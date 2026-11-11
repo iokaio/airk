@@ -33,14 +33,18 @@ export function readRetryReceipt(reply:any,expectedScope?:unknown):ReadRetryRece
 /** Repeat one MCP read only after an explicit typed rejection, within its original budget. */
 export async function requestWithReadRetry(session:Pick<McpStdioSession,'request'>,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void,expectedScope?:unknown):Promise<any>{
     const deadline=performance.now()+timeout;
+    let previousRefusal:any;
     while(true){
+        if(previousRefusal!==undefined&&performance.now()>=deadline)
+            throw Object.assign(new Error(`${name} failed: ${boundedReply(previousRefusal)}`),{nativeResponse:previousRefusal});
         const result=await session.request('tools/call',{name,arguments:args},Math.max(1,deadline-performance.now()));
         // Test assertions and diagnostics see every receipt, including refusals;
         // the shared native hint parser alone determines whether retry is safe.
         onReply?.(result);
         const delay=readRetryDelay(result,expectedScope);
-        if(delay!==undefined&&performance.now()+delay<deadline){await new Promise(resolve=>setTimeout(resolve,delay));continue;}
+        if(delay!==undefined&&performance.now()+delay<deadline){previousRefusal=result;await new Promise(resolve=>setTimeout(resolve,delay));continue;}
         assert.notEqual(result?.isError,true,`${name} failed: ${boundedReply(result)}`);
+        if(performance.now()>=deadline)throw Object.assign(new Error('MCP read observation budget exhausted'),{nativeResponse:result});
         return result;
     }
 }
@@ -127,6 +131,8 @@ export async function readNative(command:string,args:readonly string[],cwd:strin
                         {nativeStdout:stdout,nativeStderr:stderr,...(envelope!==undefined?{nativeResponse:envelope}:{})}));return;
                 }
                 if(envelope===undefined){reject(new Error('Native read returned no JSON envelope'));return;}
+                if(performance.now()>=deadline){reject(Object.assign(new Error('Native fixture read exceeded its original observation budget'),
+                    {nativeResponse:envelope,nativeStdout:stdout,nativeStderr:stderr}));return;}
                 resolve({envelope,delay});
             });
         });

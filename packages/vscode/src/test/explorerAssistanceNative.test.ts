@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
+import { stdioLaunch } from './stdioLaunch';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { ASSISTANCE_TOOLS } from '../explorerContracts';
@@ -24,11 +24,11 @@ const extensionRoot = path.resolve(__dirname, '..', '..');
 
 test('one installed endpoint serves evidence and reviewed UI drafts with independent availability and fixed project scope', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
     const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
-    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'airk-assist-native-'));
     let host: AssistanceIpcHost | undefined, session: McpStdioSession | undefined, evidence: NativeHttpSession | undefined;
     let failure:NativeTestFailure|undefined,lastRead:unknown;
     let phase='assistance setup';
     try {
+        const storage = fs.mkdtempSync(path.join(fixture.owner, 'airk-assist-native-'));
         await fixture.requireResidentProjects(2);
         const catalogSpec = await fixture.register('assistance');
         // Offline Node Assistance has no evidence authority. The service HTTPS
@@ -38,7 +38,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         // Node stands in for the editor's runtime here; the forwarder treats both the same apart from ELECTRON_RUN_AS_NODE.
         await writeLaunchDescriptor(storage, extensionRoot, version, { path: process.execPath, electron: false });
         const legacy={key:'airk_explorer',label:'Native Assistance',command:fixture.binary,args:['explorer-assistance','--descriptor',launchDescriptorPath(storage)]};
-        const result = await probeAssistance(legacy, spec.root, 'native-test');
+        const result = await probeAssistance(legacy, spec.root, 'native-test', stdioLaunch);
         assert.deepEqual(result.tools, [...ASSISTANCE_TOOLS]);
         assert.equal(result.version, version);
         fs.writeFileSync(path.join(spec.root,'fixture.txt'),'cobaltmarker native evidence');
@@ -64,7 +64,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         assert.equal(record(stoppedInspection.lifecycle).pending,null);
         assert.equal(record(stoppedInspection.selection).active,health.runtime_sha256);
         phase='open standalone Node Assistance after Stop';
-        session=(await McpStdioSession.open({command:legacy.command,args:legacy.args,cwd:spec.root,clientName:'native-test',clientVersion:version})).session;
+        session=(await McpStdioSession.open({command:legacy.command,args:legacy.args,cwd:spec.root,clientName:'native-test',clientVersion:version,launch:stdioLaunch})).session;
         const assistance=async(name:string,args={})=>{
             // native read: one offline Node Assistance request proves UI/help availability while evidence is stopped.
             const result=await session!.request('tools/call',{name,arguments:args});assert.notEqual(result.isError,true,JSON.stringify(result));return result.structuredContent??JSON.parse(result.content[0].text);
@@ -122,7 +122,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         assert.equal((await assistance('airk_explorer_ui_status')).ui.attached,false);
         const descriptor = JSON.parse(fs.readFileSync(launchDescriptorPath(storage), 'utf8'));
         fs.writeFileSync(launchDescriptorPath(storage), JSON.stringify({ ...descriptor, server_sha256: '0'.repeat(64) }));
-        await assert.rejects(probeAssistance(legacy, spec.root, 'native-test'), 'a descriptor whose digest does not match never starts the server');
+        await assert.rejects(probeAssistance(legacy, spec.root, 'native-test', stdioLaunch), 'a descriptor whose digest does not match never starts the server');
         assert.equal((await assistance('airk_explorer_ui_status')).ui.attached,false);
         assert.ok((await evidenceCall('airk_search',{query:'cobaltmarker',mode:'lexical'})).hits.length>0,'hidden native alias remains callable');
         assert.equal(inbox.list().length,1,'only the approved navigation proposal reached the Inbox');
@@ -154,8 +154,6 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         try{session?.close();}catch(error){errors.push(error);}
         try{await evidence?.close();}catch(error){errors.push(error);}
         try{host?.dispose();}catch(error){errors.push(error);}
-        try{await fs.promises.rm(storage,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
-        catch(error){errors.push(error);}
         const error=errors.length>1?new AggregateError(errors,'Assistance body and local cleanup failed'):errors[0];
         await fixture.dispose(errors.length?{error,context:failure?.context}:undefined,[...(session?[session]:[]),...(evidence?[evidence]:[])]);
     }

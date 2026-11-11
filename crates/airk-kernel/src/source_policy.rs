@@ -31,6 +31,43 @@ impl PolicyInputEpoch {
     }
 }
 
+type RuntimeMap = std::collections::BTreeMap<PathBuf, Weak<Mutex<PolicyRuntime>>>;
+static RUNTIMES: OnceLock<Mutex<RuntimeMap>> = OnceLock::new();
+
+/// Every hosted owner shares the process-wide binding map. Its entries are
+/// weak handles inserted whole, so a panic in one owner while it held the map
+/// lock (for example while loading a capsule) cannot leave a half-updated
+/// entry. Keep every live binding: discarding one would let a later Kernel
+/// for the same directory create a second, unfenced runtime. A poisoned
+/// runtime itself stays poisoned and fails closed for its own collection.
+fn lock_runtimes(runtimes: &Mutex<RuntimeMap>) -> std::sync::MutexGuard<'_, RuntimeMap> {
+    runtimes.lock().unwrap_or_else(|poisoned| {
+        let mut map = poisoned.into_inner();
+        map.retain(|_, runtime| runtime.strong_count() > 0);
+        runtimes.clear_poison();
+        map
+    })
+}
+
+/// Forget expired policy bindings under `collection_directory` when its owner
+/// exits. A binding still held by another live Kernel in this process stays,
+/// so every Kernel for that directory keeps sharing one epoch witness.
+pub(crate) fn release_expired_runtimes(collection_directory: &std::path::Path) {
+    let Some(runtimes) = RUNTIMES.get() else {
+        return;
+    };
+    let mut prefixes = vec![collection_directory.to_path_buf()];
+    prefixes.extend(std::path::absolute(collection_directory).ok());
+    prefixes.extend(collection_directory.canonicalize().ok());
+    release_expired_under(&mut lock_runtimes(runtimes), &prefixes);
+}
+
+fn release_expired_under(map: &mut RuntimeMap, prefixes: &[PathBuf]) {
+    map.retain(|directory, runtime| {
+        runtime.strong_count() > 0 || !prefixes.iter().any(|prefix| directory.starts_with(prefix))
+    });
+}
+
 pub(crate) struct PolicyRuntime {
     directory: PathBuf,
     expected: Option<Arc<SourcePolicy>>,
@@ -69,12 +106,7 @@ impl PolicyRuntime {
                 Err(error) => return Err(error.into()),
             }
         };
-        type RuntimeMap = std::collections::BTreeMap<PathBuf, Weak<Mutex<PolicyRuntime>>>;
-        static RUNTIMES: OnceLock<Mutex<RuntimeMap>> = OnceLock::new();
-        let mut runtimes = RUNTIMES
-            .get_or_init(Default::default)
-            .lock()
-            .map_err(|_| SourcePolicyReadUnavailable)?;
+        let mut runtimes = lock_runtimes(RUNTIMES.get_or_init(Default::default));
         if let Some(current) = runtimes.get(&directory).and_then(Weak::upgrade) {
             return Ok(current);
         }
@@ -793,6 +825,84 @@ mod tests {
             }],
         };
         Ok((owner, kernel, policy))
+    }
+
+    fn detached_runtime(directory: &str) -> Arc<Mutex<PolicyRuntime>> {
+        Arc::new(Mutex::new(PolicyRuntime {
+            directory: directory.into(),
+            expected: None,
+            authoritative: false,
+            capsule: None,
+            retained_policy_digest: None,
+            required_policy_digest: None,
+            retained_policy_unknown: false,
+            fence: Arc::new(AtomicBool::new(false)),
+        }))
+    }
+
+    #[test]
+    fn poisoned_runtime_map_keeps_live_bindings_and_release_drops_only_expired() {
+        let live = detached_runtime("data/one/incarnations/1");
+        let sibling = detached_runtime("data/one-two");
+        let map = Mutex::new(RuntimeMap::from([
+            ("data/one/incarnations/1".into(), Arc::downgrade(&live)),
+            ("data/one/incarnations/2".into(), Weak::new()),
+            ("data/one-two".into(), Arc::downgrade(&sibling)),
+        ]));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = map.lock().unwrap();
+            panic!("owner panicked while holding the shared policy binding map");
+        }));
+        assert!(panicked.is_err() && map.is_poisoned());
+        {
+            let recovered = lock_runtimes(&map);
+            let binding = recovered[std::path::Path::new("data/one/incarnations/1")]
+                .upgrade()
+                .expect("live binding survives poison recovery");
+            assert!(Arc::ptr_eq(&binding, &live), "no second runtime");
+            assert_eq!(recovered.len(), 2);
+        }
+        assert!(!map.is_poisoned());
+        let mut map = map.into_inner().unwrap();
+        map.insert("data/one/incarnations/3".into(), Weak::new());
+        map.insert("data/two".into(), Weak::new());
+        drop(sibling);
+        release_expired_under(&mut map, &[PathBuf::from("data/one")]);
+        let kept: Vec<_> = map.keys().cloned().collect();
+        assert_eq!(
+            kept,
+            [
+                PathBuf::from("data/one/incarnations/1"),
+                PathBuf::from("data/one-two"),
+                PathBuf::from("data/two"),
+            ]
+        );
+    }
+
+    #[test]
+    fn collection_release_forgets_expired_bindings_and_keeps_live_ones() -> Result<()> {
+        let data = crate::unlinked_tempdir()?;
+        let live_directory = data.path().join("collections-1.4").join("live");
+        let gone_directory = data.path().join("collections-1.4").join("gone");
+        std::fs::create_dir_all(&live_directory)?;
+        std::fs::create_dir_all(&gone_directory)?;
+        let live = PolicyRuntime::shared_load(live_directory.clone())?;
+        drop(PolicyRuntime::shared_load(gone_directory.clone())?);
+        crate::release_collection_caches(data.path(), "gone");
+        crate::release_collection_caches(data.path(), "live");
+        let again = PolicyRuntime::shared_load(live_directory.clone())?;
+        assert!(
+            Arc::ptr_eq(&live, &again),
+            "a live binding is never replaced"
+        );
+        let map = lock_runtimes(RUNTIMES.get().context("runtime map initialized")?);
+        assert!(!map.contains_key(&gone_directory.canonicalize()?));
+        assert!(
+            map.get(&live_directory.canonicalize()?)
+                .and_then(Weak::upgrade)
+                .is_some_and(|runtime| Arc::ptr_eq(&runtime, &live))
+        );
+        Ok(())
     }
 
     #[test]

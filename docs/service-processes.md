@@ -1,5 +1,14 @@
 # Native process ownership and cleanup
 
+> **Current state (1.8.22):** project owners, cleanup owners and the source
+> watcher now run inside the service process. They are no longer child
+> processes, so the worker-pipe, guardian and owned-child exit paths below for
+> project, inference and watcher owners apply only to the existing child-owner
+> test fixtures. The provider process-group and job owners described here still
+> contain the one isolated PDF parser and short-lived native manager commands. See
+> [process ownership](process-model.md) for the current model. The rest of this
+> page is a dated 1.4-era record.
+
 This records native service behavior in 1.4 development, separately from installed-platform qualification. The [implementation checklist](history/service-implementation-checklist.md) retains the complete drain-accounting and owner-crash gates.
 
 A disconnected worker control pipe can race an intentional idle exit. Status, renewal, helper-binding and job-dispatch paths allow up to one second to observe the exact child's successful exit without sending Stop. Only that native success clears the failure circuit; nonzero exits, invalid protocol responses, timeouts and unknown wait state retain failure handling. Cleanup still proves process/guardian and lease release before returning resource capacity or admitting another writer. The Linux revision workload that previously exhausted the circuit now passes; the owned-child regression separately checks successful/nonzero exits and refusal to forgive a protocol error.

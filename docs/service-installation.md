@@ -1,13 +1,32 @@
 # Offline service installation and lifecycle
 
-**1.8.16 source implementation; unpublished and not yet platform-qualified.**
+**Current installer policy (10 November 2026):** installations through 1.9.0
+inclusive must fully uninstall the owned predecessor and start with an empty
+catalog. Installing the same build also requires full uninstall first. Source
+files remain untouched; indexes, indexing jobs and watching are not restored.
+Reconnect waits for explicit Index library setup. Ordinary editor reopening
+only reconnects. The [candidate record](releases/release-1.8.23.md) retains its
+original evidence; source version remains 1.8.23. The delivered Windows debug package passed its
+package checks, but manual installation reported the HTTP cleanup refusal.
+The subsequent native eligibility fix is untested, with no replacement package;
+repair, builds and qualification are stopped at the user's direction.
+The [manual-test correction ledger](simplify/one-process-ledger.md#manual-test-installer-correction-10-november-2026)
+records implementation and validation; the historical rebuild policy below does
+not authorize automatic indexing on a new installation.
+
+**Inherited source implementation; unpublished and not yet platform-qualified.**
 The current sources implement a shared localhost HTTPS service, one distributed
 native executable with embedded default inference, direct manager entries and
-checkpointed upgrades. Final Windows installer, actual client/OS trust and Mac
-Neo acceptance are separate pending gates. Use the [working record](releases/release-1.8.14.md)
-for observed results, not older release evidence.
+guarded lifecycle operations. Final Windows installer, actual client/OS trust
+and Mac Neo acceptance are separate pending gates. Use the
+[1.8.23 candidate record](releases/release-1.8.23.md) and its linked task ledger
+for preparation and source validation; older release evidence is historical.
 
 ## Required clean break before 1.8.16
+
+The following records the superseded 8 November rebuild policy. The current
+installation rule above starts empty through 1.9.0 inclusive; this historical
+section does not authorize recreating saved indexes.
 
 The user approved the [clean-break contract](upgrade-rebuild-fallback.md) on
 8 November 2026. Every earlier installation must rebuild into fresh AIRK state.
@@ -436,12 +455,27 @@ The source owners are [runtime verification](../crates/airk-cli/src/runtime_inst
 A per-user native service owns the loopback listener, native grants and shared
 in-process MiniLM engine. Model status identifies its service instance, approved
 execution digest, provider generation, admission and outstanding work. A null
-inference process ID does not mean the engine is missing. Index/project workers
-can still execute independent work using the same approved native image; one
-distributed executable is not a claim that every workload uses one OS process.
+inference process ID does not mean the engine is missing.
+
+Since 1.8.22, the service is the only resident `airk` process of an
+installation. Project owners, cleanup owners and the source watcher run inside
+it. An owner that does not drain by its deadline is quarantined. It keeps its
+project lease, and that project reports a typed stuck-owner status. Other
+projects keep running, and an explicit service restart recovers. The
+temporary processes are:
+
+- one `airk service session` per VS Code window;
+- CLI and installer one-shots;
+- at most one PDF parser child;
+- a user-opened `tools shell`.
+
+Stable, preview and custom installations are separate installations, each with
+its own service. See [process ownership](process-model.md).
 
 MCP clients connect directly to the saved native HTTPS URL. They do not spawn an
-AIRK process, Node proxy or launcher for each connection/request. Verified setup,
+AIRK process, Node proxy or launcher for each connection/request. Claude Code
+and Codex credential helpers run the one-shot `airk runtime http-credential`,
+which prints the bearer header and exits. Verified setup,
 inspection and administrative CLI commands remain bounded one-shot operations.
 Interactive terminal tools execute the sealed main directly, retaining the exact
 installation and native selection. The optional terminal wrapper is a shell/PATH
@@ -597,14 +631,98 @@ configuration; changing its policy requires a separately supported transition.
 Saved state capabilities and checkpoint requirements still apply; read-only
 payload policy is not bypassed by a new transport.
 
-## Optional startup and removal
+## Startup registration and removal
 
-Startup registration is opt-in and definition/image ownership is checked before
-changing it. Uninstall removes only recorded owned native/terminal/client
-integration with the required preimage/identity checks; source and independent
-index data are preserved. A trust or process cleanup uncertainty is reported and
+Since 1.8.22, every installation, replacement and upgrade registers login
+startup through `runtime login install`. The VS Code installer and standalone
+`airk setup` share that native implementation. 1.8.20 registered it only on a
+fresh installation.
+
+- **Opt-out.** `runtime login uninstall` writes `startup-opt-out.json` in the
+  installation folder, reported as `startup_manager.user_opted_out`. An
+  upgrade honors that record and does not register again. `runtime login
+  install` clears it. The record is a new installation-folder file, not an
+  `airk-state/1` format. A replacement removes the old installation folder,
+  so a replaced installation is registered again.
+- **No idle exit.** The registered entry runs `runtime managed-serve`. In
+  HTTPS mode no service exits while idle, whether it is managed or on demand.
+  It keeps running after the editor closes and starts at the next sign-in.
+- **One service.** A second `serve`, `managed-serve`, `foreground` or `host`
+  start is refused with a `service_already_running:` message. The JSON `code`
+  is still `operation_failed`.
+- **CLI starts.** With login startup registered, `runtime ensure` and any CLI
+  command that needs the stopped service start it through the OS manager.
+  They never spawn `serve` themselves. Without a registration, the CLI starts
+  the on-demand service.
+- **Refusals.** A refused registration (OS policy, or the unqualified macOS
+  shared adapter) keeps on-demand operation and is reported. It never fails
+  installation. Explorer then starts a service that ended without a Stop
+  request once for that stopped instance, and never after an explicit Stop.
+- **Windows console.** The sign-in entry detaches from a console that no other
+  process shares, so Task Scheduler's console window does not remain open.
+
+Replacement removes the replaced installation's owned registration before
+moving its folders; see the next section. The CLI start through the OS manager
+still needs the installed process-topology check.
+
+## Replacing an installation through 1.9.0
+
+Through 1.9.0 inclusive, installation fully uninstalls the owned predecessor
+and starts with an empty catalog. Installing the same build also requires full
+uninstall first. Original sources are preserved. Reconnect cannot create an
+index. Ordinary editor reopening reconnects without reinstalling. The
+[manual-test correction ledger](simplify/one-process-ledger.md#manual-test-installer-correction-10-november-2026)
+retains the failures and validation; 1.8.22 did not satisfy this policy.
+
+1. **Ownership first.** Every location must be provably AIRK's own before
+   anything changes. A layout folder outside the default locations needs an
+   AIRK owner record. An installation record that exists but cannot be read is
+   a typed refusal (`remove_installation_refused`).
+2. **Replacement lock.** A `.<leaf>.replace-1.lock` beside the installation
+   refuses a concurrent replacement before any side effect.
+3. **Login registration.** The owned registration is removed.
+4. **User CA.** The owned user CA is retired through its trust receipt.
+5. **Folders.** Processes must be proven stopped before folders are moved aside and
+   deleted. If a move fails partway, the installer attempts to restore moved
+   directories, newest first. Executable names may already have been permanently
+   retired; restoring directories does not restore a runnable predecessor.
+   Resume the same recorded installation operation. If directory restoration
+   fails, every folder left aside is reported as residue. Owned custom index
+   storage is included after its native ownership
+   and source separation checks. Unproven shutdown or incomplete removal blocks
+   successor installation; moving a folder is not shutdown proof.
+
+The command is `airk runtime replace-installation --install-dir <dir>
+--candidate-sha256 <sha256> [--reinstall --operation-id <sha256>
+[--generation-id <sha256>]] [--apply]`. Without `--apply` it only reports the
+plan. Explicit installation uses an operation identity; an ordinary connection
+does not force a reinstall. Destructive `--apply` refuses without
+`--reinstall --operation-id`; a missing identity cannot create an unrecoverable
+cleanup attempt. Native installer receipts beside the install root
+deduplicate an accepted operation across windows, retain interrupted cleanup,
+and consume a fresh-install operation even when no predecessor exists. A host
+installation generation is separate from the verified payload identity; explicit
+reinstall consumes its current generation so a later reopen cannot repeat the
+uninstall. These are installation metadata, not a change to `airk-state/1`.
+Plan and result retain `client_references`, including proven historical launcher
+references whose files are already missing, the old endpoint and its CA.
+
+Before `--apply`, the VS Code extension captures the affected agent entries in
+project and user-level configuration files into a reconnect ledger
+(`airk.reconnect.ledger.1`). After installation, Explorer offers **Reconnect**
+for them; see [agent setup](agent-integration.md#reconnecting-after-a-replacement).
+Standalone `airk setup` uses the same replacement boundary. Source folders are
+never touched.
+
+Definition/image ownership is checked before changing a registration. Uninstall removes only recorded owned native/terminal/client
+integration with the required preimage/identity checks; sources and unrelated
+or unowned data are preserved. Proven predecessor-owned index storage is removed
+by replacement. A trust or process cleanup uncertainty is reported and
 retained rather than converted into success. Stop, logical index deletion,
 physical derived-data cleanup and full data purge are distinct operations.
+Unknown historical or unowned residue is reported and preserved; it cannot
+establish completed predecessor cleanup. Replacement does not claim a universal
+purge of every historical layout or silently ignore an unresolved owned target.
 
 `runtime inventory` is read-only. Purge requires its exact reviewed plan/digest
 and excludes unknown or redirected locations. Index deletion uses the native

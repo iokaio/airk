@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 const MAX_ENTRIES: usize = 8;
@@ -315,11 +315,35 @@ impl Cache {
             guard,
         });
     }
+
+    /// Remove every entry for a database under `prefixes`. The caller drops
+    /// the returned entries, closing their change guards, after unlocking.
+    fn release_under(&mut self, prefixes: &[PathBuf]) -> VecDeque<Entry> {
+        let (released, kept): (VecDeque<_>, _) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition(|entry| prefixes.iter().any(|prefix| entry.path.starts_with(prefix)));
+        self.entries = kept;
+        self.bytes = self.entries.iter().map(|entry| entry.bytes).sum();
+        released
+    }
 }
 
 fn cache() -> &'static Mutex<Cache> {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(Cache::default()))
+}
+
+/// Every hosted owner shares this process-wide cache. A panic in one owner
+/// while it held the lock can leave entries and the byte total inconsistent,
+/// so the whole cache is discarded (closing every change guard) and the lock
+/// is made usable again; the next request re-verifies from SQLite.
+fn lock(cache: &Mutex<Cache>) -> MutexGuard<'_, Cache> {
+    cache.lock().unwrap_or_else(|poisoned| {
+        let mut entries = poisoned.into_inner();
+        *entries = Cache::default();
+        cache.clear_poison();
+        entries
+    })
 }
 
 pub(in crate::current) fn verified(
@@ -338,9 +362,7 @@ pub(in crate::current) fn verified(
         return Ok(snapshot);
     }
     let commit = manifest.digest()?;
-    if let Ok(mut cache) = cache().lock()
-        && let Some(snapshot) = cache.get(path, commit)
-    {
+    if let Some(snapshot) = lock(cache()).get(path, commit) {
         return Ok(snapshot);
     }
     let guard = ChangeGuard::new(path);
@@ -353,23 +375,26 @@ pub(in crate::current) fn verified(
     if before.is_some()
         && stamp(path) == before
         && let Some(guard) = guard
-        && let Ok(mut cache) = cache().lock()
     {
-        cache.remember_guarded(path, commit, snapshot.clone(), guard);
+        lock(cache()).remember_guarded(path, commit, snapshot.clone(), guard);
     }
     Ok(snapshot)
 }
 
 pub(in crate::current) fn remember(path: &Path, commit: Sha256Digest, snapshot: Arc<Snapshot>) {
-    if let Ok(mut cache) = cache().lock() {
-        cache.remember(path, commit, snapshot);
-    }
+    lock(cache()).remember(path, commit, snapshot);
 }
 
 pub(in crate::current) fn clear() {
-    if let Ok(mut cache) = cache().lock() {
-        *cache = Cache::default();
-    }
+    let released = std::mem::take(&mut *lock(cache()));
+    drop(released);
+}
+
+/// Drop the seals and change-notification handles of databases under
+/// `prefixes` so they do not outlive the owner that verified them.
+pub(in crate::current) fn release_under(prefixes: &[PathBuf]) {
+    let released = lock(cache()).release_under(prefixes);
+    drop(released);
 }
 
 #[cfg(test)]
@@ -455,6 +480,54 @@ mod tests {
             file.set_times(std::fs::FileTimes::new().set_modified(modified))?;
         }
         assert!(cache.get(&path, commit).is_none());
+        Ok(())
+    }
+    #[test]
+    fn poisoned_cache_is_discarded_and_usable_again() {
+        // A byte total without entries models an update interrupted by a panic.
+        let cache = Mutex::new(Cache {
+            entries: VecDeque::new(),
+            bytes: 7,
+        });
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = cache.lock().unwrap();
+            panic!("owner panicked while holding the shared lexical cache");
+        }));
+        assert!(panicked.is_err() && cache.is_poisoned());
+        let recovered = lock(&cache);
+        assert!(recovered.entries.is_empty() && recovered.bytes == 0);
+        drop(recovered);
+        assert!(!cache.is_poisoned());
+    }
+    #[test]
+    fn release_drops_guards_under_the_released_collection_only() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut cache = Cache::default();
+        let mut fixtures = Vec::new();
+        for name in ["one", "one-two"] {
+            let parent = directory.path().join(name);
+            std::fs::create_dir(&parent)?;
+            let path = parent.join("current.sqlite3");
+            let connection = Connection::open(&path)?;
+            super::super::create(&connection)?;
+            let snapshot = Arc::new(Snapshot::capture(&connection)?);
+            let commit = snapshot
+                .manifest(super::super::updates_digest(&[])?)?
+                .digest()?;
+            cache.remember(&path, commit, snapshot);
+            fixtures.push((path, commit));
+        }
+        assert_eq!(cache.entries.len(), 2);
+        let released = cache.release_under(&[directory.path().join("one")]);
+        assert_eq!(released.len(), 1);
+        assert_eq!(released[0].path, fixtures[0].0);
+        drop(released);
+        assert_eq!(
+            cache.bytes,
+            cache.entries.iter().map(|entry| entry.bytes).sum::<usize>()
+        );
+        assert!(cache.get(&fixtures[0].0, fixtures[0].1).is_none());
+        assert!(cache.get(&fixtures[1].0, fixtures[1].1).is_some());
         Ok(())
     }
 }

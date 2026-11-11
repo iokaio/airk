@@ -2,9 +2,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import {credentialEnvironment,httpUrl,validateHttpConnection,sameHttpAuthority,preservedImportedHttpServerKey,validateOwnedPredecessorHttpProof,type OwnedPredecessorHttpProof,type HttpConnectionInfo} from './serviceHttp';
+import {httpUrl,validateHttpConnection,sameHttpAuthority,preservedImportedHttpServerKey,validateOwnedPredecessorHttpProof,type OwnedPredecessorHttpProof,type HttpConnectionInfo} from './serviceHttp';
 import { consolidateJson, consolidateToml, globalConfigDeclarations, transformGlobalContainer, type ConfigurationFile as GlobalConfigFile } from './unifiedAgentConfig';
-import { LaunchSpec, unifiedEntry, httpServerFields } from './model';
+import { LaunchSpec, unifiedEntry, httpServerFields, credentialHelperConnectionId, type HttpCredentialHelper } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
 import { readJsonConfig, syncVscodeHttpInput,removeVscodeHttpInputForId } from './agentConfig';
 import { parse } from 'jsonc-parser';
@@ -23,9 +23,47 @@ function installLauncher(spec: LaunchSpec): string | undefined {
     return spec.service && path.join(spec.service.installDir, process.platform === 'win32' ? 'airk-launcher.exe' : 'airk-launcher');
 }
 const strings = (args: unknown): args is string[] => Array.isArray(args) && args.every(value => typeof value === 'string');
-/** This installation's launchers: the current command, its per-installation launcher, or the universal launcher. */
-function ownLauncher(spec: LaunchSpec, command: unknown): boolean {
-    return typeof command === 'string' && path.isAbsolute(command) && (same(command, spec.command) || same(command, installLauncher(spec)!));
+/** Host-verified evidence that widens recognition without weakening the shape checks.
+ * `verifiedLaunchers` are absolute images that native inventory or the reconnect
+ * ledger proved belonged to an AIRK installation of this user (including the
+ * universal `AIRK/launcher/airk-launcher`); `staleHttpIds` are connection IDs the
+ * current native owner reported as unknown, so their exact AIRK-generated HTTPS
+ * declarations may be replaced. A foreign command or shape is still refused. */
+export interface MigrationRecognition {
+    readonly verifiedLaunchers?: readonly string[];
+    readonly staleHttpIds?: ReadonlySet<string>;
+    /** Write the per-connection credential helper for clients outside VS Code. */
+    readonly helper?: HttpCredentialHelper;
+}
+/** This installation's launchers: the current command, its per-installation launcher, or a host-verified launcher. */
+function ownLauncher(spec: LaunchSpec, command: unknown, verified: readonly string[] = []): boolean {
+    return typeof command === 'string' && path.isAbsolute(command) && (same(command, spec.command) || same(command, installLauncher(spec)!)
+        || verified.some(launcher => path.isAbsolute(launcher) && same(command, launcher)));
+}
+const plainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+/** An AIRK-generated HTTPS declaration for connection `id`, with either the
+ * environment-variable or the credential-helper delivery. Any other field set
+ * (a command, a foreign header or token source) is not AIRK's shape. */
+export function airkHttpDeclaration(agent: LocalAgent, fields: Record<string, unknown>, id: string): boolean {
+    if (!/^[a-f0-9]{32}$/.test(id) || 'command' in fields || 'args' in fields || 'serverUrl' in fields || typeof fields.url !== 'string') { return false; }
+    try { httpUrl(fields.url); } catch { return false; }
+    const environment = 'AIRK_MCP_TOKEN_' + id.toUpperCase();
+    if (agent === 'codex') {
+        if (fields.type !== undefined || fields.headers !== undefined || fields.env_http_headers !== undefined || 'headersHelper' in fields) { return false; }
+        const variable = fields.bearer_token_env_var, helper = fields.http_headers_helper;
+        if (!(variable === environment && helper === undefined || variable === undefined && credentialHelperConnectionId(helper) === id)) { return false; }
+        const headers = fields.http_headers;
+        return headers === undefined || plainObject(headers) && Object.keys(headers).every(key => key === 'X-AIRK-Response-Mode')
+            && ['terse', 'full'].includes(String(headers['X-AIRK-Response-Mode']));
+    }
+    if (fields.type !== 'http' || 'bearer_token_env_var' in fields || 'http_headers' in fields || 'http_headers_helper' in fields || 'env_http_headers' in fields) { return false; }
+    if ('headersHelper' in fields && (agent !== 'claude' || credentialHelperConnectionId(fields.headersHelper) !== id)) { return false; }
+    const headers = fields.headers;
+    if (!plainObject(headers)) { return false; }
+    const { ['X-AIRK-Response-Mode']: mode, ...authorization } = headers;
+    if (mode !== undefined && mode !== 'terse' && mode !== 'full') { return false; }
+    return isDeepStrictEqual(authorization, { Authorization: agent === 'copilot' ? `Bearer \${input:airkToken_${id}}` : `Bearer \${${environment}}` })
+        || agent === 'copilot' && isDeepStrictEqual(authorization, { Authorization: 'Bearer ${env:' + environment + '}' });
 }
 /** `runtime launch --install-dir <this install> -- …rest`, or just `…rest` for the universal launcher. */
 function forwarded(spec: LaunchSpec, args: string[]): string[] | undefined {
@@ -34,7 +72,7 @@ function forwarded(spec: LaunchSpec, args: string[]): string[] | undefined {
 }
 
 /** Accept only extension-owned legacy launches or this installation's launchers. Never execute the old command. */
-function recognized(spec: LaunchSpec, storage: string, command: unknown, args: unknown, _rebind = false): boolean {
+function recognized(spec: LaunchSpec, storage: string, command: unknown, args: unknown, _rebind = false, verified: readonly string[] = []): boolean {
     if (!spec.service || typeof command !== 'string' || !path.isAbsolute(command) || !strings(args)) { return false; }
     const relative = path.relative(storage, command).split(path.sep);
     const legacyCommand = relative.join('/') === `cli/bin/${process.platform === 'win32' ? 'airk.exe' : 'airk'}`
@@ -46,7 +84,7 @@ function recognized(spec: LaunchSpec, storage: string, command: unknown, args: u
     // Recognized installed entries keep their configured source/collection scope.
     // Old physical binding/data selectors must not prevent migration after all
     // local state (including the editor's registration receipt) has been erased.
-    const rest = ownLauncher(spec, command) ? forwarded(spec, args) : undefined;
+    const rest = ownLauncher(spec, command, verified) ? forwarded(spec, args) : undefined;
     if(rest?.length===3&&rest[0]==='--root'&&same(rest[1],spec.root)&&rest[2]==='mcp')return true;
     return !!rest && rest.length === 9 && rest[0] === '--root' && same(rest[1], spec.root)
         && rest[2] === '--data-dir' && path.isAbsolute(rest[3]) && rest[4] === '--collection' && rest[5] === spec.collection
@@ -54,46 +92,47 @@ function recognized(spec: LaunchSpec, storage: string, command: unknown, args: u
 }
 
 /** An Explorer Assistance entry this extension wrote: this installation's launcher and its launch descriptor. */
-function recognizedAssistance(spec: LaunchSpec, storage: string, command: unknown, args: unknown): boolean {
-    if (!spec.service || !ownLauncher(spec, command) || !strings(args)) { return false; }
+function recognizedAssistance(spec: LaunchSpec, storage: string, command: unknown, args: unknown, verified: readonly string[] = []): boolean {
+    if (!spec.service || !ownLauncher(spec, command, verified) || !strings(args)) { return false; }
     const rest = forwarded(spec, args);
     return !!rest && rest.length === 3 && rest[0] === 'explorer-assistance' && rest[1] === '--descriptor' && same(rest[2], launchDescriptorPath(storage));
 }
 
 /** Consolidate only recognized connections in one guarded file save. */
-export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage: string, source: string, includeAssistance = true, warn: (message: string) => void = () => undefined, rebind = false, remove = false, previous?:LaunchSpec,selectedKey?:string): string {
+export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage: string, source: string, includeAssistance = true, warn: (message: string) => void = () => undefined, rebind = false, remove = false, previous?:LaunchSpec,selectedKey?:string,recognition:MigrationRecognition={}): string {
     if (!spec.service) { throw new Error('Registered service binding required.'); }
     if (Buffer.byteLength(source) > 1_048_576) { throw new Error('Configuration exceeds 1 MiB.'); }
     const descriptor=launchDescriptorPath(storage);
-    const matches=(command:unknown,args:unknown)=>recognized(spec,storage,command,args,rebind)
+    const verified=recognition.verifiedLaunchers??[];
+    const matches=(command:unknown,args:unknown)=>recognized(spec,storage,command,args,rebind,verified)
         ||!!previous&&!!previous.service&&same(previous.root,spec.root)&&same(previous.service.installDir,spec.service!.installDir)
-            &&previous.collection===spec.collection&&recognized(previous,storage,command,args);
-    const fields=spec.http?httpServerFields(agent==='copilot'?'vscode':agent,spec.http):undefined;
+            &&previous.collection===spec.collection&&recognized(previous,storage,command,args,false,verified);
+    const fields=spec.http?httpServerFields(agent==='copilot'?'vscode':agent,spec.http,agent==='codex'||agent==='claude'?recognition.helper:undefined):undefined;
     const options={retrievalKey:selectedKey??`airk-${spec.collection}`,...(selectedKey?{onlyKey:true,targetKey:selectedKey,selectedFamily:selectedKey==='airk'?'unified' as const:'retrieval' as const}:{}),entry:unifiedEntry(spec,includeAssistance?descriptor:undefined),fields,warn,remove,
         recognizes:(family:'retrieval'|'explorer'|'unified',fields:Record<string,unknown>)=>{
             if(spec.http&&family==='unified'&&typeof fields.url==='string'){
                 const candidate=fields.url===spec.http.endpoint.url?spec:previous?.http&&fields.url===previous.http.endpoint.url?previous:undefined;
-                if(!candidate?.http)return false;
-                const expected=httpServerFields(agent==='copilot'?'vscode':agent,candidate.http);
-                if('command'in fields||'args'in fields||'serverUrl'in fields||fields.type!==expected.type)return false;
-                if(agent==='codex'){
-                    const headers=fields.http_headers as Record<string,unknown>|undefined;
-                    return fields.bearer_token_env_var===expected.bearer_token_env_var&&fields.headers===undefined&&fields.env_http_headers===undefined&&(!headers||typeof headers==='object'&&!Array.isArray(headers)&&Object.keys(headers).every(key=>key==='X-AIRK-Response-Mode')&&(headers['X-AIRK-Response-Mode']==='terse'||headers['X-AIRK-Response-Mode']==='full'));
-                }
-                const headers=fields.headers;if(!headers||typeof headers!=='object'||Array.isArray(headers))return false;
-                const {['X-AIRK-Response-Mode']:mode,...actual}=headers as Record<string,unknown>;
-                return (mode===undefined||mode==='full'||mode==='terse')&&(isDeepStrictEqual(actual,{Authorization:(expected.headers as Record<string,unknown>).Authorization})||agent==='copilot'&&isDeepStrictEqual(actual,{Authorization:'Bearer ${env:'+credentialEnvironment(candidate.http)+'}'}));
+                if(candidate?.http&&airkHttpDeclaration(agent,fields,candidate.http.connection_id))return true;
+                // A connection the current native owner no longer knows: only
+                // its exact AIRK-generated shape is replaced, never a foreign entry.
+                const stale=httpConfigurationConnectionId(agent,fields);
+                return !!stale&&!!recognition.staleHttpIds?.has(stale)&&airkHttpDeclaration(agent,fields,stale);
             }
-            if(family==='explorer')return recognizedAssistance(spec,storage,fields.command,fields.args);
-            if(family==='retrieval')return matches(fields.command,fields.args);
+            if(family==='explorer')return recognizedAssistance(spec,storage,fields.command,fields.args,verified);
+            // A verified launcher's entry may name another profile's attachment
+            // descriptor; the HTTPS replacement never carries that argument.
+            const verifiedCommand=typeof fields.command==='string'&&verified.some(launcher=>path.isAbsolute(launcher)&&same(launcher,String(fields.command)));
+            if(family==='retrieval'&&!verifiedCommand)return matches(fields.command,fields.args);
             if(!strings(fields.args))return false;
             const args=[...fields.args],at=args.indexOf('--explorer-descriptor');
-            if(at>=0){if(at!==args.length-2||!same(args[at+1],descriptor))return false;args.splice(at,2);}
+            if(at>=0){if(at!==args.length-2||!path.isAbsolute(args[at+1])||!same(args[at+1],descriptor)&&!verifiedCommand)return false;args.splice(at,2);}
             return matches(fields.command,args);
         }};
     let result=agent==='codex'?consolidateToml(source,options):consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
     if(agent==='copilot'&&spec.http&&result!==source)result=syncVscodeHttpInput(result,spec.http,remove);
     else if(agent==='copilot'&&spec.http&&!remove&&result===source)result=syncVscodeHttpInput(result,spec.http);
+    // A replaced stale connection leaves no orphaned credential input.
+    if(agent==='copilot'&&result!==source)for(const id of recognition.staleHttpIds??[])if(/^[a-f0-9]{32}$/.test(id))result=removeVscodeHttpInputForId(result,id);
     if(Buffer.byteLength(result)>1_048_576){throw new Error('Updated configuration would exceed 1 MiB; existing file preserved.');}
     return result;
 }
@@ -102,31 +141,23 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
  * must never reconstruct that authority from a configuration directory. */
 export function httpConfigurationConnectionId(agent:LocalAgent,fields:Record<string,unknown>):string|undefined{
     if(typeof fields.url!=='string')return;try{httpUrl(fields.url);}catch{return;}
-    if(agent==='codex'){const value=fields.bearer_token_env_var;return typeof value==='string'?/^AIRK_MCP_TOKEN_([A-F0-9]{32})$/.exec(value)?.[1].toLowerCase():undefined;}
+    if(agent==='codex'){const value=fields.bearer_token_env_var;return typeof value==='string'?/^AIRK_MCP_TOKEN_([A-F0-9]{32})$/.exec(value)?.[1].toLowerCase():value===undefined?credentialHelperConnectionId(fields.http_headers_helper):undefined;}
     const headers=fields.headers;if(!headers||typeof headers!=='object'||Array.isArray(headers))return;
     const value=(headers as Record<string,unknown>).Authorization;if(typeof value!=='string')return;
     const match=/^Bearer \$\{(?:(?:env:)?AIRK_MCP_TOKEN_([A-F0-9]{32})|input:airkToken_([a-f0-9]{32}))\}$/.exec(value);
     return match?(match[1]??match[2]).toLowerCase():undefined;
 }
-export function refreshHttpAgentConfig(agent:LocalAgent,source:string,connection:HttpConnectionInfo,previousUrl:string,serverKey='airk',previous?:HttpConnectionInfo):string{
+export function refreshHttpAgentConfig(agent:LocalAgent,source:string,connection:HttpConnectionInfo,previousUrl:string,serverKey='airk',previous?:HttpConnectionInfo,helper?:HttpCredentialHelper):string{
     const info=validateHttpConnection(connection),url=httpUrl(previousUrl),client=agent==='copilot'?'vscode':agent;
     const prior=previous===undefined?info:validateHttpConnection(previous);
     if(previous!==undefined&&(prior.selection.kind!=='imported_legacy'||info.selection.kind!=='imported_legacy'
         ||prior.selection.selection.grant.provenance.kind!=='imported_standalone_adoption'||info.selection.selection.grant.provenance.kind!=='imported_standalone_adoption'
         ||!sameHttpAuthority(info.selection,prior.selection)||info.endpoint.installation!==prior.endpoint.installation||info.endpoint.user!==prior.endpoint.user
         ||!same(info.ca_certificate_file,prior.ca_certificate_file)||url!==prior.endpoint.url))throw Error('standalone_http_reattachment_unconfirmed');
-    const expected=httpServerFields(client,info);
-    const priorFields=httpServerFields(client,prior);
+    const expected=httpServerFields(client,info,agent==='codex'||agent==='claude'?helper:undefined);
     if(serverKey!=='airk'&&preservedImportedHttpServerKey(info,serverKey)!==serverKey)throw Error('standalone_http_alias_unconfirmed');
     const options={retrievalKey:serverKey,targetKey:serverKey,onlyKey:true,selectedFamily:'unified' as const,entry:{key:serverKey,command:'',args:[],label:'AIRK',http:info},fields:expected,warn:()=>undefined,
-        recognizes:(family:string,fields:Record<string,unknown>)=>{
-            if(family!=='unified'||fields.url!==url||httpConfigurationConnectionId(agent,fields)!==prior.connection_id||'command'in fields||'args'in fields||'serverUrl'in fields||fields.type!==priorFields.type)return false;
-            if(agent==='codex'){
-                const headers=fields.http_headers;return fields.headers===undefined&&fields.env_http_headers===undefined&&(!headers||typeof headers==='object'&&!Array.isArray(headers)&&Object.keys(headers).every(key=>key==='X-AIRK-Response-Mode')&&['full','terse'].includes(String((headers as Record<string,unknown>)['X-AIRK-Response-Mode'])));
-            }
-            const headers=fields.headers as Record<string,unknown>,{['X-AIRK-Response-Mode']:mode,...authorization}=headers;
-            return (mode===undefined||mode==='full'||mode==='terse')&&(isDeepStrictEqual(authorization,{Authorization:(priorFields.headers as Record<string,unknown>).Authorization})||agent==='copilot'&&isDeepStrictEqual(authorization,{Authorization:'Bearer ${env:'+credentialEnvironment(prior)+'}'}));
-        }};
+        recognizes:(family:string,fields:Record<string,unknown>)=>family==='unified'&&fields.url===url&&airkHttpDeclaration(agent,fields,prior.connection_id)};
     let result=agent==='codex'?consolidateToml(source,options):consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
     if(agent==='copilot')result=syncVscodeHttpInput(result,info);
     if(Buffer.byteLength(result)>1_048_576)throw Error('Updated configuration would exceed 1 MiB.');return result;
@@ -237,21 +268,7 @@ function ownedLegacyRemoval(spec: LaunchSpec, storage: string, fields: Record<st
 }
 
 function ownedHttpRemoval(agent: LocalAgent, fields: Record<string, unknown>, info: OwnedPredecessorHttpProof): boolean {
-    if (httpConfigurationConnectionId(agent, fields) !== info.connection_id || !['codex', 'claude', 'copilot'].includes(agent)) { return false; }
-    const environment='AIRK_MCP_TOKEN_'+info.connection_id.toUpperCase();
-    const expected={type:agent==='codex'?undefined:'http',url:info.endpoint.url,bearer_token_env_var:environment,headers:{Authorization:agent==='copilot'?`Bearer \${input:airkToken_${info.connection_id}}`:`Bearer \${${environment}}`}};
-    if ('command' in fields || 'args' in fields || 'serverUrl' in fields || fields.type !== expected.type || fields.url !== expected.url) { return false; }
-    if (agent === 'codex') {
-        const headers = fields.http_headers as Record<string, unknown> | undefined;
-        return fields.bearer_token_env_var === expected.bearer_token_env_var && fields.headers === undefined && fields.env_http_headers === undefined
-            && (!headers || typeof headers === 'object' && !Array.isArray(headers) && Object.keys(headers).every(key => key === 'X-AIRK-Response-Mode')
-                && ['terse', 'full'].includes(String(headers['X-AIRK-Response-Mode'])));
-    }
-    const headers = fields.headers;
-    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) { return false; }
-    const { ['X-AIRK-Response-Mode']: mode, ...actual } = headers as Record<string, unknown>;
-    return (mode === undefined || mode === 'terse' || mode === 'full') && (isDeepStrictEqual(actual, { Authorization: (expected.headers as Record<string, unknown>).Authorization })
-        || agent === 'copilot' && isDeepStrictEqual(actual, { Authorization: 'Bearer ${env:' + environment + '}' }));
+    return ['codex', 'claude', 'copilot'].includes(agent) && fields.url === info.endpoint.url && airkHttpDeclaration(agent, fields, info.connection_id);
 }
 
 /** Remove only exact captured declarations. It never creates a replacement server or credential. */

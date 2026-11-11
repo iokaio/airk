@@ -60,23 +60,34 @@ configuration selects which collection a client reads. Native operation
 targets Windows, macOS and Linux. Each platform's manager launches the
 sealed main executable directly.
 
+Exactly one `airk` process stays resident per installation: the service. Project owners, cleanup owners and the source watcher run inside it.
+The temporary processes are:
+
+- one `airk service session` per VS Code window;
+- CLI and installer one-shots;
+- at most one isolated PDF parser child;
+- a user-opened `tools shell`.
+
+See [process ownership](process-model.md).
+
 ~~~mermaid
 flowchart TD
     C[VS Code, Codex and other MCP clients] -->|Authenticated loopback HTTPS / MCP| H
     T[Local developer tools] -->|Authenticated HTTPS JSON API| H
-    X[CLI and extension management] -->|Owner-checked named pipe or Unix socket| M
-    subgraph S[One per-user AIRK service: single executable]
+    X[CLI one-shots and the per-window session] -->|Owner-checked named pipe or Unix socket| M
+    subgraph S[One per-user AIRK service: single executable, single resident process]
         H[Bounded HTTPS listener and isolated sessions]
         H --> A[Canonical MCP read handlers and shared admission]
         A --> P[Bounded native worker connection pools]
         M[Metadata and lifecycle actor]
         E[Shared in-process MiniLM inference owner]
+        M -. supervises .-> W
+        P --> W[In-process project, cleanup and source-watch owners]
+        W -->|Bounded embedding requests| E
     end
-    M -. supervises .-> W
-    P --> W[Supervised index and source workers: same executable]
-    W -->|Bounded embedding requests| E
     W --> D[Independent collection storage]
     W --> R[Bounded evidence and original locations]
+    W -. one at a time .-> F[Short-lived PDF parser child]
 ~~~
 
 - **Ingress.** `airk-cli` owns the loopback listener, the installation-local
@@ -87,9 +98,14 @@ flowchart TD
 - **Management.** Bootstrap and management stay on owner-checked IPC. The
   metadata actor is metadata-only and never opens project indexes. Evidence
   does not queue behind it.
-- **Workers.** Only native worker roles open project kernels and stores.
-  Evidence travels from workers through the service's connection pools to the
-  caller. See [service processes](service-processes.md) and
+- **Workers.** Only the native project and cleanup owners open project
+  kernels and stores. Each runs on its own service thread with its own
+  runtime, lock and execution scope. Evidence travels from those owners
+  through the service's connection pools to the caller. An owner that does not
+  drain by its deadline is quarantined: it keeps its project lease, that
+  project's circuit opens and its status reports the stuck owner. Other
+  projects keep running, and an explicit service restart recovers. See [process ownership](process-model.md),
+  [service processes](service-processes.md) and
   [request execution](request-execution.md).
 - **Admission.** Connections share bounded native query admission. A
   disconnecting caller suppresses delivery but does not release capacity for
@@ -126,7 +142,7 @@ reads.
   [current index runtime](current-index-runtime.md) and
   [service publication](service-publication.md).
 - **Scheduling.** Kernel owns admission and traversal, and the native CLI owns
-  process supervision. See [service source watching](service-source-watching.md)
+  supervision of the in-process owners and the PDF parser child. See [service source watching](service-source-watching.md)
   and [service maintenance](service-maintenance.md).
 - **Usage.** Usage reporting uses Core contracts, a bounded store ledger and
   kernel estimation. It keeps no query or source content and sends no external
@@ -137,9 +153,19 @@ reads.
 - **Extension.** The extension hosts presentation, reviewed workspace
   selection and guarded request preparation. It never owns a running index
   job, and native service and index ownership is independent of extension
-  disposal.
+  disposal. Each window reaches native code through one `airk service session`,
+  which exits with the window's extension host.
 
 ## Compatibility boundary
+
+Installations through 1.9.0 inclusive first complete the owned predecessor
+uninstall and create an empty catalog. Installing the same build also requires
+a full uninstall first. Source selections and pending jobs do not trigger new
+indexes. Ordinary editor reopening reconnects; an installation operation and its
+host generation are separate identities, deduplicated by native installer
+receipts outside the removed roots. Reconnect waits for explicit Index library
+setup. These installer rules supersede the historical automatic rebuild policy
+below without changing the `airk-state/1` persisted schema.
 
 1.8.16 established the `airk-state/1` state contract. Every earlier
 installation goes through a native clean reset and fresh indexing; old index

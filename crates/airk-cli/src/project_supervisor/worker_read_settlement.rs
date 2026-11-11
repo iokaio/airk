@@ -98,16 +98,14 @@ impl ChildWorker {
                     .context("read settlement missing")?;
                 // Set uncertainty before any control bytes may be submitted.
                 settlement.phase = Phase::Unknown;
-                service_ipc::write_frame(
-                    self.input
-                        .as_mut()
-                        .context("read settlement input missing")?,
-                    &WorkerCommand::Checkpoint {
+                self.input
+                    .as_mut()
+                    .context("read settlement input missing")?
+                    .send(WorkerCommand::Checkpoint {
                         identity,
                         operation_id: settlement.operation_id,
                         seal: true,
-                    },
-                )?;
+                    })?;
                 settlement.phase = Phase::Awaiting;
                 return Ok(false);
             }

@@ -5,7 +5,7 @@ use airk_core::{
     catalog_fences::FencedReceipt,
     catalog_management::{CatalogReceipt, CatalogRequest},
     catalog_setup::{IndexSetupDraft, IndexSetupReceipt, SetupStage},
-    service::{ControlMethod, ProjectRegistration},
+    service::{ControlMethod, ControlResponse, ProjectRegistration},
     service_http::HttpSelection,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -15,7 +15,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -85,6 +85,23 @@ fn command(executable: &Path, owner: &Path) -> Command {
 /// expired command never authorizes a replay. Background service ownership is
 /// settled separately by the native lifecycle receipt.
 fn cli(executable: &Path, args: &[&str], input: Option<&Value>, owner: &Path) -> Result<Value> {
+    let output = cli_output(executable, args, input, owner)?;
+    ensure!(
+        output.status.success(),
+        "owned fixture CLI failed ({}); retain {}: {}",
+        output.status,
+        owner.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).context("invalid native fixture CLI JSON")
+}
+
+fn cli_output(
+    executable: &Path,
+    args: &[&str],
+    input: Option<&Value>,
+    owner: &Path,
+) -> Result<Output> {
     let input = input.map(serde_json::to_vec).transpose()?;
     ensure!(
         input.as_ref().is_none_or(|bytes| bytes.len() <= 16 * 1024),
@@ -134,12 +151,15 @@ fn cli(executable: &Path, args: &[&str], input: Option<&Value>, owner: &Path) ->
         "fixture CLI output exceeds budget; retain {}",
         owner.display()
     );
-    ensure!(
-        status.success(),
-        "owned fixture CLI failed ({status}); see {}",
-        stderr.display()
-    );
-    serde_json::from_slice(&fs::read(stdout)?).context("invalid native fixture CLI JSON")
+    Ok(Output {
+        status,
+        stdout: fs::read(stdout)?,
+        stderr: fs::read(stderr)?,
+    })
+}
+
+pub(super) fn fixture_command(owner: &Path, args: &[&str]) -> Result<Output> {
+    cli_output(Path::new(env!("CARGO_BIN_EXE_airk")), args, None, owner)
 }
 
 struct Rpc {
@@ -164,6 +184,20 @@ impl Rpc {
         })
     }
     fn call(&mut self, method: Value) -> Result<Value> {
+        self.call_scoped(method, None)
+    }
+    fn call_for_instance(
+        &mut self,
+        method: Value,
+        instance: airk_core::identity::Incarnation,
+    ) -> Result<Value> {
+        self.call_scoped(method, Some(instance))
+    }
+    fn call_scoped(
+        &mut self,
+        method: Value,
+        instance: Option<airk_core::identity::Incarnation>,
+    ) -> Result<Value> {
         ensure!(
             self.count < 128 && Instant::now() < self.end,
             "reviewed fixture RPC budget expired"
@@ -175,10 +209,19 @@ impl Rpc {
             .saturating_duration_since(Instant::now())
             .min(Duration::from_secs(30));
         let response = self.runtime.block_on(async {
-            tokio::time::timeout(
-                timeout,
-                airk_cli::service_runtime::request(&self.control, method),
-            )
+            tokio::time::timeout(timeout, async {
+                match instance {
+                    Some(instance) => {
+                        airk_cli::service_runtime::request_for_instance(
+                            &self.control,
+                            method,
+                            instance,
+                        )
+                        .await
+                    }
+                    None => airk_cli::service_runtime::request(&self.control, method).await,
+                }
+            })
             .await
         })??;
         let bytes = serde_json::to_vec(&response)?;
@@ -771,6 +814,432 @@ pub(super) fn installed_runtime(owner: &Path) -> Result<(PathBuf, PathBuf, PathB
     Ok((install, control, executable))
 }
 
+/// An actual selected-main foreground child; its process handle, not a later PID
+/// lookup, proves which predecessor the replacement must finish shutting down.
+pub(crate) struct FixtureForeground {
+    child: Child,
+    control: PathBuf,
+    owner: PathBuf,
+    stdout: PathBuf,
+    stderr: PathBuf,
+    namespace: airk_core::identity::Incarnation,
+    runtime: String,
+    executable_sha256: String,
+    instance: Option<airk_core::identity::Incarnation>,
+    id: String,
+}
+impl FixtureForeground {
+    pub fn spawn(install: &Path, owner: &Path) -> Result<Self> {
+        let owner = owner.canonicalize()?;
+        ensure!(
+            install.canonicalize()? == owner.join("install").canonicalize()?,
+            "foreground install escaped fixture"
+        );
+        let (control, executable) = installed_paths(
+            &owner
+                .join("payload")
+                .join(airk_cli::install_files::main_name()),
+            install,
+            &owner.join("state"),
+            &owner,
+        )?;
+        let namespace =
+            airk_store::service::registry::ServiceRegistry::open_saved(&control)?.incarnation()?;
+        let selection: Value = serde_json::from_slice(&fs::read(install.join("selected.json"))?)?;
+        let runtime = selection["active"]
+            .as_str()
+            .context("foreground runtime missing")?
+            .to_owned();
+        let executable_sha256 = airk_cli::runtime_pair::digest_file(&executable)?;
+        let id = nonce()?;
+        let stdout = owner.join(format!("foreground-{id}.stdout"));
+        let stderr = owner.join(format!("foreground-{id}.stderr"));
+        let child = command(&executable, &owner)
+            .args([
+                "runtime",
+                "foreground",
+                "--install-dir",
+                install.to_str().context("non-UTF8 foreground install")?,
+            ])
+            .stdin(Stdio::null())
+            .stdout(fs::File::create(&stdout)?)
+            .stderr(fs::File::create(&stderr)?)
+            .spawn()?;
+        Ok(Self {
+            child,
+            control,
+            owner,
+            stdout,
+            stderr,
+            namespace,
+            runtime,
+            executable_sha256,
+            instance: None,
+            id,
+        })
+    }
+
+    fn output_bounded(&self) -> Result<()> {
+        ensure!(
+            fs::metadata(&self.stdout)?.len() <= 1024 * 1024
+                && fs::metadata(&self.stderr)?.len() <= 1024 * 1024,
+            "foreground fixture output exceeded budget; retain {}",
+            self.owner.display()
+        );
+        Ok(())
+    }
+
+    pub fn wait_ready(&mut self) -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let until = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.output_bounded()?;
+            ensure!(
+                self.child.try_wait()?.is_none(),
+                "owned foreground exited before ready; retain {}",
+                self.owner.display()
+            );
+            let remaining = until.saturating_duration_since(Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "owned foreground readiness expired; retain {}",
+                self.owner.display()
+            );
+            // NotFound means the listener has not appeared. Yield under the
+            // existing deadline rather than spending the RPC result budget on
+            // an arbitrary number of pre-listener connection attempts.
+            let response = runtime.block_on(async {
+                tokio::time::timeout(
+                    remaining,
+                    airk_cli::service_runtime::request(&self.control, ControlMethod::Health),
+                )
+                .await
+            });
+            if let Ok(Ok(response)) = response {
+                let bytes = serde_json::to_vec(&response)?;
+                ensure!(
+                    bytes.len() <= 1024 * 1024,
+                    "foreground health exceeded budget"
+                );
+                fs::write(
+                    self.owner
+                        .join(format!("foreground-ready-{}.json", self.id)),
+                    bytes,
+                )?;
+                let ControlResponse::Health { observation } = response else {
+                    bail!("foreground did not return canonical health")
+                };
+                ensure!(
+                    observation.process_id == self.child.id()
+                        && observation.version == env!("CARGO_PKG_VERSION")
+                        && observation.runtime_sha256.as_deref() == Some(self.runtime.as_str())
+                        && observation.executable_sha256 == self.executable_sha256
+                        && observation
+                            .catalog_clock
+                            .is_some_and(|clock| clock.namespace == self.namespace),
+                    "foreground health does not bind the exact owned process/runtime/namespace"
+                );
+                self.instance = Some(observation.instance);
+                return Ok(());
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// Raw graceful shutdown preserves the start-allowed fixture state for the
+    /// byte-preservation refusal check. This is not a lifecycle Stop receipt.
+    pub fn shutdown_raw(&mut self) -> Result<()> {
+        let instance = self
+            .instance
+            .context("foreground has no verified instance")?;
+        let mut rpc = Rpc::new(&self.control, &self.owner)?;
+        let health = rpc.call_for_instance(json!("health"), instance)?;
+        let ControlResponse::Health { observation } = serde_json::from_value(health)? else {
+            bail!("foreground health unavailable before raw shutdown")
+        };
+        ensure!(
+            observation.instance == instance
+                && observation.process_id == self.child.id()
+                && observation.runtime_sha256.as_deref() == Some(self.runtime.as_str())
+                && observation.executable_sha256 == self.executable_sha256
+                && observation
+                    .catalog_clock
+                    .is_some_and(|clock| clock.namespace == self.namespace),
+            "raw fixture shutdown identity changed"
+        );
+        let stopped = rpc.call_for_instance(json!("shutdown"), instance)?;
+        ensure!(
+            stopped["status"] == "stopping",
+            "raw fixture shutdown was not acknowledged: {stopped}"
+        );
+        let until = Instant::now() + Duration::from_secs(30);
+        while self.child.try_wait()?.is_none() {
+            ensure!(
+                Instant::now() < until,
+                "owned foreground retained its process after raw shutdown"
+            );
+            std::thread::yield_now();
+        }
+        self.require_exited()
+    }
+
+    pub fn require_exited(&mut self) -> Result<()> {
+        self.output_bounded()?;
+        let status = self
+            .child
+            .try_wait()?
+            .context("replacement did not finish stopping the exact owned predecessor process")?;
+        fs::write(
+            self.owner
+                .join(format!("foreground-exited-{}.json", self.id)),
+            serde_json::to_vec(
+                &json!({"process_id":self.child.id(),"service_instance":self.instance,"namespace":self.namespace,"runtime":self.runtime,"exit_code":status.code(),"success":status.success(),"proof":"owned_child_wait"}),
+            )?,
+        )?;
+        Ok(())
+    }
+}
+
+/// Read the real fresh service before stopping it; keep every native field and
+/// bind all samples to one verified service instance.
+pub(super) fn observe_empty_installed_fixture(
+    install: &Path,
+    owner: &Path,
+    label: &str,
+) -> Result<(
+    airk_core::identity::Incarnation,
+    airk_core::service_resources::ResourceSnapshot,
+)> {
+    ensure!(
+        !label.is_empty()
+            && label.len() <= 64
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-'),
+        "invalid empty fixture observation label"
+    );
+    let owner = owner.canonicalize()?;
+    let (control, executable) = installed_paths(
+        &owner
+            .join("payload")
+            .join(airk_cli::install_files::main_name()),
+        install,
+        &owner.join("state"),
+        &owner,
+    )?;
+    let mut rpc = Rpc::new(&control, &owner)?;
+    let health = rpc.call(json!("health"))?;
+    let ControlResponse::Health { observation } = serde_json::from_value(health.clone())? else {
+        bail!("fresh service health unavailable")
+    };
+    let selection: Value = serde_json::from_slice(&fs::read(install.join("selected.json"))?)?;
+    ensure!(
+        observation.version == env!("CARGO_PKG_VERSION")
+            && observation.executable_sha256 == airk_cli::runtime_pair::digest_file(&executable)?
+            && observation.runtime_sha256.as_deref() == selection["active"].as_str(),
+        "fresh service image differs from selected fixture"
+    );
+    let clock = observation
+        .catalog_clock
+        .context("fresh service has no native catalog clock")?;
+    ensure!(
+        clock.namespace
+            == airk_store::service::registry::ServiceRegistry::open_saved(&control)?
+                .incarnation()?,
+        "fresh health namespace differs from current registry"
+    );
+    let instance = observation.instance;
+    let mut evidence = json!({"label":label,"health":health,"catalog_pages":[]});
+    let mut resources = None;
+    for kind in [
+        airk_core::catalog_management::CatalogKind::Indexes,
+        airk_core::catalog_management::CatalogKind::Projects,
+    ] {
+        let request = airk_core::catalog_management::CatalogPageRequest {
+            kind,
+            index_id: None,
+            project_id: None,
+            after: None,
+            expected_catalog_revision: Some(clock.revision),
+            limit: 32,
+            max_bytes: 48 * 1024,
+        };
+        request.validate()?;
+        let response = rpc.call_for_instance(
+            serde_json::to_value(ControlMethod::CatalogPage { request })?,
+            instance,
+        )?;
+        let ControlResponse::CatalogPage { page, .. } = serde_json::from_value(response.clone())?
+        else {
+            bail!("fresh catalog page unavailable")
+        };
+        ensure!(
+            page.namespace == clock.namespace
+                && page.revision == clock.revision
+                && page.items.is_empty()
+                && page.continuation.is_none(),
+            "fresh service retained catalog indexes or index sets"
+        );
+        evidence["catalog_pages"]
+            .as_array_mut()
+            .unwrap()
+            .push(response);
+    }
+    for method in [
+        ControlMethod::EmbeddingStatus,
+        ControlMethod::SourceStatus,
+        ControlMethod::Resources,
+    ] {
+        let response = rpc.call_for_instance(serde_json::to_value(method)?, instance)?;
+        let parsed: ControlResponse = serde_json::from_value(response.clone())?;
+        match parsed {
+            ControlResponse::EmbeddingStatus {
+                process_id,
+                loads,
+                reuses,
+                sessions,
+                provider,
+                ..
+            } => {
+                ensure!(
+                    process_id.is_none() && loads == 0 && reuses == 0 && sessions == 0,
+                    "fresh service allocated embedding work"
+                );
+                if let Some(provider) = provider {
+                    provider.validate()?;
+                    ensure!(
+                        provider.provider.service_instance == instance
+                            && provider.provider.approved_execution_sha256.to_string()
+                                == observation.executable_sha256
+                            && provider.queued_outstanding == 0
+                            && provider.running_outstanding == 0
+                            && provider.callback_outstanding == 0
+                            && provider.delivery_outstanding == 0
+                            && provider.model_references_outstanding == 0
+                            && provider.failure.is_none(),
+                        "fresh inference provider retains work or changed ownership"
+                    );
+                }
+                evidence["embedding"] = response;
+            }
+            ControlResponse::SourceStatus {
+                available,
+                process_id,
+                watched_directories,
+                projects,
+                pending_events,
+                blocked,
+                predecessor_draining,
+                ..
+            } => {
+                ensure!(
+                    !available
+                        && process_id.is_none()
+                        && watched_directories.is_none_or(|count| count == 0)
+                        && projects.is_none_or(|count| count == 0)
+                        && pending_events.is_none_or(|count| count == 0)
+                        && !blocked
+                        && !predecessor_draining,
+                    "fresh service retained a source watcher or source work"
+                );
+                evidence["source"] = response;
+            }
+            ControlResponse::Resources {
+                observation,
+                configuration_error,
+                ..
+            } => {
+                ensure!(
+                    !configuration_error
+                        && observation.running_jobs == 0
+                        && observation.waiting_projects == 0
+                        && observation.resident_workers == 0
+                        && observation.pending_provider_drains == 0
+                        && !observation.provider_drain_error
+                        && observation.extraction_threads_reserved == 0
+                        && observation.background_io_reserved_bytes_per_second == 0,
+                    "fresh service retained admitted workers/jobs/resources"
+                );
+                // This includes idle model/service/watcher policy headroom.
+                // Its expected value comes from the independently observed
+                // cold predecessor, not a second invocation of admission code.
+                resources = Some(*observation);
+                evidence["resources"] = response;
+            }
+            _ => bail!("fresh service resource observation unavailable: {response}"),
+        }
+    }
+    let after = rpc.call_for_instance(json!("health"), instance)?;
+    let ControlResponse::Health {
+        observation: after_health,
+    } = serde_json::from_value(after.clone())?
+    else {
+        bail!("fresh service final health unavailable")
+    };
+    ensure!(
+        after_health.instance == instance
+            && after_health.process_id == observation.process_id
+            && after_health.executable_sha256 == observation.executable_sha256
+            && after_health.runtime_sha256 == observation.runtime_sha256
+            && after_health.catalog_clock == Some(clock),
+        "fresh live observations crossed service/catalog identity"
+    );
+    evidence["health_after"] = after;
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(owner.join(format!("{label}-live-observation-{}.json", clock.namespace)))?
+        .write_all(&serde_json::to_vec(&evidence)?)?;
+    Ok((
+        clock.namespace,
+        resources.context("empty fixture omitted native resources")?,
+    ))
+}
+
+pub(super) fn observe_empty_stopped_fixture(
+    control: &Path,
+    owner: &Path,
+    namespace: airk_core::identity::Incarnation,
+) -> Result<()> {
+    let _lease = airk_store::service::ServiceLease::acquire(control)?;
+    let snapshot = airk_store::service::registry::checkpoint::snapshot(control)?;
+    fs::write(
+        owner.join("fresh-stopped-checkpoint.json"),
+        serde_json::to_vec(&snapshot)?,
+    )?;
+    ensure!(
+        snapshot.complete
+            && snapshot.namespace == Some(namespace)
+            && snapshot.indexes.is_empty()
+            && snapshot.project_bindings.is_empty()
+            && snapshot.jobs.is_empty()
+            && snapshot.unfinished.is_empty()
+            && snapshot.retained_intents.is_empty(),
+        "fresh service checkpoint retained indexes or work"
+    );
+    for name in [
+        "service_jobs",
+        "service_watch",
+        "index_definitions",
+        "query_projects",
+    ] {
+        let table = snapshot
+            .tables
+            .iter()
+            .find(|table| table.name == name)
+            .with_context(|| format!("fresh native checkpoint omitted {name}"))?;
+        ensure!(
+            !table.ephemeral_or_observation_only
+                && table.rows == Some(0)
+                && table.rows_digest.is_some(),
+            "fresh native checkpoint retained {name} history or lacked complete evidence"
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn additional_project(
     service: &ReviewedService,
     root: &Path,
@@ -901,6 +1370,93 @@ pub(super) fn shutdown(service: &ReviewedService) -> Result<()> {
         *stopped = true;
     }
     verify_stopped(service)?;
+    Ok(())
+}
+
+/// Fresh and replacement installs share a path but have different namespaces.
+/// Authenticate the current installation and instance on every cleanup attempt;
+/// an earlier namespace's receipt cannot authorize cleanup of its successor.
+pub(super) fn shutdown_installed_fixture(install: &Path, owner: &Path) -> Result<()> {
+    use airk_core::service_lifecycle::{LifecycleAction, LifecyclePhase, LifecycleRecord};
+    use airk_store::service::{ServiceLease, registry::ServiceRegistry};
+    let owner = owner.canonicalize()?;
+    ensure!(
+        install.canonicalize()? == owner.join("install").canonicalize()?,
+        "shutdown installation escaped exact fixture owner"
+    );
+    let payload = owner
+        .join("payload")
+        .join(airk_cli::install_files::main_name());
+    let (control, executable) = installed_paths(&payload, install, &owner.join("state"), &owner)?;
+    let inspected = cli(
+        &executable,
+        &[
+            "runtime",
+            "inspect",
+            "--install-dir",
+            install.to_str().context("non-UTF8 fixture install")?,
+        ],
+        None,
+        &owner,
+    )?;
+    let namespace: airk_core::identity::Incarnation =
+        serde_json::from_value(inspected["registry_namespace"].clone())?;
+    let runtime: airk_core::identity::Sha256Digest = inspected["selection"]["active"]
+        .as_str()
+        .context("fixture runtime digest missing")?
+        .parse()?;
+    if inspected["lifecycle"]["explicitly_stopped"] != true {
+        shutdown_paths(install, &control, &executable, Some((namespace, runtime)))?;
+    }
+    let receipt_path = owner.join("shutdown-complete.json");
+    regular(&receipt_path, 64 * 1024)?;
+    let receipt: Value = serde_json::from_slice(&fs::read(&receipt_path)?)?;
+    let record: LifecycleRecord = serde_json::from_value(receipt["record"].clone())?;
+    let registry = ServiceRegistry::open_saved(&control)?;
+    ensure!(
+        receipt["status"] == "lifecycle"
+            && record.phase == LifecyclePhase::Complete
+            && record.request.action == LifecycleAction::Stop
+            && record.request.key.namespace == namespace
+            && record.request.runtime == runtime
+            && registry.incarnation()? == namespace
+            && registry.recorded_service_instance()? == Some(record.request.expected_instance),
+        "fixture Stop receipt does not bind the current namespace/runtime/instance"
+    );
+    let durable = registry
+        .lifecycle_by_id(record.id)?
+        .context("current fixture Stop receipt is absent from native ledger")?;
+    ensure!(
+        serde_json::to_value(&durable)? == serde_json::to_value(&record)?
+            && registry.service_explicitly_stopped()?
+            && registry.pending_lifecycle()?.is_none(),
+        "fixture Stop receipt is incomplete or differs from canonical native lifecycle state"
+    );
+    drop(registry);
+    let _lease = ServiceLease::acquire(&control)?;
+    ensure!(
+        Rpc::new(&control, &owner)?.call(json!("health")).is_err(),
+        "fixture service remains reachable after verified Stop"
+    );
+    for stem in ["shutdown-request", "shutdown-complete"] {
+        let latest = owner.join(format!("{stem}.json"));
+        regular(&latest, 64 * 1024)?;
+        let bytes = fs::read(&latest)?;
+        let archive = owner.join(format!("{stem}-{}.json", record.id));
+        if archive.try_exists()? {
+            regular(&archive, 64 * 1024)?;
+            ensure!(
+                fs::read(&archive)? == bytes,
+                "fixture lifecycle archive changed"
+            );
+        } else {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&archive)?
+                .write_all(&bytes)?;
+        }
+    }
     Ok(())
 }
 

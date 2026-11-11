@@ -35,6 +35,7 @@ mod rebuild_observation;
 mod references;
 mod remote_tokenization;
 mod resources;
+pub use resources::OwnerActivity;
 pub mod retrieval_retry;
 pub mod roots;
 pub mod scheduler;
@@ -72,6 +73,26 @@ use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Release this process's verification seals, their change-notification
+/// handles and expired source-policy bindings for one collection. The service
+/// hosts every owner in one process; call this when a hosted owner of
+/// `collection` under `data_root` exits so these do not outlive it. Live
+/// bindings and requests held by another owner are never invalidated.
+pub fn release_collection_caches(data_root: &Path, collection: &str) {
+    let mut components = Path::new(collection).components();
+    if !matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) {
+        return; // Never widen release to a namespace or another collection.
+    }
+    for namespace in ["collections-1.4", "collections-1.2"] {
+        let directory = data_root.join(namespace).join(collection);
+        airk_store::current::release_collection_caches(&directory);
+        source_policy::release_expired_runtimes(&directory);
+    }
+}
 
 #[cfg(test)]
 fn unlinked_tempdir() -> Result<tempfile::TempDir> {
@@ -862,7 +883,7 @@ impl Kernel {
             "index pending extraction policy before preparing provider analysis"
         );
         let permanent_policy = self.source_policy_for_work()?;
-        let (current, _, _) = airk_ingest::scan_payloads_with_execution_source_policy(
+        let (current, report, _) = airk_ingest::scan_payloads_with_execution_source_policy(
             &self.root,
             &self.data_root,
             snapshot,
@@ -902,6 +923,12 @@ impl Kernel {
                 Ok(metadata)
             },
         )?;
+        // A deferred PDF stands on its previous generation, so the inventory
+        // would compare equal although that source changed.
+        ensure!(
+            report.extraction_deferred == 0,
+            "index pending deferred PDF extraction before preparing provider analysis"
+        );
         Ok(current)
     }
 

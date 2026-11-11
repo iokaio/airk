@@ -91,6 +91,7 @@ COPY fixtures/schema/airk-state-1/usage.supplemental.meta.json ./fixtures/schema
 COPY fixtures/schema/airk-state-1/usage.supplemental.objects.json ./fixtures/schema/airk-state-1/usage.supplemental.objects.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
 COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decisions.json
+COPY fixtures/wire/session_frames.json ./fixtures/wire/session_frames.json
 COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts
 COPY packages/vscode/src/test/extensionUninstall.test.ts ./packages/vscode/src/test/extensionUninstall.test.ts
 COPY packages/vscode/src/test/serviceBootstrap.test.ts ./packages/vscode/src/test/serviceBootstrap.test.ts

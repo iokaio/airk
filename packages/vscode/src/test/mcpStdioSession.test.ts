@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import * as os from 'node:os';
 import { test } from 'node:test';
 import { McpSessionError, McpStdioSession } from '../mcpStdioSession';
+import { stdioLaunch } from './stdioLaunch';
 
 // A tiny line-delimited JSON-RPC server: behaviour is selected by the method name.
 const SERVER = `
@@ -24,7 +25,7 @@ rl.on('line', line => {
 });`;
 function open(maxMessageBytes?: number) {
     return McpStdioSession.open({ command: process.execPath, args: ['-e', SERVER], cwd: os.tmpdir(), clientName: 'airk-explorer',
-        clientVersion: 'test', maxMessageBytes }, 10000);
+        clientVersion: 'test', maxMessageBytes, launch: stdioLaunch }, 10000);
 }
 
 test('handshake sends clientInfo and matches concurrent replies by id', async () => {
@@ -78,13 +79,13 @@ test('close rejects outstanding requests and later calls', async () => {
 
 test('a failed handshake kills the child and rejects', async () => {
     await assert.rejects(McpStdioSession.open({ command: process.execPath, args: ['-e', 'process.exit(2)'], cwd: os.tmpdir(),
-        clientName: 'airk-explorer', clientVersion: 'test' }, 5000), (error: unknown) => error instanceof McpSessionError && error.code === 'exited');
+        clientName: 'airk-explorer', clientVersion: 'test', launch: stdioLaunch }, 5000), (error: unknown) => error instanceof McpSessionError && error.code === 'exited');
 });
 
 test('a silent handshake timeout retains bounded launcher diagnostics and the failed method',async()=>{
     await assert.rejects(McpStdioSession.open({command:process.execPath,
         args:['-e','process.stderr.write("fixture: waiting for runtime lock");setInterval(()=>{},1000);'],
-        cwd:os.tmpdir(),clientName:'airk-test',clientVersion:'test'},1000),error=>{
+        cwd:os.tmpdir(),clientName:'airk-test',clientVersion:'test',launch:stdioLaunch},1000),error=>{
         assert.ok(error instanceof McpSessionError);assert.equal(error.code,'timeout');
         assert.match(error.message,/initialize.*1000 ms/);assert.match(error.message,/waiting for runtime lock/);return true;
     });

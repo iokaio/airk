@@ -1,5 +1,33 @@
 # One AIRK: executable, MCP endpoint and upgrade lifecycle
 
+> **User decisions, 10 November 2026: one resident process.** These replace
+> §1's "one executable is not a promise of one total OS process" paragraph and
+> the worker processes in the §2 diagram.
+>
+> - **One resident `airk.exe` per user and machine: the service.** Project,
+>   cleanup and source-watcher work runs inside it.
+> - **Temporary processes allowed.** Each must exit when its job or owner ends,
+>   so they never pile up:
+>   - one `airk service session` per VS Code window, which exits when that
+>     window's extension host closes;
+>   - `airk` commands the user types, and installer one-shots;
+>   - at most one short-lived PDF parser child for the whole service, created
+>     and torn down for each document and kept for its crash and memory limits;
+>   - a `tools shell` terminal the user opens.
+> - **Agents connect to the service's HTTPS endpoint directly.** No process is
+>   started for each agent.
+> - **The pre-1.9.0 replacement installer is bound by §3, §9 and §10.3.** It
+>   captures and reconnects AIRK agent entries before it removes launchers. It
+>   retires the old trust records it owns. It reports typed per-entry outcomes.
+>   Explorer warns about broken entries and offers a one-click Reconnect after
+>   confirmation.
+> - **The 1.8.19 narrowing is reversed.** 1.8.19 decided that agent
+>   configurations outside VS Code are not edited. That narrowing was made
+>   during implementation without the user's approval.
+>
+> The plan and evidence are in
+> [the one-process ledger](simplify/one-process-ledger.md).
+
 **Implementation plan recorded 7 November 2026; clean-break policy approved
 8 November 2026.** The current development version is **1.8.16**. The user
 approved a fresh-state/index rebuild for every earlier installation, then normal

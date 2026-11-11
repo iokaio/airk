@@ -58,6 +58,33 @@ mod lifecycle;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod macos_login;
 mod payload_repair;
+mod replacement;
+/// The pre-1.9.0 replacement boundary shared by `runtime replace-installation`
+/// and standalone `airk setup`: the complete plan, including its client
+/// references, and whether this candidate requires replacing the installation.
+pub(crate) fn replacement_plan(
+    install: &Path,
+    candidate_sha256: &str,
+    operation_id: Option<&str>,
+    generation_id: Option<&str>,
+) -> Result<(bool, serde_json::Value)> {
+    let plan = replacement::plan(install, candidate_sha256, operation_id, generation_id)?;
+    Ok((plan.required, serde_json::to_value(plan)?))
+}
+pub(crate) fn replace_installation(
+    install: &Path,
+    candidate_sha256: &str,
+    operation_id: Option<&str>,
+    generation_id: Option<&str>,
+) -> Result<serde_json::Value> {
+    replacement::apply(install, candidate_sha256, operation_id, generation_id)
+}
+pub(crate) fn pending_replacement_operation(
+    install: &Path,
+    candidate: &str,
+) -> Result<Option<String>> {
+    replacement::pending_operation(install, candidate)
+}
 mod retirement;
 pub(crate) use retirement::uninstall as uninstall_receipt;
 mod snapshot;
@@ -115,6 +142,19 @@ pub enum RuntimeCommand {
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
     },
+    /// Print an existing, unrevoked connection's bearer header for an agent's header helper.
+    ///
+    /// Reads only the owner-private credential file of this installation; it never starts
+    /// the service, enrolls, rotates or logs the token. `--format header-json` prints
+    /// {"Authorization":"Bearer <token>"}.
+    HttpCredential {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        #[arg(long, value_parser = ["header-json"])]
+        format: String,
+    },
     /// Read-only typed connection ownership lookup; revoked or unavailable IDs never become foreign.
     LookupHttpConnection {
         #[arg(long)]
@@ -153,6 +193,32 @@ pub enum RuntimeCommand {
         client: String,
         #[arg(long)]
         explorer_descriptor: Option<PathBuf>,
+    },
+    /// Through 1.9.0: remove earlier AIRK state before a fresh empty install.
+    /// Explicit same-build installs require full uninstall at every version.
+    /// With --apply, verify shutdown and remove only this installation's owned folders.
+    /// Source folders are never touched and no index is created.
+    ReplaceInstallation {
+        #[arg(long)]
+        install_dir: PathBuf,
+        /// Install-inventory SHA-256 of the runtime about to be installed.
+        #[arg(long)]
+        candidate_sha256: String,
+        /// Explicit install: matching builds also require a complete uninstall.
+        #[arg(long, requires = "operation_id")]
+        reinstall: bool,
+        /// Stable identity of this installation attempt; replay never resets its successor.
+        #[arg(long, requires = "reinstall")]
+        operation_id: Option<airk_core::identity::Sha256Digest>,
+        /// Host installation generation consumed by this explicit installation.
+        #[arg(long, requires = "operation_id")]
+        generation_id: Option<airk_core::identity::Sha256Digest>,
+        /// Native predecessor stamp returned by the reviewed read-only plan.
+        #[arg(long, requires = "apply")]
+        expected_predecessor: Option<airk_core::identity::Sha256Digest>,
+        /// Apply cleanup; required replacements need --reinstall --operation-id.
+        #[arg(long)]
+        apply: bool,
     },
     /// Revoke one local HTTPS connection while preserving its original receipt.
     HttpRevoke {
@@ -856,6 +922,68 @@ fn bootstrap(root: &Path, state: &str, pid: Option<u32>, exit_code: Option<i32>)
     )
 }
 
+/// An explicit `runtime login uninstall` records the user's choice to run AIRK
+/// on demand, so an upgrade or replacement client does not register login
+/// startup again. It lives in the installation root: a fresh or replaced
+/// installation starts without it, and an explicit `runtime login install`
+/// clears it.
+const LOGIN_OPT_OUT: &str = "startup-opt-out.json";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoginOptOut {
+    schema: u32,
+    recorded_unix_ms: u64,
+}
+
+pub(crate) fn login_opted_out(root: &Path) -> Result<bool> {
+    let path = root.join(LOGIN_OPT_OUT);
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+        Ok(_) => {
+            let record: LoginOptOut = serde_json::from_slice(&read_bounded(&path, 4096)?)?;
+            ensure!(
+                record.schema == 1,
+                "unsupported login startup opt-out record"
+            );
+            Ok(true)
+        }
+    }
+}
+
+fn record_login_opt_out(root: &Path) -> Result<()> {
+    replace_json(
+        root,
+        LOGIN_OPT_OUT,
+        &LoginOptOut {
+            schema: 1,
+            recorded_unix_ms: unix_ms()?,
+        },
+    )
+}
+
+fn clear_login_opt_out(root: &Path) -> Result<()> {
+    let path = root.join(LOGIN_OPT_OUT);
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => {
+            safe_file(&path)?;
+            fs::remove_file(&path)?;
+            sync_directory(root)
+        }
+    }
+}
+
+/// The opt-out as reported by `runtime inspect` and `runtime snapshot`.
+fn login_opt_out_report(root: &Path) -> serde_json::Value {
+    match login_opted_out(root) {
+        Ok(opted_out) => serde_json::Value::Bool(opted_out),
+        Err(_) => serde_json::Value::Null,
+    }
+}
+
 fn unix_ms() -> Result<u64> {
     Ok(u64::try_from(
         std::time::SystemTime::now()
@@ -1151,8 +1279,24 @@ fn install_lock(root: &Path) -> Result<File> {
     Ok(file)
 }
 
+/// How long a short operation on an existing installation waits for another
+/// one that holds its lock. Each such operation holds the lock briefly, and
+/// one window's session, its agent checks and a CLI command can overlap; an
+/// immediate refusal made concurrent observations refuse each other.
+const EXISTING_INSTALL_LOCK_WAIT: Duration = Duration::from_secs(15);
+
 /// Read-only observations may lock an existing installation, never initialize it.
+/// The lock stays exclusive, because some observations settle interrupted
+/// work, but a held lock is waited for, within a bound, instead of refused.
 fn existing_install_lock(root: &Path) -> Result<File> {
+    existing_install_lock_within(root, EXISTING_INSTALL_LOCK_WAIT, std::thread::sleep)
+}
+
+fn existing_install_lock_within(
+    root: &Path,
+    budget: Duration,
+    mut pause: impl FnMut(Duration),
+) -> Result<File> {
     ensure!(root.is_absolute(), "installation location must be absolute");
     let text = root.to_str().context("installation path must be UTF-8")?;
     ensure!(
@@ -1165,9 +1309,19 @@ fn existing_install_lock(root: &Path) -> Result<File> {
     ensure!(fs::metadata(&lock)?.len() == 0, "invalid install lock");
     let file = OpenOptions::new().read(true).write(true).open(&lock)?;
     safe_file(&lock)?;
-    file.try_lock()
-        .context("another AIRK installer/launcher is active; retry after it finishes")?;
-    Ok(file)
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                pause(Duration::from_millis(50));
+            }
+            Err(error) => {
+                return Err(error)
+                    .context("another AIRK installer/launcher is active; retry after it finishes");
+            }
+        }
+    }
 }
 
 async fn connection_install_lock(root: &Path, budget: Duration) -> Result<File> {
@@ -1189,6 +1343,58 @@ async fn connection_install_lock(root: &Path, budget: Duration) -> Result<File> 
 #[cfg(test)]
 mod connection_lock_tests {
     use super::*;
+
+    /// Two short operations on one installation, such as a window's
+    /// legacy-cache inspection and a driver's, overlap: the second waits for
+    /// the first instead of being refused as "another installer".
+    #[test]
+    fn concurrent_existing_install_observations_wait_for_each_other() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("installation");
+        drop(install_lock(&root)?);
+        let first = existing_install_lock(&root)?;
+        let (waiting, observed) = std::sync::mpsc::channel();
+        let second = std::thread::spawn({
+            let root = root.clone();
+            move || {
+                existing_install_lock_within(&root, Duration::from_secs(60), |_| {
+                    let _ = waiting.send(());
+                    std::thread::yield_now();
+                })
+            }
+        });
+        // The second observation is waiting on the held lock, not refused.
+        observed.recv_timeout(Duration::from_secs(30))?;
+        assert!(!second.is_finished());
+        drop(first);
+        let acquired = second
+            .join()
+            .map_err(|_| anyhow::anyhow!("observation thread panicked"))??;
+        // It holds the same exclusive lock an installer needs.
+        assert!(install_lock(&root).is_err());
+        drop(acquired);
+        drop(install_lock(&root)?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_existing_install_observation_refuses_after_its_wait_budget() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("installation");
+        let held = install_lock(&root)?;
+        let mut pauses = 0;
+        let error = existing_install_lock_within(&root, Duration::ZERO, |_| pauses += 1)
+            .err()
+            .context("a held installation lock was not refused after its budget")?;
+        assert_eq!(pauses, 0);
+        assert!(
+            format!("{error:#}").contains("another AIRK installer/launcher is active"),
+            "{error:#}"
+        );
+        drop(held);
+        drop(existing_install_lock_within(&root, Duration::ZERO, |_| ())?);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn concurrent_connections_wait_without_stealing_mutation_ownership() -> Result<()> {
@@ -1904,6 +2110,26 @@ async fn start_for_operation(
     .await
 }
 
+/// On-demand idle exit belongs to the pre-catalog (authority 0) service only. An
+/// authority-1 catalog serves agents directly over HTTPS, and no agent would
+/// restart an idle-exited service, so that service stays resident
+/// (one-airk.md §7). An unreadable registry keeps the earlier 180 s behavior.
+fn on_demand_idle_exit(authority_contract: Option<u32>) -> Option<&'static str> {
+    match authority_contract {
+        Some(contract) if contract >= 1 => None,
+        _ => Some("180"),
+    }
+}
+
+/// The saved catalog authority contract, read without starting anything.
+fn saved_catalog_authority(control: &Path) -> Option<u32> {
+    if !control.join("service-1.4.sqlite3").is_file() {
+        return None;
+    }
+    let registry = airk_store::service::registry::ServiceRegistry::open_saved(control).ok()?;
+    Some(registry.catalog_state().ok()??.authority_contract)
+}
+
 #[allow(clippy::too_many_arguments)] // Keep the exact launch inputs, clock and admission owner explicit.
 async fn start_with_observation_clock(
     root: &Path,
@@ -1946,12 +2172,17 @@ async fn start_with_observation_clock(
     // The exact receipt-backed attempt above now settles once, even after EOF.
     let service_executable =
         crate::process_roles::executable(main, crate::process_roles::Role::Service)?;
+    let mut arguments: Vec<std::ffi::OsString> = vec![
+        "serve".into(),
+        "--runtime-dir".into(),
+        control.as_os_str().to_owned(),
+    ];
+    if let Some(seconds) = on_demand_idle_exit(saved_catalog_authority(control)) {
+        arguments.extend(["--idle-exit-seconds".into(), seconds.into()]);
+    }
     let mut command = Command::new(&service_executable);
     command
-        .arg("serve")
-        .arg("--runtime-dir")
-        .arg(control)
-        .args(["--idle-exit-seconds", "180"])
+        .args(&arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -1978,16 +2209,7 @@ async fn start_with_observation_clock(
     }
     bootstrap(root, "starting", None, None)?;
     #[cfg(windows)]
-    let launched = crate::native_process::spawn_detached(
-        &service_executable,
-        &[
-            "serve".into(),
-            "--runtime-dir".into(),
-            control.as_os_str().to_owned(),
-            "--idle-exit-seconds".into(),
-            "180".into(),
-        ],
-    );
+    let launched = crate::native_process::spawn_detached(&service_executable, &arguments);
     #[cfg(not(windows))]
     let launched = crate::native_process::spawn(&mut command);
     let mut child = match launched {
@@ -2689,7 +2911,8 @@ pub use http_commands::existing_connection as existing_http_connection;
 pub use http_commands::setup as setup_http_connection;
 pub(crate) mod http_legacy;
 mod managed_service;
-pub use commands::run;
+pub(crate) use commands::install_login_startup;
+pub use commands::{run, run_with};
 
 #[cfg(test)]
 mod tests;

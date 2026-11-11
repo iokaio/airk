@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
-import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readRetryDelay,readRetryReceipt,requestWithReadRetry,QuickStatusObservation} from './nativeReadRetry';
+import childProcess = require('node:child_process');
+import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readNative,readRetryDelay,readRetryReceipt,requestWithReadRetry,QuickStatusObservation} from './nativeReadRetry';
 import {McpStdioSession} from '../mcpStdioSession';
 import {publishedStatusPending} from './nativeServiceFixture';
 
@@ -158,6 +159,52 @@ test('MCP receipt observation retains unsubmitted retries and never replays subm
     await assert.rejects(requestWithReadRetry(session,'status',{},1000,value=>observed.push(value)),/status failed: .*status_observation_superseded/);
     assert.equal(seen.length,1,'A submitted status failure must remain fatal, even with retryable=true');
     assert.deepEqual(observed,[submitted]);assert.deepEqual(replies,[ok]);
+});
+
+test('MCP fixture reads refuse a successful reply observed after their original deadline',async t=>{
+    let clock=1000,calls=0;const now=t.mock.method(performance,'now',()=>clock);
+    const session={request:async(_method:string,_params:unknown,timeout:number)=>{
+        calls++;assert.equal(timeout,100);clock=1100;return {content:[{type:'text',text:'{"hits":[]}'}]};
+    }} as unknown as McpStdioSession;
+    try{await assert.rejects(requestWithReadRetry(session,'search',{},100),/observation budget/);assert.equal(calls,1);}finally{now.mock.restore();}
+});
+
+test('CLI fixture reads refuse late successful and typed-refusal callbacks with their complete replies',async t=>{
+    const replies=[{content:[{type:'text',text:'{"files":1}'}]},
+        {isError:true,content:[{type:'text',text:JSON.stringify({status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1})}]}];
+    for(const reply of replies){
+        let clock=1000,calls=0;const now=t.mock.method(performance,'now',()=>clock),stdout=JSON.stringify(reply),stderr='exact callback stderr';
+        const execute=t.mock.method(childProcess,'execFile',((...args:unknown[])=>{
+            calls++;assert.equal(args[0],'owned-native');assert.deepEqual(args[1],['tools','call','status']);
+            assert.equal(Reflect.get(args[2] as object,'timeout'),100);
+            clock=1100;
+            const callback=args[3] as (error:Error|null,stdout:string,stderr:string)=>void;
+            callback('isError' in reply?Object.assign(new Error('exit one'),{code:1}):null,stdout,stderr);
+            return {} as childProcess.ChildProcess;
+        }) as unknown as typeof childProcess.execFile);
+        try{
+            await assert.rejects(readNative('owned-native',['tools','call','status'],process.cwd(),1100),error=>{
+                assert.match(String(error),/original observation budget/);
+                assert.deepEqual(Reflect.get(error as object,'nativeResponse'),reply);
+                assert.equal(Reflect.get(error as object,'nativeStdout'),stdout);assert.equal(Reflect.get(error as object,'nativeStderr'),stderr);return true;
+            });
+            assert.equal(calls,1,'A late refusal cannot admit another process');
+        }finally{execute.mock.restore();now.mock.restore();}
+    }
+});
+
+test('MCP fixture reads retain their last typed refusal when a retry timer overshoots the deadline',async t=>{
+    let clock=1000,calls=0;const now=t.mock.method(performance,'now',()=>clock);
+    t.mock.timers.enable({apis:['setTimeout']});
+    const refusal={isError:true,content:[{type:'text',text:JSON.stringify({status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1})}]};
+    const session={request:async()=>{calls++;return refusal;}} as unknown as McpStdioSession;
+    try{
+        const rejected=assert.rejects(requestWithReadRetry(session,'status',{},100),error=>{
+            assert.match(String(error),/status failed: .*selection_busy/);assert.equal(Reflect.get(error as object,'nativeResponse'),refusal);return true;
+        });
+        await Promise.resolve();clock=1100;t.mock.timers.tick(1);await rejected;
+        assert.equal(calls,1,'An expired retry delay cannot admit another MCP request');
+    }finally{t.mock.timers.reset();now.mock.restore();}
 });
 
 test('publication fixtures reject unhealthy, foreign and incomplete worker observations',()=>{

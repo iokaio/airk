@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LaunchSpec, launchArgs } from './model';
-import { runText } from './native';
+import { nativeText } from './nativeSession';
 import { renderReport } from './report';
 import { ADMINISTRATIVE_USAGE_LABEL, usageAction } from './usageReport';
 import { catalogHex, catalogId, catalogRevision } from './indexingCatalog';
@@ -80,8 +80,8 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
         check();
         if(scoped)throw new Error('Usage requires explicit Index administration.');
         const args = ['report', '--days', String(days), '--format', format];
-        return chosenPrice ? withJson(chosenPrice, file => runText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], path.dirname(spec.command),180000))
-            : runText(spec.command, [...launchArgs(spec, 'usage'), ...args], path.dirname(spec.command),180000);
+        return chosenPrice ? withJson(chosenPrice, file => nativeText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], 180000))
+            : nativeText(spec.command, [...launchArgs(spec, 'usage'), ...args], 180000);
     };
     const render = () => { check(); const value = { ...report, days, busy }; if (surface) { surface.render(value); } else { panel!.webview.html = renderReport(administration?'Index administration: Usage & Savings':'Usage & Savings', 'usage', value); } };
     const qualify = (value:object):object => administration?{...value,administrative_scope:{purpose:administration.purpose,
@@ -144,7 +144,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
                     if (!files?.[0]) { break; }
                     {
                         check();const file=files[0].fsPath;
-                        const preview = JSON.parse(await runText(spec.command,[...launchArgs(spec,'usage'),'import',file,'--preview'],path.dirname(spec.command),180000));
+                        const preview = JSON.parse(await nativeText(spec.command,[...launchArgs(spec,'usage'),'import',file,'--preview'],180000));
                         if(typeof preview.input_sha256!=='string'||!/^[a-f\d]{64}$/i.test(preview.input_sha256))throw new Error('Measurement preview identity is unavailable.');
                         await show(JSON.stringify(preview, null, 2), 'json');
                         const answer = await vscode.window.showInformationMessage(`Import the displayed measurement into ${spec.name}? It will remain labelled as supplied evidence. Request links, if present, must still be retained in this collection.`, { modal: true }, 'Import measurement');

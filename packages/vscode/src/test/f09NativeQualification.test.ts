@@ -10,11 +10,12 @@ import {RuntimeHost} from '../serviceBootstrap';
 import {record} from '../serviceClient';
 import {probeAssistance,runText} from '../native';
 import {writeLaunchDescriptor,assistanceDirectory,launchDescriptorPath} from '../explorerAssistanceLaunch';
-import {NativeServiceFixture} from './nativeServiceFixture';
+import {NativeServiceFixture,finishNativeFixture,type NativeTestFailure} from './nativeServiceFixture';
+import {stdioLaunch} from './stdioLaunch';
 import {serviceTestHost} from './serviceTestHost';
 const binary=process.env.AIRK_TEST_BINARY;
 const qualify=process.env.AIRK_TEST_F09_QUALIFICATION==='1';
-const extension=path.resolve(__dirname,'../..');
+const extension=path.resolve(process.env.AIRK_TEST_EXTENSION_ROOT??path.resolve(__dirname,'../..'));
 
 test('source qualification preserves a null launcher and never publishes synthetic trust into native control',async context=>{
     const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-source-host-contract-')));
@@ -37,6 +38,9 @@ test('F09 real RuntimeHost source port publishes selected host scope without inv
     // Positive early UI policy excludes managed pins; own the staged install.
     const fixture=await NativeServiceFixture.create(binary!,'owned');
     let editor:Awaited<ReturnType<typeof serviceTestHost>>|undefined;
+    let failure:NativeTestFailure|undefined;
+    let failureRetained=false;
+    const retainFailure=async(error:unknown)=>{if(!failureRetained){failureRetained=true;await fixture.retainFailure(error);}};
     try{
         const spec=await fixture.register('source-0');
         const inspection=await fixture.run(['runtime','inspect','--install-dir',fixture.install]);
@@ -79,12 +83,13 @@ test('F09 real RuntimeHost source port publishes selected host scope without inv
         await editor.close();editor=undefined;
         await context.test('Windows real ACL tool success preserves strict native foreign-ACE refusal',
             {skip:process.platform!=='win32',timeout:60000},async()=>{
+            try{
             const storage=path.join(fixture.owner,'acl-qualified');
             const packageJson=JSON.parse(await fs.readFile(path.join(extension,'package.json'),'utf8'));
             // Actual default async fixed-system whoami/icacls; no runner replacement.
             await writeLaunchDescriptor(storage,extension,packageJson.version,{path:process.execPath,electron:false});
             const descriptor=launchDescriptorPath(storage),entry={key:'airk_explorer',label:'Native Assistance',command:fixture.binary,args:['explorer-assistance','--descriptor',descriptor]};
-            assert.equal((await probeAssistance(entry,spec.root,version)).version,version);
+            assert.equal((await probeAssistance(entry,spec.root,version,stdioLaunch)).version,version);
             const directory=assistanceDirectory(storage),system=process.env.SystemRoot;
             assert.ok(system&&path.isAbsolute(system),'actual Windows system directory required');
             const icacls=path.join(system!,'System32','icacls.exe');
@@ -97,8 +102,9 @@ test('F09 real RuntimeHost source port publishes selected host scope without inv
             await assert.rejects(runText(fixture.binary,['explorer-assistance','--descriptor',descriptor],fixture.owner,15000),/explorer_assistance_descriptor_invalid/);
             const descriptorJson=JSON.parse(await fs.readFile(descriptor,'utf8'));
             assert.equal(descriptorJson.server_sha256.length,64);
+            }catch(error){await retainFailure(error);throw error;}
         });
-    }finally{
-        try{await editor?.close();}finally{await fixture.dispose();}
+    }catch(error){failure={error};await retainFailure(error);}finally{
+        await finishNativeFixture(fixture,[()=>editor?.close()],failure);
     }
 });

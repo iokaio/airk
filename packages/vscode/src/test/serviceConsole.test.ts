@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { ConsoleHost, ServiceConsoleController } from '../serviceConsoleController';
+import { ConsoleHost, ServiceConsoleController, unmanagedStoppedInstance } from '../serviceConsoleController';
+import type { RuntimeBinding } from '../serviceBootstrap';
 import { consoleAction, diagnosticPreview, ServiceConsoleState } from '../serviceConsoleView';
 import { managementView, panelDetails } from '../explorerManagement';
 
@@ -1723,4 +1724,61 @@ test('retained migration decline or trust loss after native review has no durabl
         f.host.confirm=async()=>{if(decision==='lose-trust')f.setTrusted(false);return decision!=='decline';};
         try{await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};await f.action('configureProject',{project});assert.equal(prepared,1);assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project'in value).length,0);assert.equal(f.controller.state.pending.length,0);}finally{f.controller.dispose();}
     }
+});
+
+test('only a stopped on-demand instance without OS login startup is eligible for one automatic start',()=>{
+    const exited='ab'.repeat(16),binding={installDir:'/install',controlDir:'/control',executable:'/executable',launcher:null,runtimeSha256:'90'.repeat(32),version:'1.4.0',lifecycle:'on-demand',verificationBasis:'trusted_distribution'} as unknown as RuntimeBinding;
+    const logs=(...kinds:string[])=>({records:kinds.map(kind=>({schema:1,instance:exited,kind,observed_unix_ms:1,project:null,job:null,count:1}))});
+    const inspection=(overrides:RecordValue={}):RecordValue=>({lifecycle:{explicitly_stopped:false,pending:null},startup_manager:{mode:'user',installed:false},logs:logs('service_started','service_stopped'),...overrides});
+    for(const [reason,value] of [
+        ['crash or other exit after a refused registration',inspection()],
+        ['crash before a stop record was written',inspection({logs:logs('service_started')})],
+        ['idle exit of an older runtime',inspection({logs:logs('service_started','idle_exit','service_stopped')})],
+        ['startup manager unavailable',inspection({startup_manager:{mode:'unavailable'}})],
+    ] as const)assert.equal(unmanagedStoppedInstance(binding,value,'1.4.0'),exited,reason);
+    for(const [reason,value] of [
+        ['explicit Stop',inspection({lifecycle:{explicitly_stopped:true,pending:null}})],
+        ['pending lifecycle request',inspection({lifecycle:{explicitly_stopped:false,pending:{id:'1'}}})],
+        ['unknown stop preference',inspection({lifecycle:{}})],
+        ['OS login manager owns restarts',inspection({startup_manager:{mode:'user',installed:true}})],
+        ['shutdown requested',inspection({logs:logs('service_started','shutdown_requested','service_stopped')})],
+        ['no saved events',inspection({logs:{records:[]}})],
+        ['malformed events',inspection({logs:{records:'service_stopped'}})],
+        ['malformed instance',inspection({logs:{records:[{kind:'service_stopped',instance:'x'}]}})],
+    ] as const)assert.equal(unmanagedStoppedInstance(binding,value,'1.4.0'),undefined,reason);
+    assert.equal(unmanagedStoppedInstance(binding,inspection(),'1.4.1'),undefined,'different runtime version');
+    assert.equal(unmanagedStoppedInstance({...binding,lifecycle:'external'},inspection(),'1.4.0'),undefined,'external owner');
+    assert.equal(unmanagedStoppedInstance({...binding,payloadVerified:false},inspection(),'1.4.0'),undefined,'unverified payload');
+    assert.equal(unmanagedStoppedInstance(undefined,inspection(),'1.4.0'),undefined);
+    assert.equal(unmanagedStoppedInstance(binding,undefined,'1.4.0'),undefined);
+});
+for(const [name,stopped,registered] of [['starts a crashed service again once when login startup registration was refused',false,false],
+    ['keeps an explicitly stopped service stopped',true,false],['leaves starts to the registered OS login manager',false,true]] as const)test(`a status check ${name}`,async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),exited='ab'.repeat(16),lifecycle={explicitly_stopped:stopped,pending:null};
+    let down=true,ensures=0;
+    const records=['service_started',...(stopped?['shutdown_requested']:[]),'service_stopped'].map(kind=>({schema:1,instance:exited,kind,observed_unix_ms:1,project:null,job:null,count:1}));
+    const discover=f.host.runtime.discover;
+    f.host.runtime.discover=async()=>{const value=await discover();return {...value,inspection:{...value.inspection,lifecycle}};};
+    f.host.runtime.snapshot=async()=>({schema:1,lifecycle,startup_manager:{mode:'user',installed:registered},logs:{schema:1,malformed_records:0,stored_bytes:1,tail_truncated:false,records}});
+    const ensure=f.host.runtime.ensure;
+    f.host.runtime.ensure=async explicit=>{ensures++;assert.notEqual(explicit,true,'never an explicit Start');down=false;return ensure(explicit);};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){if(down)throw new ServiceError('service_unavailable');return base.transport.request(method);}});
+    const recovers=!stopped&&!registered;
+    try{
+        await f.controller.refresh(true);
+        assert.equal(ensures,recovers?1:0);assert.equal(f.controller.state.connected,recovers);
+        down=true;await f.controller.refresh(true);
+        assert.equal(ensures,recovers?1:0,'the same stopped instance is not started again');assert.equal(f.controller.state.connected,false);
+    }finally{f.controller.dispose();}
+});
+test('a status check starts nothing for a failure other than an unavailable service',async()=>{
+    const f=fixture(),exited='ab'.repeat(16),lifecycle={explicitly_stopped:false,pending:null};let ensures=0;
+    const records=['service_started','service_stopped'].map(kind=>({schema:1,instance:exited,kind,observed_unix_ms:1,project:null,job:null,count:1}));
+    const discover=f.host.runtime.discover;
+    f.host.runtime.discover=async()=>{const value=await discover();return {...value,inspection:{...value.inspection,lifecycle}};};
+    f.host.runtime.snapshot=async()=>({schema:1,lifecycle,startup_manager:{mode:'user',installed:false},logs:{schema:1,malformed_records:0,stored_bytes:1,tail_truncated:false,records}});
+    f.host.runtime.ensure=async()=>{ensures++;throw new Error('must not ensure');};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(){throw new ServiceError('service_rebind_required');}});
+    try{await f.controller.refresh(true);assert.equal(ensures,0);assert.equal(f.controller.state.connected,false);assert.equal(f.controller.state.message,'service_rebind_required');}
+    finally{f.controller.dispose();}
 });

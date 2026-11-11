@@ -55,6 +55,7 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk runtime foreground`](#airk-runtime-foreground)
 - [`airk runtime http-connection`](#airk-runtime-http-connection)
 - [`airk runtime http-connection-info`](#airk-runtime-http-connection-info)
+- [`airk runtime http-credential`](#airk-runtime-http-credential)
 - [`airk runtime http-endpoint`](#airk-runtime-http-endpoint)
 - [`airk runtime http-issuer-rotation`](#airk-runtime-http-issuer-rotation)
 - [`airk runtime http-legacy-connection`](#airk-runtime-http-legacy-connection)
@@ -89,6 +90,7 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk runtime remove`](#airk-runtime-remove)
 - [`airk runtime repair-launcher`](#airk-runtime-repair-launcher)
 - [`airk runtime repair-payload`](#airk-runtime-repair-payload)
+- [`airk runtime replace-installation`](#airk-runtime-replace-installation)
 - [`airk runtime reprepare-legacy-caches`](#airk-runtime-reprepare-legacy-caches)
 - [`airk runtime reset-startup`](#airk-runtime-reset-startup)
 - [`airk runtime retire-legacy-caches`](#airk-runtime-retire-legacy-caches)
@@ -129,6 +131,7 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk service requests prepare-configuration`](#airk-service-requests-prepare-configuration)
 - [`airk service requests retry`](#airk-service-requests-retry)
 - [`airk service rpc`](#airk-service-rpc)
+- [`airk service session`](#airk-service-session)
 - [`airk service shutdown`](#airk-service-shutdown)
 - [`airk settings`](#airk-settings)
 - [`airk setup`](#airk-setup)
@@ -2423,9 +2426,11 @@ Commands:
   http-issuer-rotation          Explicitly stage, commit or finalize an authenticated local issuer rotation
   http-endpoint                 Read the owner-authenticated local HTTPS endpoint without enrolling a client
   http-connection-info          Read an existing connection's verified references without issuing credentials
+  http-credential               Print an existing, unrevoked connection's bearer header for an agent's header helper
   lookup-http-connection        Read-only typed connection ownership lookup; revoked or unavailable IDs never become foreign
   http-trust                    Inspect or explicitly manage this native issuer in the current user's trust store
   http-connection               Enroll a saved native selection and return protected credential references
+  replace-installation          Through 1.9.0: remove earlier AIRK state before a fresh empty install. Explicit same-build installs require full uninstall at every version. With --apply, verify shutdown and remove only this installation's owned folders. Source folders are never touched and no index is created
   http-revoke                   Revoke one local HTTPS connection while preserving its original receipt
   http-legacy-connection        Migrate exact owned predecessor configuration using existing imported authority
   http-legacy-union-connection  Migrate an original no-default multi-project declaration without widening authority
@@ -3236,6 +3241,61 @@ Options:
 
   -h, --help
           Print help
+```
+
+## airk runtime http-credential
+
+```text
+Print an existing, unrevoked connection's bearer header for an agent's header helper.
+
+Reads only the owner-private credential file of this installation; it never starts the service, enrolls, rotates or logs the token. `--format header-json` prints {"Authorization":"Bearer <token>"}.
+
+Usage: airk runtime http-credential [OPTIONS] --install-dir <INSTALL_DIR> --connection-id <CONNECTION_ID> --format <FORMAT>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --connection-id <CONNECTION_ID>
+
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --format <FORMAT>
+          [possible values: header-json]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## airk runtime http-endpoint
@@ -4975,6 +5035,71 @@ Options:
           Print help
 ```
 
+## airk runtime replace-installation
+
+```text
+Through 1.9.0: remove earlier AIRK state before a fresh empty install. Explicit same-build installs require full uninstall at every version. With --apply, verify shutdown and remove only this installation's owned folders. Source folders are never touched and no index is created
+
+Usage: airk runtime replace-installation [OPTIONS] --install-dir <INSTALL_DIR> --candidate-sha256 <CANDIDATE_SHA256>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --candidate-sha256 <CANDIDATE_SHA256>
+          Install-inventory SHA-256 of the runtime about to be installed
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --reinstall
+          Explicit install: matching builds also require a complete uninstall
+
+      --operation-id <OPERATION_ID>
+          Stable identity of this installation attempt; replay never resets its successor
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --generation-id <GENERATION_ID>
+          Host installation generation consumed by this explicit installation
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --expected-predecessor <EXPECTED_PREDECESSOR>
+          Native predecessor stamp returned by the reviewed read-only plan
+
+      --apply
+          Apply cleanup; required replacements need --reinstall --operation-id
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
 ## airk runtime reprepare-legacy-caches
 
 ```text
@@ -5758,6 +5883,7 @@ Commands:
   prepare-storage        Create the reserved index storage for an already reserved project (owner-only on Unix)
   prepare-configuration  Prepare a guarded configuration request for a project; submit it with `requests retry`
   console                Persistent JSON management transport on stdin/stdout (used by the VS Code extension)
+  session                One editor window's framed native helper on stdin/stdout; exits on EOF or owner loss
   logs                   Print recent service log records (--limit), export all retained logs (--all) or the raw job-error ring (--raw)
   record-error           Record a bounded local extension/setup error without starting the service
   register               Register --root/--data-dir/--collection with the service at --runtime-dir. The data directory must exist
@@ -7051,6 +7177,58 @@ Options:
 
   -h, --help
           Print help
+```
+
+## airk service session
+
+```text
+One editor window's framed native helper on stdin/stdout; exits on EOF or owner loss.
+
+Serves hello, metadata-only control relays (each naming its control directory and optional runtime pin) and allowlisted one-shot commands run in this process. It is a client, never the service, and starts the service only through `runtime ensure/start`.
+
+Usage: airk service session [OPTIONS]
+
+Options:
+      --parent-watch <BOOL>
+          Exit when the launching process exits, even if stdin stays open
+
+          [default: true]
+          [possible values: true, false]
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## airk service shutdown

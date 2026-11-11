@@ -12,6 +12,7 @@ import { RuntimeHost, type RuntimeBinding } from '../serviceBootstrap';
 import { ServiceClient, ServiceError, record, type RecordValue } from '../serviceClient';
 import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
+import { NativeSession } from '../nativeSession';
 import * as cliInstall from '../cliInstall';
 import * as globalInventory from '../globalAgentInventory';
 import {ca,cert,key} from './fixtures/httpTlsFixture';
@@ -65,7 +66,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     await new Promise<void>(resolve=>httpServer.listen(0,'127.0.0.1',resolve));const httpUrl=`https://127.0.0.1:${(httpServer.address() as {port:number}).port}/mcp`;
     const closeHttp=async()=>{httpServer.closeAllConnections();await new Promise<void>(resolve=>httpServer.close(()=>resolve()));};test.after(closeHttp);
     const nativeMethods:string[]=[];
-    const state={nativeHealthFailures:0,nativeInstance:'12'.repeat(16),httpConnections:[] as {selection:HttpSelection;id:string;client:string;descriptor?:string}[],down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,installedVersion:options.installedVersion??bundledVersion,
+    const state={replacementPlan:undefined as undefined|Record<string,unknown>,replacedAt:undefined as undefined|number,nativeHealthFailures:0,nativeInstance:'12'.repeat(16),httpConnections:[] as {selection:HttpSelection;id:string;client:string;descriptor?:string}[],down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,installedVersion:options.installedVersion??bundledVersion,
         hostContextKeys:[] as string[],hostContextReply:undefined as undefined|((key:string)=>unknown|Promise<unknown>),
         catalogDetailReply:undefined as undefined|((entity:Record<string,unknown>)=>unknown|Promise<unknown>),
         legacyBindingReply:undefined as undefined|((project:string)=>unknown|Promise<unknown>),legacyBindingProjects:[] as string[],
@@ -158,7 +159,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         state.discovered++;assert.equal(this.options.installDir,install);
         await options.discoveryGate;
         // A fresh machine has no installed runtime until the first ensure.
-        const fresh=options.fresh&&state.ensured===0;
+        const fresh=options.fresh&&state.ensured===0||state.replacedAt!==undefined&&state.ensured===state.replacedAt;
         const cleanBreak=binding.cleanBreak?{...binding.cleanBreak,registrations_complete:true,registrations:[...registrations.values(),...inactiveRegistrations.values()]}:runtimeCleanBreakRequired(binding.version,bundledVersion)?{required:true,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:null,registrations_complete:true,registrations:[...registrations.values(),...inactiveRegistrations.values()]}:undefined;
         return {bundle:{main:path.join(root,'bundle-main'),helper:path.join(root,'bundle-helper'),source:root,digest:binding.runtimeSha256,version:bundledVersion,platform:'fixture'},
             installDir:install,installed:!fresh,location:{user_paths:{data,launcher:path.join(root,'launcher'),state:path.join(root,'native-state')}},inspection:fresh?undefined:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:binding.verificationBasis},
@@ -205,6 +206,9 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         const selections=rows.map(row=>{const response=imported(row.registration);return {namespace:response.observation.namespace,expected_catalog_revision:response.observation.catalog_revision,registration:row.registration,grant:response.observation.eligibility.grant,configuration_receipt:row.configuration_receipt};});
         const selection:HttpSelection={kind:'imported_legacy_union',selection:{namespace:'34'.repeat(16),selections,no_default_project:true}};state.httpConnections.push({selection:structuredClone(selection),id,client,descriptor});return httpInfo(selection,id);
     });
+    // Fixtures model existing installations explicitly; replacement is opt-in per test.
+    test.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>state.replacementPlan??{required:false,expected_predecessor:'ef'.repeat(32),reason:'same_runtime',locations:[]});
+    test.mock.method(RuntimeHost.prototype,'replaceInstallation',async()=>{calls.push('installation-replaced');state.replacementPlan={required:false,expected_predecessor:'ef'.repeat(32),reason:'no_installation',locations:[]};state.replacedAt=state.ensured;binding.version=bundledVersion;binding.cleanBreak=undefined;binding.rebuild=undefined;return {replaced:true,removed:['fixture-previous'],residue:[],agents:'fixture agents notice'};});
     test.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async(_binding:RuntimeBinding,id:string)=>{const connection=httpInfos.get(id);return {schema:1,active:_binding.runtimeSha256,connection_id:id,status:connection?'owned':'not_owned',...(connection?{connection:structuredClone(connection)}:{})};});
     let originalHttpSnapshot:any;
     const captureHttpSnapshot=(predecessor:string,originalControl:string)=>{
@@ -257,6 +261,13 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(RuntimeHost.prototype,'reviewProject',review);
     test.mock.method(RuntimeHost.prototype,'registerProject',register);
     test.mock.method(cliInstall,'installLauncherCli',async()=>[]);
+    // The activation opens its real window session, but this fixture owns native
+    // discovery, so no verified bundle image is ever bound to it. Commands that
+    // reach the session keep the one-shot seam (`native.runText`) individual
+    // tests already observe; session transport and lifetime have their own suite.
+    test.mock.method(NativeSession.prototype,'serves',async()=>true);
+    test.mock.method(NativeSession.prototype,'text',(command:string,args:readonly string[],timeout?:number,input?:string)=>
+        native.runText(command,[...args],path.dirname(command),timeout,undefined,undefined,input));
     test.mock.method(native,'prepareHelper',async()=>{throw new Error('Legacy helper preparation is forbidden');});
     test.mock.method(native,'runJson',async()=>{throw new Error('Direct collection command is forbidden');});
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;

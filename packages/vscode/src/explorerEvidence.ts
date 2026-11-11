@@ -192,7 +192,8 @@ export class EvidenceClient {
     private async connect(): Promise<McpStdioSession|McpHttpSession> {
         if (this.session && !this.session.closed) { return this.session; }
         if (!this.opening) {
-            const open = this.options.open ?? ((options, timeout) => McpStdioSession.open(options, timeout));
+            // Only an injected test transport opens stdio; production requires the HTTPS connection.
+            const open = this.options.open;
             const httpOpen=async(spec:LaunchSpec)=>{
                 if(!spec.http)throw new Error('http_connection_requires_reviewed_scope');
                 const selection=spec.combinedSession?{kind:'combined' as const,selection:spec.combinedSession}:spec.catalogSession?{kind:'scoped' as const,selection:spec.catalogSession}:spec.http.selection.kind==='imported_legacy'?spec.http.selection:undefined;
@@ -200,7 +201,7 @@ export class EvidenceClient {
                 if(selection.kind==='imported_legacy'&&(selection.selection.registration.binding!==spec.service?.project||selection.selection.registration.root!==spec.root||selection.selection.registration.data_root!==spec.dataDir||selection.selection.registration.collection!==spec.collection))throw new Error('crossed_imported_http_backing');
                 return McpHttpSession.open({...await httpMaterial(spec.http),clientName:this.options.clientName??EXPLORER_CLIENT_NAME,clientVersion:this.clientVersion},this.options.handshakeTimeout??90000);
             };
-            const connected=this.options.resolveConnection?this.options.resolveConnection(this.spec,this.options.clientName??EXPLORER_CLIENT_NAME).then(httpOpen):this.spec.http?httpOpen(this.spec):
+            const connected=this.options.resolveConnection?this.options.resolveConnection(this.spec,this.options.clientName??EXPLORER_CLIENT_NAME).then(httpOpen):this.spec.http||!open?httpOpen(this.spec):
                 open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
                 clientName: this.options.clientName ?? EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000);
             this.opening = connected

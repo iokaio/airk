@@ -117,6 +117,81 @@ test('installed manifests accept only VS Code private metadata and formatting ch
     } finally { await f.close(); }
 });
 
+test('host installation generation is validated separately from the unchanged reviewed payload', async () => {
+    const f = await diskFixture();
+    try {
+        const original = await readUpdatePayload(f.root), reviewed = JSON.parse(f.files['package.json']);
+        for (const installedTimestamp of [1794000000000, 1794000000001]) {
+            await fs.writeFile(path.join(f.root, 'package.json'), JSON.stringify({ ...reviewed, __metadata: { installedTimestamp } }));
+            const captured = await readUpdatePayload(f.root);
+            assert.equal(Reflect.get(captured, 'installationGeneration'), String(installedTimestamp));
+            assert.equal(captured.identity, original.identity, 'host installation metadata is outside the payload seal');
+            assert.deepEqual(captured.manifest, original.manifest);
+            assert.equal(captured.files.get('package.json')!.toString(), f.files['package.json']);
+        }
+        for (const metadata of [undefined, null, [], 'not metadata', {}, { installedTimestamp: '1794000000000' },
+            { installedTimestamp: null }, { installedTimestamp: 0 }, { installedTimestamp: -1 },
+            { installedTimestamp: 1.5 }, { installedTimestamp: 8640000000000001 }, { installedTimestamp: Number.MAX_SAFE_INTEGER + 1 }]) {
+            await fs.writeFile(path.join(f.root, 'package.json'), JSON.stringify({ ...reviewed, __metadata: metadata }));
+            const captured = await readUpdatePayload(f.root);
+            assert.equal(Reflect.get(captured, 'installationGeneration'), undefined, `invalid host metadata: ${JSON.stringify(metadata)}`);
+            assert.equal(captured.identity, original.identity);
+            assert.deepEqual(captured.manifest, original.manifest);
+        }
+    } finally { await f.close(); }
+});
+
+test('the compatibility generation reader shares bounded timestamp validation and refuses a crossed product manifest', async () => {
+    const f = await diskFixture();
+    try {
+        const read: unknown = Reflect.get(require('../extensionUpdateLoader'), 'readInstallationGeneration');
+        assert.equal(typeof read, 'function');
+        const generation = read as (root: string, expectedVersion: string) => Promise<string | undefined>;
+        const reviewed = JSON.parse(f.files['package.json']), filename = path.join(f.root, 'package.json');
+        await fs.writeFile(filename, JSON.stringify({ ...reviewed, __metadata: { installedTimestamp: 1794000000000 } }));
+        assert.equal(await generation(f.root, '1.8.12'), '1794000000000');
+        assert.equal(await generation(f.root, '1.8.12'), Reflect.get(await readUpdatePayload(f.root), 'installationGeneration'));
+        for (const metadata of [undefined, {}, null, [], { installedTimestamp: '1794000000000' }, { installedTimestamp: -1 }, { installedTimestamp: 1.5 }, { installedTimestamp: 8640000000000001 }]) {
+            await fs.writeFile(filename, JSON.stringify({ ...reviewed, __metadata: metadata }));
+            assert.equal(await generation(f.root, '1.8.12'), undefined);
+        }
+        for (const changed of [{ version: '1.8.13' }, { publisher: 'other' }, { name: 'other' }]) {
+            await fs.writeFile(filename, JSON.stringify({ ...reviewed, ...changed, __metadata: { installedTimestamp: 1794000000000 } }));
+            await assert.rejects(generation(f.root, '1.8.12'), /AIRK installation manifest/);
+        }
+        await fs.writeFile(filename, 'x'.repeat(256 * 1024 + 1));
+        await assert.rejects(generation(f.root, '1.8.12'), /size budget/);
+        await fs.unlink(filename);assert.equal(await generation(f.root, '1.8.12'), undefined);
+    } finally { await f.close(); }
+});
+
+test('an identical VSIX with a new host generation refreshes once without using asset mtimes', async () => {
+    const f = await diskFixture(), events: string[] = [];
+    const generation = Symbol.for('iokaio.airk.installationGeneration'), reviewed = JSON.parse(f.files['package.json']);
+    const install = (metadata: unknown) => fs.writeFile(path.join(f.root, 'package.json'), JSON.stringify({ ...reviewed, __metadata: metadata }));
+    const loader = new ExtensionUpdateLoader(context(f.root), readUpdatePayload, async () => f.root, () => ({
+        activate: async managed => {
+            events.push(`activate:${Reflect.get(managed, generation)}`);
+            assert.equal(Object.hasOwn(managed.extension.packageJSON, '__metadata'), false);
+            return { getServerDefinitions: async () => [], whenReady: async () => {} };
+        },
+        deactivate: async () => { events.push('deactivate'); },
+    }), async () => {});
+    try {
+        await install({ installedTimestamp: 1794000000000 }); await loader.start();
+        await loader.refresh();
+        await install({ installedTimestamp: 1794000000001 }); await loader.refresh(); await loader.refresh();
+        assert.deepEqual(events, ['activate:1794000000000', 'deactivate', 'activate:1794000000001']);
+        for (const metadata of [undefined, { installedTimestamp: 'invalid' }, { installedTimestamp: 1794000000001 }]) {
+            await install(metadata); await loader.refresh();
+        }
+        assert.deepEqual(events, ['activate:1794000000000', 'deactivate', 'activate:1794000000001'], 'missing or malformed metadata cannot invent an installation event');
+        const asset = path.join(f.root, 'out/serviceExtension.js');
+        await fs.utimes(asset, new Date(1794000000002), new Date(1794000000002)); await loader.refresh();
+        assert.equal(events.length, 3, 'asset mtimes do not authorize a reinstall');
+    } finally { await loader.stop(); await f.close(); }
+});
+
 test('reviewed manifest snapshot remains digest sealed and bounded even when installed metadata is ignored', async () => {
     const f = await diskFixture();
     try {
@@ -170,7 +245,21 @@ test('isolated module graphs load captured CommonJS, JSON and vscode without pol
     }
 });
 
-function sessionFixture(options: { open?: boolean; settle?: () => Promise<void>; fail?: string; freezeContext?: boolean;
+test('captured service code can import the loader generation reader without activating another service module', async () => {
+    const f = await diskFixture();
+    try {
+        await fs.writeFile(path.join(f.root, 'package.json'), JSON.stringify({ name: 'airk', publisher: 'iokaio', version: '1.8.12', __metadata: { installedTimestamp: 1794000000000 } }));
+        const captured = payload(f.root);
+        captured.files = new Map([
+            ['out/serviceExtension.js', Buffer.from("const {readInstallationGeneration}=require('./extensionUpdateLoader');exports.activate=async(context)=>({getServerDefinitions:async()=>[await readInstallationGeneration(context.extensionPath,'1.8.12')],whenReady:async()=>{}});")],
+            ['out/extensionUpdateLoader.js', await fs.readFile(path.join(__dirname, '..', 'extensionUpdateLoader.js'))],
+        ]);
+        const api = await loadUpdateModule(captured).activate(context(f.root));
+        assert.deepEqual(await api.getServerDefinitions(), ['1794000000000']);
+    } finally { await f.close(); }
+});
+
+function sessionFixture(options: { open?: boolean; settle?: () => Promise<void>; fail?: string; failGeneration?: string; freezeContext?: boolean;
     activationGate?: { identity: string; promise: Promise<void>; entered?(): void };
     prepareGate?: { identity: string; promise: Promise<void>; entered(): void }; deactivateFailure?: string } = {}) {
     calls.length = logs.length = warnings.length = 0;
@@ -191,6 +280,7 @@ function sessionFixture(options: { open?: boolean; settle?: () => Promise<void>;
             assert.equal(managed.asAbsolutePath('out/example.js'), path.join(next.root, 'out/example.js'));
             managed.subscriptions.push({ dispose: () => lifecycle.push(`dispose:${next.identity}`) });
             if (next.identity === options.fail) { throw new Error('fictional activation failure'); }
+            if (next.installationGeneration !== undefined && next.installationGeneration === options.failGeneration) { throw new Error('fictional installation generation failure'); }
             if (next.identity === options.activationGate?.identity) { options.activationGate.entered?.(); await options.activationGate.promise; }
             return { getServerDefinitions: async () => [next.identity] as any, whenReady: async () => {},
                 explorerHandoff: () => ({ open: options.open ?? true, route: 'indexing/library' }),
@@ -205,6 +295,32 @@ function sessionFixture(options: { open?: boolean; settle?: () => Promise<void>;
     const loader = new ExtensionUpdateLoader(host, read, async () => current.root, load, options.settle ?? (async () => {}));
     return { loader, lifecycle, contexts, host, original, next(next: UpdatePayload) { current = next; } };
 }
+
+test('a failed installation generation stays suppressed while a later installation of identical bytes can load', async () => {
+    const f = sessionFixture({ failGeneration: '1794000000001' }); await f.loader.start();
+    try {
+        f.next({ ...f.original, installationGeneration: '1794000000001' }); await f.loader.refresh(); await f.loader.refresh();
+        assert.equal(f.lifecycle.filter(event => event === 'activate:first').length, 3, 'initial, failed candidate and restored interface only');
+        assert.equal(warnings.length, 1);
+        assert.equal(Reflect.get(f.contexts.at(-1), Symbol.for('iokaio.airk.installationGeneration')), undefined);
+        f.next({ ...f.original, installationGeneration: '1794000000002' }); await f.loader.refresh(); await f.loader.refresh();
+        assert.equal(f.lifecycle.filter(event => event === 'activate:first').length, 4, 'later host generation has its own activation attempt');
+        assert.equal(Reflect.get(f.contexts.at(-1), Symbol.for('iokaio.airk.installationGeneration')), '1794000000002');
+    } finally { await f.loader.stop(); }
+});
+
+test('installation generation must remain unchanged through candidate settlement', async () => {
+    let f!: ReturnType<typeof sessionFixture>;
+    f = sessionFixture({ settle: async () => { const next = { ...f.original, installationGeneration: '1794000000002' }; f.next(next); } });
+    await f.loader.start();
+    try {
+        const next = { ...f.original, installationGeneration: '1794000000001' }; f.next(next); await f.loader.refresh();
+        assert.deepEqual(f.lifecycle, ['activate:first'], 'a different installation was observed while settling');
+        await f.loader.refresh(); await f.loader.refresh();
+        assert.deepEqual(f.lifecycle, ['activate:first', 'deactivate:first', 'dispose:first', 'activate:first']);
+        assert.equal(Reflect.get(f.contexts[1], Symbol.for('iokaio.airk.installationGeneration')), '1794000000002');
+    } finally { await f.loader.stop(); }
+});
 
 test('automatic handoff disposes only the AIRK context, preserves its route and forwards the original API', async () => {
     const f = sessionFixture(), api = await f.loader.start();

@@ -50,7 +50,7 @@ export interface ExplorerError { readonly code: ExplorerErrorCode | string; read
 /** User guidance preserves the original code for diagnostics and never replays work. */
 export function friendlyError(error: ExplorerError): string {
     const recovery: Partial<Record<ExplorerErrorCode, string>> = {
-        SERVICE_UNAVAILABLE: 'Open Management > Service and choose Connect / reconnect. Use Start service only when you intend to start it.',
+        SERVICE_UNAVAILABLE: 'Open Management > Service. If the service is not running, choose Start service; Connect / reconnect only reattaches to a running service.',
         SCOPE_NOT_GRANTED: 'Open Indexing > Search scope to choose indexes or index sets and review the scope grant before searching.',
         HOST_UNAVAILABLE: 'Try reconnecting, or close and reopen Explorer if the extension host restarted.',
         WORKSPACE_UNTRUSTED: 'Review VS Code workspace trust, then reopen the intended project when you are ready.',

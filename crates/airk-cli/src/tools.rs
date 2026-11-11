@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+use airk_cli::cli_io::CliIo;
 use airk_mcp::local::tools;
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use serde_json::{Map, Value, json};
 use std::{
-    io::{BufRead, Read, Write},
+    io::{BufRead, Read},
     path::{Path, PathBuf},
 };
 
@@ -211,17 +212,21 @@ pub enum ToolsCommand {
     Shell,
 }
 
-fn print_json(value: &impl serde::Serialize) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
+fn print_json(io: &CliIo, value: &impl serde::Serialize) -> Result<()> {
+    io.line(serde_json::to_string_pretty(value)?);
     Ok(())
 }
 
 /// Metadata inspection works even before a workspace has been indexed.
-pub fn inspect(action: &ToolsCommand) -> Result<bool> {
-    inspect_catalog(action, airk_mcp::unified::tools())
+pub fn inspect(action: &ToolsCommand, io: &CliIo) -> Result<bool> {
+    inspect_catalog(action, airk_mcp::unified::tools(), io)
 }
 
-fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) -> Result<bool> {
+fn inspect_catalog(
+    action: &ToolsCommand,
+    catalog: Vec<airk_mcp::remote::Tool>,
+    io: &CliIo,
+) -> Result<bool> {
     match action {
         ToolsCommand::Call {
             tool,
@@ -232,19 +237,19 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
                 args.as_deref(),
                 args_file.as_deref(),
             )?)))?;
-            print_json(&result)?;
+            print_json(io, &result)?;
             ensure!(result["isError"] != true, "AIRK help request failed");
         }
-        ToolsCommand::List { json: true } => print_json(&json!({"tools": catalog}))?,
+        ToolsCommand::List { json: true } => print_json(io, &json!({"tools": catalog}))?,
         ToolsCommand::List { json: false } => {
             for tool in catalog {
-                println!(
+                io.line(format_args!(
                     "{}\n  {}",
                     tool.name,
                     tool.description.as_deref().unwrap_or_default()
-                );
+                ));
             }
-            println!("\nUse: airk tools help <tool>\nOr in the tools console: help <tool>");
+            io.line("\nUse: airk tools help <tool>\nOr in the tools console: help <tool>");
         }
         ToolsCommand::Help {
             tool: name,
@@ -257,14 +262,14 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
                 })
                 .with_context(|| format!("Unknown MCP tool '{name}'. Use 'airk tools list'."))?;
             if *raw {
-                print_json(&tool)?;
+                print_json(io, &tool)?;
             } else {
-                println!(
+                io.line(format_args!(
                     "{}\n{}\n\nInput schema (required arguments and defaults):",
                     tool.name,
                     tool.description.as_deref().unwrap_or_default()
-                );
-                print_json(&tool.input_schema)?;
+                ));
+                print_json(io, &tool.input_schema)?;
                 let schema = Value::Object((*tool.input_schema).clone());
                 let mut template = Map::new();
                 if let Some(properties) = schema["properties"].as_object() {
@@ -286,16 +291,16 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
                         }
                     }
                 }
-                println!("\nArgument template (replace placeholders; follow schema constraints):");
-                print_json(&template)?;
-                println!(
+                io.line("\nArgument template (replace placeholders; follow schema constraints):");
+                print_json(io, &template)?;
+                io.line(format_args!(
                     "\nSave arguments as query.json, then run with your collection options:\n  airk tools call {name} --args-file query.json\nInside the tools console:\n  call {name} --args-file query.json\n  call {name} {}",
                     Value::Object(template)
-                );
+                ));
                 if matches!(name.as_str(), "airk_search" | "search") {
-                    println!(
+                    io.line(format_args!(
                         "\nExplicit vector search (requires a published model/index and discloses partial coverage):\n  call airk_search {{\"query\":\"how is a forgotten password recovered\",\"mode\":\"vector\",\"limit\":5}}\nOmit mode for the saved collection search policy."
-                    );
+                    ));
                 }
             }
         }
@@ -305,11 +310,11 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
 }
 
 /// Calls on an explicit catalog session must reach its native authority.
-pub fn inspect_selected(action: &ToolsCommand, selected: bool) -> Result<bool> {
+pub fn inspect_selected(action: &ToolsCommand, selected: bool, io: &CliIo) -> Result<bool> {
     if selected && matches!(action, ToolsCommand::Call { .. }) {
         return Ok(false);
     }
-    inspect(action)
+    inspect(action, io)
 }
 
 fn arguments(text: Option<&str>, file: Option<&Path>) -> Result<Map<String, Value>> {
@@ -343,6 +348,7 @@ async fn call(
     tool: String,
     args: Map<String, Value>,
     raw: bool,
+    io: &CliIo,
 ) -> Result<()> {
     let result = session.call(tool, args).await?;
     ensure!(
@@ -350,27 +356,27 @@ async fn call(
         "invalid native tool response"
     );
     if raw {
-        print_json(&result)?;
+        print_json(io, &result)?;
     } else {
         // Make JSON text content readable in a terminal; one-shot calls retain the wire envelope.
         let envelope = &result;
-        println!(
-            "{}",
-            if result["isError"].as_bool().unwrap_or(false) {
-                "MCP error:"
-            } else {
-                "Result:"
-            }
-        );
+        io.line(if result["isError"].as_bool().unwrap_or(false) {
+            "MCP error:"
+        } else {
+            "Result:"
+        });
         for content in envelope["content"]
             .as_array()
             .context("Missing MCP content")?
         {
             if content["type"] == "text" {
                 let text = content["text"].as_str().context("Missing MCP text")?;
-                print_json(&serde_json::from_str::<Value>(text).unwrap_or_else(|_| json!(text)))?;
+                print_json(
+                    io,
+                    &serde_json::from_str::<Value>(text).unwrap_or_else(|_| json!(text)),
+                )?;
             } else {
-                print_json(content)?;
+                print_json(io, content)?;
             }
         }
     }
@@ -381,6 +387,7 @@ async fn call(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // The resolved project inputs stay explicit.
 pub async fn run_remote_selected(
     action: ToolsCommand,
     control: PathBuf,
@@ -389,8 +396,9 @@ pub async fn run_remote_selected(
     data: &Path,
     collection: &str,
     selection: Option<airk_core::service::ScopedConnectRequest>,
+    io: &CliIo,
 ) -> Result<()> {
-    if inspect_selected(&action, selection.is_some())? {
+    if inspect_selected(&action, selection.is_some(), io)? {
         return Ok(());
     }
     let backend = match selection {
@@ -413,10 +421,11 @@ pub async fn run_remote_selected(
                 tool,
                 arguments(args.as_deref(), args_file.as_deref())?,
                 true,
+                io,
             )
             .await
         }
-        ToolsCommand::Shell => shell(&session, root, Some(data), collection).await,
+        ToolsCommand::Shell => shell(&session, root, Some(data), collection, io).await,
         _ => unreachable!("tool metadata handled before connection"),
     }
 }
@@ -446,6 +455,7 @@ pub async fn run_backend(
     action: ToolsCommand,
     backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools>,
     defaults: Map<String, Value>,
+    io: &CliIo,
 ) -> Result<()> {
     let backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools> =
         std::sync::Arc::new(airk_mcp::unified::Unified::combined(backend, None)?);
@@ -481,14 +491,22 @@ pub async fn run_backend(
                     tool,
                     arguments(args.as_deref(), args_file.as_deref())?,
                     true,
+                    io,
                 )
                 .await
             }
             ToolsCommand::Shell => {
-                shell(&session, Path::new("."), None, "explicit combined session").await
+                shell(
+                    &session,
+                    Path::new("."),
+                    None,
+                    "explicit combined session",
+                    io,
+                )
+                .await
             }
             action => {
-                inspect_catalog(&action, session.catalog())?;
+                inspect_catalog(&action, session.catalog(), io)?;
                 Ok(())
             }
         }
@@ -505,10 +523,10 @@ pub async fn run_backend(
     }
 }
 
-fn shell_help() {
-    println!(
+fn shell_help(io: &CliIo) {
+    io.line(format_args!(
         "Commands:\n  list                         List MCP tools\n  help <tool>                  Arguments, defaults and examples\n  call <tool> <JSON object>     Call a tool; omit JSON for {{}}\n  call <tool> --args-file <path> Read JSON from a file\n  help                         Show this help\n  exit                         Close this console\n\nTry:\n  call airk_status\n  help airk_search\n  call airk_search {{\"query\":\"authentication\",\"mode\":\"vector\",\"limit\":5}}\n\nThis is an AIRK tools console, not an operating-system shell.\nCalls read the existing index; they do not index or download models.\nJSON is entered directly without shell quoting. File paths may contain spaces.\n"
-    );
+    ));
 }
 
 async fn shell(
@@ -516,24 +534,27 @@ async fn shell(
     root: &Path,
     data: Option<&Path>,
     collection: &str,
+    io: &CliIo,
 ) -> Result<()> {
+    // Interactive only: `service session` refuses `tools shell`, so this reads
+    // the process's own standard input.
     // Debug formatting escapes control characters in user-selected paths/names.
     if let Some(data) = data {
-        println!(
+        io.line(format_args!(
             "AIRK Tools\nCollection: {:?}\nWorkspace: {:?}\nStorage: {:?}\n",
             collection, root, data
-        );
+        ));
     } else {
-        println!(
-            "AIRK Tools\nExplicit reviewed combined session. Use query_scope to inspect permitted members.\n"
+        io.line(
+            "AIRK Tools\nExplicit reviewed combined session. Use query_scope to inspect permitted members.\n",
         );
     }
-    shell_help();
+    shell_help(io);
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     loop {
-        print!("airk> ");
-        std::io::stdout().flush()?;
+        io.text("airk> ");
+        io.flush()?;
         let mut line = Vec::new();
         if input
             .by_ref()
@@ -550,7 +571,7 @@ async fn shell(
         let line = match std::str::from_utf8(&line) {
             Ok(line) => line.trim(),
             Err(_) => {
-                eprintln!("Error: input must be UTF-8");
+                io.error_line("Error: input must be UTF-8");
                 continue;
             }
         };
@@ -561,23 +582,28 @@ async fn shell(
             break;
         }
         if matches!(line, "help" | "--help" | "?") {
-            shell_help();
+            shell_help(io);
             continue;
         }
-        let result = console_command(session, root, line).await;
+        let result = console_command(session, root, line, io).await;
         if let Err(error) = result {
-            eprintln!("Error: {error:#}");
+            io.error_line(format_args!("Error: {error:#}"));
         }
     }
     Ok(())
 }
 
-async fn console_command(session: &impl ToolSession, root: &Path, line: &str) -> Result<()> {
+async fn console_command(
+    session: &impl ToolSession,
+    root: &Path,
+    line: &str,
+    io: &CliIo,
+) -> Result<()> {
     let (command, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
     let rest = rest.trim();
     match command {
         "list" if rest.is_empty() => {
-            inspect_catalog(&ToolsCommand::List { json: false }, session.catalog())?;
+            inspect_catalog(&ToolsCommand::List { json: false }, session.catalog(), io)?;
         }
         "help" if !rest.is_empty() => {
             inspect_catalog(
@@ -586,6 +612,7 @@ async fn console_command(session: &impl ToolSession, root: &Path, line: &str) ->
                     json: false,
                 },
                 session.catalog(),
+                io,
             )?;
         }
         "call" if !rest.is_empty() => {
@@ -601,7 +628,7 @@ async fn console_command(session: &impl ToolSession, root: &Path, line: &str) ->
             } else {
                 arguments(if args.is_empty() { None } else { Some(args) }, None)?
             };
-            call(session, tool.into(), args, false).await?;
+            call(session, tool.into(), args, false, io).await?;
         }
         _ => anyhow::bail!("Unknown command. Type help for instructions."),
     }

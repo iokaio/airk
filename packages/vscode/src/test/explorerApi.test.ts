@@ -80,7 +80,7 @@ test('native draft and receipt reads retain read deadlines while actual pickers 
         'indexing.context.preview', 'indexing.context.delete', 'indexing.grant.draft', 'indexing.grant.revoke',
         'indexing.setup.draft', 'indexing.source.draft', 'indexing.source.read', 'indexing.source.pending',
         'indexing.split.open', 'indexing.split.sourceRead', 'indexing.split.draft', 'indexing.split.read',
-        'indexing.policy.read', 'indexing.retirement.read',
+        'indexing.policy.read', 'indexing.retirement.read', 'agents.configHealth',
     ];
     for (const type of reads) {
         const before = c.sent.length, pending = c.api.request(type, {}), timer = [...c.timers.values()][0];

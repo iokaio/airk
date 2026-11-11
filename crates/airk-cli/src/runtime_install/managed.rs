@@ -543,4 +543,4 @@ pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

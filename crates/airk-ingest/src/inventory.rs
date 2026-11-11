@@ -286,6 +286,11 @@ pub fn scan_roots_with_source_policy(
                             extracted.chunks.iter().map(|chunk| chunk.text.len()).sum(),
                             false,
                         ),
+                        // A busy or interrupted parser slot says nothing about
+                        // this content, so it is never cached as a failure.
+                        Err(error) if crate::pdf_slot::slot_outcome(&error).is_some() => {
+                            return Err(error);
+                        }
                         Err(error) => (
                             Eligibility::ExtractionFailed,
                             0,

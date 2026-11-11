@@ -134,6 +134,8 @@ pub(super) fn read(
             Err(_) => serde_json::json!({"mode":"unavailable"}),
         }
     };
+    let mut startup_manager = startup_manager;
+    startup_manager["user_opted_out"] = login_opt_out_report(root);
     let log_control = crate::install_layout::saved_control(root).ok();
     let logs = log_control
         .as_ref()

@@ -215,7 +215,7 @@ pub(super) fn step(
             return Ok(Step::Pending);
         };
         let worker = active.worker;
-        let pid = active.process.id();
+        let pid = active.host_process_id();
         targets = barrier.targets;
         let replies = active
             .replies

@@ -6,6 +6,7 @@ use airk_core::{
     catalog_fences::FenceIntent, catalog_management::CatalogRequest, identity::Sha256Digest,
 };
 use std::io::{BufRead, Read, Write};
+use std::process::ChildStdin;
 
 const PREFIX: &str = "AIRK_GUARDED_PREPARED:";
 const CONTROLLER_ROLE: &str = "AIRK_GUARDED_CONTROLLER";

@@ -33,6 +33,8 @@ pub fn dispatch() -> Result<bool> {
 
 pub(crate) fn extract(bytes: &[u8]) -> Result<Vec<String>> {
     extract_inner(bytes).map_err(|error| {
+        // A refused parser slot is not a capacity failure: its typed cause stays
+        // on top so the caller defers (busy) or stops (interrupted) instead.
         if error.chain().any(|cause| {
             cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
                 matches!(
@@ -79,8 +81,21 @@ fn extract_inner(bytes: &[u8]) -> Result<Vec<String>> {
         args,
         timeout_ms: 15_000,
     };
-    crate::provider_process::run_limited(&spec, directory.path(), &[], 65_536, Some(LIMITS))
-        .context("isolated PDF extraction failed or exceeded its resource budget")?;
+    {
+        // One live parser per process (the whole service). The slot is held
+        // until run_limited returned, after the parser's job or process group
+        // was closed and the child reaped; a waiter observes interruption.
+        let interruption = crate::pdf_slot::current_interruption();
+        let _slot = crate::pdf_slot::process_slot().acquire(
+            &crate::pdf_slot::SystemClock,
+            slot_wait(),
+            &|| interruption.as_ref().is_some_and(|probe| probe()),
+        )?;
+        #[cfg(test)]
+        let _live = tests::LiveParser::enter();
+        crate::provider_process::run_limited(&spec, directory.path(), &[], 65_536, Some(LIMITS))
+            .context("isolated PDF extraction failed or exceeded its resource budget")?;
+    }
     let output = crate::provider_process::read_capped(
         File::open(directory.path().join("output.json"))?,
         MAX_OUTPUT,
@@ -92,6 +107,35 @@ fn extract_inner(bytes: &[u8]) -> Result<Vec<String>> {
     let pages = reply.pages.context("PDF worker omitted pages")?;
     validate_pages(&pages)?;
     Ok(pages)
+}
+
+#[cfg(not(test))]
+fn slot_wait() -> std::time::Duration {
+    crate::pdf_slot::SLOT_WAIT
+}
+#[cfg(test)]
+fn slot_wait() -> std::time::Duration {
+    SLOT_WAIT_OVERRIDE
+        .with(std::cell::Cell::get)
+        .unwrap_or(crate::pdf_slot::SLOT_WAIT)
+}
+#[cfg(test)]
+thread_local! {
+    static SLOT_WAIT_OVERRIDE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+/// Test seam: run `work` with this slot wait budget for PDF extractions made
+/// on the calling thread. Restores the previous budget.
+#[cfg(test)]
+pub(crate) fn with_slot_wait<T>(budget: std::time::Duration, work: impl FnOnce() -> T) -> T {
+    struct Restore(Option<std::time::Duration>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SLOT_WAIT_OVERRIDE.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = Restore(SLOT_WAIT_OVERRIDE.with(|slot| slot.replace(Some(budget))));
+    work()
 }
 
 fn validate_pages(pages: &[String]) -> Result<()> {
@@ -197,7 +241,132 @@ fn preflight_page_tree(document: &pdf_extract::Document) -> Result<()> {
     Ok(())
 }
 
+/// Whether the parser may run, from what it observed about its parent.
+#[cfg(any(unix, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParentWatch {
+    Continue,
+    Exit,
+}
+
+/// Host-independent parent-watch rule. `started_under` is the parent observed
+/// as the parser started, `armed` whether the platform's exit-on-parent-death
+/// notification was installed for it, and `now_under` the parent observed after
+/// arming. A different parent means the spawner died before the notification
+/// existed (the parser was reparented); an unarmed watch cannot promise to end
+/// the parser with its parent. Either way the parser exits instead of parsing.
+#[cfg(any(unix, test))]
+fn parent_watch(started_under: i64, armed: bool, now_under: i64) -> ParentWatch {
+    if armed && started_under > 0 && now_under == started_under {
+        ParentWatch::Continue
+    } else {
+        ParentWatch::Exit
+    }
+}
+
+/// Exit status of a parser whose spawner is gone; no process reads it.
+#[cfg(unix)]
+const PARENT_GONE: i32 = 70;
+
+/// A parser never outlives the process that spawned it. On Windows the
+/// kill-on-close job already ends it with the service. On Unix its process
+/// group survives a service crash, so the parser watches its parent itself.
+#[cfg(unix)]
+fn exit_with_parent() {
+    // SAFETY: getppid has no preconditions and cannot fail.
+    let started_under = unsafe { libc::getppid() };
+    let armed = arm_parent_exit(started_under).is_ok();
+    // SAFETY: as above.
+    let now_under = unsafe { libc::getppid() };
+    if parent_watch(i64::from(started_under), armed, i64::from(now_under)) == ParentWatch::Exit {
+        // SAFETY: ends this process at once; it holds nothing shared, and its
+        // private directory belongs to the spawner.
+        unsafe { libc::_exit(PARENT_GONE) }
+    }
+}
+#[cfg(not(unix))]
+fn exit_with_parent() {}
+
+/// Linux: the kernel sends SIGKILL when the thread that spawned this parser
+/// exits, including when its whole process dies. That thread blocks in
+/// `run_limited` (or the guardian's main thread waits) until the parser is
+/// reaped, so a living spawner never triggers it.
+#[cfg(target_os = "linux")]
+fn arm_parent_exit(_parent: libc::pid_t) -> std::io::Result<()> {
+    // SAFETY: PR_SET_PDEATHSIG reads one unsigned-long signal number and only
+    // sets this process's parent-death signal; no memory is passed.
+    let result = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// macOS: a watcher thread exits the parser when kqueue reports the parent's
+/// exit. Registration fails (ESRCH) if the parent is already gone.
+#[cfg(target_os = "macos")]
+fn arm_parent_exit(parent: libc::pid_t) -> std::io::Result<()> {
+    // SAFETY: kqueue takes no arguments; the descriptor is owned by the watcher.
+    let queue = unsafe { libc::kqueue() };
+    if queue < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: kevent is plain data, for which all-zero is a valid value.
+    let mut change: libc::kevent = unsafe { std::mem::zeroed() };
+    change.ident = parent as libc::uintptr_t;
+    change.filter = libc::EVFILT_PROC;
+    change.flags = libc::EV_ADD | libc::EV_ONESHOT;
+    change.fflags = libc::NOTE_EXIT;
+    // SAFETY: reads one initialized change record; writes no events; no timeout.
+    let registered =
+        unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
+    if registered < 0 {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: closes the descriptor created above, exactly once.
+        unsafe { libc::close(queue) };
+        return Err(error);
+    }
+    let watcher = std::thread::Builder::new()
+        .name("airk-pdf-parent".into())
+        // The watcher only ever exits the process; name its result type
+        // rather than rely on never-type fallback.
+        .spawn::<_, ()>(move || {
+            // SAFETY: as above, all-zero is a valid output record.
+            let mut event: libc::kevent = unsafe { std::mem::zeroed() };
+            loop {
+                // SAFETY: waits without timeout for one event into the owned record.
+                let ready = unsafe {
+                    libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, std::ptr::null())
+                };
+                if ready < 0
+                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                {
+                    continue;
+                }
+                // The parent exited, or the watch itself failed: never parse unwatched.
+                // SAFETY: ends this process at once; it holds nothing shared.
+                unsafe { libc::_exit(PARENT_GONE) }
+            }
+        });
+    match watcher {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            // SAFETY: the watcher never started, so this is the only owner.
+            unsafe { libc::close(queue) };
+            Err(error)
+        }
+    }
+}
+
+/// Other Unix hosts cannot start a provider group, so a parser never runs here.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn arm_parent_exit(_parent: libc::pid_t) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
 fn worker() -> Result<()> {
+    exit_with_parent();
     let mut bytes = Vec::new();
     File::open("input.pdf")?
         .take((crate::MAX_FILE_BYTES + 1) as u64)
@@ -257,10 +426,90 @@ fn ensure_output_capacity(requested: usize, remaining: usize) -> std::io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+    /// Counts parsers between admission and reaped exit.
+    pub(super) struct LiveParser;
+    impl LiveParser {
+        pub(super) fn enter() -> Self {
+            let now = LIVE.fetch_add(1, Ordering::SeqCst) + 1;
+            PEAK.fetch_max(now, Ordering::SeqCst);
+            Self
+        }
+    }
+    impl Drop for LiveParser {
+        fn drop(&mut self) {
+            LIVE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
     #[test]
     #[ignore = "invoked only by isolated PDF tests"]
     fn worker_fixture() -> Result<()> {
         worker()
+    }
+
+    #[test]
+    fn the_parser_runs_only_while_watched_under_its_original_parent() {
+        assert_eq!(parent_watch(4242, true, 4242), ParentWatch::Continue);
+        // The spawner died before the watch was armed: the parser was
+        // reparented to init, launchd or a subreaper.
+        assert_eq!(parent_watch(4242, true, 1), ParentWatch::Exit);
+        assert_eq!(parent_watch(4242, true, 777), ParentWatch::Exit);
+        // An unarmed watch cannot promise to end the parser with its parent.
+        assert_eq!(parent_watch(4242, false, 4242), ParentWatch::Exit);
+        // No observable parent at all.
+        assert_eq!(parent_watch(0, true, 0), ParentWatch::Exit);
+        // A service running as PID 1 (a container) is still a valid parent.
+        assert_eq!(parent_watch(1, true, 1), ParentWatch::Continue);
+    }
+
+    #[test]
+    fn concurrent_documents_run_one_reaped_parser_at_a_time() -> Result<()> {
+        // Two and then four concurrent extractions, each with a real parser
+        // child that refuses its document and exits.
+        for documents in [2, 4] {
+            PEAK.store(0, Ordering::SeqCst);
+            let failures = std::thread::scope(|threads| {
+                let handles = (0..documents)
+                    .map(|_| threads.spawn(|| extract(b"%PDF-1.4\nmalformed")))
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("extraction panicked"))
+                    .collect::<Vec<_>>()
+            });
+            for failure in failures {
+                let error = failure.unwrap_err();
+                assert!(
+                    error.to_string().contains("PDF extraction refused"),
+                    "{error:#}"
+                );
+            }
+            assert_eq!(PEAK.load(Ordering::SeqCst), 1);
+        }
+        // Every failed parse released the slot.
+        drop(crate::pdf_slot::process_slot().acquire(
+            &crate::pdf_slot::SystemClock,
+            std::time::Duration::ZERO,
+            &|| false,
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn interrupted_work_never_starts_a_parser() {
+        let error = crate::pdf_slot::with_interruption(std::sync::Arc::new(|| true), || {
+            extract(b"%PDF-1.4\nmalformed").unwrap_err()
+        });
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.is::<crate::pdf_slot::PdfSlotInterrupted>()),
+            "{error:#}"
+        );
     }
 
     #[test]

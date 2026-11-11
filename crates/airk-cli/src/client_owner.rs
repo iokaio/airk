@@ -25,6 +25,21 @@ pub fn watch() -> Result<()> {
     Ok(())
 }
 
+/// The launching client, observed without exiting. `service session` uses it
+/// to drain started installer work before exiting on owner loss; [`watch`]
+/// keeps exiting at once for the stdio clients that use it.
+pub(crate) struct OwnerObserver(Owner);
+
+impl OwnerObserver {
+    pub(crate) fn exited(&self) -> bool {
+        self.0.exited()
+    }
+}
+
+pub(crate) fn observe() -> Result<OwnerObserver> {
+    Ok(OwnerObserver(Owner::capture()?))
+}
+
 #[cfg(unix)]
 struct Owner(libc::pid_t);
 #[cfg(unix)]

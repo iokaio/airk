@@ -86,7 +86,8 @@ impl Settlement {
         value["restored"] = serde_json::json!(self.restored);
         value["deleted"] = serde_json::json!(self.deleted);
         value["left"] = serde_json::json!(self.left);
-        eprintln!("{value}");
+        // In a session request this reaches the request's own stderr.
+        crate::cli_io::diagnostic_line(value);
     }
 }
 

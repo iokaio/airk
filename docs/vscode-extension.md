@@ -17,7 +17,9 @@ do not survive as authority; clients reconnect through fresh review. Original
 sources stay untouched. Native process/ownership checks govern old-artifact
 cleanup, and failures must remain visible. Supported 1.8.16+ upgrades require the
 persisted state contract in addition to the version. The target public release
-is 1.9.0 after qualification; current candidate versions remain 1.8.16.
+is 1.9.0 after qualification; the current local candidate is 1.8.22 (see the
+[1.8.22 record](releases/release-1.8.22.md)), and 1.8.16 remains the state
+baseline.
 
 The [current reset contract](upgrade-rebuild-fallback.md) supersedes older
 optional migration/rebuild instructions. Implementation and installed acceptance
@@ -197,6 +199,21 @@ inventing another client's HTTP/auth schema. Native setup and an extension-side
 probe are not proof that the chosen external client loaded its configuration.
 Require actual initialization, tool discovery, status and a cited scoped read.
 
+### Broken agent entries and Reconnect (1.8.22)
+
+Explorer checks recognized AIRK entries in project files, user-level files that
+AIRK provably wrote, and the reconnect ledger that a pre-1.9.0 replacement
+captures before `--apply`. It warns once per set of findings when the window
+starts and after an installation. Findings appear in an Explorer banner, the
+status bar and Management → Agents.
+
+**Reconnect** asks once, then creates or reuses the index for each recorded
+folder and grants this window access. That grant makes the index the window's
+search scope. It then enrolls HTTPS, rewrites each entry in place and
+provisions trust and the token helper. Each entry reports a typed status. The
+finding classes, the steps and the statuses are listed in
+[agent setup](agent-integration.md#reconnecting-after-a-replacement).
+
 ### Protected VS Code credential input
 
 Manual/migrated `.vscode/mcp.json` uses a command input reference such as
@@ -212,9 +229,13 @@ a duplicate provider definition.
 
 This credential path needs no Code environment reload. It requires the AIRK
 extension and a harness that supports command inputs. Portable/forwarded MCP
-harnesses which reject input variables remain unqualified. Codex/Claude instead
-use their verified environment references; new terminals created by this window
-can receive prepared additive CA/credential values. Existing apps, terminals,
+harnesses which reject input variables remain unqualified. Since 1.8.22,
+Codex and Claude Code instead get a one-shot credential helper
+(`http_headers_helper` / `headersHelper` running `airk runtime http-credential
+… --format header-json`), so agents started outside VS Code receive their
+token. Without a helper path that is safe to write, Codex falls back to its
+environment reference. New terminals created by this window can receive
+prepared additive CA/credential values. Existing apps, terminals,
 headless processes and remote/container hosts do not inherit them from a saved
 project file. See [agent setup](agent-integration.md) and [templates](../examples/mcp/README.md).
 Credential-bearing terminal environment collections are nonpersistent: Code must
@@ -287,6 +308,34 @@ their separate explicit deletion/purge contracts apply. Do not infer complete
 cleanup from the editor tab closing or an uninstall process starting.
 
 ## Runtime and distribution
+
+### One native session per window (1.8.22)
+
+The extension does not start one `airk` process per operation. Each window
+runs one `airk service session`. It relays control requests and runs
+allowlisted CLI commands in-process, with the same output as the one-shot
+command and responses up to 16 MiB. It exits when the window's extension host
+ends.
+
+On owner loss, the session cancels read-only work. It lets installer or other
+exclusive work that has already started finish within that request's own
+deadline, at most 600 seconds. This is a documented exception. When the
+window releases the session, the extension waits for that deadline plus 5
+seconds before it kills the process. `airk.runtime.nativeExecution: false`
+closes the window session.
+
+The extension still starts a separate one-shot when a different runtime build
+is involved or when no window session exists. It also starts the uninstall
+worker and the `tools shell` terminal. The service itself, with its project,
+cleanup and source-watch owners, is the only resident AIRK process. See
+[process ownership](process-model.md).
+
+The extension registers login startup on every installation, replacement and
+upgrade, unless the user ran `airk runtime login uninstall`. The 1.8.20
+restart after an idle exit is removed. When no OS registration exists, a
+status check restarts a service that ended without a Stop request, once for
+that stopped instance. See
+[startup registration](service-installation.md#startup-registration-and-removal).
 
 The in-progress request-tracking correction uses a private per-request journal
 at `globalStorageUri/service-intents`, shared by console and extension actions.

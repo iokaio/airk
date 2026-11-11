@@ -3,7 +3,7 @@ import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
 import {probeMcp} from '../native';
 import {record} from '../serviceClient';
-import {NativeServiceFixture} from './nativeServiceFixture';
+import {NativeServiceFixture,finishNativeFixture,type NativeTestFailure} from './nativeServiceFixture';
 import {LaunchSpec,UNIFIED_TOOLS} from '../model';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -37,6 +37,7 @@ function assertEmptySetupStatus(status:any):void{
 
 test('one reviewed HTTPS MCP selection excludes indexes registered later',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:NativeHttpSession|undefined;
+    let failure:NativeTestFailure|undefined;
     try{
         const root=path.join(fixture.owner,'late-source');await fs.mkdir(root);
         const spec=await fixture.register('new-index',root);
@@ -53,11 +54,12 @@ test('one reviewed HTTPS MCP selection excludes indexes registered later',{skip:
         assert.equal(status.scope_observation.members.length,1);
         await fixture.refuseUnimportedLegacy(spec);
         assert.equal((await fixture.embedding()).loads,0,'metadata/refused enrollment do not start inference');
-    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{try{await session?.close();}finally{await fixture.dispose();}}
+    }catch(error){failure={error};await fixture.retainFailure(error,session?[session]:[]);}finally{await finishNativeFixture(fixture,[()=>session?.close()],failure,session?[session]:[]);}
 });
 
 test('reviewed native setup verifies without starting inference', {skip:!process.env.AIRK_TEST_BINARY,timeout:240000}, async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    let failure:NativeTestFailure|undefined;
     try{
         const spec=await fixture.register('unindexed');
         const result=await probeMcp(spec);assert.equal(result.tools.length,UNIFIED_TOOLS.length);
@@ -68,11 +70,12 @@ test('reviewed native setup verifies without starting inference', {skip:!process
         assertEmptySetupStatus(status);assertSelectedScope(status,spec);
         const embedding=await fixture.embedding();
         assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
+    }catch(error){failure={error};await fixture.retainFailure(error);}finally{await finishNativeFixture(fixture,[],failure);}
 });
 
 test('reviewed HTTPS MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:NativeHttpSession|undefined;
+    let failure:NativeTestFailure|undefined;
     const attempts:QuickStatusObservation[]=[];let confirmed:QuickStatusObservation|undefined;let dropped=0;
     const observe:QuickStatusObserver=value=>{
         if(value.kind==='confirmed')confirmed=value;
@@ -85,14 +88,15 @@ test('reviewed HTTPS MCP quick status completes cold verification without diagno
         const status=await quickStatus(session,observe,spec.catalogSession);assertSelectedScope(status,spec);
         assertEmptySetupStatus(status);
         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{
+    }catch(error){failure={error};await fixture.retainFailure(error,session?[session]:[]);}finally{
         t.diagnostic(JSON.stringify({quickStatus:{attempts,confirmed:confirmed??null,dropped,nativeStageCounts:'unmeasured',hashCounts:'unmeasured'}}));
-        try{await session?.close();}finally{await fixture.dispose();}
+        await finishNativeFixture(fixture,[()=>session?.close()],failure,session?[session]:[]);
     }
 });
 
 test('scoped status revalidates authority and keeps complete provenance across aliases and detail modes',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:NativeHttpSession|undefined;
+    let failure:NativeTestFailure|undefined;
     try{
         const spec=await fixture.register('cached-status');await fs.writeFile(path.join(spec.root,'memo.txt'),'Original status cache fixture.');
         await fixture.configure(spec,{operation:'vectors',enabled:false});await fixture.job(spec);
@@ -121,12 +125,13 @@ test('scoped status revalidates authority and keeps complete provenance across a
         for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.query_concurrency,16,JSON.stringify(value));assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assertSelectedScope(value,spec);const {scope_observation,...scalar}=value;assert.ok(Buffer.byteLength(JSON.stringify(scalar))<1024,'scalar status retains its original byte bound; complete scope is additional');}
         for(const name of ['diagnostics','airk_diagnostics']){const detail=await read(name);assert.equal(detail.query_concurrency,16,JSON.stringify(detail));assert.ok(detail.runtime);assert.ok(detail.work);}
         const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
-    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{try{await session?.close();}finally{await fixture.dispose();}}
+    }catch(error){failure={error};await fixture.retainFailure(error,session?[session]:[]);}finally{await finishNativeFixture(fixture,[()=>session?.close()],failure,session?[session]:[]);}
 });
 
 for(const admission of ['sequential','concurrent'] as const){
     test(`four cold HTTPS ${admission} clients observe first status without diagnostic warmup`,{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
         const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);const sessions:NativeHttpSession[]=[];
+        let failure:NativeTestFailure|undefined;
         try{
             const spec=await fixture.register(`four-${admission}-status`);
             const open=async(client:number)=>{const session=await fixture.openHttp(spec,`cold-${admission}-${client}`);sessions.push(session);};
@@ -137,13 +142,14 @@ for(const admission of ['sequential','concurrent'] as const){
             const observations=await Promise.all(sessions.map(session=>quickStatus(session,undefined,spec.catalogSession)));
             for(const observation of observations){assertSelectedScope(observation,spec);assertEmptySetupStatus(observation);}
             assert.equal((await fixture.embedding()).loads,0,'first status does not start inference');
-        }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{const closed=await Promise.allSettled(sessions.map(session=>session.close()));try{for(const result of closed)if(result.status==='rejected')throw result.reason;}finally{await fixture.dispose();}}
+        }catch(error){failure={error};await fixture.retainFailure(error,sessions);}finally{await finishNativeFixture(fixture,sessions.map(session=>()=>session.close()),failure,sessions);}
     });
 }
 
 test('mixed four-call batches honor status snapshots and typed read admission',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     const sessions:NativeHttpSession[]=[];
+    let failure:NativeTestFailure|undefined;
     const refusals:Array<{binding:string;round:number;tool:string}&ReadRetryReceipt>=[];
     try{
         const spec=await fixture.register('mixed-status');
@@ -199,5 +205,5 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
             }
         }
         process.stderr.write(`[native fixture] mixed batches: ${JSON.stringify({scoped_batches:6,scoped_logical_reads:24,unimported_legacy_enrollment_refusals:1,unsubmitted_refusals:refusals})}\n`);
-    }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{const closed=await Promise.allSettled(sessions.map(session=>session.close()));try{for(const result of closed)if(result.status==='rejected')throw result.reason;}finally{await fixture.dispose();}}
+    }catch(error){failure={error};await fixture.retainFailure(error,sessions);}finally{await finishNativeFixture(fixture,sessions.map(session=>()=>session.close()),failure,sessions);}
 });

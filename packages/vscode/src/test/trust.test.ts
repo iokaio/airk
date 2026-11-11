@@ -682,7 +682,7 @@ test('agent setup uses credential-referenced HTTP, writes only on request and re
     const f=await serviceTestHost(context);
     try{f.state.pick=items=>items.find(item=>item.client==='codex')??items[0];await f.commands.get('airk.setupAgent')!();assert.equal(f.panels.length,1);
         const destination=path.join(f.folders[0].uri.fsPath,'.codex','config.toml');await assert.rejects(fs.stat(destination),{code:'ENOENT'});
-        await f.panels[0].send({action:'copy'});assert.ok(f.clipboard[0].includes(f.httpUrl));assert.match(f.clipboard[0],/bearer_token_env_var/);assert.ok(!f.clipboard[0].includes('command ='));assert.ok(!f.clipboard[0].includes('--service-project'));
+        await f.panels[0].send({action:'copy'});assert.ok(f.clipboard[0].includes(f.httpUrl));assert.match(f.clipboard[0],/http_headers_helper = .* runtime http-credential --install-dir .* --connection-id [a-f0-9]{32} --format header-json/);assert.doesNotMatch(f.clipboard[0],/bearer_token_env_var/);assert.ok(!f.clipboard[0].includes('command ='));assert.ok(!f.clipboard[0].includes('--service-project'));
         await f.panels[0].send({action:'createCodex'});const before=await fs.readFile(destination,'utf8');assert.doesNotMatch(before,/service-project/);
         f.stub.workspace.workspaceFolders=[];await f.api.getServerDefinitions();await f.panels[0].send({action:'createCodex'});
         assert.match(f.panels[0].webview.html,/Workspace or storage changed/);assert.equal(await fs.readFile(destination,'utf8'),before);
@@ -710,7 +710,7 @@ test('Codex setup consolidates an existing legacy connection through guarded edi
         f.stub.workspace.openTextDocument=async()=>document;
         f.stub.workspace.applyEdit=async(edit:any)=>{document.text=edit.after;document.version++;return true;};
         await panel.send({action:'updateCodex'});
-        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('[mcp_servers.airk]')&&updated.includes('bearer_token_env_var')&&updated.includes('https://127.0.0.1:')&&!updated.includes('--explorer-descriptor')&&!updated.includes('airk_explorer'),panel.webview.html);assert.equal(saved,1);
+        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('[mcp_servers.airk]')&&updated.includes('http_headers_helper')&&!updated.includes('bearer_token_env_var')&&updated.includes('https://127.0.0.1:')&&!updated.includes('--explorer-descriptor')&&!updated.includes('airk_explorer'),panel.webview.html);assert.equal(saved,1);
         await panel.send({action:'updateCodex'});assert.equal(saved,1,'current connections require no repeat edit');
         f.stub.workspace.textDocuments=[{uri:{fsPath:destination},isDirty:true}];await panel.send({action:'updateCodex'});
         assert.match(panel.webview.html,/unsaved/i);assert.equal(saved,1);

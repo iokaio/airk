@@ -21,6 +21,59 @@ export const AGENT_INSTRUCTION_FILES = {
     codex: { name: 'Codex', file: 'AGENTS.md' },
     copilot: { name: 'GitHub Copilot', file: '.github/copilot-instructions.md' },
 } as const;
+/** Classification of one recognized AIRK entry in an agent configuration.
+ * Every stdio entry is retired: the native runtime refuses stdio MCP. */
+export type AgentEntryStatus = 'stdio_retired' | 'stdio_missing_command' | 'https_unknown_connection' | 'https_endpoint_mismatch' | 'https_helper_missing' | 'https_trust_missing' | 'ok';
+/** One problem in a recognized AIRK entry of a project or user-level agent
+ * configuration (`agents.configHealth`, Explorer alerts). `unreadable` names a
+ * present file that could not be read or parsed, so its entries could not be checked. */
+export interface AgentConfigFinding {
+    readonly agent: string;
+    readonly label: string;
+    readonly file: string;
+    /** `project`: a recognized file under a project folder; `user`: the agent's user-level configuration. */
+    readonly scope?: 'project' | 'user';
+    readonly serverKey?: string;
+    readonly containerPath?: readonly string[];
+    readonly command?: string;
+    readonly url?: string;
+    readonly connectionId?: string;
+    /** Project folder recorded by the entry (`--root`) or the reconnect ledger. */
+    readonly root?: string;
+    readonly collection?: string;
+    readonly problem: Exclude<AgentEntryStatus, 'ok'> | 'unreadable';
+    readonly detail?: string;
+    /** Captured before the installation that this entry referenced was replaced. */
+    readonly ledger?: boolean;
+}
+export interface AgentConfigHealthView {
+    readonly project: string;
+    /** Project-relative configuration files that were present and parsed. */
+    readonly checked: readonly string[];
+    readonly findings: readonly AgentConfigFinding[];
+}
+/** Typed outcome of Reconnect for one entry. AIRK never claims a running client reconnected. */
+export interface AgentReconnectResult {
+    readonly agent: string;
+    readonly label: string;
+    readonly file: string;
+    readonly serverKey: string;
+    readonly root?: string;
+    readonly status: 'complete' | 'awaiting_host_reconnect' | 'awaiting_index' | 'blocked_unknown_owner' | 'blocked_client_compatibility' | 'recovery_required';
+    readonly detail?: string;
+    /** The exact action the user takes in that client, for `awaiting_host_reconnect`. */
+    readonly hostAction?: string;
+}
+/** Proactive agent-configuration alert shown in Explorer, the status bar and a notification. */
+export interface AgentConfigAlerts {
+    readonly digest: string;
+    readonly checkedAt: number;
+    /** At most 32 findings; `total` counts all of them. */
+    readonly findings: readonly AgentConfigFinding[];
+    readonly total: number;
+    readonly reconnecting?: boolean;
+    readonly results?: readonly AgentReconnectResult[];
+}
 export const AIRK_AGENT_INSTRUCTIONS = [
     '## Using AIRK',
     '',
@@ -134,6 +187,8 @@ export interface ExplorerViewState {
     readonly connectionCheck?: ConnectionCheck;
     readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
     readonly runtimeUpgrade?: RuntimeUpgradeProgress;
+    /** Broken or retired AIRK agent entries found in project or user-level configuration. */
+    readonly agentConfigAlerts?: AgentConfigAlerts;
     readonly trusted: boolean;
     /** Actual editor trust, separate from disposed/revoked client authority. Absent is unknown. */
     readonly workspaceTrusted?: boolean;
@@ -478,7 +533,7 @@ export const MANAGE_ACTIONS = [
     'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent',
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
-export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.verifyMcp', 'airk.manageVscodeMcp', 'airk.installCli', 'airk.openTools', 'airk.chooseStorage',
+export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.reconnectAgents', 'airk.verifyMcp', 'airk.manageVscodeMcp', 'airk.installCli', 'airk.openTools', 'airk.chooseStorage',
     'airk.indexMode', 'airk.usage', 'airk.logs', 'airk.showExtensionOutput', 'airk.httpIssuerRotationStatus', 'airk.rotateHttpIssuer'] as const;
 
 /** One Explorer help topic, compiled from src/explorerHelp at build time and versioned with the VSIX. */
@@ -733,6 +788,7 @@ export const WEBVIEW_MESSAGES = {
         days: { kind: 'int', min: 7, max: 30, optional: true } },
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
     'instructions.open': { agent: { kind: 'enum', values: ['claude', 'codex', 'copilot'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } },
+    'agents.configHealth': { project: PROJECT },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
     'planner.import': {},
     'source.choose': {},

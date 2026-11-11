@@ -5,13 +5,16 @@ import * as fs from 'node:fs/promises';
 import { readdirSync, statSync, lstatSync, readFileSync, realpathSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
 import { randomBytes, createHash,X509Certificate } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { HttpSelection, HttpConnectionInfo, validateHttpConnection, preservedImportedHttpServerKey, matchesImportedHttpOrigin, sameHttpAuthority, credentialEnvironment, httpMaterial, httpPublicTrustFile, publishNativeInput, removeNativeInput,validateEndpoint,validatePredecessorHttpLookup,predecessorHttpProof,type PredecessorHttpLookup,type PredecessorHttpScope,type OwnedPredecessorHttpProof,type PredecessorHttpSnapshot } from './serviceHttp';
+import {restrictWindowsDirectory} from './privateDirectory';
+import { HttpSelection, HttpConnectionInfo, validateHttpConnection, preservedImportedHttpServerKey, matchesImportedHttpOrigin, sameHttpAuthority, credentialEnvironment, httpMaterial, httpPublicTrustFile, publishNativeInput, removeNativeInput,validateEndpoint,validatePredecessorHttpLookup,validatePredecessorHttpSnapshot,validateOwnedPredecessorHttpProof,predecessorHttpProof,type PredecessorHttpLookup,type PredecessorHttpScope,type OwnedPredecessorHttpProof,type PredecessorHttpSnapshot } from './serviceHttp';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {inventoryGlobalAgentConfigs,globalConfigDeclarations,transformGlobalContainer,type GlobalAgent,type GlobalConfigFile} from './globalAgentInventory';
 import { setupAgent, AgentSetupHost } from './agentSetup';
-import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
-import { probeMcp, runText } from './native';
+import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS, credentialHelperCommand, type HttpCredentialHelper } from './model';
+import { probeMcp } from './native';
+import { closeWindowSession, nativeText, openWindowSession, windowNativeSession } from './nativeSession';
+import { isManagedExtensionContext, readInstallationGeneration } from './extensionUpdateLoader';
 import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, runtimeBindingIdentity, sameRuntimeAuthority, type LegacyOriginLocator } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError, type RecordValue } from './serviceClient';
@@ -30,7 +33,9 @@ import type { SearchDraft } from './explorerDrafts';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
-import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup, validateCleanBreakClientPlan, type CleanBreakClientPlan, type CleanBreakClientFile } from './agentMigration';
+import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup, validateCleanBreakClientPlan, type CleanBreakClientPlan, type CleanBreakClientFile, type MigrationRecognition } from './agentMigration';
+import { AGENT_CONFIG_LABELS, checkAgentConnections, type AgentConfigEntry, type AgentConfigHealth, type AgentHealthHttp, type HttpOwnership } from './agentConfigHealth';
+import { RECONNECT_LEDGER_KEY, captureReconnectLedger, clientReferences, ledgerEntryFor, hostReconnectAction, ledgerLaunchers, mergeReconnectLedgers, parserAgent, recordedRoot, reconnectGroups, replacedHostArtifacts, samePath, validateReconnectLedger, type ClientReferences, type ReconnectLedger, type ReconnectSourceFile, type ReconnectStatus } from './agentReconnect';
 import { readJsonConfig, vscodeCredentialConfiguration, vscodeManualConnectionIds, vscodeManualConfiguration } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
 import {ClientTrustPublicationError,IssuerRotationStatus,publishOwnedIssuerBundle,updateOwnedIssuerBundles} from './httpIssuerRotation';
@@ -41,7 +46,7 @@ import { rememberShellIntegration, rememberUninstallTarget, shellProfiles, captu
 import { recordDiagnosticFailure } from './diagnosticLogs';
 import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
 import type {ServiceConsoleState} from './serviceConsoleView';
-import type { RuntimeUpgradeProgress } from './explorerContracts';
+import type { AgentConfigAlerts, AgentReconnectResult, RuntimeUpgradeProgress } from './explorerContracts';
 import { applyLocalSearchScope, saveLocalIndexSet, localScopeChoice, managedScopeProject, type ManagedScopeProject, type LocalScopeAdapter } from './localSearchScope';
 import { chooseRuntimeUpgradeMode, NativeRebuildObservation, RebuildNotices, rebuildNotice, validateRebuildObservation, runtimeCleanBreakRequired,predecessorExecutableInRuntime,cleanBreakSuccessorPublished } from './runtimeRebuild';
 
@@ -92,11 +97,31 @@ interface CleanBreakClientCapture {
     journal?:ScopeRetirementCapture;
     result?:{complete:boolean;capturedAt:number;configurations:Awaited<ReturnType<typeof applyCleanBreakClientCleanup>>;receipts:Awaited<ReturnType<typeof retireCleanBreakUninstallReceipts>>;hostArtifacts?:{complete:boolean;removed:string[];blockers:string[]};journal?:ScopeRetirementResult|{complete:false;state:'waiting_for_successor_publication'};httpRevalidation?:{snapshot:PredecessorHttpLookup['snapshot'];queries:Omit<PredecessorHttpLookup,'snapshot'>[]}};
 }
+/** Reconnect's read-only plan for one recorded folder, named in the confirmation. */
+type ReconnectIndexPlan={kind:'scope';spec:LaunchSpec}|{kind:'existing';indexId:string;name:string}
+    |{kind:'failed';stage:'window_context'|'index_lookup'|'index_setup'|'access_grant'|'search_scope';code:string;detail:string};
+/** Entries that need a new HTTPS connection from the folder's reviewed index. */
+function reconnectNeedsIndex(entry:{status:string}):boolean{return entry.status==='stdio_retired'||entry.status==='stdio_missing_command'||entry.status==='https_unknown_connection';}
+/** A typed refusal from one chain stage; an unknown outcome is never reported as a refusal. */
+function reconnectFailure(stage:Extract<ReconnectIndexPlan,{kind:'failed'}>['stage'],error:unknown):Extract<ReconnectIndexPlan,{kind:'failed'}>{
+    const unknown=error instanceof ServiceError&&error.outcomeUnknown||error instanceof Error&&error.message==='search_scope_outcome_unconfirmed';
+    const attached=error&&typeof error==='object'&&'nativeResponse' in error?error.nativeResponse:undefined;
+    const native=attached&&typeof attached==='object'&&!Array.isArray(attached)?attached as Record<string,unknown>:undefined;
+    const code=unknown?'outcome_unknown':error instanceof ServiceError?error.code:error instanceof Error&&/^[a-z0-9_]{1,128}$/.test(error.message)?error.message:'native_refusal';
+    const text=error instanceof Error?error.message:String(error),status=native&&typeof native.status==='string'?` Native status: ${native.status}.`:'';
+    return {kind:'failed',stage,code,detail:(unknown?'The outcome is unknown; check Indexing → Index library before retrying.':text.slice(0,400))+status};
+}
 interface CleanBreakHostArtifacts {
     mementos:{key:string;sha256:string}[];
     environment:{name:string;type:number;sha256:string;namespace:string;installation:string}[];
     bundles:{file:string;sha256:string;dev:string;ino:string;size:number;namespace:string;installation:string}[];
     blockers:string[];assistanceRefreshed?:boolean;
+}
+/** Host recovery metadata; native replacement receipts remain authoritative. */
+interface ReplacementOperationRecord {
+    candidate:string;operation:string;generation?:string;references?:unknown;expectedPredecessor?:string;
+    hostArtifacts?:{predecessor:string;controlDir:string;snapshot?:PredecessorHttpSnapshot;proofs:OwnedPredecessorHttpProof[];artifacts:CleanBreakHostArtifacts};
+    hostCleanup?:{complete:boolean;removed:string[];retained:string[];blockers:string[]};
 }
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
     // Capture the loaded code's version; extension metadata can change after a VSIX install.
@@ -135,6 +160,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private runtimeUpgrade?:RuntimeUpgradeProgress;
     private cleanBreakClientResult?:RecordValue;
     private cleanBreakClientWork?:{key:string;work:Promise<void>};
+    /** Proactive agent-configuration findings (Explorer banner, status bar, notification). */
+    private agentAlerts?:AgentConfigAlerts;
+    private agentHealthRun?:Promise<void>;
+    private agentStatus?:vscode.StatusBarItem;
+    private reconnectingAgents=false;
+    /** `user_paths.launcher` reported by native discovery: the universal launcher's folder. */
+    private userLauncherDirectory?:string;
+    /** `user_paths.data`: the default index storage when no storage preference is saved. */
     private localScopeWorking=false;
     private localScopeEpoch=0;
     private localScopeLabelChoice?:{index_ids:string[];project_ids:string[]};
@@ -356,6 +389,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             reviewTransition:(binding,action,options)=>this.runtime().reviewTransition(binding,action,options),transition:async(binding,review)=>{
                 if(review.cleanBreak)await this.captureCleanBreakClients(binding,review.target,review.cleanBreakPolicy??binding.cleanBreak??{});
                 const result=await this.runtime().transition(binding,review);this.trusted();
+                // A selected runtime change renames the image that owned credential helpers start.
+                if(!review.cleanBreak)await this.refreshHelpersAfterTransition();
                 if(review.cleanBreak){
                     const observed=await this.runtime().discover();this.trusted();
                     if(!observed.inspection)throw new ServiceError('clean_break_selected_runtime_unavailable');
@@ -752,6 +787,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             this.trusted();
             if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+            this.observeUserLauncher(observation);
             await this.observeRebuild(observation.inspection?.rebuild??observation.diagnosis?.rebuild);this.trusted();
             if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();if(!this.renderSetupFailed())this.status.text='AIRK: setup';return;}
             const binding=this.runtime().binding(observation.inspection,observation.installDir);
@@ -1009,7 +1045,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(info.selection.kind==='imported_legacy'&&matchesImportedHttpOrigin(info.selection.selection,registration))return info;
         }
     }
-    private async migrationCandidate(spec:LaunchSpec,agent:LocalAgent,before:string,previous?:LaunchSpec,binding?:RuntimeBinding,selectedKey?:string){
+    private async migrationCandidate(spec:LaunchSpec,agent:LocalAgent,before:string,previous?:LaunchSpec,binding?:RuntimeBinding,selectedKey?:string,recognition:MigrationRecognition={}){
         const client=agent==='copilot'?'vscode':agent;
         const supported=['codex','claude','vscode'].includes(client);
         const declarations=globalConfigDeclarations(agent==='codex'?'codex':agent==='copilot'?'copilot':'claude',before).filter(row=>selectedKey===undefined||row.serverKey===selectedKey);
@@ -1020,18 +1056,18 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         // Detect actual owned declarations before enrollment. Unrelated client
         // settings must not trigger a new credential or an unsupported-client error.
         const candidate=prior?{...spec,http:prior}:{...spec,http:undefined};
-        const commands=[spec.command,path.join(spec.service!.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),...(old?[old.command]:[])];
+        const commands=[spec.command,path.join(spec.service!.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),...(old?[old.command]:[]),...(recognition.verifiedLaunchers??[])];
         const ownCommand=declarations.some(row=>typeof row.fields.command==='string'&&path.isAbsolute(row.fields.command)&&commands.some(command=>same(command,String(row.fields.command))));
         const ownHttp=!!prior&&before.toLowerCase().includes(prior.connection_id);
         let removed:string;
-        try{removed=migrateAgentConfig(agent,candidate,this.context.globalStorageUri.fsPath,before,true,()=>undefined,false,true,old,selectedKey);}
+        try{removed=migrateAgentConfig(agent,candidate,this.context.globalStorageUri.fsPath,before,true,()=>undefined,false,true,old,selectedKey,recognition);}
         catch(error){if(!ownCommand&&!ownHttp)return {client,supported,candidate,old,owned:false};throw error;}
         if(removed===before&&ownCommand)throw new ServiceError('owned_agent_alias_requires_review');
         if(removed!==before&&!prior&&!declarations.some(row=>row.serverKey!=='airk_explorer'&&Array.isArray(row.fields.args)&&row.fields.args.includes('mcp')))throw new ServiceError('owned_assistance_scope_requires_review');
         return {client,supported,candidate,old,owned:removed!==before};
     }
-    private async prepareOwnedHttpMigration(spec:LaunchSpec,agent:LocalAgent,before:string,previous?:LaunchSpec,migration?:{binding:RuntimeBinding;valid:()=>void;configurationReceipt?:string;selectedKey?:string}):Promise<{spec:LaunchSpec;previous?:LaunchSpec;skip?:boolean}>{
-        const {client,supported,candidate,old,owned}=await this.migrationCandidate(spec,agent,before,previous,migration?.binding,migration?.selectedKey);
+    private async prepareOwnedHttpMigration(spec:LaunchSpec,agent:LocalAgent,before:string,previous?:LaunchSpec,migration?:{binding:RuntimeBinding;valid:()=>void;configurationReceipt?:string;selectedKey?:string},recognition:MigrationRecognition={}):Promise<{spec:LaunchSpec;previous?:LaunchSpec;skip?:boolean}>{
+        const {client,supported,candidate,old,owned}=await this.migrationCandidate(spec,agent,before,previous,migration?.binding,migration?.selectedKey,recognition);
         if(!owned)return {spec:candidate,previous:old,skip:true};
         if(!supported)throw new ServiceError('http_client_compatibility_unverified');
         const next=spec.catalogSession||spec.combinedSession?await this.enrollHttpSpec(spec,client):await this.enrollLegacyHttpSpec(candidate,client,migration?.configurationReceipt??createHash('sha256').update(before).digest('hex'),migration);
@@ -1074,7 +1110,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const stat=await fs.lstat(directory).catch(()=>undefined);
             if(!stat?.isDirectory()||stat.isSymbolicLink()||!same(await fs.realpath(directory),directory))throw new ServiceError('legacy_selection_review_required');
             const before=await readJsonConfig(destination);if(before===undefined)throw new ServiceError('legacy_selection_review_required');
-            const resolved=await this.prepareOwnedHttpMigration(selected,agent,before);return resolved.spec;
+            const resolved=await this.prepareOwnedHttpMigration(selected,agent,before,undefined,undefined,await this.migrationRecognition(agent,before));return resolved.spec;
         }finally{client.dispose();}
     }
     async index(requested?:LaunchSpec):Promise<void>{
@@ -1140,6 +1176,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(!selected)throw new Error('No project selected. Select a registered project and check again.');
             publish({phase:'preparing',message:`Checking the native registration for ${selected.name}…`});
             if(!selected.http)selected=await this.resolveAgentSpec(selected);else if(!this.isCurrent(selected))throw new ServiceError('workspace_registration_changed');
+            // Native refuses stdio MCP; a project without an enrolled HTTPS connection is refused here, not probed.
+            if(!selected.http&&!this.connectionEntries(selected)[0].http)throw new ServiceError('http_connection_requires_reviewed_scope');
             const result=await probeMcp(selected,UNIFIED_TOOLS.length,this.runningVersion,this.connectionEntries(selected)[0],
                 message=>publish({phase:'checking',message}));
             publish({phase:'verified',tools:result.tools,checkedAt:Date.now(),handshakeMs:result.handshakeMs,
@@ -1172,7 +1210,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         try{await this.automaticInstall();if(!this.binding&&!this.installationFailed)await early;
             if(!this.disposed)this.startup=this.startup?.failed?this.startup:this.installationFailed?{...this.startup,message:'AIRK startup needs attention. Open Logs for the recorded failure.',failed:true}:undefined;
         }catch(error){if(!this.disposed){this.startup={startedAt,message:String(error),failed:true};this.output.appendLine(String(error));}}
-        finally{if(!this.disposed)this.treeChanges.fire();}
+        finally{if(!this.disposed){this.treeChanges.fire();void this.refreshAgentAlerts();}}
     }
     async openTools():Promise<void>{
         const spec=await this.chooseSpec();if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
@@ -1182,7 +1220,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async showTool(tool:'airk_status'):Promise<void>{
         const spec=await this.chooseSpec();if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
-        const text=await runText(spec.command,[...launchArgs(spec,'tools'),'call',tool,'--args',JSON.stringify({response_mode:this.responseMode()})],path.dirname(spec.command),180000);
+        const text=await nativeText(spec.command,[...launchArgs(spec,'tools'),'call',tool,'--args',JSON.stringify({response_mode:this.responseMode()})],180000);
         this.trusted();this.output.appendLine(JSON.stringify(JSON.parse(text),null,2));this.output.show(true);
     }
     async usage():Promise<void>{
@@ -1526,7 +1564,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(row.serverKey!=='airk'&&preservedImportedHttpServerKey(info,row.serverKey)!==row.serverKey)throw new ServiceError('owned_http_alias_requires_review',false,{connection_id:id});
             const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
             await this.provisionHttpInfo(info,agent==='copilot'?'vscode':agent,check,storage);check();
-            if(!onlyEndpointChanges||row.fields.url!==info.endpoint.url)result=refreshHttpAgentConfig(agent,result,info,String(row.fields.url),row.serverKey);
+            // A credential helper names the runtime image; follow it to the current one.
+            const helper=this.credentialHelper(binding),written=agent==='codex'?row.fields.http_headers_helper:agent==='claude'?row.fields.headersHelper:undefined;
+            const helperStale=typeof written==='string'&&!!helper&&written!==credentialHelperCommand(helper,id);
+            if(!onlyEndpointChanges||row.fields.url!==info.endpoint.url||helperStale)result=refreshHttpAgentConfig(agent,result,info,String(row.fields.url),row.serverKey,undefined,typeof written==='string'?helper:undefined);
             this.migrationHttpConnections.set(id,info);owned=true;
         }
         return {source:result,owned};
@@ -1694,7 +1735,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
         const infos=new Map<string,OwnedPredecessorHttpProof>();
         for(const file of plan.files)for(const removal of file.removals)if(removal.http)infos.set(removal.http.connection_id,removal.http);
-        const keys=this.context.globalState.keys().filter(key=>/^airk\.http\.(?:legacy\.|standalone\.|connection\.)/.test(key));
+        const keys=this.context.globalState.keys().filter(key=>/^airk\.http\.(?:legacy\.|standalone\.|connection\.|union\.)/.test(key));
         if(keys.length>4096)throw new ServiceError('clean_break_http_inventory_bound');
         // Metadata alone supplies no ownership: consult the still-live original
         // native ledger before its control directory is removed.
@@ -2057,7 +2098,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             :scope==='all'?'Adds a marked PATH block to Bash, Zsh and fish startup files.':'Adds a marked PATH block to ~/.profile and the startup files of shells you use.';
         const detail=[`Installs the AIRK ${this.runningVersion} runtime for this user account. The saved storage preference is ${storage}; each new index requires an explicit storage choice.`,
             'Open folders are not registered or indexed automatically. Set up each new index with explicit source and storage locations in Indexing → Index library.',
-            'Indexing continues after editor windows close; login startup is a separate opt-in.',shell,
+            'The service starts at login and stays available after editor windows close. Indexing starts only after explicit index setup.',shell,
             'Existing recognized AIRK agent entries in these projects may be updated.',
             'Hidden files can be indexed: review .airkignore first. AIRK is not a secret scanner.'].join('\n');
         const choice=await vscode.window.showInformationMessage('Set up AIRK on this computer?',{modal:true,detail},'Set up','Customize…','Not now',"Don't set up automatically");
@@ -2159,10 +2200,598 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(this.installationFailed)return;
             await this.refresh();await this.installationComplete(true);
         });
+        void this.refreshAgentAlerts();
     }
     async retryUpdate():Promise<void>{
         await this.settingUp;
         await this.automaticInstall(true,true);await this.refresh();
+    }
+    /** A VSIX installation generation is a host event hint, separate from the
+     * verified native payload. Native receipts serialize and deduplicate it
+     * across windows; explicit reinstall always receives a fresh operation. */
+    private replacementOperationKey(installed:BootstrapObservation,operation?:string):string{return `airk.installOperation.1.${installed.installDir}${operation?'.'+identifier(operation,32):''}`;}
+    private replacementCaptureDirectory(installed:BootstrapObservation):string{
+        const install=process.platform==='win32'?path.toNamespacedPath(installed.installDir).toLowerCase():path.resolve(installed.installDir);
+        return path.join(this.context.globalStorageUri.fsPath,'install-captures',createHash('sha256').update(install).digest('hex'));
+    }
+    private replacementCaptures(installed:BootstrapObservation):{file:string;sha256:string;dev:bigint;ino:bigint;record:ReplacementOperationRecord}[]{
+        const directory=this.replacementCaptureDirectory(installed),result:{file:string;sha256:string;dev:bigint;ino:bigint;record:ReplacementOperationRecord}[]=[];
+        try{
+            for(const parent of [path.dirname(directory),directory]){const stat=lstatSync(parent);if(!stat.isDirectory()||stat.isSymbolicLink()||!same(realpathSync(parent),parent)||process.platform!=='win32'&&(stat.mode&0o077)!==0)throw new ServiceError('installation_capture_directory_unsafe');}
+        }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return result;throw error;}
+        const names=readdirSync(directory).sort();if(names.length>128)throw new ServiceError('installation_capture_inventory_bound');let total=0;
+        for(const name of names){
+            const match=/^([a-f0-9]{64})-[a-f0-9]{32}\.json$/.exec(name);if(!match)throw new ServiceError('installation_capture_name_invalid');
+            const file=path.join(directory,name),stat=lstatSync(file,{bigint:true});
+            if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1n||stat.size>8n*1048576n||(total+=Number(stat.size))>16*1048576||process.platform!=='win32'&&(stat.mode&0o077n)!==0n)throw new ServiceError('installation_capture_file_unsafe');
+            const bytes=readFileSync(file);if(BigInt(bytes.length)!==stat.size)throw new ServiceError('installation_capture_changed');
+            const value=record(JSON.parse(bytes.toString('utf8')));
+            if(value.candidate!==installed.bundle.digest||value.operation!==match[1]||value.generation!==undefined&&(typeof value.generation!=='string'||!/^[a-f0-9]{64}$/.test(value.generation)))throw new ServiceError('installation_operation_pending');
+            if(value.references!==undefined)clientReferences({client_references:value.references});
+            const pending=value as unknown as ReplacementOperationRecord;this.validateReplacementHostArtifacts(pending);
+            result.push({file,sha256:createHash('sha256').update(bytes).digest('hex'),dev:stat.dev,ino:stat.ino,record:pending});
+        }
+        return result;
+    }
+    private async publishReplacementCapture(installed:BootstrapObservation,pending:ReplacementOperationRecord):Promise<void>{
+        const directory=this.replacementCaptureDirectory(installed);
+        for(const parent of [path.dirname(directory),directory]){
+            let created=false;try{await fs.mkdir(parent,{mode:0o700});created=true;}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}this.trusted();
+            const stat=await fs.lstat(parent);this.trusted();if(!stat.isDirectory()||stat.isSymbolicLink()||!same(await fs.realpath(parent),parent)||process.platform!=='win32'&&(stat.mode&0o077)!==0)throw new ServiceError('installation_capture_directory_unsafe');
+            if(created){const guard=await restrictWindowsDirectory(parent,undefined,()=>!this.disposed&&vscode.workspace.isTrusted);guard.assertCurrent();}
+        }
+        const existing=this.replacementCaptures(installed);
+        if(existing.length>=128||existing.reduce((total,value)=>total+Buffer.byteLength(JSON.stringify(value.record)),0)+Buffer.byteLength(JSON.stringify(pending))>16*1048576)throw new ServiceError('installation_capture_inventory_bound');
+        const file=path.join(directory,pending.operation+'-'+randomBytes(16).toString('hex')+'.json'),bytes=JSON.stringify(pending);
+        const handle=await fs.open(file,'wx',0o600);try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}this.trusted();
+    }
+    private replacementRecords(installed:BootstrapObservation):{key:string;record:ReplacementOperationRecord}[]{
+        const base=this.replacementOperationKey(installed),keys=this.context.globalState.keys().filter(key=>key===base||key.startsWith(base+'.')&&/^[a-f0-9]{64}$/.test(key.slice(base.length+1))).sort();
+        // Match the native consumed-operation budget. Never silently discard a proposal.
+        if(keys.length>128)throw new ServiceError('installation_operation_inventory_bound');
+        const records=new Map<string,{key:string;record:ReplacementOperationRecord}>();
+        for(const key of keys){
+            const value=record(this.context.globalState.get(key));
+            if(value.candidate!==installed.bundle.digest||typeof value.operation!=='string'||!/^[a-f0-9]{64}$/.test(value.operation)
+                ||value.generation!==undefined&&(typeof value.generation!=='string'||!/^[a-f0-9]{64}$/.test(value.generation))
+                ||key!==base&&key!==this.replacementOperationKey(installed,value.operation)||Buffer.byteLength(JSON.stringify(value))>8*1048576)throw new ServiceError('installation_operation_pending');
+            if(value.references!==undefined)clientReferences({client_references:value.references});
+            records.set(value.operation,{key,record:value as unknown as ReplacementOperationRecord});
+        }
+        // Immutable per-window captures survive a lost or overwritten hint.
+        for(const capture of this.replacementCaptures(installed))records.set(capture.record.operation,{key:this.replacementOperationKey(installed,capture.record.operation),record:capture.record});
+        return [...records.values()];
+    }
+    private replacementRecord(installed:BootstrapObservation,operation:string):ReplacementOperationRecord|undefined{return this.replacementRecords(installed).find(value=>value.record.operation===operation)?.record;}
+    private async saveReplacementRecord(installed:BootstrapObservation,operation:string,change:Partial<ReplacementOperationRecord>,capture=false):Promise<void>{
+        const current=this.replacementRecord(installed,operation);
+        const next={...current,candidate:installed.bundle.digest,operation,...change};
+        if(Buffer.byteLength(JSON.stringify(next))>8*1048576)throw new ServiceError('installation_host_cleanup_capture_bound');
+        if(next.hostArtifacts)this.validateReplacementHostArtifacts(next);
+        if(capture&&change.hostArtifacts&&!change.hostArtifacts.artifacts.blockers.length)await this.publishReplacementCapture(installed,next);
+        await this.context.globalState.update(this.replacementOperationKey(installed,operation),next);this.trusted();
+    }
+    private async replacementOperation(installed:BootstrapObservation,explicit:boolean):Promise<{operationId?:string;generationId?:string}>{
+        const records=this.replacementRecords(installed);
+        if(records.length){
+            const observed:{record:ReplacementOperationRecord;reason:string;required:boolean}[]=[];let unavailable=false;
+            for(const {record:pending}of records){
+                try{
+                    const plan=await this.runtime().replacementPlan(installed.installDir,pending.operation,pending.generation);this.trusted();
+                    if(typeof plan.reason!=='string'||typeof plan.required!=='boolean')throw new ServiceError('invalid_native_replacement_plan');
+                    if(!['resume_installation_replacement','installation_already_replaced','replace_before_1_9_0','no_installation','same_runtime','ordinary_upgrade'].includes(plan.reason))throw new ServiceError('invalid_native_replacement_plan');
+                    observed.push({record:pending,reason:plan.reason,required:plan.required});
+                }catch{this.trusted();unavailable=true;} // Failure never proves that a competing operation is absent.
+            }
+            const resumed=observed.filter(value=>value.reason==='resume_installation_replacement');
+            if(resumed.length>1)throw new ServiceError('installation_operation_reconciliation_required');
+            const completed=observed.filter(value=>value.reason==='installation_already_replaced').sort((left,right)=>Number(!!right.record.hostArtifacts)-Number(!!left.record.hostArtifacts));
+            const selected=resumed[0]??completed[0]??(!unavailable?observed[0]:undefined);
+            if(!selected)throw new ServiceError('installation_operation_reconciliation_required');
+            // Copy a legacy single-slot record only after a positive native observation.
+            await this.saveReplacementRecord(installed,selected.record.operation,selected.record);
+            return {operationId:selected.record.operation,generationId:selected.record.generation};
+        }
+        const suppliedGeneration=Reflect.get(this.context,Symbol.for('iokaio.airk.installationGeneration'));
+        const generation=suppliedGeneration===undefined&&isManagedExtensionContext(this.context)
+            ?await readInstallationGeneration(this.context.extensionPath,this.runningVersion):suppliedGeneration;
+        this.trusted();
+        const location=process.platform==='win32'?path.toNamespacedPath(installed.installDir).toLowerCase():path.resolve(installed.installDir);
+        const generationId=typeof generation==='string'&&/^\d{1,16}$/.test(generation)&&Number.isSafeInteger(Number(generation))&&Number(generation)>0&&Number(generation)<=8640000000000000
+            ?createHash('sha256').update(JSON.stringify(['airk-vsix-installation/1',location,installed.bundle.digest,generation])).digest('hex'):undefined;
+        const operationId=explicit?randomBytes(32).toString('hex'):generationId;
+        if(operationId)await this.saveReplacementRecord(installed,operationId,{generation:generationId});
+        return {operationId,generationId};
+    }
+    private async completeReplacementOperation(installed:BootstrapObservation,operation:string|undefined):Promise<void>{
+        if(!operation)return;
+        // Another host can admit its proposal after any read-only observation.
+        // Complete only this operation; never erase another owner's journal.
+        const key=this.replacementOperationKey(installed,operation),legacy=this.replacementOperationKey(installed);
+        await this.context.globalState.update(key,undefined);this.trusted();
+        if(this.context.globalState.get<{operation?:string}>(legacy)?.operation===operation)await this.context.globalState.update(legacy,undefined);
+    }
+    /** Through 1.9.0 an actual installation (including the same build) first
+     * completes the owned uninstall. Ordinary window reopening only reconnects. */
+    private async replacePreviousInstallation(installed:BootstrapObservation,operationId?:string,generationId?:string):Promise<'removed'|'replayed'|undefined>{
+        const plan=await this.runtime().replacementPlan(installed.installDir,operationId,generationId);this.trusted();
+        const resumeHostCleanup=async()=>{
+            if(operationId){
+                const captures=this.replacementCaptures(installed).filter(value=>value.record.operation===operationId);
+                for(const capture of captures){
+                    await this.retireReplacedHostArtifacts(installed,capture.record);this.trusted();
+                    const current=readFileSync(capture.file),stat=lstatSync(capture.file,{bigint:true});
+                    if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1n||stat.dev!==capture.dev||stat.ino!==capture.ino||createHash('sha256').update(current).digest('hex')!==capture.sha256)throw new ServiceError('installation_capture_changed');
+                    unlinkSync(capture.file);
+                }
+                if(captures.length)return;
+            }
+            const pending=operationId?this.replacementRecord(installed,operationId):undefined;
+            if(pending?.hostArtifacts)await this.retireReplacedHostArtifacts(installed,pending);
+            else if(pending?.references!==undefined&&this.replacementHostInventoryPresent())throw new ServiceError('installation_host_cleanup_proof_unavailable');
+        };
+        if(plan.required!==true){
+            if(operationId&&plan.reason==='no_installation'){
+                const expected=identifier(plan.expected_predecessor,32),result=await this.runtime().replaceInstallation(installed.installDir,operationId,generationId,expected);this.trusted();
+                if(result.replaced!==false)throw new ServiceError('native_replacement_unconfirmed',false,result);
+                await resumeHostCleanup();return 'replayed';
+            }
+            if(operationId&&plan.reason==='installation_already_replaced'){await resumeHostCleanup();return 'replayed';}
+            return undefined;
+        }
+        const previous=typeof plan.installed_version==='string'?` ${plan.installed_version}`:'';
+        // Capture before anything is removed (one-airk.md §10.3 steps 1-2): every
+        // AIRK agent entry that names an executable in the removed folders, or
+        // the old endpoint, with exact file and entry digests.
+        const references=clientReferences(plan);
+        const ledger=references?await this.captureReplacementClients(installed,references):undefined;this.trusted();
+        let expectedPredecessor=identifier(plan.expected_predecessor,32);
+        if(operationId){
+            const pending=this.replacementRecord(installed,operationId);
+            if(pending?.hostArtifacts){
+                if(!pending.expectedPredecessor||pending.expectedPredecessor!==expectedPredecessor)throw new ServiceError('replacement_predecessor_changed');
+                expectedPredecessor=pending.expectedPredecessor;
+            }
+            // A resumed native operation has already removed some predecessor
+            // files. Only its saved preimages can authorize remaining cleanup.
+            const hostArtifacts=plan.reason==='resume_installation_replacement'?pending?.hostArtifacts:await this.captureReplacementHostArtifacts(installed,references);
+            if(!hostArtifacts&&this.replacementHostInventoryPresent())throw new ServiceError('installation_host_cleanup_proof_unavailable');
+            await this.saveReplacementRecord(installed,operationId,{generation:generationId,expectedPredecessor,references:plan.client_references,...(hostArtifacts?{hostArtifacts}:{})},plan.reason!=='resume_installation_replacement');
+            if(hostArtifacts?.artifacts.blockers.length)throw new ServiceError('installation_host_cleanup_capture_incomplete',false,{blockers:hostArtifacts.artifacts.blockers});
+        }
+        this.reportInstall(`Removing the previous AIRK${previous} installation. Installations through 1.9.0 require a full uninstall first, including the same build. Indexes are created only when you add them in Indexing. Source folders are not changed.`);
+        // Release this window's own handles on the old folders before they move.
+        this.closeHttpEndpointWatcher();this.console.reset();this.binding=undefined;this.specs=[];
+        const result=await this.runtime().replaceInstallation(installed.installDir,operationId,generationId,expectedPredecessor);this.trusted();
+        if(result.replaced===false){await resumeHostCleanup();return 'replayed';}
+        for(const raw of Array.isArray(result.removed)?result.removed:[])this.output.appendLine(`Removed ${String(raw)}`);
+        for(const raw of Array.isArray(result.residue)?result.residue:[])this.output.appendLine(`Uninstall incomplete: ${String(raw)}`);
+        if(Array.isArray(result.residue)&&result.residue.length)throw new ServiceError('installation_cleanup_incomplete',false,result);
+        await resumeHostCleanup();
+        if(typeof result.agents==='string')this.output.appendLine(result.agents);
+        if(ledger?.entries.length){
+            this.output.appendLine(`${ledger.entries.length} AIRK agent entr${ledger.entries.length===1?'y':'ies'} used the removed installation. AIRK recorded them for Reconnect (status: awaiting Reconnect):`);
+            for(const entry of ledger.entries)this.output.appendLine(`  ${AGENT_CONFIG_LABELS[entry.agent]} ${entry.destination} › ${entry.serverKey}${entry.root?` (project ${entry.root})`:''}`);
+        }else if(typeof result.agents!=='string')this.output.appendLine('No matching AIRK agent entries were captured in the checked configuration files. Review any remaining connection warnings in Management → Agents.');
+        for(const blocker of ledger?.blockers??[])this.output.appendLine(`Could not check ${blocker.destination} for AIRK agent entries (${blocker.code}); review it manually.`);
+        return 'removed';
+    }
+    /** After Management's upgrade/rollback/resume: rewrite owned helper entries to the selected image through the
+     * same exact-preimage refresh the service-restart path uses. Setup does this in migrateAgentConnections before
+     * retire-previous. A failure is reported; it never undoes the native transition. */
+    private async refreshHelpersAfterTransition():Promise<void>{
+        try{
+            const observed=await this.runtime().discover();this.trusted();
+            if(!observed.inspection)return;
+            const selected=this.runtime().binding(observed.inspection,observed.installDir);
+            if(selected.version!==this.runningVersion){this.output.appendLine(`AIRK agent credential helpers were not refreshed: the selected runtime ${selected.version} does not match this window (${this.runningVersion}). Reload the window, then check Management → Agents.`);return;}
+            await this.refreshHttpConfigurationFiles(selected);
+        }catch(error){this.installationWarnings=true;this.output.appendLine('AIRK agent credential helpers were not refreshed after the runtime change: '+String(error));void this.refreshAgentAlerts();}
+    }
+    private observeUserLauncher(observation:BootstrapObservation):void{
+        const directory=record(observation.location?.user_paths??{}).launcher;
+        if(typeof directory==='string'&&path.isAbsolute(directory))this.userLauncherDirectory=directory;
+    }
+    private reconnectLedger():ReconnectLedger|undefined{
+        const value=this.context.globalState.get<unknown>(RECONNECT_LEDGER_KEY);if(value===undefined)return undefined;
+        try{return validateReconnectLedger(value);}catch(error){this.output.appendLine('AIRK reconnect record is unreadable and was ignored: '+String(error));return undefined;}
+    }
+    /** AIRK launcher images of this user: the universal launcher folder native discovery reports, and ledger captures. */
+    private verifiedAgentLaunchers():string[]{
+        const universal=this.userLauncherDirectory?[path.join(this.userLauncherDirectory,process.platform==='win32'?'airk-launcher.exe':'airk-launcher')]:[];
+        return [...new Set([...universal,...ledgerLaunchers(this.reconnectLedger())])].slice(0,256);
+    }
+    /** The one-shot native credential command, when its paths can be written safely into a client shell command. */
+    private credentialHelper(binding:RuntimeBinding):HttpCredentialHelper|undefined{
+        const helper={executable:binding.executable,installDir:binding.installDir};
+        try{credentialHelperCommand(helper,'0'.repeat(32));return helper;}catch{return undefined;}
+    }
+    /** Recognition evidence for one configuration file: verified launchers, dead connection IDs and the helper. */
+    async migrationRecognition(agent:LocalAgent,source:string|undefined):Promise<MigrationRecognition>{
+        this.trusted();const binding=this.binding,stale=new Set<string>();
+        if(binding&&source!==undefined&&['codex','claude','copilot'].includes(agent)){
+            let rows:ReturnType<typeof globalConfigDeclarations>=[];try{rows=globalConfigDeclarations(parserAgent(agent),source);}catch{rows=[];}
+            for(const row of rows.slice(0,64)){
+                const id=httpConfigurationConnectionId(agent,row.fields);if(!id)continue;
+                try{const lookup=await this.lookupHttpOwnership(binding,id);this.trusted();if(lookup.status==='not_owned')stale.add(id);}catch(error){if(error instanceof ServiceError&&error.code==='workspace_untrusted')throw error;}
+            }
+        }
+        const helper=binding?this.credentialHelper(binding):undefined;
+        return {verifiedLaunchers:this.verifiedAgentLaunchers(),...(stale.size?{staleHttpIds:stale}:{}),...(helper?{helper}:{})};
+    }
+    /** Project folders whose agent files a capture or check reads: open folders, remembered registrations and recorded roots. */
+    private agentProjectRoots(extra:readonly string[]=[]):string[]{
+        const binding=this.binding,roots:string[]=[];
+        const add=(root:string|undefined)=>{if(root&&path.isAbsolute(root)&&!roots.some(known=>samePath(known,root))&&roots.length<64)roots.push(root);};
+        for(const folder of this.folders())add(folder.uri.fsPath);
+        if(binding){try{for(const root of this.workspace.rememberedRoots(binding))add(root);}catch{/* No saved registrations. */}}
+        extra.forEach(add);return roots;
+    }
+    private async projectAgentFiles(roots:readonly string[],check:()=>void):Promise<{files:ReconnectSourceFile[];blockers:{destination:string;code:string}[]}>{
+        const files:ReconnectSourceFile[]=[],blockers:{destination:string;code:string}[]=[];
+        for(const root of roots)for(const [agent,parts]of Object.entries(localAgentLocations)){
+            const destination=path.join(root,...parts);
+            try{const source=await readJsonConfig(destination);check();if(source!==undefined)files.push({agent:agent as LocalAgent,scope:'project',destination,source});}
+            catch(error){check();const code=(error as NodeJS.ErrnoException).code;if(code!=='ENOENT'&&code!=='ENOTDIR')blockers.push({destination,code:'configuration_unreadable'});}
+        }
+        return {files,blockers};
+    }
+    private async captureReplacementClients(installed:BootstrapObservation,references:ClientReferences):Promise<ReconnectLedger>{
+        const generation=this.generation,check=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        this.observeUserLauncher(installed);
+        const inventory=await inventoryGlobalAgentConfigs({home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check});check();
+        const user:ReconnectSourceFile[]=inventory.files.map(file=>({agent:file.agent,scope:'user',destination:file.destination,source:file.source}));
+        // User-level declarations can name the projects they served.
+        const recorded=user.flatMap(file=>{try{return globalConfigDeclarations(parserAgent(file.agent),file.source).flatMap(row=>{const root=recordedRoot(row.fields);return root?[root]:[];});}catch{return [];}});
+        const project=await this.projectAgentFiles(this.agentProjectRoots(recorded),check);
+        // Discovery proves this user's launcher location even when an earlier
+        // install already removed its image. File existence is not a complete
+        // inventory of historical client declarations.
+        const historical={...references,executables:[...new Set([...references.executables,...this.verifiedAgentLaunchers()])]};
+        const ledger=mergeReconnectLedgers(this.reconnectLedger(),captureReconnectLedger([...project.files,...user],historical,installed.installDir,Date.now()));
+        ledger.blockers.push(...project.blockers,...inventory.blockers.map(item=>({destination:item.destination??this.context.globalStorageUri.fsPath,code:item.code})));
+        validateReconnectLedger(ledger);
+        await this.context.globalState.update(RECONNECT_LEDGER_KEY,ledger);check();
+        return ledger;
+    }
+    private replacementHostInventoryPresent():boolean{
+        if(this.context.globalState.keys().some(key=>/^airk\.http\.(?:legacy|standalone|connection|union)\./.test(key)))return true;
+        let present=false;this.context.environmentVariableCollection.forEach?.(name=>{if(/^AIRK_MCP_TOKEN_[A-F0-9]{32}$/.test(name)||['CODEX_CA_CERTIFICATE','NODE_EXTRA_CA_CERTS'].includes(name))present=true;});
+        if(present||this.ownedHttpTrustBundles.size)return true;
+        try{return readdirSync(path.join(this.context.globalStorageUri.fsPath,'http-trust')).length>0;}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT';}
+    }
+    /** Capture native disposal authority and host preimages before native removes
+     * the predecessor control directory. Opaque connection IDs are not authority. */
+    private async captureReplacementHostArtifacts(installed:BootstrapObservation,references:ClientReferences|undefined):Promise<ReplacementOperationRecord['hostArtifacts']>{
+        if(!installed.inspection){if(this.replacementHostInventoryPresent())throw new ServiceError('installation_host_cleanup_proof_unavailable');return;}
+        const binding=this.runtime().binding(installed.inspection,installed.installDir),check=()=>this.trusted();
+        const lookups=new Map<string,PredecessorHttpLookup>();let snapshot:PredecessorHttpSnapshot|undefined;
+        const scope={predecessor:binding.runtimeSha256,controlDir:binding.controlDir};
+        const artifacts=await this.captureCleanBreakHostArtifacts(binding,{schema:1,installDir:installed.installDir,files:[],blockers:[]},check,async id=>{
+            const cached=lookups.get(id);if(cached)return cached;
+            if(lookups.size>=4096)throw new ServiceError('installation_host_cleanup_lookup_bound');
+            const lookup=validatePredecessorHttpLookup(await this.runtime().lookupPredecessorHttpOwnership(binding,id,scope),binding.runtimeSha256,id,scope);check();
+            if(snapshot&&!isDeepStrictEqual(snapshot,lookup.snapshot))throw new ServiceError('installation_host_cleanup_snapshot_changed');
+            snapshot=lookup.snapshot;lookups.set(id,lookup);return lookup;
+        });check();
+        if(snapshot&&references&&(references.httpEndpoint!==null&&snapshot.endpoint?.url!==references.httpEndpoint||references.caSha256!==null&&snapshot.endpoint?.ca_sha256!==references.caSha256))throw new ServiceError('installation_host_cleanup_scope_changed');
+        const proofs=[...lookups.values()].flatMap(lookup=>{const proof=predecessorHttpProof(lookup);return proof?[proof]:[];});
+        return {predecessor:binding.runtimeSha256,controlDir:binding.controlDir,snapshot,proofs,artifacts};
+    }
+    private validateReplacementHostArtifacts(pending:ReplacementOperationRecord):NonNullable<ReplacementOperationRecord['hostArtifacts']>{
+        const captured=pending.hostArtifacts;if(!captured)throw new ServiceError('installation_host_cleanup_proof_unavailable');
+        if(typeof pending.expectedPredecessor!=='string'||!/^[a-f0-9]{64}$/.test(pending.expectedPredecessor))throw new ServiceError('installation_host_cleanup_predecessor_unconfirmed');
+        identifier(captured.predecessor,32);if(typeof captured.controlDir!=='string'||!path.isAbsolute(captured.controlDir)||!Array.isArray(captured.proofs)||captured.proofs.length>128)throw new ServiceError('installation_host_cleanup_invalid');
+        const snapshot=captured.snapshot?validatePredecessorHttpSnapshot(captured.snapshot,{predecessor:captured.predecessor,controlDir:captured.controlDir}):undefined;
+        const ids=new Set<string>();for(const raw of captured.proofs){
+            const proof=validateOwnedPredecessorHttpProof(raw);
+            if(!snapshot||ids.has(proof.connection_id))throw new ServiceError('installation_host_cleanup_invalid');ids.add(proof.connection_id);
+            validatePredecessorHttpLookup({...proof,snapshot},captured.predecessor,proof.connection_id,{predecessor:captured.predecessor,controlDir:captured.controlDir});
+        }
+        const artifacts=captured.artifacts,hash=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+        if(!artifacts||!Array.isArray(artifacts.mementos)||artifacts.mementos.length>4096||!Array.isArray(artifacts.environment)||artifacts.environment.length>4096||!Array.isArray(artifacts.bundles)||artifacts.bundles.length>1024||!Array.isArray(artifacts.blockers)||artifacts.blockers.length>8192||artifacts.blockers.some(value=>typeof value!=='string'||value.length>8192))throw new ServiceError('installation_host_cleanup_invalid');
+        const owned=(item:{namespace:string;installation:string})=>captured.proofs.some(proof=>proof.namespace===item.namespace&&proof.endpoint.installation===item.installation);
+        for(const item of artifacts.mementos)if(typeof item.key!=='string'||!/^airk\.http\.(?:legacy|standalone|connection|union)\./.test(item.key)||!hash(item.sha256)||!captured.proofs.length)throw new ServiceError('installation_host_cleanup_invalid');
+        for(const item of artifacts.environment)if(!/^AIRK_MCP_TOKEN_[A-F0-9]{32}$/.test(item.name)&&!['CODEX_CA_CERTIFICATE','NODE_EXTRA_CA_CERTS'].includes(item.name)||item.type!==vscode.EnvironmentVariableMutatorType.Replace||!hash(item.sha256)||!owned(item))throw new ServiceError('installation_host_cleanup_invalid');
+        const trust=path.join(this.context.globalStorageUri.fsPath,'http-trust');
+        for(const item of artifacts.bundles)if(typeof item.file!=='string'||!path.isAbsolute(item.file)||!same(path.dirname(item.file),trust)||!hash(item.sha256)||!/^\d+$/.test(item.dev)||!/^\d+$/.test(item.ino)||!Number.isSafeInteger(item.size)||item.size<0||item.size>2097152||!owned(item))throw new ServiceError('installation_host_cleanup_invalid');
+        if(pending.hostCleanup){
+            const outcome=pending.hostCleanup,identities=new Set([...artifacts.mementos.map(item=>'memento:'+item.key),...artifacts.environment.map(item=>'environment:'+item.name),...artifacts.bundles.map(item=>item.file)]);
+            if(typeof outcome.complete!=='boolean'||![outcome.removed,outcome.retained,outcome.blockers].every(values=>Array.isArray(values)&&values.length<=16384&&values.every(value=>typeof value==='string'&&value.length<=16384))||outcome.removed.some(value=>!identities.has(value)))throw new ServiceError('installation_host_cleanup_invalid');
+        }
+        return captured;
+    }
+    /** Retire only captured, native-owned preimages. A refusal preserves this
+     * operation and its complete cleanup outcome for an exact retry. */
+    private async retireReplacedHostArtifacts(installed:BootstrapObservation,pending:ReplacementOperationRecord):Promise<void>{
+        const captured=this.validateReplacementHostArtifacts(pending),proof=captured.artifacts,collection=this.context.environmentVariableCollection;
+        const result={complete:false,removed:[...new Set(pending.hostCleanup?.removed??[])],retained:[] as string[],blockers:[...proof.blockers]},digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
+        for(const key of this.context.globalState.keys())if(/^airk\.http\.(?:legacy|standalone|connection|union)\./.test(key)&&!proof.mementos.some(item=>item.key===key))result.retained.push('memento:'+key);
+        collection.forEach?.(name=>{if((/^AIRK_MCP_TOKEN_[A-F0-9]{32}$/.test(name)||['CODEX_CA_CERTIFICATE','NODE_EXTRA_CA_CERTS'].includes(name))&&!proof.environment.some(item=>item.name===name))result.retained.push('environment:'+name);});
+        // This selector receives only independently proven predecessor rows;
+        // global HTTP key names never establish ownership.
+        const eligible=replacedHostArtifacts({mementoKeys:proof.mementos.map(item=>item.key),environment:proof.environment.flatMap(item=>{const current=collection.get(item.name);return current?[{name:item.name,replace:current.type===vscode.EnvironmentVariableMutatorType.Replace,value:current.value}]:[];}),bundles:proof.bundles.map(item=>({file:item.file,certificates:captured.snapshot?.endpoint?[captured.snapshot.endpoint.ca_sha256]:[]}))},{executables:[],httpEndpoint:captured.snapshot?.endpoint?.url??null,caSha256:captured.snapshot?.endpoint?.ca_sha256??null},path.join(this.context.globalStorageUri.fsPath,'http-trust'));
+        const failed=(identity:string,error:unknown)=>{result.retained.push(identity);result.blockers.push((identity+': '+String(error)).slice(0,16384));};
+        for(const item of proof.mementos){
+            const identity='memento:'+item.key,current=this.context.globalState.get<unknown>(item.key);this.trusted();if(current===undefined)continue;
+            try{
+                if(!eligible.mementos.includes(item.key)||digest(JSON.stringify(current))!==item.sha256)throw new ServiceError('installation_host_memento_changed');
+                const value=typeof current==='string'?current:record(current).connection_id;
+                if(!captured.proofs.some(owner=>owner.connection_id===value))throw new ServiceError('installation_host_memento_owner_changed');
+                await this.context.globalState.update(item.key,undefined);this.trusted();result.removed.push(identity);
+            }catch(error){this.trusted();failed(identity,error);}
+        }
+        for(const item of proof.environment){
+            const identity='environment:'+item.name,current=collection.get(item.name);this.trusted();if(!current)continue;
+            try{
+                const reference=this.ownedHttpTrustReferences.get(item.name);
+                if(!eligible.environment.includes(item.name)||reference&&(reference.namespace!==item.namespace||reference.installation!==item.installation)||current.type!==item.type||digest(current.value)!==item.sha256)throw new ServiceError('installation_host_environment_changed');
+                if(item.name.startsWith('AIRK_MCP_TOKEN_')&&!captured.proofs.some(owner=>owner.connection_id===item.name.slice(15).toLowerCase()&&owner.credential_sha256===item.sha256))throw new ServiceError('installation_host_environment_owner_changed');
+                collection.delete(item.name);this.ownedHttpTrustReferences.delete(item.name);result.removed.push(identity);
+            }catch(error){this.trusted();failed(identity,error);}
+        }
+        for(const item of proof.bundles){
+            this.trusted();try{
+                if(!eligible.bundles.includes(item.file))throw new ServiceError('installation_host_trust_owner_unconfirmed');
+                if([...this.ownedHttpTrustReferences].some(([name,reference])=>same(reference.file,item.file)&&(reference.namespace!==item.namespace||reference.installation!==item.installation)&&collection.get(name)?.value===item.file))throw new ServiceError('installation_host_trust_shared');
+                const stat=await fs.lstat(item.file,{bigint:true}).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;});this.trusted();if(!stat)continue;
+                const bytes=await httpPublicTrustFile(item.file);this.trusted();
+                if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1n||stat.dev.toString()!==item.dev||stat.ino.toString()!==item.ino||stat.size!==BigInt(item.size)||digest(bytes)!==item.sha256)throw new ServiceError('installation_host_trust_changed');
+                const final=lstatSync(item.file,{bigint:true});
+                if(!same(realpathSync(item.file),item.file)||!final.isFile()||final.isSymbolicLink()||final.nlink!==1n||final.dev.toString()!==item.dev||final.ino.toString()!==item.ino||final.size!==BigInt(item.size)||digest(readFileSync(item.file))!==item.sha256)throw new ServiceError('installation_host_trust_changed');
+                unlinkSync(item.file);this.ownedHttpTrustBundles.delete(item.file);result.removed.push(item.file);
+            }catch(error){this.trusted();failed(item.file,error);}
+        }
+        try{result.blockers.push(...await this.censusPredecessorTrustCopies(proof.bundles,()=>this.trusted(),async()=>{if(!captured.snapshot)throw new ServiceError('installation_host_cleanup_snapshot_unavailable');return captured.snapshot;}));this.trusted();}
+        catch(error){this.trusted();result.blockers.push(('installation_host_cleanup_census_incomplete: '+String(error)).slice(0,16384));}
+        result.complete=result.blockers.length===0;
+        await this.saveReplacementRecord(installed,pending.operation,{hostArtifacts:captured,hostCleanup:result});
+        for(const owner of captured.proofs){const info=this.migrationHttpConnections.get(owner.connection_id);if(info&&info.endpoint.namespace===owner.namespace&&info.endpoint.installation===owner.endpoint.installation)this.migrationHttpConnections.delete(owner.connection_id);}
+        this.output.appendLine("Retired the removed installation's VS Code trust records: "+result.removed.filter(value=>value.startsWith('memento:')).length+' saved connection record(s), '+result.removed.filter(value=>value.startsWith('environment:')).length+' terminal variable(s), '+result.removed.filter(value=>!value.startsWith('memento:')&&!value.startsWith('environment:')).length+' trust bundle(s).');
+        for(const blocker of result.blockers)this.output.appendLine('Host cleanup incomplete; retained '+blocker);
+        if(result.retained.length)this.output.appendLine('Retained '+result.retained.length+' host artifact(s) whose predecessor ownership or unchanged preimage was not confirmed; see the saved operation cleanup outcome.');
+        if(!result.complete)throw new ServiceError('installation_host_cleanup_incomplete',false,result);
+    }
+    /** Native observations for HTTPS entries; every call is a bounded read. */
+    private agentHealthHttp(binding:RuntimeBinding,check:()=>void):AgentHealthHttp{
+        const endpointUrl=[...this.migrationHttpConnections.values()][0]?.endpoint.url??this.currentCatalogScope()?.spec.http?.endpoint.url;
+        return {...(endpointUrl?{endpointUrl}:{}),
+            lookup:async(id:string):Promise<HttpOwnership>=>{
+                const lookup=await this.lookupHttpOwnership(binding,id);check();
+                if(lookup.status==='not_owned')return {status:'not_owned'};
+                if(lookup.status!=='owned')return {status:'unavailable'};
+                try{return {status:'owned',url:validateHttpConnection(lookup.connection,undefined,path.join(binding.controlDir,'http-1')).endpoint.url};}catch{return {status:'unavailable'};}
+            },
+            issuerTrusted:async()=>{const observed=await this.runtime().httpTrust(binding,'inspect');check();return observed.outcome==='unsupported'?undefined:observed.trusted===true;}};
+    }
+    private async observeAgentHealth(check:()=>void):Promise<Required<AgentConfigHealth>>{
+        const binding=this.binding,ledger=this.reconnectLedger();
+        const inventory=await inventoryGlobalAgentConfigs({home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check});check();
+        const recorded=(ledger?.entries??[]).flatMap(entry=>entry.root?[entry.root]:[]);
+        return checkAgentConnections(this.agentProjectRoots(recorded),{check,verifiedLaunchers:this.verifiedAgentLaunchers(),ledger,userFiles:inventory.files,...(binding?{http:this.agentHealthHttp(binding,check)}:{})});
+    }
+    /** Host health for one project (Management › Agents): the same classifier with native observations. */
+    async agentConfigHealth(root:string,check:()=>void):Promise<AgentConfigHealth>{
+        const binding=this.binding;
+        return checkAgentConnections([root],{check,verifiedLaunchers:this.verifiedAgentLaunchers(),ledger:this.reconnectLedger(),ledgerRoots:false,...(binding?{http:this.agentHealthHttp(binding,check)}:{})});
+    }
+    agentConfigAlerts():AgentConfigAlerts|undefined{return this.agentAlerts;}
+    /** Re-check agent configuration and surface findings once per digest. Read-only. */
+    refreshAgentAlerts(notify=true):Promise<void>{
+        if(this.agentHealthRun)return this.agentHealthRun;
+        const run=(async()=>{
+            if(this.disposed||!vscode.workspace.isTrusted||!nativeExecutionAllowed()||this.extensionUpdate)return;
+            const generation=this.generation,check=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+            try{const health=await this.observeAgentHealth(check);await this.publishAgentAlerts(health,notify);}
+            catch(error){if(!this.disposed)this.output.appendLine('AIRK agent configuration check did not finish: '+String(error));}
+        })().finally(()=>{if(this.agentHealthRun===run)this.agentHealthRun=undefined;});
+        this.agentHealthRun=run;return run;
+    }
+    private async publishAgentAlerts(health:Required<AgentConfigHealth>,notify:boolean,results?:AgentReconnectResult[]):Promise<void>{
+        if(this.disposed)return;
+        const findings=health.findings.filter(finding=>finding.problem!=='unreadable');
+        if(!findings.length&&!results?.length){
+            const had=!!this.agentAlerts;this.agentAlerts=undefined;this.agentStatus?.hide?.();if(had)this.treeChanges.fire();return;
+        }
+        this.agentAlerts={digest:health.digest,checkedAt:Date.now(),findings:findings.slice(0,32),total:findings.length,...(this.reconnectingAgents?{reconnecting:true}:{}),...(results?.length?{results:results.slice(0,64)}:{})};
+        this.treeChanges.fire();
+        if(!findings.length){this.agentStatus?.hide?.();return;}
+        if(!this.agentStatus){this.agentStatus=vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left,39);this.context.subscriptions.push(this.agentStatus);}
+        this.agentStatus.text='$(warning) AIRK: agents need Reconnect';this.agentStatus.command='airk.reconnectAgents';
+        this.agentStatus.tooltip=`${findings.length} AIRK agent entr${findings.length===1?'y':'ies'} cannot reach AIRK. Click to review and reconnect.`;this.agentStatus.show();
+        const key='airk.agentHealth.notified.1';
+        if(!notify||this.context.globalState.get<string>(key)===health.digest)return;
+        await this.context.globalState.update(key,health.digest);
+        const agents=[...new Set(findings.map(finding=>finding.label))].join(', ');
+        const generation=this.generation;
+        void vscode.window.showWarningMessage(`${agents} ${findings.length===1?'has an AIRK entry that':'have AIRK entries that'} can no longer connect. Reconnect rewrites ${findings.length===1?'it':'them'} to the current HTTPS connection after you confirm.`,'Reconnect','Show details').then(async action=>{
+            if(this.disposed||generation!==this.generation)return;
+            if(action==='Reconnect')await vscode.commands.executeCommand('airk.reconnectAgents');
+            else if(action==='Show details')await this.showManagement('#manage/agents');
+        }).then(undefined,error=>this.output.appendLine('AIRK Reconnect action failed: '+String(error)));
+    }
+    /** One confirmation, then per recorded folder: select an existing reviewed index, enroll HTTPS and rewrite each entry in place. */
+    async reconnectAgents():Promise<void>{
+        this.trusted();if(this.reconnectingAgents)return;
+        const generation=this.generation,check=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const health=await this.observeAgentHealth(check);
+        const broken=health.entries.filter(entry=>entry.status!=='ok');
+        if(!broken.length){await this.publishAgentAlerts(health,false);void vscode.window.showInformationMessage('No AIRK agent entries need Reconnect.');return;}
+        const located=broken.map(entry=>({...entry,root:entry.root??(entry.scope==='project'?this.projectRootOf(entry):undefined)}));
+        const groups=reconnectGroups(located);
+        // Read-only planning before the confirmation. Reconnect never creates an index.
+        const plans=new Map<string,ReconnectIndexPlan>();
+        for(const group of groups){
+            if(!group.root||!group.entries.some(entry=>reconnectNeedsIndex(entry)))continue;
+            plans.set(group.root,await this.planReconnectIndex(group.root,check));check();
+        }
+        const describe=(root:string|undefined)=>{
+            const plan=root?plans.get(root):undefined;
+            if(!plan)return '';
+            if(plan.kind==='scope')return '  Uses only the matching index in this window’s reviewed search scope.';
+            if(plan.kind==='existing')return `  Grants this window access to the existing index ${plan.name} and makes it this window’s search scope.`;
+            return `  Cannot reconnect this folder: ${plan.detail}`;
+        };
+        const detail=[...groups.map(group=>[group.root??'No recorded project folder',describe(group.root),
+            ...group.entries.map(entry=>`  ${reconnectNeedsIndex(entry)&&plans.get(group.root??'')?.kind==='failed'?'Leaves unchanged':'Updates'} ${AGENT_CONFIG_LABELS[entry.agent]}: ${entry.file} › ${entry.serverKey} (${entry.status.split('_').join(' ')})`)].filter(Boolean).join('\n')),
+            'Eligible entries are rewritten in place to a new local HTTPS connection; other servers, comments, disabled states and tool policies are kept, and issuer trust and credential delivery are set up. An entry without an existing index or edited since this check is left unchanged. Running agents must reconnect themselves.'].join('\n\n');
+        if(await vscode.window.showWarningMessage('Reconnect coding agents to AIRK?',{modal:true,detail},'Reconnect')!=='Reconnect')return;
+        check();this.reconnectingAgents=true;await this.publishAgentAlerts(health,false);
+        const results:AgentReconnectResult[]=[],outcomes:{entry:AgentConfigEntry;result:AgentReconnectResult}[]=[];
+        try{
+            let trustReviewed=false;
+            for(const group of groups){
+                const plan=group.root?plans.get(group.root):undefined;
+                const prepared=plan?await this.prepareReconnectIndex(group.root!,plan,check):undefined;
+                for(const entry of group.entries){
+                    const result=await this.reconnectEntry(entry,group.root,prepared,check,()=>{const first=!trustReviewed;trustReviewed=true;return first;});
+                    results.push(result);outcomes.push({entry,result});this.output.appendLine(`AIRK Reconnect ${result.status}: ${result.label} ${result.file} › ${result.serverKey}${result.detail?` — ${result.detail}`:''}${result.hostAction?` ${result.hostAction}`:''}`);
+                }
+            }
+        }finally{
+            // A later folder's cancellation must not erase receipts for entries
+            // whose configuration write already completed.
+            try{if(outcomes.length)await this.recordReconnectResults(outcomes);}
+            finally{this.reconnectingAgents=false;}
+        }
+        const fresh=await this.observeAgentHealth(check).catch(()=>health);
+        await this.publishAgentAlerts(fresh,false,results);
+        const waiting=results.filter(result=>result.status==='awaiting_host_reconnect').length,blocked=results.length-waiting-results.filter(result=>result.status==='complete').length;
+        void vscode.window.showInformationMessage(`AIRK Reconnect: ${waiting} entr${waiting===1?'y':'ies'} rewritten; each agent must reconnect (see AIRK output).${blocked?` ${blocked} need attention.`:''}`,'Show details').then(action=>{if(action==='Show details')void this.showManagement('#manage/agents');});
+    }
+    private projectRootOf(entry:AgentConfigEntry):string|undefined{
+        const parts=localAgentLocations[entry.agent];return parts?path.resolve(entry.file,...parts.map(()=>'..')):undefined;
+    }
+    private async recordReconnectResults(outcomes:readonly {entry:AgentConfigEntry;result:AgentReconnectResult}[]):Promise<void>{
+        const ledger=this.reconnectLedger();if(!ledger)return;
+        for(const {entry,result}of outcomes){
+            const recorded=ledgerEntryFor(ledger,{destination:entry.file,containerPath:entry.containerPath,serverKey:entry.serverKey,fields:entry.fields});
+            if(recorded){recorded.status=result.status as ReconnectStatus;recorded.detail=result.detail?.slice(0,2048);}
+        }
+        await this.context.globalState.update(RECONNECT_LEDGER_KEY,validateReconnectLedger(ledger));
+    }
+    /** The exact reviewed native member for this folder. A combined spec's root
+     * is only a display origin; enrollment carries an explicit singleton subset. */
+    private reconnectScope(root:string,indexId?:string):LaunchSpec|undefined{
+        const active=this.currentCatalogScope();if(!active)return undefined;
+        const selection=active.selection,combined='indexes' in selection;
+        if(combined?!isDeepStrictEqual(active.spec.combinedSession,selection.session):!isDeepStrictEqual(active.spec.catalogSession,selection.session))return undefined;
+        const indexes=combined?selection.indexes:[selection.index];
+        const matches=indexes.filter(index=>(indexId===undefined||index.id===indexId)&&samePath(index.backing.root,root));
+        if(matches.length!==1)return undefined;
+        const index=matches[0],backing=index.backing;
+        const spec:LaunchSpec={...active.spec,root:backing.root,dataDir:backing.data_root,collection:backing.collection,name:index.name,http:undefined,
+            service:{...active.spec.service!,project:backing.binding}};
+        return combined?{...spec,combinedSession:{...selection.session,index_ids:[index.id]}}:spec;
+    }
+    /** Read-only: a reviewed current member or an existing complete index. No
+     * workspace or retired agent declaration authorizes creating an index. */
+    private async planReconnectIndex(root:string,check:()=>void):Promise<ReconnectIndexPlan>{
+        try{
+            const spec=this.reconnectScope(root);if(spec)return {kind:'scope',spec};
+            // Plain catalog reads only. The window context read, which can save this window's
+            // context key and calls catalogHostContext, waits for the confirmation (prepareReconnectIndex).
+            const controller=this.console.controller;let after:unknown=null;const seen=new Set<string>(),matches=new Map<string,string>();
+            for(let turn=0;turn<16;turn++){
+                const response=await controller.catalogRead({catalog_page:{request:{kind:'indexes',index_id:null,project_id:null,after,expected_catalog_revision:null,limit:16,max_bytes:48*1024}}});check();
+                for(const row of catalogItems(response)){
+                    const index=catalogObject(row.value),backing=index.backing===undefined?undefined:catalogObject(index.backing);
+                    if(row.kind==='index'&&index.tombstone===false&&index.source_import==='complete'&&backing&&typeof backing.root==='string'&&samePath(backing.root,root))matches.set(catalogId(index.id,'idx_'),String(index.name??index.id));
+                }
+                after=catalogObject(response.page).continuation;if(after===null)break;
+                const token=JSON.stringify(after);if(seen.has(token))throw new ServiceError('reconnect_index_inventory_incomplete');seen.add(token);
+            }
+            if(after!==null)throw new ServiceError('reconnect_index_inventory_incomplete');
+            if(matches.size===1){const [indexId,name]=[...matches][0];return {kind:'existing',indexId,name};}
+            return {kind:'failed',stage:'index_lookup',code:matches.size?'reconnect_index_selection_required':'reconnect_index_required',
+                detail:matches.size?`More than one index serves ${root}. Choose the intended index in Indexing → Search scope, apply it, then choose Reconnect again.`:
+                    `No existing AIRK index serves ${root}. Create an index explicitly in Indexing → Index library, then choose Reconnect again. Reconnect does not create indexes.`};
+        }catch(error){check();return reconnectFailure('index_lookup',error);}
+    }
+    /**
+     * After the confirmation: the existing index's search-scope grant path
+     * (grant draft, apply, use). Native mutations can finish before a later
+     * validation fails; their receipts remain authoritative and are not replayed.
+     */
+    private async prepareReconnectIndex(root:string,plan:ReconnectIndexPlan,check:()=>void):Promise<{spec?:LaunchSpec;failure?:Extract<ReconnectIndexPlan,{kind:'failed'}>}>{
+        if(plan.kind==='failed')return {failure:plan};
+        if(plan.kind==='scope'){
+            const spec=this.reconnectScope(root);
+            return spec&&isDeepStrictEqual(spec.catalogSession,plan.spec.catalogSession)&&isDeepStrictEqual(spec.combinedSession,plan.spec.combinedSession)?{spec}:
+                {failure:{kind:'failed',stage:'search_scope',code:'explicit_scope_selection_changed',detail:'This window’s search scope changed. Choose Reconnect again.'}};
+        }
+        try{
+            await this.prepareWindowContext();check();
+            await this.applySearchScope({index_ids:[plan.indexId],project_ids:[]});check();
+        }catch(error){
+            check();const failure=reconnectFailure('access_grant',error);
+            return {failure:{...failure,detail:`${failure.detail} Earlier search-scope changes may have completed; review Indexing → Search scope and its retained outcomes before retrying. Existing indexes were not created or deleted.`}};
+        }
+        const spec=this.reconnectScope(root,plan.indexId);
+        return spec?{spec}:{failure:{kind:'failed',stage:'search_scope',code:'reconnect_scope_unconfirmed',detail:`Search scope Apply completed for existing index ${plan.indexId}, but its exact reviewed scope for ${root} could not be confirmed. Review Indexing → Search scope. No index was created or deleted.`}};
+    }
+    private async reconnectEntry(entry:AgentConfigEntry&{root?:string},root:string|undefined,prepared:{spec?:LaunchSpec;failure?:Extract<ReconnectIndexPlan,{kind:'failed'}>}|undefined,check:()=>void,reviewTrust:()=>boolean):Promise<AgentReconnectResult>{
+        const label=AGENT_CONFIG_LABELS[entry.agent],base={agent:entry.agent,label,file:entry.file,serverKey:entry.serverKey,...(root?{root}:{})};
+        const outcome=(status:AgentReconnectResult['status'],detail?:string,hostAction?:string):AgentReconnectResult=>({...base,status,...(detail?{detail}:{}),...(hostAction?{hostAction}:{})});
+        if(!['claude','codex','copilot'].includes(entry.agent))return outcome('blocked_client_compatibility',`AIRK has no verified HTTPS configuration format for ${label} yet; replace this entry by hand using Connect a coding agent….`);
+        const enrolls=reconnectNeedsIndex(entry);
+        if(enrolls&&!root)return outcome('blocked_unknown_owner','The entry does not record which project folder it served.');
+        if(enrolls&&!prepared?.spec){
+            const failure=prepared?.failure;
+            return outcome(failure?.code==='outcome_unknown'?'recovery_required':'awaiting_index',failure?`${failure.stage.split('_').join(' ')} could not complete (${failure.code}): ${failure.detail} The entry was left unchanged.`:'Choose an existing index for this folder in Indexing → Search scope before reconnecting. The entry was left unchanged.');
+        }
+        try{
+            if(!this.currentBinding())await this.refresh();check();
+            const binding=this.binding;if(!binding)return outcome('recovery_required','The AIRK service is not connected. Start it in Management → Service and choose Reconnect again.');
+            const parser=parserAgent(entry.agent),client=entry.agent==='copilot'?'vscode':entry.agent;
+            const original=await readJsonConfig(entry.file);check();
+            if(original===undefined)return outcome('recovery_required','The configuration file no longer exists.');
+            const rows=globalConfigDeclarations(parser,original),row=rows.find(item=>item.serverKey===entry.serverKey&&isDeepStrictEqual(item.containerPath,entry.containerPath));
+            if(!row||!isDeepStrictEqual(row.fields,entry.fields))return outcome('recovery_required','The entry changed since the check; it was left unchanged. Check again.');
+            const file:GlobalConfigFile={agent:parser,destination:entry.file,source:original,sha256:createHash('sha256').update(original).digest('hex'),declarations:rows};
+            let before='';transformGlobalContainer(file,entry.containerPath,source=>{before=source;return source;});
+            const recognition=await this.migrationRecognition(entry.agent,before);check();
+            let after:string;
+            if(!enrolls){
+                const lookup=await this.lookupHttpOwnership(binding,entry.connectionId!);check();
+                if(lookup.status!=='owned')return outcome('recovery_required','The connection is no longer owned by the current service; check again.');
+                const info=validateHttpConnection(lookup.connection,undefined,path.join(binding.controlDir,'http-1'));
+                await this.provisionHttpInfo(info,client,check,await fs.realpath(this.context.globalStorageUri.fsPath));check();
+                after=refreshHttpAgentConfig(entry.agent,before,info,String(row.fields.url),entry.serverKey,undefined,recognition.helper);
+            }else{
+                const enrolled=await this.enrollHttpSpec(prepared!.spec!,client);check();
+                after=migrateAgentConfig(entry.agent,enrolled,this.context.globalStorageUri.fsPath,before,this.assistanceEnabled(),warning=>this.output.appendLine(`AIRK Reconnect: ${warning} (${entry.file})`),false,false,undefined,entry.serverKey,recognition);
+            }
+            check();
+            const updated=transformGlobalContainer(file,entry.containerPath,()=>after);
+            if(updated!==original)await this.saveMigrationConfiguration(entry.file,original,updated,check);
+            // The entry is saved; issuer trust is a separate, reported step.
+            let trust='';
+            if(entry.agent!=='copilot'&&reviewTrust()){
+                try{
+                    const observed=await this.runtime().httpTrust(binding,'inspect');check();
+                    if(observed.outcome==='unsupported')trust=' Automatic issuer trust is unavailable on this platform; see Management → Agents for the manual step.';
+                    else if(observed.trusted!==true&&typeof observed.ca_sha256==='string'){const installed=await this.runtime().httpTrust(binding,'install',observed.ca_sha256);check();this.output.appendLine('AIRK HTTPS issuer trust result: '+JSON.stringify(installed));}
+                }catch(error){check();trust=` Issuer trust could not be confirmed (${error instanceof Error?error.message.slice(0,200):String(error)}).`;}
+            }
+            const delivery=entry.agent==='copilot'||recognition.helper?'':' This agent receives the credential only when started from a VS Code terminal; its path cannot be written as a credential helper.';
+            return outcome('awaiting_host_reconnect',`Rewritten to ${updated===original?'the current HTTPS connection (no change was needed)':'the current HTTPS connection'}.${delivery}${trust}`,hostReconnectAction(entry.agent));
+        }catch(error){
+            check();
+            const code=error instanceof ServiceError?error.code:'',text=error instanceof Error?error.message:String(error);
+            if(code==='http_client_compatibility_unverified'||/http_client_compatibility_unverified/.test(text))return outcome('blocked_client_compatibility',text.slice(0,600));
+            if(/^Unrecognized .* connection/.test(text))return outcome('blocked_unknown_owner',`${text.slice(0,600)} The entry was left unchanged.`);
+            return outcome('recovery_required',text.slice(0,600));
+        }
+    }
+    /** Report, once, whether the fresh installation registered login startup. */
+    private reportStartupRegistration():void{
+        const runtime=this.runtime(),startup=runtime.startupRegistration;runtime.startupRegistration=undefined;
+        if(!startup)return;
+        if(startup.registered){this.output.appendLine('AIRK now starts automatically when you sign in, and keeps running after VS Code closes.');return;}
+        if('optedOut' in startup){this.output.appendLine('AIRK login startup stays off because you removed it (runtime login uninstall). Run "airk runtime login install" to turn it back on.');return;}
+        this.installationWarnings=true;
+        this.output.appendLine(`AIRK could not register login startup, so the service is started on demand instead of at sign-in; Explorer starts it again if it stops. Native result: ${startup.error}`);
     }
     private async automaticSetup(notify:boolean,explicit:boolean):Promise<void>{
         if(!vscode.workspace.isTrusted||!explicit&&vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return;
@@ -2170,13 +2799,22 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         let runtimeInstalled=false,finalized=false,cleanBreakTransition=false;
         let setupObservation:BootstrapObservation|undefined;
         try{
+            if(explicit&&serviceRuntimeOptions().managed)throw new ServiceError('managed_runtime_reinstall_requires_owning_installer');
             this.reportInstall('Connecting to AIRK; checking the installed runtime…');
             let installed=await this.runtime().discover();this.trusted();
             setupObservation=installed;this.diagnosticObservation=installed;
+            // Discovery is read-only. First-use deferral precedes operation
+            // journals and native admission, including a fresh-install receipt.
+            const predecessorCaptured=!serviceRuntimeOptions().managed&&this.replacementRecords(installed).some(({record:pending})=>pending.hostArtifacts!==undefined||pending.references!==undefined);
+            if(!installed.inspection&&!serviceRuntimeOptions().managed&&!predecessorCaptured&&!await this.firstUseReview(installed,explicit))return;
+            const operation=!serviceRuntimeOptions().managed?await this.replacementOperation(installed,explicit):{};
+            const replacement=!serviceRuntimeOptions().managed?await this.replacePreviousInstallation(installed,operation.operationId,operation.generationId):undefined;
+            if(replacement==='removed'||replacement==='replayed'){
+                installed=await this.runtime().discover();this.trusted();
+                setupObservation=installed;this.diagnosticObservation=installed;
+            }
             await this.observeRebuild(installed.inspection?.rebuild??installed.diagnosis?.rebuild);this.trusted();
             void this.reportLastUninstall(installed);
-            // Nothing persistent (receipts, runtime, PATH or registrations) happens before this review.
-            if(!installed.inspection&&!serviceRuntimeOptions().managed&&!await this.firstUseReview(installed,explicit))return;
             if(!serviceRuntimeOptions().managed){
                 const launcherDirectory=record(installed.location.user_paths).launcher;
                 if(typeof launcherDirectory!=='string'||!path.isAbsolute(launcherDirectory))throw new ServiceError('invalid_launcher_location');
@@ -2196,7 +2834,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 }
                 const identity=`${this.runningVersion}:${binding.runtimeSha256}`;
                 if(!cleanBreak&&binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest
-                    &&!installed.diagnosis?.pending_activation&&this.context.globalState.get<string>(`airk.installComplete.2.${binding.installDir}`)===identity){
+                    &&!installed.diagnosis?.pending_activation&&(replacement==='replayed'||this.context.globalState.get<string>(`airk.installComplete.2.${binding.installDir}`)===identity)){
                     runtimeInstalled=true;
                     if(installed.inspection.lifecycle&&record(installed.inspection.lifecycle).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
                     // A completed installation does not prove that its on-demand service survived editor/OS shutdown.
@@ -2208,6 +2846,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                     await this.refresh();
                     this.reportInstall('Connected to AIRK. Saved project work remains with the service.');
                     this.setupSucceeded(binding,generation);
+                    await this.completeReplacementOperation(installed,operation.operationId);
                     await this.openWorkbenchAfterSetup();
                     if(this.installationWarnings)this.output.appendLine('Some agent connections need review in Management > Agents.');
                     return;
@@ -2266,6 +2905,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.reportUpgrade('reconnecting','Connecting to the updated runtime and loading saved index capabilities…');
             const binding=await this.runtime().ensure();this.trusted();
             runtimeInstalled=true;
+            this.reportStartupRegistration();
             const completed=await this.runtime().discover();
             const completedBinding=completed.inspection?this.runtime().binding(completed.inspection,completed.installDir):binding;
             if(cleanBreakTransition&&completedBinding.rebuild?.mode!=='clean_break')throw new ServiceError('clean_break_progress_unavailable');
@@ -2276,6 +2916,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             await this.prepareWorkspaceProjects(binding);await this.finalizeLegacyLauncherRemoval(binding,true,true);finalized=true;await this.refresh();
             this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Set up new indexes explicitly in Indexing; existing native work remains in Management.');
             this.setupSucceeded(binding,generation);
+            await this.completeReplacementOperation(installed,operation.operationId);
             await this.openWorkbenchAfterSetup();
             if(notify)await this.installationComplete();
             },progressTitle);
@@ -2325,7 +2966,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             this.reportInstall('Installation did not complete. See AIRK output for the failure and retry instructions.');
             this.renderSetupFailed();
-            void vscode.window.showErrorMessage(`AIRK installation needs attention: ${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`);}
+            const guidance=error instanceof ServiceError&&error.code==='managed_runtime_reinstall_requires_owning_installer'
+                ?'This runtime is managed externally. Use its owning installer to fully uninstall it before reinstalling.'
+                :`${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`;
+            void vscode.window.showErrorMessage(`AIRK installation needs attention: ${guidance}`);}
     }
     private async prepareWorkspaceProjects(binding:RuntimeBinding):Promise<void>{
         this.trusted();
@@ -2619,7 +3263,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
             setStatusBar:(text,tooltip)=>{if(!this.disposed&&!this.renderUpdateStatus()&&!this.renderSetupFailed()){
                 if(!nativeExecutionAllowed())this.renderNativeDisabled();else{this.status.text=text;this.status.tooltip=tooltip;}
-            }},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs};
+            }},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs,
+            agentConfigHealth:(root,check)=>this.agentConfigHealth(root,check),agentConfigAlerts:()=>this.agentConfigAlerts()};
     }
     private readonly handoffs=new HandoffStore({authorized:()=>this.assistanceEnabled(),binding:()=>this.assistanceHost?.bindingFingerprint??'',
         revisions:()=>this.explorerLoaded?.draftRevisions??{},publication:()=>this.explorerLoaded?.publication});
@@ -2665,7 +3310,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }catch(error){this.output.appendLine(`Explorer Assistance window endpoint is unavailable: ${error instanceof Error?error.message:String(error)}`);}
     }
     connectionEntries(spec:LaunchSpec):ServerEntry[]{
-        return [unifiedEntry(spec,this.explorerDescriptor())];
+        const entry=unifiedEntry(spec,this.explorerDescriptor()),helper=entry.http&&this.binding?this.credentialHelper(this.binding):undefined;
+        return [helper?{...entry,helper}:entry];
     }
     agentStorage():string{return this.context.globalStorageUri.fsPath;}
     private explorerDescriptor():string|undefined{
@@ -2701,6 +3347,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
         this.trusted();
         const entry=this.connectionEntries(spec)[0];
+        // Native refuses stdio MCP: only the enrolled HTTPS connection is checked.
+        if(!entry.http&&!spec.http)throw new ServiceError('http_connection_requires_reviewed_scope');
         await writeLaunchDescriptor(this.context.globalStorageUri.fsPath,Reflect.get(this.context,Symbol.for('iokaio.airk.managedAssetRoot'))??this.context.extensionPath,this.runningVersion,undefined,()=>this.assistanceEnabled());
         const result=await probeMcp(spec,UNIFIED_TOOLS.length,this.runningVersion,entry);this.trusted();
         return result.tools;
@@ -2717,6 +3365,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         await vscode.workspace.getConfiguration('airk').update('runtime.nativeExecution',true,vscode.ConfigurationTarget.Global);
     }
     nativeExecutionChanged():void{
+        // Turning native execution off stops this window's session; turning it on reopens one.
+        if(!nativeExecutionAllowed())closeWindowSession();
+        else if(!windowNativeSession())openWindowSession();
         if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
         this.reset();this.definitions.fire();void this.start();
     }
@@ -2725,10 +3376,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 }
 
 let active:ServiceExtension|undefined;
-export function deactivate():void{active?.dispose();active=undefined;}
+export function deactivate():void{active?.dispose();active=undefined;closeWindowSession();}
 /** Activated by the final 1.4 adapter cutover, after native/package contract checks. */
 export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpServerDefinition[]>;whenReady():Promise<void>;explorerHandoff():{open:boolean;route?:string};prepareForUpdate():Promise<void>}>{
     setNativeExecutionGate(nativeExecutionSetting);
+    // The one temporary `airk service session` of this window; it exits with the window.
+    // One registration closes whichever session is current, including one
+    // reopened after native execution was turned back on.
+    openWindowSession();context.subscriptions.push({dispose:closeWindowSession});
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
     const workbench=new WorkbenchView(context,controller.explorerHost());
@@ -2767,6 +3422,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.reindex=()=>controller.repair('rebuild');commands.treeReindex=spec=>controller.repair('rebuild',spec as LaunchSpec|undefined);
     commands.diagnose=()=>controller.repair('verify');commands.currentMaintenance=()=>controller.repair('auto');
     commands.status=()=>controller.showTool('airk_status');
+    commands.reconnectAgents=()=>controller.reconnectAgents();
     commands.chooseStorage=()=>controller.registerWorkspace();
     commands.installCli=()=>controller.repairInstallation();
     commands.httpCredential=input=>controller.httpCredential(input);

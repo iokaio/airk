@@ -1,8 +1,11 @@
 # Coding-agent MCP setup
 
-The **1.8.14 working implementation** connects clients directly to the shared
-native HTTPS service on IPv4 loopback. MCP connections and reads do not start an
-AIRK command, launcher, proxy or Node bridge. The listener URL comes from verified
+Clients connect directly to the shared native HTTPS service on IPv4 loopback,
+at `https://127.0.0.1:<port>/mcp`. MCP connections and reads do not start an
+AIRK command, launcher, proxy or Node bridge, and no process runs for each
+agent. Since 1.8.22, the only process an agent starts is the one-shot
+credential helper described below, which exits after printing the token.
+Stdio MCP is retired. The listener URL comes from verified
 native discovery: an occupied preferred port can select another saved port, so
 copy the actual endpoint rather than assuming a machine-wide fixed port.
 
@@ -34,8 +37,94 @@ ownership or incomplete retirement remains an explicit blocker.
 | Implemented adapter | Configuration | Host trust and credentials |
 | --- | --- | --- |
 | VS Code / Copilot Chat | `servers.airk` with `type: "http"`, literal actual `url`, and protected command input `${input:airkToken_<ID>}` with a matching top-level `inputs` definition. The built-in provider returns an HTTP definition. | Review the native per-user issuer trust action. The provider supplies its protected credential via the API; manual project files use the AIRK extension's protected native credential resolver, without a Code reload. |
-| Codex | Literal `mcp_servers.airk.url`, `bearer_token_env_var`, and nested `http_headers`. URL interpolation is not invented. | Add the public issuer through `CODEX_CA_CERTIFICATE`, preserving an existing CA bundle/`SSL_CERT_FILE`. Credentials use a host environment reference. |
-| Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url`, and `${AIRK_MCP_TOKEN_<ID>}` Authorization header. | Preserve `NODE_EXTRA_CA_CERTS` while adding the public native issuer; provision the credential to the actual process. |
+| Codex | Literal `mcp_servers.airk.url`, nested `http_headers`, and `http_headers_helper` (1.8.22). Without a helper path that is safe to write, `bearer_token_env_var` is used instead. URL interpolation is not invented. | Add the public issuer through `CODEX_CA_CERTIFICATE`, preserving an existing CA bundle/`SSL_CERT_FILE`. The helper delivers the credential; see below. |
+| Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url`, a `${AIRK_MCP_TOKEN_<ID>}` Authorization header, and `headersHelper` (1.8.22), which overrides that header. | Preserve `NODE_EXTRA_CA_CERTS` while adding the public native issuer. The helper delivers the credential; see below. |
+
+### Credential helpers (1.8.22)
+
+Claude Code's `headersHelper` and Codex's `mcp_servers.<id>.http_headers_helper`
+run this command:
+
+```console
+airk runtime http-credential --install-dir <installation> --connection-id <id> --format header-json
+```
+
+It prints `{"Authorization":"Bearer <token>"}` and exits. It reads only this
+installation's owner-private credential file for an existing, unrevoked
+connection. It never starts the service, enrolls, rotates or logs the token.
+Agents started outside VS Code therefore receive their token without a
+prepared environment variable. The command is refused inside the per-window
+`airk service session`, so a session never returns bearer tokens.
+
+The extension writes helper paths only when a client shell can pass them
+through unquoted. When the runtime changes, it refreshes the helper commands it
+owns before retiring the previous runtime. The Codex key name is taken from the
+Codex configuration reference.
+
+Still unverified against the real clients:
+
+- whether Codex trusts the OS user certificate store outside VS Code;
+- which Windows shell runs the header helpers.
+
+VS Code does not use a helper. It gets the token from the extension's MCP
+provider or from the `airk.httpCredential` command input in `.vscode/mcp.json`.
+
+### Reconnecting after a replacement
+
+Through 1.9.0 inclusive, installation fully uninstalls the owned predecessor and
+starts empty, including when installing the same build. Ordinary editor
+reopening reconnects; see [installation](service-installation.md#replacing-an-installation-through-190).
+Since 1.8.22, it no longer leaves agent entries pointing at removed launchers
+unreported. This reverses the 1.8.19 rule that configurations outside VS Code
+are not edited.
+
+1. **Capture.** Before `--apply`, the extension records the affected AIRK
+   entries in a reconnect ledger (`airk.reconnect.ledger.1`). This covers
+   project files and user-level files, using the replacement's typed
+   `client_references`. Nothing is written before that capture.
+2. **Warn.** Explorer checks project files (`.mcp.json`, `.codex/config.toml`,
+   `.vscode/mcp.json`), user-level files (`~/.claude.json`,
+   `~/.codex/config.toml`, VS Code User `mcp.json`) and the ledger. User-level
+   entries count only when AIRK provably wrote them. Explorer warns once per
+   set of findings when the window starts and after an installation. Findings
+   appear in an Explorer banner, the status bar and Management → Agents.
+   Classes are `stdio_retired`, `stdio_missing_command`,
+   `https_unknown_connection`, `https_endpoint_mismatch`,
+   `https_trust_missing`, `https_helper_missing` and `ok`. A missing helper is
+   repaired by the helper refresh, not a full Reconnect.
+3. **Reconnect.** **Reconnect** (or **AIRK: Reconnect Coding Agents…**) shows
+   the existing index and configuration entries it will use, and asks once.
+   Reconnect never creates an index. If none exists for a recorded folder,
+   it leaves that folder's entries unchanged and directs you to create one
+   explicitly in **Indexing → Index library**. If several indexes match,
+   select the intended index in **Indexing → Search scope** first.
+   For each folder with an existing index it then:
+   - grants this window access. **This makes the index the window's search
+     scope;**
+   - enrolls HTTPS;
+   - rewrites each entry in place, keeping other servers, comments, disabled
+     states and policies;
+   - provisions trust and the token helper.
+4. **Report.** Each entry reports one of these statuses:
+   - `complete`;
+   - `awaiting_host_reconnect`, with the host's action, such as Claude Code
+     `/mcp` → Reconnect or restarting Codex;
+   - `awaiting_index`: an index or reviewed scope is needed, or scope
+     preparation failed. Its code is shown and the agent entry stays unchanged.
+     Completed search-scope changes retain their native outcomes; an unchanged
+     agent entry does not mean that earlier scope steps were undone;
+   - `blocked_unknown_owner`;
+   - `blocked_client_compatibility`;
+   - `recovery_required`.
+
+AIRK never claims that a running agent reconnected. Confirm with the agent's
+own MCP controls and a scoped `status` call. The installed-editor journeys for
+this flow are pending; see the [1.8.22 record](releases/release-1.8.22.md).
+
+Both single-index and combined native selections are supported. Reconnect
+matches the recorded folder against the reviewed index metadata and enrolls
+only that matching index. A combined selection's first display folder does
+not determine access to its other members.
 
 These are implemented serializers/provisioning paths, not blanket client/version
 or cross-platform qualification. Other formats remain

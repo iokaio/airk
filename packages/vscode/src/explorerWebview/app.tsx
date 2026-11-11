@@ -17,6 +17,7 @@ import { friendlyError } from '../explorerErrors';
 import { acceptSearchSession, selectSearchProject } from './searchStore';
 import { RuntimeUpgradeProgress } from './runtimeUpgrade';
 import { Notice, NoticeContext, noticeKey } from './notices';
+import { AgentConfigAlert } from './manage';
 
 interface Persisted { route?: string; lens?: string; themed?: boolean }
 
@@ -143,6 +144,7 @@ export function App() {
                     </div>}
                     {state.runtimeUpgrade&&!state.extensionUpdate&&<RuntimeUpgradeProgress upgrade={state.runtimeUpgrade} />}
                     {state.startup&&!state.runtimeUpgrade&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
+                    {state.agentConfigAlerts&&!state.extensionUpdate&&<AgentConfigAlert alerts={state.agentConfigAlerts} showDetails={() => go({ workspace: 'manage', tab: 'agents' })} />}
                     {state.extensionUpdate && <Notice global noticeKey={noticeKey('extension-update', state.extensionUpdate.runningVersion, state.extensionUpdate.installedVersion)} class="card">
                         <h1>Reload to finish the AIRK update</h1>
                         <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>

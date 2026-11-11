@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import { stdioLaunch } from './stdioLaunch';
 import { AssistanceTools, toolDefinitions } from '../explorerAssistance/tools';
 import { HelpIndex } from '../explorerAssistance/help';
 import { windowChannel } from '../explorerAssistance/attach';
@@ -171,7 +172,7 @@ test('the real bundled MCP server reaches its project window for validation, nav
             targetRevisions: () => ({ studio: revision }), uiStatus: () => ({ active_route: 'code/symbols', binding_generation: generation, blockers: [] }),
             validate: (kind, draft) => store.validate(kind, draft), suggest: (kind, draft, client) => store.submit(kind, draft, client),
             proposalStatus: id => store.status(id), handoff: token => handoffs.get(token) }); assert.ok(host);
-        session = (await McpStdioSession.open({ command: process.execPath, args: [path.resolve(__dirname, '../explorerAssistance.js'), '--assistance-dir', directory], cwd: root, clientName: 'test', clientVersion: '1' }, 5000)).session;
+        session = (await McpStdioSession.open({ command: process.execPath, args: [path.resolve(__dirname, '../explorerAssistance.js'), '--assistance-dir', directory], cwd: root, clientName: 'test', clientVersion: '1', launch: stdioLaunch }, 5000)).session;
         const call = async (name: string, args = {}) => (await session!.request('tools/call', { name, arguments: args }, 5000)).structuredContent;
         assert.deepEqual((await session.request('tools/list', {}, 5000)).tools.map((tool: any) => tool.name), [...ASSISTANCE_TOOLS]);
         const status = await call('airk_explorer_ui_status'); assert.equal(status.ui.active_route, 'code/symbols'); assert.equal(status.ui.binding_generation, 1);

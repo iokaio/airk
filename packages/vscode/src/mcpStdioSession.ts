@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { requireNativeExecution } from './nativeGate';
 
 export class McpSessionError extends Error {
-    constructor(readonly code: 'exited' | 'invalid_json' | 'oversize' | 'timeout' | 'closed' | 'rpc' | 'overloaded', message: string, readonly detail?: unknown) {
+    constructor(readonly code: 'exited' | 'invalid_json' | 'oversize' | 'timeout' | 'closed' | 'rpc' | 'overloaded' | 'stdio_mcp_retired', message: string, readonly detail?: unknown) {
         super(message);
     }
 }
@@ -17,6 +17,8 @@ export interface McpStdioOptions {
     clientVersion: string;
     /** Largest single protocol message accepted from the server. */
     maxMessageBytes?: number;
+    /** The transport. Production supplies none: native refuses stdio MCP, and AIRK starts
+     * no process outside the window session. Tests inject their own server process. */
     launch?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 }
 interface Pending { resolve(value: any): void; reject(error: Error): void; timer?: NodeJS.Timeout }
@@ -44,12 +46,12 @@ export class McpStdioSession {
         child.stdout.on('data', (text: string) => this.read(text));
     }
 
-    /** Spawn, initialize and acknowledge; rejects (and kills the child) if the handshake fails. */
+    /** Initialize and acknowledge over an injected transport; rejects (and closes it) if the handshake fails. */
     static async open(options: McpStdioOptions, handshakeTimeout = 90000): Promise<{ session: McpStdioSession; initialize: any }> {
         requireNativeExecution();
+        if (!options.launch) { throw new McpSessionError('stdio_mcp_retired', 'AIRK no longer starts MCP over stdio. Connect over the enrolled HTTPS connection.'); }
         const env = { ...process.env, ...options.env };
-        const child = (options.launch ?? ((command, args, launch) => spawn(command, args, { ...launch, windowsHide: true, stdio: 'pipe' })))(
-            options.command, options.args, { cwd: options.cwd, env });
+        const child = options.launch(options.command, options.args, { cwd: options.cwd, env });
         const session = new McpStdioSession(child, options.maxMessageBytes ?? DEFAULT_MCP_MESSAGE_BYTES);
         try {
             const initialize = await session.request('initialize', { protocolVersion: '2025-11-25', capabilities: {},

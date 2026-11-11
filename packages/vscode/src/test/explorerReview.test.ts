@@ -244,7 +244,7 @@ test('Review finds source impact and tests through real native minimal symbols a
         assert.ok(tests.candidates.some(item => item.path === 'tests/contract.test.ts' && item.reason === 'changed_test_file'));
         assert.ok(tests.candidates.some(item => item.path === 'tests/contract.test.ts' && item.line && item.text.includes('ChangedContract')));
         assert.equal(tests.publication, impact.publication);
-    } finally { session?.dispose(); await fixture.dispose(); }
+    } catch(error) {await fixture.retainFailure(error);throw error;} finally { session?.dispose(); await fixture.dispose(); }
 });
 
 test('Review preserves failed lookups and refuses mixed declarations/reference publications', async () => {

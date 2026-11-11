@@ -5,10 +5,11 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
+import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, probeAssistance, runJson, runText } from '../native';
 import { LaunchSpec, launchArgs, UNIFIED_TOOLS } from '../model';
 import { McpStdioSession } from '../mcpStdioSession';
-import { NativeServiceFixture,NativeTestFailure,nativeFailureDetail } from './nativeServiceFixture';
+import { NativeServiceFixture,NativeTestFailure,nativeFailureDetail,finishNativeFixture } from './nativeServiceFixture';
+import {stdioLaunch} from './stdioLaunch';
 import {capturedNativeText} from './nativeReadRetry';
 import { record, ServiceError, RecordValue } from '../serviceClient';
 
@@ -22,6 +23,126 @@ test('MCP connection probes preserve unknown readiness separately from confirmed
     state='unavailable';assert.equal(record((await probeMcp(spec)).status).state,'index_unavailable');
     state='available';assert.equal(record((await probeMcp(spec)).status).state,undefined);
     assert.equal(closed,3);
+});
+
+async function closeAssistanceProbeFixture(root:string,child:ReturnType<typeof stdioLaunch>|undefined,closed:Promise<void>|undefined,failure?:unknown):Promise<void>{
+    const errors:unknown[]=failure===undefined?[]:[failure];
+    try{
+        if(child){
+            child.kill();assert.ok(closed,'a launched probe child has an exit observer');let timer:NodeJS.Timeout|undefined;
+            try{await Promise.race([closed,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Owned Assistance probe child did not close')),5000);})]);}
+            finally{if(timer)clearTimeout(timer);}
+        }
+        await fs.rm(root,{recursive:true,force:true});
+    }catch(error){errors.push(error);}
+    if(errors.length===1)throw errors[0];
+    if(errors.length>1)throw new AggregateError(errors,'Assistance probe failure and owned cleanup failed');
+}
+
+test('Assistance probes require explicit stdio injection and verify real bundled help before closing their exact child', {timeout:30000},async t=>{
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-probe-assistance-'))),directory=path.join(root,'assistance');
+    const server=path.resolve(__dirname,'../explorerAssistance.js'),args=[server,'--assistance-dir',directory];
+    const entry={key:'airk_explorer',label:'Owned probe fixture',command:process.execPath,args};
+    let child:ReturnType<typeof stdioLaunch>|undefined,closed:Promise<void>|undefined,launches=0,failure:unknown;
+    t.signal.addEventListener('abort',()=>child?.kill(),{once:true});
+    try{
+        await fs.mkdir(directory);
+        await assert.rejects(probeAssistance(entry,root,'probe-test'),(error:unknown)=>error instanceof Error&&Reflect.get(error,'code')==='stdio_mcp_retired');
+        const launch:typeof stdioLaunch=(command,received,options)=>{
+            launches++;assert.equal(command,process.execPath);assert.deepEqual(received,[server,'--assistance-dir',directory]);assert.equal(options.cwd,root);
+            child=stdioLaunch(command,received,options);closed=new Promise(resolve=>child!.once('close',()=>resolve()));return child;
+        };
+        const result=await probeAssistance(entry,root,'probe-test',launch);
+        assert.equal(launches,1);assert.ok(result.tools.includes('airk_explorer_help_search'));
+        assert.equal(result.version,JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version);
+        assert.ok(closed);await closed;assert.ok(child&&(child.exitCode!==null||child.signalCode!==null),'the owned server child really exited');
+        assert.deepEqual(entry.args,[server,'--assistance-dir',directory],'probing preserves the caller declaration');
+    }catch(error){failure=error;}finally{await closeAssistanceProbeFixture(root,child,closed,failure);}
+});
+
+test('Assistance probes preserve a wrong-server identity failure while closing the exact real server child', {timeout:30000},async t=>{
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-probe-assistance-'))),directory=path.join(root,'assistance');
+    const server=path.resolve(__dirname,'../explorerAssistance.js'),entry={key:'airk_explorer',label:'Wrong identity fixture',command:process.execPath,args:[server,'--assistance-dir',directory]};
+    const open=McpStdioSession.open;let child:ReturnType<typeof stdioLaunch>|undefined,closed:Promise<void>|undefined,original:unknown,launches=0;
+    t.signal.addEventListener('abort',()=>child?.kill(),{once:true});
+    t.mock.method(McpStdioSession,'open',async(...args:Parameters<typeof McpStdioSession.open>)=>{
+        const opened=await open.apply(McpStdioSession,args);
+        return {...opened,initialize:{...opened.initialize,serverInfo:{...opened.initialize.serverInfo,name:'unrelated-fixture-server'}}};
+    });
+    const launch:typeof stdioLaunch=(command,args,options)=>{
+        launches++;assert.equal(command,process.execPath);assert.deepEqual(args,[server,'--assistance-dir',directory]);
+        child=stdioLaunch(command,args,options);closed=new Promise(resolve=>child!.once('close',()=>resolve()));return child;
+    };
+    await assert.rejects((async()=>{
+        let failure:unknown;
+        try{await fs.mkdir(directory);await probeAssistance(entry,root,'probe-test',launch);}
+        catch(error){original=failure=error;}finally{await closeAssistanceProbeFixture(root,child,closed,failure);}
+    })(),error=>{
+        assert.equal(error,original,'successful child cleanup preserves the original failure object');
+        assert.ok(error instanceof Error);assert.equal(error.message,'The server is not AIRK Explorer Assistance.');return true;
+    });
+    assert.equal(launches,1);assert.ok(child&&(child.exitCode!==null||child.signalCode!==null));
+});
+
+for(const withBody of [false,true])test(`native fixture completion retains every closer failure${withBody?' together with the original body failure':''}`,async()=>{
+    const body=new Error('body failure'),first=new Error('first closer failure'),second=new Error('second closer failure');
+    const order:string[]=[],disposed:NativeTestFailure[]=[];
+    const fixture={dispose:async(failure?:NativeTestFailure)=>{order.push('dispose');if(failure){disposed.push(failure);throw failure.error;}}};
+    await assert.rejects(finishNativeFixture(fixture,[()=>{order.push('first');throw first;},async()=>{order.push('second');throw second;}],withBody?{error:body}:undefined),error=>{
+        assert.ok(error instanceof AggregateError);assert.deepEqual(error.errors,withBody?[body,first,second]:[first,second]);return true;
+    });
+    assert.deepEqual(order,['first','second','dispose']);assert.equal(disposed.length,1);
+    assert.ok(disposed[0].error instanceof AggregateError);assert.deepEqual(disposed[0].error.errors,withBody?[body,first,second]:[first,second]);
+});
+
+test('native fixture job polling refuses a terminal reply observed after its original deadline',async t=>{
+    let clock=1000,calls=0;const now=t.mock.method(Date,'now',()=>clock);
+    const fixture=Object.create(NativeServiceFixture.prototype) as NativeServiceFixture;
+    fixture.client={rpc:async()=>{calls++;clock=181000;return {job:{id:'ab'.repeat(32),state:'succeeded'}};}} as unknown as NonNullable<NativeServiceFixture['client']>;
+    try{await assert.rejects(fixture.waitJob('ab'.repeat(32)),/deadline|observation budget/);assert.equal(calls,1);}finally{now.mock.restore();}
+});
+
+test('native fixture repair polling refuses completion observed after its original deadline',async t=>{
+    let clock=1000,reads=0;const now=t.mock.method(Date,'now',()=>clock);
+    const fixture=Object.create(NativeServiceFixture.prototype) as NativeServiceFixture;
+    fixture.client={preparePlan:async()=>({}),submitMutation:async()=>({plan:{id:'ab'.repeat(32)}}),rpc:async(method:unknown)=>{
+        if(record(method).plan){if(++reads===1)return {plan:{phase:'ready',preview_digest:'cd'.repeat(32)}};clock=181000;return {plan:{phase:'finished',outcome:'succeeded'}};}return {plan:{}};
+    }} as unknown as NonNullable<NativeServiceFixture['client']>;
+    try{await assert.rejects(fixture.repair({service:{project:'ef'.repeat(32)}} as LaunchSpec),/deadline|observation budget/);assert.equal(reads,2);}finally{now.mock.restore();}
+});
+
+test('native fixture embedding status refuses an available reply observed after its original deadline',async t=>{
+    let clock=1000,calls=0;const now=t.mock.method(Date,'now',()=>clock);
+    const fixture=Object.create(NativeServiceFixture.prototype) as NativeServiceFixture,reply={available:true,worker:'ab'.repeat(16)};
+    fixture.client={rpc:async()=>{calls++;clock=16000;return reply;}} as unknown as NonNullable<NativeServiceFixture['client']>;
+    try{
+        await assert.rejects(fixture.embedding(),error=>{assert.match(String(error),/deadline|observation budget/);assert.equal(Reflect.get(error as object,'nativeResponse'),reply);return true;});
+        assert.equal(calls,1);
+    }finally{now.mock.restore();}
+});
+
+test('native fixture helper readiness refuses availability observed after its original deadline',async t=>{
+    let clock=1000,reads=0,starts=0;const now=t.mock.method(Date,'now',()=>clock);
+    const fixture=Object.create(NativeServiceFixture.prototype) as NativeServiceFixture,reply={available:true,worker:'ab'.repeat(16)};
+    t.mock.method(fixture,'embedding',async()=>{if(++reads===1)return {available:false};clock=91000;return reply;});
+    fixture.client={rpc:async(method:unknown)=>{assert.equal(method,'start_embedding');starts++;return {};}} as unknown as NonNullable<NativeServiceFixture['client']>;
+    try{
+        await assert.rejects(fixture.ensureEmbedding(),error=>{assert.match(String(error),/deadline|observation budget/);assert.equal(Reflect.get(error as object,'nativeResponse'),reply);return true;});
+        assert.equal(reads,2);assert.equal(starts,1);
+    }finally{now.mock.restore();}
+});
+
+test('native fixture embedding polling preserves its last refusal when a retry timer overshoots the deadline',async t=>{
+    let clock=1000,calls=0;const now=t.mock.method(Date,'now',()=>clock);
+    t.mock.timers.enable({apis:['setTimeout']});
+    const fixture=Object.create(NativeServiceFixture.prototype) as NativeServiceFixture;
+    const refusal=new ServiceError('embedding_observation_busy',true,{status:'failure',code:'embedding_observation_busy',fixture:'complete refusal'});
+    fixture.client={rpc:async()=>{calls++;throw refusal;}} as unknown as NonNullable<NativeServiceFixture['client']>;
+    try{
+        const rejected=assert.rejects(fixture.embedding(),error=>error===refusal);
+        await Promise.resolve();clock=16000;t.mock.timers.tick(50);await rejected;
+        assert.equal(calls,1,'An expired retry delay cannot admit another status observation');
+    }finally{t.mock.timers.reset();now.mock.restore();}
 });
 
 async function removeFixture(directory: string, prefix: string): Promise<void> {

@@ -15,6 +15,21 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// A drained in-process owner has not been observed to exit yet; the caller
+/// asks again. Never a reap receipt and never a release of its resources.
+#[derive(Debug)]
+struct WorkerDrainPending;
+impl std::fmt::Display for WorkerDrainPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native worker drain pending: the owner is stopping")
+    }
+}
+impl std::error::Error for WorkerDrainPending {}
+/// The owner's stop grace and drain period, plus actor-turn margin.
+const WORKER_DRAIN_BUDGET: Duration = OWNER_STOP_GRACE
+    .saturating_add(IN_PROCESS_DRAIN)
+    .saturating_add(Duration::from_secs(5));
+
 pub(super) enum Operation {
     Attach,
     AdministrativeRead {
@@ -578,17 +593,27 @@ impl CatalogControl for CatalogControlHandle {
         }
     }
     fn drain_worker(&self, ticket: &FenceTicket, worker: WorkerIdentity) -> Result<()> {
-        ensure!(
-            matches!(
-                self.call(Operation::DrainWorker {
-                    ticket: ticket.clone(),
-                    worker
-                })?,
-                Response::Drained
-            ),
-            "unexpected native worker drain response"
-        );
-        Ok(())
+        // An in-process owner stops cooperatively and is reaped on a later
+        // actor turn, so a pending drain is asked again until the owner's stop
+        // grace and drain period have passed; after that it is quarantined.
+        let deadline = Instant::now() + WORKER_DRAIN_BUDGET;
+        loop {
+            match self.call(Operation::DrainWorker {
+                ticket: ticket.clone(),
+                worker,
+            }) {
+                Ok(Response::Drained) => return Ok(()),
+                Ok(_) => anyhow::bail!("unexpected native worker drain response"),
+                Err(error) if error.is::<WorkerDrainPending>() => {
+                    ensure!(
+                        Instant::now() < deadline,
+                        "native worker drain incomplete: the owner did not stop by its drain deadline and is quarantined"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
     fn finish_worker_drains(
         &self,
@@ -845,10 +870,12 @@ impl ChildWorker {
             gate: gate.clone(),
             expected,
         });
-        if let Err(error) = service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &command,
-        ) {
+        if let Err(error) = self
+            .input
+            .as_mut()
+            .context("project input missing")?
+            .send(command)
+        {
             self.catalog_quarantined = true;
             return Err(error.into());
         }
@@ -1156,6 +1183,12 @@ pub(super) fn execute(
                 return Ok(Response::Drained);
             }
             if !confirmed_reap(&gate, workers, root, worker, may_allocate)? {
+                // A stop already began on an earlier attempt: the in-process
+                // owner is reaped by a later actor turn, never waited for here.
+                if !workers.contains_key(&worker.project) && super::stopping_project(worker.project)
+                {
+                    return Err(anyhow::Error::new(WorkerDrainPending));
+                }
                 let current = workers
                     .get(&worker.project)
                     .context("native drain worker still unavailable")?;
@@ -1167,6 +1200,9 @@ pub(super) fn execute(
                 // Existing single ownership performs cooperative Stop, bounded
                 // drain, contained termination and actual descendant/provider reap.
                 begin_worker_exit(workers, worker.project, admission.pool, admission.drains)?;
+                if !gate.worker_was_reaped(worker)? && super::stopping_project(worker.project) {
+                    return Err(anyhow::Error::new(WorkerDrainPending));
+                }
             }
             ensure!(
                 gate.worker_was_reaped(worker)?,

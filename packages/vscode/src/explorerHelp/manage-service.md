@@ -32,12 +32,12 @@ Use the separate **Copy complete JSON**, **Open complete JSON** or **Export comp
 
 ## Processes on this machine
 
-A user-owned installation uses `airk-service` for the shared service, `airk-index` for project workers and `airk-source` for source watching (`.exe` on Windows). Since 1.8.14, offline inference runs inside the service; installations before 1.8.14 also ran an `airk-embed` helper. Agents and Explorer can each have a separate MCP frontend and launcher. Two VS Code windows do not imply only two AIRK processes. MCP processes follow their client lifetime; background indexing can continue after an editor closes. An idle, connected agent remains connected.
+Since 1.8.22, one AIRK process stays resident per installation: the service. Project indexing, cleanup, source watching and offline inference run inside it. Each VS Code window adds one `airk service session`, which exits with the window. Commands you type, installer steps, at most one short-lived PDF parser and a tools shell you open are the only other AIRK processes. Agents connect over HTTPS and start no AIRK process, apart from a credential helper that exits at once. If one project's work cannot stop, that project is quarantined and shows a stuck-owner status while every other project keeps running; restart the service to recover it. Stable, preview and custom installations each have their own service. Background indexing continues after an editor closes. An idle, connected agent remains connected.
 
-The installer creates the role names from one downloaded engine. Organization-managed read-only payloads and development builds retain their original executable names.
+Earlier releases ran separate `airk-index`, `airk-source` and launcher processes. Organization-managed read-only payloads and development builds retain their original executable names.
 
-## Upgrading and uninstalling 1.6.4
+## Upgrading and uninstalling
 
-Supported 1.4, 1.5 and 1.6 runtimes upgrade before connection checks. On Windows and Linux, activation stops verified owned predecessor processes; reconnect agents afterward. macOS uses authenticated graceful drain. Uninstall completes through VS Code after restart and removes owned launchers and recorded AIRK agent entries. Index/service data and original sources remain. Project removal in Storage separately deletes that project's derived index and saved settings.
+Until 1.9.0, installing over an earlier AIRK replaces it: AIRK proves the old folders are its own, removes its sign-in startup and owned trust, stops its processes and installs fresh. Source folders are never touched, and no index is created until you add one. Agent entries that the old installation used are recorded first; Management > Agents then offers Reconnect. Uninstall completes through VS Code after restart and removes owned launchers and recorded AIRK agent entries. Index/service data and original sources remain. Project removal in Storage separately deletes that project's derived index and saved settings.
 
 Service fact rows whose complete value is Not observed are hidden. Diagnostics retain the complete observation; zero, No and none remain visible. Health alone does not confirm live-source freshness or indexing progress.

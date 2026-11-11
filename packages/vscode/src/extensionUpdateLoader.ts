@@ -11,9 +11,12 @@ import { isDeepStrictEqual } from 'node:util';
 const INVENTORY = 'airk-update.json';
 const MARKER = Symbol.for('iokaio.airk.managedExtensionContext');
 const ASSETS = Symbol.for('iokaio.airk.managedAssetRoot');
+const INSTALLATION_GENERATION = Symbol.for('iokaio.airk.installationGeneration');
 const MAX_FILE = 8 * 1024 * 1024, MAX_TOTAL = 32 * 1024 * 1024;
 export interface UpdatePayload {
     root: string; identity: string; version: string;
+    /** Optional VS Code installation observation, separate from reviewed payload trust. */
+    installationGeneration?: string;
     manifest: Record<string, unknown>; files: ReadonlyMap<string, Buffer>;
 }
 interface ManagedApi {
@@ -25,6 +28,18 @@ interface ManagedApi {
 interface ManagedModule { activate(context: vscode.ExtensionContext): Promise<ManagedApi>; deactivate?(): void | Promise<void> }
 interface Session { module: ManagedModule; api: ManagedApi; subscriptions: vscode.Disposable[] }
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+/** Missing or malformed host metadata never invents an installation event. */
+function installationGeneration(manifest: unknown): string | undefined {
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) { return undefined; }
+    const metadata = Reflect.get(manifest, '__metadata');
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) { return undefined; }
+    const timestamp: unknown = Reflect.get(metadata, 'installedTimestamp');
+    return typeof timestamp === 'number' && Number.isSafeInteger(timestamp) && timestamp > 0 && timestamp <= 8640000000000000
+        ? String(timestamp) : undefined;
+}
+
+const candidateIdentity = (payload: UpdatePayload) => JSON.stringify([payload.root, payload.identity, payload.installationGeneration]);
 
 async function boundedFile(filename: string, maximum: number): Promise<Buffer> {
     const file = await fs.open(filename, 'r');
@@ -40,6 +55,21 @@ async function boundedFile(filename: string, maximum: number): Promise<Buffer> {
         if (used > maximum || used > stat.size) { throw new Error('AIRK update file grew during observation'); }
         return bytes.subarray(0, used);
     } finally { await file.close(); }
+}
+
+/** Compatibility for a loaded host that predates the generation context Symbol.
+ * This host observation is not payload trust; the native bundle stays verified separately. */
+export async function readInstallationGeneration(root: string, expectedVersion: string): Promise<string | undefined> {
+    let bytes: Buffer;
+    try { bytes = await boundedFile(path.join(root, 'package.json'), 256 * 1024); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; } throw error; }
+    const manifest: unknown = JSON.parse(bytes.toString('utf8'));
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)
+        || Reflect.get(manifest, 'name') !== 'airk' || Reflect.get(manifest, 'publisher') !== 'iokaio'
+        || Reflect.get(manifest, 'version') !== expectedVersion) {
+        throw new Error('The AIRK installation manifest does not match the running extension.');
+    }
+    return installationGeneration(manifest);
 }
 
 /** An inventory proves completeness, not trust: VS Code owns VSIX installation. */
@@ -65,7 +95,7 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
         || Object.hasOwn(reviewedManifest, '__metadata')) { throw new Error('Invalid AIRK reviewed package manifest'); }
     const entries = Object.entries(inventory.files);
     if (entries.length < 3 || entries.length > 256) { throw new Error('Invalid AIRK update inventory size'); }
-    const files = new Map<string, Buffer>(); let total = 0;
+    const files = new Map<string, Buffer>(); let total = 0, generation: string | undefined;
     for (const [name, expected] of entries) {
         if (!/^(?:package\.json|native\/manifest\.json|images\/airk\.svg|out\/[A-Za-z0-9_-]+\.(?:js|css)|node_modules\/jsonc-parser\/(?:package\.json|lib\/umd\/(?:main|impl\/[A-Za-z-]+)\.js))$/.test(name)
             || typeof expected !== 'string' || !/^[0-9a-f]{64}$/.test(expected)) { throw new Error('Invalid AIRK update inventory entry'); }
@@ -74,6 +104,7 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
         if (name === 'package.json') {
             const installed = JSON.parse(content.toString('utf8'));
             if (!installed || typeof installed !== 'object' || Array.isArray(installed)) { throw new Error('Invalid installed AIRK package manifest'); }
+            generation = installationGeneration(installed);
             delete installed.__metadata;
             if (!isDeepStrictEqual(installed, reviewedManifest)) { throw new Error('Installed AIRK package fields differ from the reviewed manifest'); }
             files.set(name, reviewedBytes);
@@ -88,7 +119,7 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
     const manifest = JSON.parse(files.get('package.json')!.toString('utf8'));
     const native = JSON.parse(files.get('native/manifest.json')!.toString('utf8'));
     if (manifest.name !== 'airk' || manifest.publisher !== 'iokaio' || manifest.version !== inventory.version || native.version !== inventory.version) { throw new Error('AIRK update versions do not agree'); }
-    return { root: canonical, identity: digest(bytes), version: inventory.version, manifest, files };
+    return { root: canonical, identity: digest(bytes), version: inventory.version, installationGeneration: generation, manifest, files };
 }
 
 /** Local imports execute captured bytes without changing Node's or another extension's cache. */
@@ -135,6 +166,7 @@ function managedContext(context: vscode.ExtensionContext, payload: UpdatePayload
     return new Proxy({} as vscode.ExtensionContext, { get(_target, key) {
         if (key === MARKER) { return true; }
         if (key === ASSETS) { return assets; }
+        if (key === INSTALLATION_GENERATION) { return payload.installationGeneration; }
         if (key === 'extensionPath') { return payload.root; }
         if (key === 'extensionUri') { return vscode.Uri.file(assets); }
         if (key === 'extension') { return extension; }
@@ -251,14 +283,21 @@ export class ExtensionUpdateLoader implements vscode.Disposable {
     }
     private async refreshOnce(): Promise<void> {
         const root = await this.root(this.context);
-        // A sealed inventory changes for every shipped byte change. Routine polls
-        // read its small descriptor only; full hashing belongs to a changed candidate.
+        // The sealed inventory identifies shipped bytes; VS Code's optional host
+        // timestamp distinguishes another installation of those same bytes. Neither
+        // asset mtimes nor missing host metadata is an installation event.
         if (this.read === readUpdatePayload && this.payload && path.relative(path.resolve(root), this.payload.root) === ''
-            && digest(await boundedFile(path.join(root, INVENTORY), 256 * 1024)) === this.payload.identity) { return; }
+            && digest(await boundedFile(path.join(root, INVENTORY), 256 * 1024)) === this.payload.identity) {
+            const generation = await readInstallationGeneration(root, this.payload.version);
+            if (generation === undefined || generation === this.payload.installationGeneration) { return; }
+        }
         const next = await this.read(root);
-        if (this.disposed || (next.root === this.payload?.root && next.identity === this.payload.identity) || next.identity === this.failedIdentity) { return; }
+        if (this.disposed || (next.root === this.payload?.root && next.identity === this.payload.identity
+            && (next.installationGeneration === undefined || next.installationGeneration === this.payload.installationGeneration))
+            || candidateIdentity(next) === this.failedIdentity) { return; }
         await this.settle(); const confirmed = await this.read(await this.root(this.context));
-        if (this.disposed || confirmed.root !== next.root || confirmed.identity !== next.identity) { return; }
+        if (this.disposed || confirmed.root !== next.root || confirmed.identity !== next.identity
+            || confirmed.installationGeneration !== next.installationGeneration) { return; }
         const prepared = this.load(confirmed), assets = await captureAssets(this.context, confirmed);
         if (this.disposed) { return; }
         const previous = this.payload!, old = this.session, explorer = old?.api.explorerHandoff?.();
@@ -267,7 +306,7 @@ export class ExtensionUpdateLoader implements vscode.Disposable {
         try {
             replacement = await this.startSession(confirmed, prepared, assets);
         } catch (error) {
-            this.failedIdentity = confirmed.identity;
+            this.failedIdentity = candidateIdentity(confirmed);
             this.output.appendLine(`AIRK ${confirmed.version} activation failed: ${String(error)}. Restoring the previous interface.`);
             replacement = await this.startSession(previous);
             if (this.disposed) { await this.closeSession(replacement); return; }

@@ -92,7 +92,7 @@ test('Explorer code and document views read real symbol ids, candidate edges and
         assert.ok(page.more, 'list_files returns a continuation cursor');
         const next = await continueFacts(client, handles, project, page.more!);
         assert.equal(next.publication, page.publication);
-    } finally {
+    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
         client?.dispose();
         await fixture.dispose();
     }
@@ -127,7 +127,7 @@ test('a runnable strategy produces a verified snapshot from real AIRK replies an
         const edited = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', dirty });
         assert.equal(edited.manifest.outcome, 'partial');
         assert.ok(edited.manifest.reasons.some(reason => /session\.ts is changed since index/.test(reason)), edited.manifest.reasons.join('; '));
-    } finally {
+    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
         client?.dispose();
         await fixture.dispose();
     }

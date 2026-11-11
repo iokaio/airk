@@ -481,11 +481,33 @@ pub async fn serve(root: &Path) -> Result<()> {
     serve_with_idle(root, None).await
 }
 
+/// Exactly one service owns a control root. While a live service holds the
+/// single-instance lease, a second `serve`, `managed-serve`, `foreground` or
+/// `host` start is refused with the typed `service_already_running` code; the
+/// lease and its exclusion are unchanged.
+fn acquire_single_instance(root: &Path) -> Result<airk_store::service::ServiceLease> {
+    airk_store::service::ServiceLease::acquire(root).map_err(|error| {
+        let held = error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<std::fs::TryLockError>(),
+                Some(std::fs::TryLockError::WouldBlock)
+            )
+        });
+        if held {
+            error.context(
+                "service_already_running: another AIRK service owns this control directory; use the running service (`airk runtime ensure`) instead of starting a second one",
+            )
+        } else {
+            error
+        }
+    })
+}
+
 pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Result<()> {
     crate::install_layout::validate_control_root(root)?;
     crate::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
-    let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
+    let _ownership = Arc::new(acquire_single_instance(root)?);
     crate::http_endpoint::rotation::require_start_allowed(root)?;
     crate::install_layout::record_control_root(&_ownership)?;
     if root.join("service-1.4.sqlite3").try_exists()? {
@@ -854,6 +876,8 @@ async fn request_once(
 
 #[cfg(test)]
 mod registry_retry_tests;
+#[cfg(test)]
+mod single_instance_tests;
 
 #[cfg(test)]
 mod connection_failure_tests {

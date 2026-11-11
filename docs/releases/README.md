@@ -1,5 +1,13 @@
 # Release records
 
+The 1.8.23 manual installation reported an HTTP cleanup refusal. Its subsequent
+native fix is an untested source checkpoint; no replacement installer was built.
+Repair and qualification stopped at the user's direction on 10 November 2026.
+
+- [1.8.23 Windows debug manual-test candidate](release-1.8.23.md): full owned uninstall through 1.9.0 inclusive, including the same build; empty successor without automatic indexing; ordinary reopen reconnects; Reconnect uses existing reviewed single/combined scopes. Source manifests and lockfiles are synchronized at 1.8.23; the Windows debug native package and VSIX are built and package-verified. Installed-editor and platform qualification remain pending.
+- [1.8.22 local VSIX candidate](release-1.8.22.md) (failed manual-test artifact; corrected source prepared for 1.8.23): one resident `airk.exe` (the service), with workers inside it; one session per VS Code window; direct HTTPS agents and credential helper. Reconnect created an index before failing its scope check. Original artifact identity and evidence are retained.
+- [1.8.20 local VSIX candidate](release-1.8.20.md) (dated history, corrected by 1.8.22): a fresh install registers login startup, so the service keeps running and starts again after a reboot; Explorer restarts an idle-exited service and flags agent configurations that name a removed launcher.
+- [1.8.19 local VSIX candidate](release-1.8.19.md) (dated history; its "agent configurations outside VS Code are not edited" is reversed in 1.8.22): until 1.9.0, installing over an earlier version stops and removes it and installs fresh; no index is created until you add one.
 - [1.8.18 local VSIX candidate](release-1.8.18.md): focused simplification closeout, unchanged state baseline and explicit qualification evidence for Windows manual testing.
 - [1.8.16 clean-break baseline](release-1.8.16.md): persisted `airk-state/1` baseline and retained failed installed-editor acceptance.
 - [1.8.14 implementation record](release-1.8.14.md): unpublished One AIRK implementation in progress; C0 source metadata and later acceptance evidence remain distinct.

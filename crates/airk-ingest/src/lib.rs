@@ -134,6 +134,7 @@ impl ScanLimits {
 mod documents;
 pub mod inventory;
 pub mod ocr;
+pub mod pdf_slot;
 pub mod pdf_worker;
 mod prose;
 mod provider_process;
@@ -180,6 +181,11 @@ pub struct IndexReport {
     pub selection_diagnostics: Vec<SkippedFile>,
     #[serde(default)]
     pub selection_diagnostics_truncated: usize,
+    /// Documents left on their previous generation behind a busy PDF parser
+    /// slot. In-process only: never serialized, so the report's wire shape is
+    /// unchanged. The `extraction_deferred` skip entries carry the paths.
+    #[serde(skip)]
+    pub extraction_deferred: usize,
     #[serde(default)]
     pub embedding_cache_hits: u64,
     #[serde(default)]

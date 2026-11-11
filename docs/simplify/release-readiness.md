@@ -1,5 +1,161 @@
 # Local VSIX release readiness
 
+## Correction: 1.8.19 and 1.8.20 broke docs/one-airk.md (10 November 2026)
+
+**Observed on the maintainer's machine after installing 1.8.20.**
+
+- Task Manager showed two `airk.exe` processes: the service (`runtime managed-serve`) and the per-window `service console`.
+- The replacement had deleted `AIRK\launcher\airk-launcher.exe`. The workspace `.mcp.json` and `.codex/config.toml` still started it, so the coding agent's AIRK MCP failed with `CONNECTION_CLOSED`.
+- Explorer gave no warning and offered no fix.
+
+**What was wrong.**
+
+- The 1.8.19 entry below records "agent configurations outside VS Code are not edited". That narrowing was **not a user decision**. It contradicts one-airk.md §1, §9 and §10.3 steps 1, 2 and 8, which require moving owned agent entries first and removing launchers only afterwards.
+- The 1.8.20 agent check only appears in Management → Agents, reads project files only, and flags only stdio entries whose command is missing.
+- The remedy it suggests (Connect a coding agent…) refuses exactly those entries.
+
+**Conflicting 1.8.19/1.8.20 items, and their resolution.**
+
+| Item | Resolution |
+| --- | --- |
+| Agent entries not migrated before the launcher was deleted | The replacement captures them first. Explorer reconnects them after one confirmation. |
+| Old trust records left behind: the user CA, the extension trust bundles and the environment entries | Retired through their receipts before the folders move. |
+| Startup registration removed before the ownership check | Order reversed. |
+| Static `agents` string in the replacement output | Typed `client_references` and typed per-entry statuses. |
+| Standalone `airk setup` still upgrades in place | Uses the same replacement boundary. |
+| Service idle-exits in HTTPS mode; login startup only on fresh installs; Explorer restarts the service once after an idle exit | The service never idle-exits in HTTPS mode. Login startup is registered on every install. The restart workaround is removed. |
+| The extension starts one `airk.exe` per operation | One session per window. |
+| Workers run as separate `airk.exe` processes | Workers run inside the service. |
+
+The decisions are recorded at the top of [one-airk.md](../one-airk.md). Implementation and evidence are tracked in [the one-process ledger](one-process-ledger.md). The 1.8.19 and 1.8.20 entries below remain dated historical records.
+
+## 1.8.20: the service keeps running after installation (10 November 2026)
+
+**Observed on the maintainer's machine after installing 1.8.19.**
+- The replacement succeeded, then the fresh service logged `service_started`
+  at 10:06:03, `idle_exit` at 10:09:11 and `service_stopped`.
+- Explorer polls then reported `service_unavailable` every few seconds. Each
+  poll ran `runtime inspect`, `diagnose` and `snapshot`; these were the
+  short-lived `airk.exe` processes the user saw.
+- `runtime inspect` reported `launcher: null`, and the snapshot reported
+  `startup_manager.installed: false`.
+- The workspace `.mcp.json` and `.codex/config.toml` still named
+  `AIRK\launcher\airk-launcher.exe`, which the replacement had moved aside, so
+  the coding agent's AIRK MCP failed with `CONNECTION_CLOSED`.
+
+**Root cause.** The fresh install relied on the on-demand service and its
+180-second idle exit, but nothing could start it again:
+- health polls deliberately do not count as client activity;
+- Explorer only observed status;
+- HTTPS agents cannot start a process;
+- no login startup was registered.
+
+**User decisions.**
+- A new installation must start the service and register it to start again
+  after a reboot.
+- Bump to 1.8.20.
+- Implement the proposed Explorer fixes: restart after an idle exit, clearer
+  advice, and a broken agent-configuration check.
+
+**Implementation.**
+- **Fresh install registers login startup.** After a fresh install, the
+  extension (`RuntimeHost.prepare`) and standalone `airk setup` run
+  `runtime login install`; both use the extracted `install_login_startup`, the
+  same sequence the CLI command ran.
+  - A refusal is reported and keeps on-demand operation.
+  - The registered `runtime managed-serve` has no idle exit.
+- **Replacement removes the old entry.** It removes a receipt-owned
+  registration before moving folders; a failure stops the replacement before
+  anything moves.
+- **No console window at sign-in.** Before this change, a temporary
+  current-user `InteractiveToken` task running a console program opened a
+  visible Windows Terminal window. A probe program that called `FreeConsole`
+  as the console's only process lost its window and kept running.
+  `managed-serve` now does the same on Windows and clears its standard handles.
+- **Explorer.**
+  - It restarts an idle-exited on-demand service once per exited instance (a
+    pure `idleExitedInstance` decision).
+  - The unavailable-service advice was corrected.
+  - Management → Agents checks recognized project agent files for AIRK stdio
+    entries whose absolute command is missing. This check was delegated; the
+    primary agent reviewed it.
+
+Receipts are in `artifacts/readiness-1820/`.
+
+| Check | Result |
+| --- | --- |
+| Extension compile (`ext-compile-r1`) | Pass, 13.7 s |
+| Mocked extension suite (`ext-mocked-r1`) | 1,332 selected, 1,311 pass, 21 skipped, 0 fail; all 13 new or changed tests pass |
+| Scoped Clippy `-p airk-cli -p airk-mcp --features local-inference` with fmt check (`clippy-cli-mcp-r1`) | Pass, 90.9 s, incremental on, timings retained |
+| Native selection: replacement, managed_service, service_manager, user_paths (`native-tests-r1`) | Not run: link failed (`LNK1181`, ORT library) because the runner was invoked without `--static`; harness invocation error |
+| Same selection with the recorded static environment (`native-tests-r2`) | 29 selected, 29 pass |
+| Optimized runtime (`runtime-build-r1`, `build-service-runtime.py --profile release`, static ORT) | Pass, 818.3 s, inputs unchanged, timings retained; `airk.exe` SHA-256 `2195bfd28a6026c087f05b9aca48420cb4f870bafd03e802d9bab5562aa59678`, install inventory `f4d121d92043afd54265e873afeace076a488f006e9a3b1fe7e33f5f4db28314` |
+| Login probe on the optimized runtime (`login-probe-r1`, owned fixture, `--state-dir`) | Pass, 228.8 s (detail below) |
+| Native package (`native-package-r1`) | Pass, `airk-1.8.20-x86_64-pc-windows-msvc.zip` |
+| Extension package, first attempt (`extension-package-r1`) | Failed: the packager's runtime-module allowlist did not list the new `agentConfigHealth.js`. Allowlist corrected in `scripts/package-extension.py`; only packaging was rerun |
+| Extension package, second attempt (`extension-package-r2`) | Refused: the failed attempt's output folder already existed. The failed output is retained |
+| Extension package, third attempt (`extension-package-r3`, `final-extension-b`) | Pass, 937 files; VSIX SHA-256 `32fc98c870fb27ae10a7ab9498cecc1ff42cb1720b111271d5e42d32660128fb` |
+| Installed Explorer (`installed-explorer-r1`) | Pass, 12.0 s |
+| Installed native editor, five scenarios (`installed-native-r1`) | Pass: same, different, multi, usage, untrusted; 470.4 s |
+
+Login probe detail (`login-probe-r1`):
+- `login install` registered a task, and the task started exactly one
+  `managed-serve` process.
+- No visible window belonged to that process.
+- `ensure` reused the manager-owned instance.
+- After 205 s of uptime the same instance was still serving, with no
+  `idle_exit` event.
+- `replace-installation --apply` removed the task, its definition file and both
+  fixture folders, with no residue.
+
+**Harness gap found.** The installed-editor journey's fresh installs now
+register real logon tasks: four `airksvc-…` entries, from a baseline of 0. The
+harness does not unregister them. They were removed afterwards through each
+fixture's own owned `runtime login uninstall` (see
+`installed-native-r1-login-cleanup.txt`), and the fixture folders were
+retained. The installed-editor harnesses need to unregister login startup in
+their own cleanup before they are run routinely.
+
+Not run: macOS and Linux (the macOS shared login adapter remains unqualified),
+full workspace tests, and hosted CI. Nothing was committed, pushed, published
+or installed into the normal editor profile.
+
+## 1.8.19: replace instead of upgrade before 1.9.0 (10 November 2026)
+
+User decisions: every installer before 1.9.0 removes a different AIRK
+installation and installs fresh; no index is created until the user adds one;
+the build stays on 1.8.x (1.8.19). Recommended answers accepted: everything
+before 1.9.0 is replaced, custom index data outside AIRK folders is left in
+place. One recommendation was narrowed during implementation: agent
+configurations outside VS Code are not edited (the existing editors for them are
+the proof-heavy clean-break plans being retired); the installer tells the user
+to reconnect them from Management → Agents.
+
+Implementation: native `runtime replace-installation` (plan, or `--apply` to stop
+processes running from the AIRK folders with the existing exact-image stop
+primitive, move each folder aside atomically, then delete). Each folder must be
+provably AIRK's own before anything moves. The extension calls the plan right
+after discovery and, when required, applies it and continues as a fresh
+install. The in-place clean-break code is unreached before 1.9.0; deleting it is
+a separate step after a clean compile shows it has no callers.
+
+Read-only plan on the maintainer's real installation (debug build): required,
+installed 1.8.11, four locations: `data\index-v1`, `launcher`, `service-1.4`,
+`state\service-1.4`.
+
+| Check | Result |
+| --- | --- |
+| Native replacement unit tests (`r20-replacement-tests-r2`) | 10 selected, 10 pass, including a damaged layout naming an unrelated folder (refused, nothing moved) |
+| Mocked extension suite (`extension-mocked-r20c.log`) | 1,320 selected, 1,299 pass, 21 skipped, 0 fail |
+| Live replacement of a running 1.8.11 installation, debug build (`r20-debug-replacement-plain`) | Pass: processes stopped, folders removed in 0.6 s, client terminated, fresh install healthy, no index, sources unchanged |
+| Same with five payloads and an unfinished 1.8.15 update (`r20-debug-replacement-machine`) | Pass, removal 1.8 s |
+
+Two earlier attempts in this step are recorded: a guard that accepted any path
+containing "airk" passed this checkout's own path and was replaced by a
+provenance check (caught by its test); one debug build was misdirected to
+`C:/Program Files/Git/debug-runtime-d` by a shell variable error, stopped
+before writing anything there.
+
 ## First real-machine install and direction change (10 November 2026)
 
 The first install of the committed 1.8.18 VSIX on the maintainer's own Windows

@@ -46,6 +46,9 @@ mod service_management;
 pub mod service_registration;
 pub mod service_runtime;
 pub mod standalone_setup;
+mod worker_host;
+mod worker_scope;
+mod worker_transport;
 
 pub mod bundled_assets;
 pub mod derived_worker;
@@ -83,9 +86,12 @@ mod source_supervisor;
 pub mod unix_guardian;
 mod user_paths;
 
+pub mod cli_io;
 pub mod client_requests;
 pub mod console_client;
 pub mod explorer_assistance;
+pub mod session;
+pub mod session_protocol;
 pub mod unified_mcp;
 pub mod universal_launcher;
 pub mod usage_client;

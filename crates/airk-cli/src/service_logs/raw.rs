@@ -4,7 +4,7 @@ use super::*;
 use std::fmt::Write as _;
 
 const DIRECTORY: &str = "job-errors-1";
-const OWNER: &str = "job-errors-1.owner.json";
+pub(super) const OWNER: &str = "job-errors-1.owner.json";
 // Keep worst-case JSON escaping plus progress inside the 64 KiB worker frame.
 const DETAIL_BYTES: usize = 8 << 10;
 // JSON escaping can use six bytes for one byte of diagnostic text.

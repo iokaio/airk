@@ -468,6 +468,11 @@ pub(crate) fn remove_target(
     remove(control, &Native::new(target)?, approval)
 }
 pub fn run(command: &LegacyCommand) -> Result<()> {
+    run_with(command, &crate::cli_io::CliIo::process())
+}
+
+/// One legacy maintenance command writing through `io`.
+pub fn run_with(command: &LegacyCommand, io: &crate::cli_io::CliIo) -> Result<()> {
     let value = match command {
         LegacyCommand::DerivedReceipts { runtime_dir } => {
             airk_store::current::legacy_retirement::receipts(runtime_dir)?
@@ -521,7 +526,7 @@ pub fn run(command: &LegacyCommand) -> Result<()> {
             serde_json::json!({"forgotten":approval,"native_work_repeated":false})
         }
     };
-    println!("{}", serde_json::to_string_pretty(&value)?);
+    io.line(serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 

@@ -18,9 +18,9 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "extensionUpdateLoader.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
+MODULES = ("extension.js", "extensionUpdateLoader.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "nativeSession.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
            "usagePanel.js", "usageReport.js", "report.js", "readRetry.js",
-           "agentConnections.js", "agentConfig.js", "agentMigration.js", "globalAgentInventory.js", "agentToml.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeRebuild.js", "serviceClient.js", "nativeOutcome.js",
+           "agentConnections.js", "agentConfig.js", "agentConfigHealth.js", "agentReconnect.js", "agentMigration.js", "globalAgentInventory.js", "agentToml.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeRebuild.js", "serviceClient.js", "nativeOutcome.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js", "privateIntentStore.js", "intentAcceptedEvidence.js",
            "mcpStdioSession.js", "mcpHttpSession.js", "serviceHttp.js", "httpIssuerRotation.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",
@@ -33,7 +33,7 @@ MODULES = ("extension.js", "extensionUpdateLoader.js", "extensionUninstall.js", 
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css")
 # Host-only implementations that must never ship a second bundled copy.
-HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class IntentJournal", "class PrivateIntentStore", "function probeMcp",
+HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class NativeSession", "class IntentJournal", "class PrivateIntentStore", "function probeMcp",
                 "class ServiceConsoleController", "class RuntimeHost")
 JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/edit.js",
                "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",

@@ -1,0 +1,93 @@
+{
+  "schema": "airk.wire-fixture.session-frames/1",
+  "contract": "crates/airk-cli/src/session_protocol.rs",
+  "protocol": 1,
+  "budgets": {
+    "max_request_frame_bytes": 196608,
+    "max_invoke_stdin_bytes": 65536,
+    "max_invoke_args": 64,
+    "max_invoke_arg_bytes": 32768,
+    "max_response_frame_bytes": 16777216,
+    "max_invoke_stderr_bytes": 65536,
+    "max_in_flight": 8,
+    "max_invoke_deadline_ms": 600000
+  },
+  "requests": [
+    {
+      "name": "hello",
+      "json": {"id": "01010101010101010101010101010101", "request": {"hello": {"protocol": 1}}}
+    },
+    {
+      "name": "control health relay",
+      "json": {"id": "02020202020202020202020202020202", "request": {"control": {"runtime_dir": "C:\\fixture\\AIRK\\state\\service-v1\\control", "method": "health"}}}
+    },
+    {
+      "name": "control relay pinned to an approved runtime",
+      "json": {"id": "07070707070707070707070707070707", "request": {"control": {"runtime_dir": "C:\\fixture\\AIRK\\state\\service-v1\\control", "runtime_sha256": "2222222222222222222222222222222222222222222222222222222222222222", "method": {"projects": {"after": null, "revision": null, "limit": 32}}}}}
+    },
+    {
+      "name": "invoke without stdin",
+      "json": {"id": "03030303030303030303030303030303", "request": {"invoke": {"argv": ["runtime", "inspect", "--install-dir", "C:\\fixture\\AIRK\\runtime"], "deadline_ms": 60000}}}
+    },
+    {
+      "name": "invoke with stdin",
+      "json": {"id": "04040404040404040404040404040404", "request": {"invoke": {"argv": ["service", "prepare-configuration", "--runtime-dir", "C:\\fixture\\control", "--project", "fixture"], "stdin": "{\"draft\":1}", "deadline_ms": 60000}}}
+    },
+    {
+      "name": "cancel",
+      "json": {"id": "05050505050505050505050505050505", "request": {"cancel": {"target": "03030303030303030303030303030303"}}}
+    }
+  ],
+  "invalid_requests": [
+    {
+      "name": "unknown request field",
+      "json": {"id": "01010101010101010101010101010101", "request": {"hello": {"protocol": 1}}, "extra": true}
+    },
+    {
+      "name": "unknown method",
+      "json": {"id": "01010101010101010101010101010101", "request": {"spawn": {"argv": []}}}
+    },
+    {
+      "name": "invoke without deadline",
+      "json": {"id": "01010101010101010101010101010101", "request": {"invoke": {"argv": ["runtime", "inspect"]}}}
+    },
+    {
+      "name": "control relay without a control directory",
+      "json": {"id": "02020202020202020202020202020202", "request": {"control": {"method": "health"}}}
+    },
+    {
+      "name": "non-canonical id",
+      "json": {"id": "ABCDEF", "request": {"hello": {"protocol": 1}}}
+    }
+  ],
+  "responses": [
+    {
+      "name": "hello",
+      "json": {"id": "01010101010101010101010101010101", "outcome": {"status": "hello", "protocol": 1, "version": "0.0.0-fixture", "executable_sha256": "1111111111111111111111111111111111111111111111111111111111111111"}}
+    },
+    {
+      "name": "control failure relay",
+      "json": {"id": "02020202020202020202020202020202", "outcome": {"status": "control", "response": {"status": "failure", "code": "service_unavailable"}}}
+    },
+    {
+      "name": "invoked success",
+      "json": {"id": "03030303030303030303030303030303", "outcome": {"status": "invoked", "success": true, "stdout": "{\"selected\":null}\n", "stderr": ""}}
+    },
+    {
+      "name": "invoked failure keeps the native error line",
+      "json": {"id": "04040404040404040404040404040404", "outcome": {"status": "invoked", "success": false, "stdout": "", "stderr": "{\"airk_error\":1,\"code\":\"operation_failed\",\"retryable\":false,\"message\":\"fixture\"}\n"}}
+    },
+    {
+      "name": "busy is retryable",
+      "json": {"id": "05050505050505050505050505050505", "outcome": {"status": "failed", "code": "session_busy", "retryable": true}}
+    },
+    {
+      "name": "refused command",
+      "json": {"id": "06060606060606060606060606060606", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}
+    },
+    {
+      "name": "cancelled",
+      "json": {"id": "03030303030303030303030303030303", "outcome": {"status": "cancelled"}}
+    }
+  ]
+}

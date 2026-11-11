@@ -72,6 +72,23 @@ pub(crate) fn release_lexical_cache() {
     lexical::cache::clear();
 }
 
+/// Drop this process's verification seals and their change-notification
+/// handles for every store under `collection_directory`. One service process
+/// shares these caches between hosted owners; an exiting owner calls this so
+/// they do not outlive it. A live owner of the same collection only loses
+/// reuse and re-verifies on its next read.
+pub fn release_collection_caches(collection_directory: &std::path::Path) {
+    if collection_directory.as_os_str().is_empty() {
+        return; // An empty prefix would match every relative key.
+    }
+    // Lexical keys keep the caller's spelling; generation keys are canonical.
+    let mut prefixes = vec![collection_directory.to_path_buf()];
+    prefixes.extend(std::path::absolute(collection_directory).ok());
+    prefixes.extend(collection_directory.canonicalize().ok());
+    lexical::cache::release_under(&prefixes);
+    crate::verified_cache::release_under(&prefixes);
+}
+
 use airk_core::{
     graph_storage::GraphHead,
     identity::{Incarnation, Sha256Digest, framed_digest},

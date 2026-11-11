@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for agents and AIRK Workbench, with complete cited results and configurable concurrent retrieval.",
-  "version": "1.8.18",
+  "version": "1.8.23",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -258,6 +258,10 @@
         },
         {
           "command": "airk.setupAgent",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.reconnectAgents",
           "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
         },
         {
@@ -538,6 +542,12 @@
         "command": "airk.setupAgent",
         "category": "AIRK",
         "title": "Connect Coding Agent…",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+      },
+      {
+        "command": "airk.reconnectAgents",
+        "category": "AIRK",
+        "title": "Reconnect Coding Agents…",
         "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {

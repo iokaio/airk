@@ -1,5 +1,18 @@
 # Clean break and rebuild at the 1.8.16 baseline
 
+> **Superseded for installs through 1.9.0 inclusive (user decision,
+> 10 November 2026).** Installation must complete the owned predecessor uninstall
+> and start with an empty catalog. Installing the same build also requires a
+> full uninstall first. Original source files remain untouched; no source roster,
+> index, grant, pending indexing job or watching policy is replayed. Reconnect
+> waits for explicit Index library setup instead of creating an index. Ordinary
+> editor reopening reconnects without reinstalling. Interrupted installation
+> resumes its exact native operation, and concurrent windows cannot repeat that
+> uninstall. The [manual-test ledger](simplify/one-process-ledger.md#manual-test-installer-correction-10-november-2026)
+> records implementation and verification; 1.8.22 failed this policy.
+> The remaining text is the dated historical rebuild contract. Its low-level
+> recovery code is not authority to start a new installation with saved indexes.
+
 **Approved 8 November 2026 after the installed upgrade failures.** The user
 approved replacing all pre-1.8.16 index migration with a forced clean break. The
 1.8.16+ development line will be stabilized and qualified before an eventual

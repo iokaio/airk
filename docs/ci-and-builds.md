@@ -1,17 +1,17 @@
 # GitHub CI, native artifacts and spending controls
 
-A historical one-release exception covered the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). That pinned repair required its complete cumulative diff to stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only that exact repair allowed PR/main CI to run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remained its authenticated producer. This exception does not apply to the current 1.8.18 source or its 1.8.14 implementation base.
+A historical one-release exception covered the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). That pinned repair required its complete cumulative diff to stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only that exact repair allowed PR/main CI to run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remained its authenticated producer. This exception does not apply to the current 1.8.20 source or its 1.8.14 implementation base.
 
 For local development, use the [scoped Rust iteration workflow](../CONTRIBUTING.md#local-rust-iteration): one coordinated Cargo owner, warm per-checkout targets and retained timings. Its Windows incremental override applies to development Clippy only. Required CI/release scopes and checked-in compilation profiles below are unchanged; a local scoped pass does not qualify them.
 
-The current local candidate version is **1.8.18**. The clean-break baseline
+The current local candidate version is **1.8.20**. The clean-break baseline
 remains **1.8.16** for all earlier installations. Supported later upgrades
 require the persisted `airk-state/1` contract; public 1.9.0 is a future release
 after qualification. Reset/rebuild and owned-artifact cleanup replace historical
 preserved-index migration acceptance.
 The current implementation builds on the unpublished
 1.8.14 single-executable implementation; it is not a qualified release. See the
-[current candidate record](releases/release-1.8.18.md), the
+[current candidate record](releases/release-1.8.20.md), the
 [release-readiness ledger](simplify/release-readiness.md), the
 [1.8.16 baseline record](releases/release-1.8.16.md), the broader
 [1.8.14 working record](releases/release-1.8.14.md) and
@@ -255,7 +255,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.18 working-build record](releases/release-1.8.18.md) describes current candidate qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.20 working-build record](releases/release-1.8.20.md) describes current candidate qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 

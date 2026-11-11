@@ -52,6 +52,31 @@ export const LOCAL_LOG_ACTIONS=['logs','exportLogs','openRawLogs','saveRawLogs']
 export const LOCAL_DIAGNOSTIC_ACTIONS=['copyRuntimeDiagnostics','openRuntimeDiagnostics','saveRuntimeDiagnostics'];
 function objOutcomeUnknown(row:RecordValue):boolean{return record(record(row.configuration??{}).outcome??{}).code==='configuration_outcome_unknown_reinspect';}
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
+const object=(value:unknown):RecordValue|undefined=>value&&typeof value==='object'&&!Array.isArray(value)?value as RecordValue:undefined;
+/** Recovery key for a stopped service that no OS manager will start again: an
+ * on-demand AIRK service whose login startup registration was refused or is
+ * absent, and whose latest saved instance ended without a requested shutdown
+ * (a crash, or an idle exit of an older runtime). A status check that finds the
+ * service unavailable starts it through the native ensure once per such
+ * instance. An explicit Stop, a pending lifecycle request, a registered OS
+ * login manager, an external manager, an unverified payload, a different
+ * runtime version or malformed saved metadata never start anything. */
+export function unmanagedStoppedInstance(binding:RuntimeBinding|undefined,inspection:RecordValue|undefined,version:string):string|undefined{
+    if(!binding||!inspection||binding.lifecycle!=='on-demand'||binding.payloadVerified===false||binding.version!==version)return;
+    const lifecycle=object(inspection.lifecycle);
+    if(!lifecycle||lifecycle.explicitly_stopped!==false||lifecycle.pending)return;
+    if(object(inspection.startup_manager)?.installed===true)return;
+    const records=object(inspection.logs)?.records;
+    if(!Array.isArray(records)||!records.length)return;
+    const instance=object(records[records.length-1])?.instance;
+    if(typeof instance!=='string'||!/^[a-f0-9]{32}$/.test(instance))return;
+    for(let index=records.length-1;index>=0;index--){
+        const row=object(records[index]);
+        if(!row||row.instance!==instance)break;
+        if(row.kind==='shutdown_requested')return;
+    }
+    return instance;
+}
 export class ServiceConsoleController {
     readonly state:ServiceConsoleState;
     private observationToken=randomUUID();
@@ -91,6 +116,7 @@ export class ServiceConsoleController {
     private readonly idle=new Set<(available:boolean)=>void>();
     private logRequest?:{action:string;work:Promise<void>};
     private pollDeadline?:number;
+    private recoveredInstance?:string;
     private lastPollFailure?:string;
     private readonly receiptDiagnostics=new Set<string>();
     private readonly retainedOutcomes=new WeakSet<ServiceError>();
@@ -626,7 +652,9 @@ export class ServiceConsoleController {
         try{
             this.authorized();
             if(this.state.message===WORKSPACE_TRUST_MESSAGE)this.state.message=undefined;
-            if(!this.client)await this.discover();await this.observe(automatic);
+            if(!this.client)await this.discover();
+            try{await this.observe(automatic);}
+            catch(error){if(!await this.recoverUnmanagedService(error))throw error;this.pollDeadline=Date.now()+15000;await this.observe(automatic);}
             if(authorizationFailed&&this.state.connected&&this.state.health.state==='live'){
                 if(this.state.bootstrap.code==='runtime_client_no_longer_authorized')
                     this.state.bootstrap={...this.state.bootstrap,state:this.state.bootstrap.value?'cached':'unavailable',code:undefined};
@@ -653,6 +681,19 @@ export class ServiceConsoleController {
             if(!this.client&&code(error)!=='runtime_client_no_longer_authorized')this.state.bootstrap={...this.state.bootstrap,state:'failed',code:code(error),checkedAt:Date.now()};
         }
         finally{this.pollDeadline=undefined;this.state.busy=false;this.publish();this.releaseIdle();}
+    }
+    /** The service is unavailable and login startup was refused or is absent:
+     * start the on-demand service again through the native ensure (which runs
+     * in this window's session and honors an explicit Stop), once per stopped
+     * instance. With registration in place the OS manager owns starts. */
+    private async recoverUnmanagedService(error:unknown):Promise<boolean>{
+        if(code(error)!=='service_unavailable')return false;
+        const instance=unmanagedStoppedInstance(this.binding,this.bootstrap?.inspection,this.host.version);
+        if(!instance||instance===this.recoveredInstance)return false;
+        this.recoveredInstance=instance;
+        this.binding=await this.host.runtime.ensure();this.authorized();this.state.lifecycle=this.binding.lifecycle;
+        this.client?.dispose();this.client=this.host.runtime.client(this.binding);
+        return true;
     }
     private async observe(automatic=false):Promise<void>{
         if(!this.client){await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);return;}

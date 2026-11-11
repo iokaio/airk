@@ -2,7 +2,7 @@
 import { Notice, noticeKey } from './notices';
 import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { AGENT_INSTRUCTION_FILES, AIRK_AGENT_INSTRUCTIONS, FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView, ProjectSummary, StatusSummary } from '../explorerContracts';
+import { AGENT_INSTRUCTION_FILES, AIRK_AGENT_INSTRUCTIONS, AgentConfigAlerts, AgentConfigFinding, AgentConfigHealthView, FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView, ProjectSummary, StatusSummary } from '../explorerContracts';
 import { request } from './api';
 import { CompleteNativeResponse, CopyDetails, Facts } from './components';
 import type { Route } from '../explorerRoutes';
@@ -209,7 +209,7 @@ export function ProjectsScreen(props: ScreenProps) {
                 <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Set up index…</Act></div>
                 <span class="muted">Updates automatically</span></div>
             <details><summary>Browse active or removed projects</summary><Paging view={view} actions={actions} /></details>
-            {!view.connected && !view.busy && <p class="callout">The service connection is unavailable. Automatic checks will retry; view connection details in the Service tab.</p>}
+            {!view.connected && !view.busy && <p class="callout">The service connection is unavailable. Automatic checks will retry and start a service that stopped while idle. If it stays unavailable, choose Start service in the Service tab.</p>}
             {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Set up index opens an explicit native source and storage review in Indexing.`}</p>}
             {entry && scoped && <>
                 <h2>{entry.summary.name}</h2><p class="path">{entry.summary.root}</p>
@@ -471,6 +471,76 @@ function AgentInstructions(props: ScreenProps) {
     </article>;
 }
 
+/** What one finding means for the user, in plain words. */
+export function agentFindingExplanation(finding: AgentConfigFinding): string {
+    switch (finding.problem) {
+        case 'stdio_missing_command': return `This entry starts an AIRK program that no longer exists (an earlier AIRK installation was replaced or removed). AIRK now connects agents over local HTTPS. Reconnect replaces this entry for ${finding.label}; other servers and settings are kept.`;
+        case 'stdio_retired': return `This entry starts AIRK as a local stdio program. AIRK no longer accepts stdio MCP connections; agents connect over local HTTPS. Reconnect replaces this entry for ${finding.label}; other servers and settings are kept.`;
+        case 'https_unknown_connection': return 'This HTTPS entry uses a connection that the current AIRK service does not know (its installation was replaced). Reconnect creates a new connection and updates this entry.';
+        case 'https_endpoint_mismatch': return 'This HTTPS entry points to an earlier AIRK address. Reconnect updates it to the address the service publishes now.';
+        case 'https_helper_missing': return 'The credential helper of this HTTPS entry names an AIRK program that no longer exists (the runtime was upgraded). Reconnect points it at the current program; the connection itself is unchanged.';
+        case 'https_trust_missing': return 'This entry is current, but your user certificate store does not trust the AIRK local HTTPS issuer, so an agent started outside VS Code cannot verify the connection. Reconnect offers to install that trust.';
+        default: return `This file could not be checked: ${finding.detail ?? 'it could not be read.'} Review it manually.`;
+    }
+}
+/** Rendered inline, not as a component, so each finding keys directly in its list. */
+function findingCard(finding: AgentConfigFinding, actions: ReturnType<typeof useActions>) {
+    return <div key={`${finding.file}\u0000${finding.serverKey ?? ''}`} class="callout" role="group" aria-label={`${finding.label} configuration`}>
+        <p><strong>{finding.label}</strong>{finding.scope === 'user' ? ' (user settings)' : ''} · <code class="path">{finding.file}</code>{finding.serverKey !== undefined && <> · server <code>{finding.serverKey}</code></>}</p>
+        {finding.command && <p>{finding.problem === 'stdio_missing_command' ? 'Missing command' : 'Command'}: <code class="path">{finding.command}</code></p>}
+        {finding.url && <p>Address: <code>{finding.url}</code></p>}
+        {finding.root && <p>Project folder: <code class="path">{finding.root}</code></p>}
+        <p>{agentFindingExplanation(finding)}</p>
+        {finding.problem !== 'unreadable' && <div class="actions">
+            <button type="button" onClick={() => { void actions.command('airk.reconnectAgents'); }}>Reconnect…</button>
+            <button type="button" class="ghost" onClick={() => { void actions.command('airk.setupAgent'); }}>Connect a coding agent…</button>
+        </div>}
+    </div>;
+}
+
+/** Explorer-wide warning while broken or retired AIRK agent entries remain. */
+export function AgentConfigAlert(props: { alerts: AgentConfigAlerts; showDetails: () => void }) {
+    const actions = useActions(), { alerts } = props;
+    const agents = [...new Set(alerts.findings.map(finding => finding.label))].join(', ');
+    return <Notice global noticeKey={noticeKey('agent-config-alert', alerts.digest)} class="card" role="alert">
+        <h1>{alerts.total ? 'Coding agents cannot reach AIRK' : 'AIRK Reconnect results'}</h1>
+        {alerts.total > 0 && <p>{alerts.total === 1 ? 'One AIRK entry' : `${alerts.total} AIRK entries`} in {agents || 'agent'} configuration {alerts.total === 1 ? 'needs' : 'need'} attention. {alerts.findings[0] ? agentFindingExplanation(alerts.findings[0]) : ''}</p>}
+        {alerts.results?.length ? <ul>{alerts.results.map(result => <li key={`${result.file}\u0000${result.serverKey}`}><strong>{result.label}</strong> <code class="path">{result.file}</code>: {result.status.split('_').join(' ')}{result.detail ? ` (${result.detail})` : ''}{result.hostAction ? ` ${result.hostAction}` : ''}</li>)}</ul> : null}
+        <div class="actions">
+            {alerts.total > 0 && <button type="button" disabled={alerts.reconnecting} onClick={() => { void actions.command('airk.reconnectAgents'); }}>{alerts.reconnecting ? 'Reconnecting…' : 'Reconnect…'}</button>}
+            <button type="button" class="ghost" onClick={props.showDetails}>Show details</button>
+        </div>
+        {actions.outcome && <p role="status">{actions.outcome}</p>}
+    </Notice>;
+}
+
+/** Read-only check of the selected project's own agent configuration files; keyed by project so results never carry over. */
+function AgentConfigCheck(props: { project?: string; trusted: boolean; actions: ReturnType<typeof useActions> }) {
+    const [health, setHealth] = useState<AgentConfigHealthView>(), [error, setError] = useState<string>();
+    const [busy, setBusy] = useState(false), [attempt, setAttempt] = useState(0);
+    const available = !!props.project && props.trusted;
+    useEffect(() => {
+        if (!available) { return; }
+        let current = true;
+        setBusy(true); setError(undefined);
+        request<AgentConfigHealthView>('agents.configHealth', { project: props.project! }).then(
+            value => { if (current) { setHealth(value); } },
+            failure => { if (current) { setHealth(undefined); setError(failure instanceof Error ? failure.message : String(failure)); } },
+        ).finally(() => { if (current) { setBusy(false); } });
+        return () => { current = false; };
+    }, [props.project, available, attempt]);
+    return <article class="card agent-config-check">
+        <h2>Agent configuration check</h2>
+        <p>Looks for AIRK entries in this project’s agent configuration files that no longer work: stdio entries (AIRK now connects agents over local HTTPS), missing programs, and HTTPS entries with an unknown connection, an old address or an untrusted issuer. Files are only read; nothing changes until you choose Reconnect.</p>
+        {busy && <p role="status">Checking agent configuration files…</p>}
+        {error && <Notice noticeKey={noticeKey("agent-config-check", props.project, error)}><p>{error}</p></Notice>}
+        {health && !busy && (health.findings.length ? health.findings.map(finding => findingCard(finding, props.actions))
+            : <p class="muted">No broken AIRK entries found in this project's agent configuration files.</p>)}
+        {health && !busy && health.checked.length > 0 && <p class="muted">Checked: {health.checked.map((file, index) => <span key={file}>{index ? ', ' : ''}<code>{file}</code></span>)}</p>}
+        <div class="actions"><button type="button" class="ghost" disabled={busy || !available} onClick={() => setAttempt(value => value + 1)}>{busy ? 'Checking…' : 'Check again'}</button></div>
+    </article>;
+}
+
 export function AgentsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     const check=props.state.connectionCheck;
@@ -512,6 +582,7 @@ export function AgentsScreen(props: ScreenProps) {
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.rotateHttpIssuer'); }}>Review HTTPS issuer rotation…</button>
                         </div></article>
                 </div>
+                <AgentConfigCheck key={`config-check:${props.state.selectedProject ?? ''}`} project={props.state.selectedProject} trusted={props.state.trusted} actions={actions}/>
                 <AgentInstructions key={props.state.selectedProject} {...props}/>
             </>}
         </Frame>

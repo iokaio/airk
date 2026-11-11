@@ -65,7 +65,9 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
 }
 
 /** One MCP server in an agent configuration. Legacy entries exist only for migration. */
-export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string; readonly http?:HttpConnectionInfo }
+export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string; readonly http?:HttpConnectionInfo;
+    /** HTTPS only: per-connection credential command for clients outside VS Code. */
+    readonly helper?:HttpCredentialHelper }
 export const ASSISTANCE_KEY = 'airk_explorer';
 export const UNIFIED_KEY = 'airk';
 export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','query_scope','read_file','references','relationships','search','status','diagnostics','symbols'] as const;
@@ -113,18 +115,51 @@ export function assistanceEntry(spec: LaunchSpec, descriptor: string): ServerEnt
         args: spec.service.universal ? forwarded : ['runtime', 'launch', '--install-dir', spec.service.installDir, '--', ...forwarded] };
 }
 
-/** Serialize entries in the selected client's configuration format. */
-export function httpServerFields(client:Client,info:HttpConnectionInfo):Record<string,unknown>{
+/** A one-shot native credential command that a client runs per connection.
+ * It prints `{"Authorization":"Bearer …"}` and exits; no secret is stored in
+ * the configuration file or the user environment. */
+export interface HttpCredentialHelper { readonly executable: string; readonly installDir: string }
+/** Characters a client shell (cmd, sh/bash) passes through unquoted. */
+const SHELL_PLAIN = /^[A-Za-z0-9_.:\\/+-]+$/;
+function helperPath(value: string): string {
+    // Reject anything a shell could reinterpret inside double quotes, and
+    // namespaced/UNC spellings whose doubled backslashes a POSIX shell collapses.
+    if (!path.isAbsolute(value) || value.length > 1024 || /["'`$%!\r\n\x00-\x1f]/.test(value) || /^\\\\/.test(value)) { throw new Error('http_credential_helper_path_unsupported'); }
+    return SHELL_PLAIN.test(value) ? value : `"${value}"`;
+}
+export function credentialHelperCommand(helper: HttpCredentialHelper, connectionId: string): string {
+    if (!/^[a-f0-9]{32}$/.test(connectionId)) { throw new Error('invalid_http_connection_id'); }
+    return `${helperPath(helper.executable)} runtime http-credential --install-dir ${helperPath(helper.installDir)} --connection-id ${connectionId} --format header-json`;
+}
+/** The program a client shell command starts: its first token, quoted or plain. */
+export function commandExecutable(command: unknown): string | undefined {
+    if (typeof command !== 'string' || command.length > 4096) { return undefined; }
+    const match = /^\s*(?:"([^"]+)"|([^\s"]+))/.exec(command);
+    return match ? match[1] ?? match[2] : undefined;
+}
+/** The connection ID of an AIRK credential helper command, or undefined for any other command. */
+export function credentialHelperConnectionId(command: unknown): string | undefined {
+    if (typeof command !== 'string' || command.length > 4096) { return undefined; }
+    const match = /^(?:"[^"]+"|[^\s"]+) runtime http-credential --install-dir (?:"[^"]+"|[^\s"]+) --connection-id ([a-f0-9]{32}) --format header-json$/.exec(command);
+    return match?.[1];
+}
+/** Serialize entries in the selected client's configuration format. A helper,
+ * when supplied, delivers the credential to clients started outside VS Code:
+ * Claude Code `headersHelper` overrides the static Authorization header, and
+ * Codex `http_headers_helper` replaces `bearer_token_env_var` (an explicit
+ * bearer variable would take precedence over the helper and fail when unset). */
+export function httpServerFields(client:Client,info:HttpConnectionInfo,helper?:HttpCredentialHelper):Record<string,unknown>{
     info=validateHttpConnection(info);const environment=credentialEnvironment(info),url=info.endpoint.url;
-    if(client==='codex')return {url,bearer_token_env_var:environment,http_headers:{'X-AIRK-Response-Mode':'terse'}};
+    if(client==='codex')return helper?{url,http_headers_helper:credentialHelperCommand(helper,info.connection_id),http_headers:{'X-AIRK-Response-Mode':'terse'}}
+        :{url,bearer_token_env_var:environment,http_headers:{'X-AIRK-Response-Mode':'terse'}};
     if(client==='vscode')return {type:'http',url,headers:{Authorization:`Bearer \${input:${vscodeCredentialInputId(info)}}`,'X-AIRK-Response-Mode':'terse'}};
-    if(client==='claude')return {type:'http',url,headers:{Authorization:`Bearer \${${environment}}`,'X-AIRK-Response-Mode':'terse'}};
+    if(client==='claude')return {type:'http',url,headers:{Authorization:`Bearer \${${environment}}`,'X-AIRK-Response-Mode':'terse'},...(helper?{headersHelper:credentialHelperCommand(helper,info.connection_id)}:{})};
     throw new Error(`http_client_compatibility_unverified: ${client}`);
 }
 export function serializeServers(client: Client, entries: readonly ServerEntry[]): string {
     if(entries.some(entry=>entry.http)){
         if(entries.some(entry=>!entry.http)||entries.length!==1)throw new Error('One explicitly enrolled HTTP endpoint required.');
-        const info=validateHttpConnection(entries[0].http),name=entries[0].key,fields=httpServerFields(client,info);
+        const info=validateHttpConnection(entries[0].http),name=entries[0].key,fields=httpServerFields(client,info,entries[0].helper);
         // These formats have explicit URL + host-environment references. Other
         // clients remain compatibility blockers until their real schema is qualified.
         if(client==='codex')return `[mcp_servers.${name}]\n`+Object.entries(fields).filter(([,value])=>typeof value!=='object').map(([key,value])=>`${key} = ${JSON.stringify(value)}\n`).join('')+

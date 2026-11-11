@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { migrateAgentConfig } from './agentMigration';
+import { migrateAgentConfig, type LocalAgent, type MigrationRecognition } from './agentMigration';
 import { Client, LaunchSpec, McpVerification, ServerEntry, serializeServers, launchArgs } from './model';
 import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from './agentConfig';
 import { agentChoices, assistancePrompt, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
@@ -24,6 +24,9 @@ export interface AgentSetupHost {
     agentStorage(): string;
     /** Probe the same unified connection used by the agent. */
     verifyAssistance(spec: LaunchSpec): Promise<string[]>;
+    /** Host-verified recognition evidence for this file: AIRK launcher images of earlier installations,
+     * connection IDs the current service no longer knows, and the credential helper to write. */
+    migrationRecognition?(agent: LocalAgent, source: string | undefined): Promise<MigrationRecognition>;
 }
 
 const locations: Record<Client, string> = {
@@ -145,7 +148,8 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     if (before === undefined) { throw new Error('Create a new Codex project configuration first.'); }
                     // This explicit action updates the selected source's old storage binding;
                     // background migration still requires an exact native identity match.
-                    const after = migrateAgentConfig('codex', spec, host.agentStorage(), before,connection.args.includes('--explorer-descriptor'),undefined,true);
+                    const recognition = await host.migrationRecognition?.('codex', before) ?? {}; checkCurrent();
+                    const after = migrateAgentConfig('codex', spec, host.agentStorage(), before,connection.args.includes('--explorer-descriptor'),undefined,true,false,undefined,undefined,recognition);
                     if (!after.includes('[mcp_servers.airk]')) { throw new Error('No recognized AIRK entry for this project; merge the displayed connection manually.'); }
                     checkCurrent();
                     if (after !== before) { await saveConfiguration(destination, before, after); }
@@ -154,8 +158,9 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
                     const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
                     const connection=entries.find(entry=>entry.key==='airk');
+                    const recognition=await host.migrationRecognition?.(client, await readJsonConfig(jsonConfigPath(client, spec)).catch(()=>undefined)) ?? {};checkInstall();
                     await installJsonConfig(client, spec, checkInstall, saveConfiguration, entries, source=>
-                        migrateAgentConfig(client,spec,host.agentStorage(),source,connection?.args.includes('--explorer-descriptor')??false,undefined,true));
+                        migrateAgentConfig(client,spec,host.agentStorage(),source,connection?.args.includes('--explorer-descriptor')??false,undefined,true,false,undefined,undefined,recognition));
                     status = `${selected.label} project configuration installed. Reload the agent and complete its trust prompts. Agent connection has not been verified.`;
                 } else if (action === 'reviewLegacy' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Review the configuration on the host running this agent.'); }

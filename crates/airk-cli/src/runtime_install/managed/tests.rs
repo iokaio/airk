@@ -1,17 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
-fn fixture(lifecycle: ManagedLifecycle) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
+pub(in crate::runtime_install) fn fixture(
+    lifecycle: ManagedLifecycle,
+) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
     fixture_with_layout(lifecycle, false)
 }
 fn fixture_with_layout(
     lifecycle: ManagedLifecycle,
     historical: bool,
 ) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
+    fixture_with_origin(lifecycle, historical, false)
+}
+
+pub(in crate::runtime_install) fn reserved_fixture(
+    lifecycle: ManagedLifecycle,
+) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
+    fixture_with_origin(lifecycle, false, true)
+}
+
+fn fixture_with_origin(
+    lifecycle: ManagedLifecycle,
+    historical: bool,
+    reserved: bool,
+) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("metadata");
     local_ipc::prepare_root(&root)?;
-    layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
+    if !reserved {
+        layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
+    }
     let source = owner.path().join("provider");
     fs::create_dir(&source)?;
     let identity = if historical {
@@ -38,7 +56,24 @@ fn fixture_with_layout(
         executable_sha256: runtime_pair::digest_file(&source.join(main_name()))?,
         lifecycle,
     };
-    replace_json(&root, POLICY, &policy)?;
+    if reserved {
+        let canonical_root = root.canonicalize()?;
+        let lock = install_lock(&root)?;
+        let authority = InstallerAuthority {
+            root: &canonical_root,
+            _lock: &lock,
+        };
+        let reservation =
+            catalog::VerifiedManagedReservation::prepare(&authority, &policy, &canonical_root)?;
+        layout::initialize_managed(
+            &canonical_root,
+            Some(&canonical_root),
+            RuntimeChannel::Stable,
+            &reservation,
+        )?;
+    } else {
+        replace_json(&root, POLICY, &policy)?;
+    }
     Ok((owner, root, policy))
 }
 

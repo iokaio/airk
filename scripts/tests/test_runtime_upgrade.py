@@ -23,6 +23,73 @@ UPGRADE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(UPGRADE)
 
 class UpgradeFixtureOwnershipTests(unittest.TestCase):
+    def test_replacement_apply_uses_one_durable_authorized_operation(self):
+        invoke = mock.Mock(return_value={"replaced": True, "residue": []})
+        with mock.patch.object(UPGRADE.secrets, "token_hex", return_value="d" * 64) as token:
+            actual = UPGRADE.apply_fixture_replacement(invoke, Path("airk"), Path("install"), "c" * 64)
+        token.assert_called_once_with(32)
+        invoke.assert_called_once_with(Path("airk"), "runtime", "replace-installation", "--install-dir", Path("install"),
+            "--candidate-sha256", "c" * 64, "--reinstall", "--operation-id", "d" * 64, "--apply")
+        self.assertEqual(actual, invoke.return_value)
+
+    def test_fresh_replacement_requires_complete_native_empty_registry_and_catalog(self):
+        inspected = {"registry_namespace": "a" * 32, "clean_break_error": None, "clean_break": {
+            "required": False, "installed_contract": "airk-state/1", "registrations_complete": True,
+            "registrations_scope": "current_registry", "registrations": []}}
+        def page(method):
+            self.assertIn(method["catalog_page"]["request"]["kind"], ("indexes", "projects"))
+            return {"status": "catalog_page", "page": {
+                "namespace": "a" * 32, "revision": 1, "items": [], "continuation": None}}
+        rpc = mock.Mock(side_effect=page)
+        result = UPGRADE.validate_fresh_replacement(inspected, rpc, "a" * 32)
+        self.assertEqual(result["inspection"], inspected)
+        self.assertEqual(set(result["catalog_pages"]), {"indexes", "projects"})
+        self.assertEqual(rpc.call_count, 2)
+
+    def test_fresh_replacement_refuses_missing_null_or_incomplete_native_observations(self):
+        inspected = {"registry_namespace": "a" * 32, "clean_break_error": None, "clean_break": {
+            "required": False, "installed_contract": "airk-state/1", "registrations_complete": True,
+            "registrations_scope": "current_registry", "registrations": []}}
+        rpc = mock.Mock()
+        for fault in ("missing_report", "null_report", "missing_roster", "null_roster", "incomplete", "old_scope", "missing_error", "error", "required", "contract", "registered", "namespace"):
+            altered = copy.deepcopy(inspected)
+            report = altered["clean_break"]
+            if fault == "missing_report": altered.pop("clean_break")
+            elif fault == "null_report": altered["clean_break"] = None
+            elif fault == "missing_roster": report.pop("registrations")
+            elif fault == "null_roster": report["registrations"] = None
+            elif fault == "incomplete": report["registrations_complete"] = False
+            elif fault == "old_scope": report["registrations_scope"] = "predecessor_reset_roster"
+            elif fault == "missing_error": altered.pop("clean_break_error")
+            elif fault == "error": altered["clean_break_error"] = "unavailable"
+            elif fault == "required": report["required"] = True
+            elif fault == "contract": report["installed_contract"] = None
+            elif fault == "registered": report["registrations"] = [{"binding": "b" * 64}]
+            else: altered["registry_namespace"] = "b" * 32
+            with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                UPGRADE.validate_fresh_replacement(altered, rpc, "a" * 32)
+
+    def test_fresh_replacement_refuses_nonempty_crossed_or_incomplete_catalog_pages(self):
+        inspected = {"registry_namespace": "a" * 32, "clean_break_error": None, "clean_break": {
+            "required": False, "installed_contract": "airk-state/1", "registrations_complete": True,
+            "registrations_scope": "current_registry", "registrations": []}}
+        def page(method):
+            return {"status": "catalog_page", "page": {
+                "namespace": "a" * 32, "revision": 1, "items": [], "continuation": None}}
+        for fault in ("indexes", "projects", "namespace", "revision", "missing_items", "missing_continuation", "null_page"):
+            def wrong_page(method):
+                result = page(method)
+                kind = method["catalog_page"]["request"]["kind"]
+                if fault == kind: result["page"]["items"] = [{"kind": "index" if kind == "indexes" else "project"}]
+                elif fault == "namespace": result["page"]["namespace"] = "b" * 32
+                elif fault == "revision" and kind == "projects": result["page"]["revision"] = 2
+                elif fault == "missing_items": result["page"].pop("items")
+                elif fault == "missing_continuation": result["page"].pop("continuation")
+                elif fault == "null_page": result["page"] = None
+                return result
+            with self.subTest(catalog_fault=fault), self.assertRaises(RuntimeError):
+                UPGRADE.validate_fresh_replacement(inspected, wrong_page, "a" * 32)
+
     def test_persisted_baseline_resolved_windows_paths_accept_drive_and_unc_aliases(self):
         class ResolvedPath:
             def __init__(self, value):

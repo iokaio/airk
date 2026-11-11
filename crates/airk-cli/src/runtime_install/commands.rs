@@ -3,6 +3,12 @@
 use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
+    run_with(command, &crate::cli_io::CliIo::process()).await
+}
+
+/// One runtime command body writing through `io` (the process streams, or a
+/// `service session` request's captured streams).
+pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Result<()> {
     let output = match command {
         RuntimeCommand::HttpIssuerRotation {
             install_dir,
@@ -54,6 +60,11 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             connection_id,
         } => http_commands::existing_connection(install_dir, *connection_id).await?,
+        RuntimeCommand::HttpCredential {
+            install_dir,
+            connection_id,
+            format: _,
+        } => http_commands::credential_header(install_dir, *connection_id)?,
         RuntimeCommand::LookupHttpConnection {
             install_dir,
             expected_active,
@@ -99,6 +110,35 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             connection_id,
         } => http_commands::revoke(install_dir, *connection_id).await?,
+        RuntimeCommand::ReplaceInstallation {
+            install_dir,
+            candidate_sha256,
+            reinstall: _,
+            operation_id,
+            generation_id,
+            expected_predecessor,
+            apply,
+        } => {
+            let operation = operation_id.map(|id| id.to_string());
+            let generation = generation_id.map(|id| id.to_string());
+            let expected = expected_predecessor.map(|stamp| stamp.to_string());
+            if *apply {
+                replacement::apply_expected(
+                    install_dir,
+                    candidate_sha256,
+                    operation.as_deref(),
+                    generation.as_deref(),
+                    expected.as_deref(),
+                )?
+            } else {
+                serde_json::to_value(replacement::plan(
+                    install_dir,
+                    candidate_sha256,
+                    operation.as_deref(),
+                    generation.as_deref(),
+                )?)?
+            }
+        }
         RuntimeCommand::HttpLegacyConnection {
             install_dir,
             registration_file,
@@ -247,6 +287,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Login {
             install_dir,
+            action: LoginCommand::Install,
+        } => serde_json::to_value(install_login_startup(install_dir).await?)?,
+        RuntimeCommand::Login {
+            install_dir,
             action,
         } => {
             managed::require_unmanaged(install_dir)?;
@@ -270,20 +314,16 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             match action {
                 LoginCommand::Plan => serde_json::to_value(manager.plan()?)?,
                 LoginCommand::Status => serde_json::to_value(manager.status()?)?,
-                LoginCommand::Install => {
-                    let (_, main, approval) = selected(install_dir)?;
-                    drain(install_dir, &main, &approval).await?;
-                    serde_json::to_value(manager.install()?)?
-                }
+                LoginCommand::Install => unreachable!("handled by install_login_startup"),
                 LoginCommand::Start => serde_json::to_value(manager.start()?)?,
-                LoginCommand::Stop | LoginCommand::Uninstall => serde_json::to_value(
-                    stop_login(
-                        install_dir,
-                        &manager,
-                        matches!(action, LoginCommand::Uninstall),
-                    )
-                    .await?,
-                )?,
+                LoginCommand::Stop | LoginCommand::Uninstall => {
+                    let uninstall = matches!(action, LoginCommand::Uninstall);
+                    let status = stop_login(install_dir, &manager, uninstall).await?;
+                    if uninstall {
+                        record_login_opt_out(install_dir)?;
+                    }
+                    serde_json::to_value(status)?
+                }
             }
         }
         RuntimeCommand::Foreground { install_dir } => {
@@ -392,21 +432,29 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             runtime_sha256,
             expected_active,
             rebuild_indexes,
-        } => serde_json::to_value(if *rebuild_indexes {
-            activate_rebuilding_reviewed(
-                install_dir,
-                runtime_sha256,
-                expected_active
-                    .as_deref()
-                    .context("rebuild requires the reviewed preceding selection")?,
-            )
-            .await?
-        } else {
-            match expected_active {
-                Some(expected) => activate_reviewed(install_dir, runtime_sha256, expected).await?,
-                None => activate(install_dir, runtime_sha256).await?,
-            }
-        })?,
+        } => {
+            ensure!(
+                *rebuild_indexes || !state_contract::required(install_dir)?,
+                "replacement_required: install a fresh empty AIRK runtime before activating earlier state; rebuilding requires an explicit --rebuild-indexes request"
+            );
+            serde_json::to_value(if *rebuild_indexes {
+                activate_rebuilding_reviewed(
+                    install_dir,
+                    runtime_sha256,
+                    expected_active
+                        .as_deref()
+                        .context("rebuild requires the reviewed preceding selection")?,
+                )
+                .await?
+            } else {
+                match expected_active {
+                    Some(expected) => {
+                        activate_reviewed(install_dir, runtime_sha256, expected).await?
+                    }
+                    None => activate(install_dir, runtime_sha256).await?,
+                }
+            })?
+        }
         RuntimeCommand::InspectCandidate {
             install_dir,
             runtime_sha256,
@@ -450,10 +498,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Lifecycle { install_dir } => {
             let mut bytes = Vec::new();
-            std::io::stdin()
-                .lock()
-                .take(16385)
-                .read_to_end(&mut bytes)?;
+            io.stdin().take(16385).read_to_end(&mut bytes)?;
             ensure!(bytes.len() <= 16384, "lifecycle request exceeds budget");
             let input = serde_json::from_slice(&bytes)?;
             serde_json::json!({"status":"lifecycle","record":lifecycle::run(install_dir,input).await?})
@@ -537,7 +582,8 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let (rebuild, rebuild_error) = rebuild_report(install_dir);
             let clean_break = state_contract::report(install_dir);
             let clean_break_error = clean_break.as_ref().err().map(ToString::to_string);
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation,"rebuild":rebuild,"rebuild_error":rebuild_error,"clean_break":clean_break.ok(),"clean_break_error":clean_break_error})
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation,"rebuild":rebuild,"rebuild_error":rebuild_error,"clean_break":clean_break.ok(),"clean_break_error":clean_break_error,
+                "startup_manager":{"user_opted_out":login_opt_out_report(install_dir)}})
         }
         RuntimeCommand::Remove {
             install_dir,
@@ -816,8 +862,28 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_contract":state_contract::CONTRACT,"state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1,"metadata_console":1,"io_worker_threads":2,"index_catalog":airk_store::service::registry::catalog::capabilities()})
         }
     };
-    println!("{}", serde_json::to_string(&output)?);
+    io.line(serde_json::to_string(&output)?);
     Ok(())
+}
+
+/// Register login startup for an unmanaged installation, draining any on-demand
+/// service so the OS manager starts the selected image. `runtime login install`
+/// and a fresh standalone `airk setup` share this one implementation.
+pub(crate) async fn install_login_startup(
+    install_dir: &Path,
+) -> Result<crate::service_manager::ServiceStatus> {
+    managed::require_unmanaged(install_dir)?;
+    let manager = crate::service_manager::ServiceManager::for_runtime(install_dir)?;
+    let _lock = install_lock(install_dir)?;
+    legacy_maintenance::settle_locked(install_dir).await?;
+    require_login_registration_change(install_dir, &LoginCommand::Install)?;
+    payload_repair::require_settled(install_dir)?;
+    activation::require_settled(install_dir)?;
+    let (_, main, approval) = selected(install_dir)?;
+    drain(install_dir, &main, &approval).await?;
+    let status = manager.install()?;
+    clear_login_opt_out(install_dir)?;
+    Ok(status)
 }
 
 pub(super) fn require_login_registration_change(root: &Path, action: &LoginCommand) -> Result<()> {

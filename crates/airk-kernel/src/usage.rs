@@ -24,6 +24,8 @@ pub struct RequestSpan {
     event_id: [u8; 16],
     disk_before: Option<u64>,
     resources: Option<crate::resources::ResourceSpan>,
+    /// Unrecorded requests still share the service's process-wide counters.
+    _unmeasured: Option<crate::resources::UnmeasuredWork>,
 }
 
 impl RequestSpan {
@@ -214,6 +216,7 @@ impl crate::Kernel {
             enabled,
             event_id: new_event_id(),
             resources: enabled.then(crate::resources::ResourceSpan::start),
+            _unmeasured: (!enabled).then(crate::resources::UnmeasuredWork::start),
             disk_before: if enabled
                 && matches!(operation, UsageOperation::Index | UsageOperation::Reindex)
             {

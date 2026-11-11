@@ -5,6 +5,7 @@ use airk_core::model_objects::ModelObjectSet;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::RefCell,
     path::PathBuf,
     sync::{Arc, OnceLock},
 };
@@ -126,6 +127,42 @@ pub trait Connector: Send + Sync {
 
 static CONNECTOR: OnceLock<Arc<dyn Connector>> = OnceLock::new();
 
+/// The connector slot of one in-process worker, shared by every thread it
+/// binds. A child-process worker uses the process slot instead.
+#[derive(Clone, Default)]
+pub struct ConnectorScope(Arc<OnceLock<Arc<dyn Connector>>>);
+thread_local! { static SCOPE: RefCell<Option<ConnectorScope>> = const { RefCell::new(None) }; }
+
+/// Restores the thread's previous binding when dropped.
+pub struct ConnectorBinding(Option<ConnectorScope>);
+impl Drop for ConnectorBinding {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        // A thread-exit binding may drop after this thread's slot is gone.
+        let _ = SCOPE.try_with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+impl ConnectorScope {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// The in-process equivalent of [`install_connector`]: once per scope.
+    pub fn install(&self, connector: Arc<dyn Connector>) -> Result<()> {
+        self.0
+            .set(connector)
+            .map_err(|_| anyhow::anyhow!("embedding adapter already installed"))
+    }
+    /// Bind this scope to the calling thread until the returned guard drops.
+    pub fn bind_thread(&self) -> ConnectorBinding {
+        ConnectorBinding(SCOPE.with(|slot| slot.borrow_mut().replace(self.clone())))
+    }
+    /// The calling thread's binding, for helper threads of the same work.
+    pub fn current() -> Option<Self> {
+        SCOPE.with(|slot| slot.borrow().clone())
+    }
+}
+
 /// Install once from the trusted native adapter, never from workspace configuration.
 pub fn install_connector(connector: Arc<dyn Connector>) -> Result<()> {
     CONNECTOR
@@ -133,8 +170,15 @@ pub fn install_connector(connector: Arc<dyn Connector>) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("embedding adapter already installed"))
 }
 
-pub fn connector() -> Result<&'static Arc<dyn Connector>> {
-    CONNECTOR.get().ok_or_else(|| {
-        anyhow::anyhow!("embedding worker is unavailable; native adapter not installed")
-    })
+/// The calling thread's connector: its bound scope's, otherwise the process
+/// connector. A bound thread never falls back to the process connector.
+pub fn connector() -> Result<Arc<dyn Connector>> {
+    SCOPE
+        .with(|slot| match slot.borrow().as_ref() {
+            Some(scope) => scope.0.get().cloned(),
+            None => CONNECTOR.get().cloned(),
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("embedding worker is unavailable; native adapter not installed")
+        })
 }

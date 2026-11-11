@@ -2,7 +2,7 @@
 // Pure, atomic configuration transform. No filesystem or process access.
 import { applyEdits, createScanner, findNodeAtLocation, getNodeValue, modify, parseTree, SyntaxKind, type Node, type ParseError } from 'jsonc-parser';
 import {scanTomlStatements,TomlValue,parseTomlDeclarations,encodeTomlValue} from './agentToml';
-import { EXPLORER_TOOL_RENAMES, RETRIEVAL_TOOLS, UNIFIED_TOOLS, type ServerEntry } from './model';
+import { EXPLORER_TOOL_RENAMES, RETRIEVAL_TOOLS, UNIFIED_TOOLS, credentialHelperConnectionId, type ServerEntry } from './model';
 
 export type ConfigurationAgent='codex'|'claude'|'copilot';
 export interface ConfigurationDeclaration {serverKey:string;containerPath:string[];fields:Record<string,unknown>}
@@ -99,7 +99,7 @@ function merge(entries: Existing[], options: Consolidation): Fields {
     if(options.entry.http){
         const modes=entries.flatMap(entry=>{const headers=entry.fields.http_headers??entry.fields.headers;return headers&&typeof headers==='object'&&!Array.isArray(headers)&&'X-AIRK-Response-Mode'in headers?[(headers as Fields)['X-AIRK-Response-Mode']]:[];});
         if(modes.some(mode=>mode!=='full'&&mode!=='terse')||new Set(modes).size>1)throw new Error('Conflicting HTTP response modes; existing configuration preserved.');
-        if(modes.length){const field=result.bearer_token_env_var?'http_headers':'headers';result[field]={...(result[field] as Fields??{}),'X-AIRK-Response-Mode':modes[0]};}
+        if(modes.length){const field='http_headers' in result?'http_headers':'headers';result[field]={...(result[field] as Fields??{}),'X-AIRK-Response-Mode':modes[0]};}
     }
     const keys = new Set(entries.flatMap(entry=>Object.keys(entry.fields)));
     for (const key of keys) {
@@ -126,7 +126,7 @@ function merge(entries: Existing[], options: Consolidation): Fields {
             }
             if(options.entry.http){
                 if(Object.keys(env).some(key=>!['AIRK_CLIENT','AIRK_MCP_RESPONSE_MODE'].includes(key)))throw new Error('HTTP migration requires review of the former server environment. Existing file preserved.');
-                const mode=env.AIRK_MCP_RESPONSE_MODE;if(mode!==undefined){if(mode!=='full'&&mode!=='terse')throw new Error('Invalid prior response mode; existing file preserved.');const field=result.bearer_token_env_var?'http_headers':'headers';result[field]={...(result[field] as Fields??{}),'X-AIRK-Response-Mode':mode};}
+                const mode=env.AIRK_MCP_RESPONSE_MODE;if(mode!==undefined){if(mode!=='full'&&mode!=='terse')throw new Error('Invalid prior response mode; existing file preserved.');const field='http_headers' in result?'http_headers':'headers';result[field]={...(result[field] as Fields??{}),'X-AIRK-Response-Mode':mode};}
             }else result.env=env;
             continue;
         }
@@ -135,8 +135,20 @@ function merge(entries: Existing[], options: Consolidation): Fields {
         }
         result[key]=values[0].fields[key];
     }
+    if(options.entry.http){
+        // A supplied credential helper wins. A carried helper survives only for
+        // the same connection; Codex then uses the helper instead of a bearer
+        // variable, which would take precedence and fail outside VS Code.
+        const id=options.entry.http.connection_id;
+        for(const key of HELPER_FIELDS){
+            if(options.fields&&key in options.fields){result[key]=options.fields[key];continue;}
+            if(key in result&&credentialHelperConnectionId(result[key])!==id)delete result[key];
+        }
+        if(typeof result.http_headers_helper==='string')delete result.bearer_token_env_var;
+    }
     return result;
 }
+const HELPER_FIELDS=['headersHelper','http_headers_helper'] as const;
 function family(key:string, options:Consolidation):Family { return options.onlyKey&&key===options.retrievalKey&&options.selectedFamily?options.selectedFamily:key==='airk'?'unified':key===options.retrievalKey?'retrieval':'explorer'; }
 function check(entries:Existing[], options:Consolidation):void {
     for (const entry of entries) {

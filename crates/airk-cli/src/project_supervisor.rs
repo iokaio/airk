@@ -5,7 +5,12 @@ use crate::{
     project_protocol::{self as protocol, Command as WorkerCommand, Reply},
     service_inference::Pool,
     service_ipc,
+    worker_host::{ObservedExit, OwnerThread, StopStep, WorkerHost},
+    worker_transport::{FrameSink, FrameSource},
 };
+// Only the child-process owner fixtures still start processes here.
+#[cfg(test)]
+use crate::worker_transport::StreamFrames;
 use airk_core::{
     identity::Incarnation,
     service::{ControlResponse, MAX_FRAME_BYTES, ProjectBinding, QueryAllowance, WorkerIdentity},
@@ -13,10 +18,11 @@ use airk_core::{
 use airk_kernel::service_broker::{Broker, new_instance_id};
 use airk_store::service::{EmbeddingLease, ProjectLease, registry::ServiceRegistry};
 use anyhow::{Context, Result, ensure};
+#[cfg(test)]
+use std::process::{Child, Command, Stdio};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, SyncSender},
@@ -78,9 +84,12 @@ struct ChildWorker {
     catalog_pending: Option<catalog::Pending>,
     catalog_quarantined: bool,
     derived: bool,
-    _containment: crate::child_job::ChildJob,
-    child: Child,
-    input: Option<ChildStdin>,
+    /// Present only for a child host; an in-process owner has no job object.
+    _containment: Option<crate::child_job::ChildJob>,
+    child: WorkerHost,
+    /// The in-process owner's slots, used to ask it to drain.
+    scope: Option<crate::worker_scope::WorkerScope>,
+    input: Option<Box<dyn FrameSink<WorkerCommand>>>,
     output: Receiver<Reply>,
     reader: Option<std::thread::JoinHandle<()>>,
     stderr: Option<crate::process_diagnostics::WorkerStderr>,
@@ -132,7 +141,7 @@ pub(crate) fn complete_provider_authorizations(
     Ok(())
 }
 
-fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
+fn clean_disconnected_exit(child: &mut impl ObservedExit, error: &anyhow::Error) -> bool {
     let disconnected = error.chain().any(|cause| {
         cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
             matches!(
@@ -149,13 +158,31 @@ fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
     // Observe its actual exit without sending Stop or releasing ownership first.
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        match child.try_wait() {
+        match child.observed_exit() {
             Ok(Some(status)) => return status.success(),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => return false,
         }
     }
 }
+
+/// The existing stop period an owner has to exit on its own after its stop
+/// request. A child is then killed; an in-process owner is asked to drain.
+const OWNER_STOP_GRACE: Duration = Duration::from_secs(10);
+/// The further time an in-process owner has, after the existing 10-second
+/// stop period, to reach a safe point once asked to drain. It covers the
+/// 15-second bound of an isolated PDF parse that may be in progress. An owner
+/// still running after both is quarantined, never killed or released.
+const IN_PROCESS_DRAIN: Duration = Duration::from_secs(20);
+/// Diagnostic code of an owner that did not stop within both periods.
+const STOP_DEADLINE_CODE: &str = "owner_quarantined_stop_deadline";
+/// Diagnostic code recorded when a quarantined owner's thread later returned.
+const QUARANTINE_RELEASED_CODE: &str = "owner_quarantine_released";
+/// An in-process project owner's thread stack, matching the CLI thread that
+/// ran a child project owner.
+const OWNER_STACK_BYTES: usize = 8 << 20;
+/// In-process control frames queue like bytes in a child's pipes.
+const CONTROL_FRAMES: usize = 16;
 fn retire_helper(
     pool: &mut Option<Pool>,
     gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
@@ -192,41 +219,101 @@ fn retire_helper(
     }
 }
 
+/// Dropping an owner never waits for an in-process one. Only an owner whose
+/// exit was already observed is finalized here; the supervisor keeps every
+/// other stopping in-process owner in its stopping collection instead, so a
+/// running owner reaches this only if it was dropped outside that path.
 impl Drop for ChildWorker {
     fn drop(&mut self) {
-        if let Some(mut input) = self.input.take() {
-            let _ = service_ipc::write_frame(&mut input, &WorkerCommand::Stop);
+        if self.child.in_process() {
+            // Closing the control carrier is the stop request. Sending a frame
+            // could block on an owner that no longer reads its carrier.
+            self.input.take();
+            if !matches!(self.child.try_wait(), Ok(Some(_))) {
+                // Not observed to exit: its own thread keeps its lease, and no
+                // reap is reported, so nothing it holds is released here.
+                if let Some(scope) = &self.scope {
+                    scope.execution.drain();
+                }
+                return;
+            }
+        } else {
+            self.stop_child();
         }
-        let until = Instant::now() + Duration::from_secs(10);
+        self.finish_exit();
+    }
+}
+
+impl ChildWorker {
+    /// A child fixture keeps its process semantics: Stop, the grace period,
+    /// then a contained kill, waiting until its exit is actually observed.
+    fn stop_child(&mut self) {
+        if let Some(mut input) = self.input.take() {
+            let _ = input.send(WorkerCommand::Stop);
+        }
+        let requested = Instant::now();
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
                 // Unknown wait state never authorizes a numerical PID signal.
                 // Retain ownership/admission until native exit is observable.
                 Err(_) => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) => {
-                    let _ = self.child.kill();
-                    if self.child.wait().is_ok() {
-                        break;
+                Ok(None) => match crate::worker_host::stop_step(
+                    false,
+                    requested,
+                    Instant::now(),
+                    OWNER_STOP_GRACE,
+                    IN_PROCESS_DRAIN,
+                    false,
+                ) {
+                    StopStep::Kill => {
+                        if let Some(child) = self.child.child_mut() {
+                            let _ = child.kill();
+                            if child.wait().is_ok() {
+                                break;
+                            }
+                        }
+                        // Failed native wait is uncertainty, never a reap receipt
+                        // or permission to release accepted resource ownership.
+                        std::thread::sleep(Duration::from_millis(25));
                     }
-                    // Failed native wait is uncertainty, never a reap receipt
-                    // or permission to release accepted resource ownership.
-                    std::thread::sleep(Duration::from_millis(25));
-                }
+                    // A child is only ever waited for or killed.
+                    StopStep::Wait | StopStep::Drain | StopStep::Quarantine => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                },
             }
         }
-        self._containment.drain();
+    }
+
+    /// The in-process owner's own report that it cannot reach a safe point.
+    fn quarantine_reason(&self) -> Option<&'static str> {
+        self.scope
+            .as_ref()?
+            .execution
+            .stuck()
+            .map(airk_kernel::service_execution::StuckReason::code)
+    }
+
+    /// Release what an owner's observed exit proves is no longer in use.
+    fn finish_exit(&mut self) {
+        if let Some(containment) = &self._containment {
+            containment.drain();
+        }
         #[cfg(unix)]
-        if let Some(identity) = self.identity {
+        if !self.child.in_process()
+            && let Some(identity) = self.identity
+        {
             crate::unix_guardian::wait_for_worker(&self.runtime, identity);
         }
         let _ = local_ipc::remove_exited_endpoint(&self.runtime, &self.role);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
-        if let Some(stderr) = self.stderr.take() {
-            stderr.finish(&mut self.child);
+        if let Some(stderr) = self.stderr.take()
+            && let Some(child) = self.child.child_mut()
+        {
+            stderr.finish(child);
         }
         if let (Some(gate), Some(identity)) = (&self.catalog_gate, self.identity) {
             let _ = gate.observe_worker_reaped(identity);
@@ -238,6 +325,63 @@ impl Drop for ChildWorker {
             );
         }
     }
+}
+
+/// Replies queue one at a time; an undrained reply closes the carrier, as a
+/// child's reply reader always did.
+fn spawn_reply_reader(
+    mut output: Box<dyn FrameSource<Reply>>,
+    sender: SyncSender<Reply>,
+) -> Result<std::thread::JoinHandle<()>> {
+    Ok(std::thread::Builder::new()
+        .name("airk-project-replies".into())
+        .spawn(move || {
+            while let Ok(Some(reply)) = output.recv() {
+                if sender.try_send(reply).is_err() {
+                    break;
+                }
+            }
+        })?)
+}
+
+/// The body of an in-process owner's thread. Like a child process exit, it
+/// returns only after the owner's runtime has finished every blocking task,
+/// so the owner's lease is released before the supervisor observes the exit.
+fn run_in_process(
+    init: protocol::Init,
+    commands: Box<dyn FrameSource<WorkerCommand>>,
+    replies: Box<dyn FrameSink<Reply>>,
+    scope: crate::worker_scope::WorkerScope,
+    derived: bool,
+) -> Result<()> {
+    /// Releases the owner's project lease last: after its runtime, and so
+    /// every blocking task still holding owner state, has returned. This
+    /// also runs when the body unwinds.
+    struct LeaseRelease(crate::worker_scope::WorkerScope);
+    impl Drop for LeaseRelease {
+        fn drop(&mut self) {
+            self.0.release_lease();
+        }
+    }
+    let _release = LeaseRelease(scope.clone());
+    let _bound = scope.bind_thread();
+    let residency = crate::worker_scope::Residency::Service(scope.clone());
+    if derived {
+        return crate::derived_worker::serve(init, commands, replies, residency);
+    }
+    // The same two-worker runtime shape that served a child project owner.
+    // Every runtime thread, including its blocking pool, binds this owner.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("airk-project-runtime")
+        .on_thread_start(move || scope.bind_for_thread_life())
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(crate::project_worker::serve(
+        init, commands, replies, residency,
+    ));
+    drop(runtime);
+    result
 }
 
 impl ChildWorker {
@@ -292,26 +436,101 @@ impl ChildWorker {
         }
         Ok(())
     }
+    /// Production start: every project and cleanup owner runs in the service.
     fn spawn(
         root: &Path,
         project: ProjectBinding,
         service: Incarnation,
         derived: bool,
     ) -> Result<Self> {
-        let executable = crate::process_roles::executable(
-            &std::env::current_exe()?.canonicalize()?,
-            crate::process_roles::Role::Index,
-        )?;
-        Self::spawn_image(
+        Self::start_in_process(
             root,
             project,
             service,
             derived,
-            &executable,
             crate::runtime_pair::engine_identity()?,
         )
     }
 
+    /// One owner on a service thread. The control protocol, its frames, the
+    /// handshake and every identity check are those of a child owner.
+    fn start_in_process(
+        root: &Path,
+        project: ProjectBinding,
+        service: Incarnation,
+        derived: bool,
+        engine: airk_core::identity::Sha256Digest,
+    ) -> Result<Self> {
+        let worker = new_instance_id()?;
+        let (commands, command_source) =
+            crate::worker_transport::channel::<WorkerCommand>(CONTROL_FRAMES);
+        let (replies, reply_source) = crate::worker_transport::channel::<Reply>(CONTROL_FRAMES);
+        let scope = crate::worker_scope::WorkerScope::new();
+        let init = protocol::Init {
+            engine,
+            runtime: root.into(),
+            project,
+            service,
+            worker,
+        };
+        let owner_scope = scope.clone();
+        let handle = std::thread::Builder::new()
+            .name("airk-project-owner".into())
+            .stack_size(OWNER_STACK_BYTES)
+            .spawn(move || {
+                run_in_process(
+                    init,
+                    Box::new(command_source),
+                    Box::new(replies),
+                    owner_scope,
+                    derived,
+                )
+            })
+            .context("start project owner")?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut process = Self {
+            exiting: false,
+            read_settlement: None,
+            catalog_gate: None,
+            catalog_pending: None,
+            catalog_quarantined: false,
+            derived,
+            child: WorkerHost::Thread(OwnerThread::new(handle)),
+            _containment: None,
+            scope: Some(scope),
+            input: Some(Box::new(commands)),
+            output: receiver,
+            reader: None,
+            stderr: None,
+            identity: None,
+            role: protocol::role(worker),
+            runtime: root.into(),
+            last_renewal: Instant::now(),
+            pool_binding: None,
+            provider_helpers: Vec::new(),
+            provider_in_process: false,
+            #[cfg(feature = "local-inference")]
+            provider_completed: None,
+            pool_pending: false,
+            last_status: Instant::now(),
+            waiting: None,
+        };
+        let started = (|| -> Result<()> {
+            process.reader = Some(spawn_reply_reader(Box::new(reply_source), sender)?);
+            process.finish_start(project, service, worker)
+        })();
+        if let Err(error) = started {
+            // Never wait here for an owner that did not start. It stops on its
+            // own thread, keeping its lease until then, and the supervisor
+            // reaps it after observing that exit; its project stays draining.
+            stop_in_process(project, process, Instant::now());
+            return Err(error);
+        }
+        Ok(process)
+    }
+
+    /// The existing child-process owner, kept for its process fixtures.
+    #[cfg(test)]
     fn spawn_image(
         root: &Path,
         project: ProjectBinding,
@@ -345,8 +564,10 @@ impl ChildWorker {
             crate::native_process::spawn(&mut command).context("start project owner")?;
         let containment =
             crate::native_process::attach_owned(&mut child, crate::child_job::ChildJob::attach)?;
-        let input = child.stdin.take().context("project input missing")?;
-        let mut output = child.stdout.take().context("project output missing")?;
+        let mut input = child.stdin.take().context("project input missing")?;
+        let output: Box<dyn FrameSource<Reply>> = Box::new(StreamFrames(
+            child.stdout.take().context("project output missing")?,
+        ));
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
             exiting: false,
@@ -355,9 +576,10 @@ impl ChildWorker {
             catalog_pending: None,
             catalog_quarantined: false,
             derived,
-            child,
-            _containment: containment,
-            input: Some(input),
+            child: WorkerHost::Child(child),
+            _containment: Some(containment),
+            scope: None,
+            input: None,
             output: receiver,
             reader: None,
             stderr: None,
@@ -376,24 +598,15 @@ impl ChildWorker {
         };
         if let Some(directory) = diagnostic_directory {
             process.stderr = Some(crate::process_diagnostics::WorkerStderr::start(
-                &mut process.child,
+                process.child.child_mut().context("project child missing")?,
                 &process.role,
                 &directory,
             )?);
         }
-        process.reader = Some(
-            std::thread::Builder::new()
-                .name("airk-project-replies".into())
-                .spawn(move || {
-                    while let Ok(Some(reply)) = service_ipc::read_frame(&mut output) {
-                        if sender.try_send(reply).is_err() {
-                            break;
-                        }
-                    }
-                })?,
-        );
+        process.reader = Some(spawn_reply_reader(output, sender)?);
+        // Init is the only frame of its type; the boxed carrier owns the rest.
         service_ipc::write_frame(
-            process.input.as_mut().context("project input missing")?,
+            &mut input,
             &protocol::Init {
                 engine,
                 runtime: root.into(),
@@ -402,7 +615,19 @@ impl ChildWorker {
                 worker,
             },
         )?;
-        let reply = process
+        process.input = Some(Box::new(StreamFrames(input)));
+        process.finish_start(project, service, worker)?;
+        Ok(process)
+    }
+
+    /// The owner's first reply must name exactly the generation it was started as.
+    fn finish_start(
+        &mut self,
+        project: ProjectBinding,
+        service: Incarnation,
+        worker: Incarnation,
+    ) -> Result<()> {
+        let reply = self
             .output
             .recv_timeout(Duration::from_secs(10))
             .context("project startup failed or timed out")?;
@@ -413,14 +638,14 @@ impl ChildWorker {
                         && identity.worker == worker
                         && identity.project == project
                         && identity.fencing_generation > 0
-                        && role == process.role,
+                        && role == self.role,
                     "project owner identity mismatch"
                 );
-                process.identity = Some(identity);
+                self.identity = Some(identity);
             }
             _ => anyhow::bail!("project owner failed initialization"),
         }
-        Ok(process)
+        Ok(())
     }
 
     fn grant(&mut self) -> Result<ControlResponse> {
@@ -429,12 +654,12 @@ impl ChildWorker {
             "native read worker is retiring"
         );
         self.require_catalog_ready()?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::Grant {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::Grant {
                 caller: local_ipc::caller_identity()?,
-            },
-        )?;
+            })?;
         let reply = self
             .output
             .recv_timeout(Duration::from_secs(3))
@@ -472,15 +697,15 @@ impl ChildWorker {
             pool.as_ref().is_some_and(|access| access.in_process),
         )?;
         let pool_pending = helper_pending && !self.derived && pool_binding.is_none();
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::Activate {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::Activate {
                 identity,
                 allowance,
                 pool: pool.map(Box::new),
                 pool_pending,
-            },
-        )?;
+            })?;
         ensure!(
             matches!(
                 self.output.recv_timeout(Duration::from_secs(10))?,
@@ -504,9 +729,8 @@ impl ChildWorker {
             pool_binding,
             pool.as_ref().is_some_and(|access| access.in_process),
         )?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::ConfigurePool {
+        self.input.as_mut().context("project input missing")?.send(
+            WorkerCommand::ConfigurePool {
                 identity: self.identity.context("project identity missing")?,
                 pool: pool.map(Box::new),
                 pool_pending,
@@ -592,13 +816,13 @@ impl ChildWorker {
         );
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::RunJob {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::RunJob {
                 identity,
                 allowance,
-            },
-        )?;
+            })?;
         ensure!(
             matches!(
                 self.output.recv_timeout(Duration::from_secs(3))?,
@@ -616,15 +840,15 @@ impl ChildWorker {
     ) -> Result<protocol::WorkObservation> {
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::WorkStatus {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::WorkStatus {
                 identity,
                 control,
                 keep_for_maintenance,
                 freshness: freshness.map(Box::new),
-            },
-        )?;
+            })?;
         let Reply::WorkStatus { observation } = self.output.recv_timeout(Duration::from_secs(3))?
         else {
             anyhow::bail!("project work status failed")
@@ -643,10 +867,10 @@ impl ChildWorker {
     fn renew(&mut self) -> Result<()> {
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::Renew { identity },
-        )?;
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::Renew { identity })?;
         ensure!(
             matches!(
                 self.output.recv_timeout(Duration::from_secs(3))?,
@@ -660,9 +884,8 @@ impl ChildWorker {
     fn configure_queries(&mut self, concurrency: usize) -> Result<()> {
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::ConfigureQueries {
+        self.input.as_mut().context("project input missing")?.send(
+            WorkerCommand::ConfigureQueries {
                 identity,
                 concurrency,
             },
@@ -812,17 +1035,15 @@ fn checkpoint_workers(
         let identity = worker
             .identity
             .context("checkpoint worker identity missing")?;
-        service_ipc::write_frame(
-            worker
-                .input
-                .as_mut()
-                .context("checkpoint worker input missing")?,
-            &WorkerCommand::Checkpoint {
+        worker
+            .input
+            .as_mut()
+            .context("checkpoint worker input missing")?
+            .send(WorkerCommand::Checkpoint {
                 identity,
                 operation_id,
                 seal,
-            },
-        )?;
+            })?;
         let Reply::Checkpoint { observation } = worker
             .output
             .recv_timeout(until.saturating_duration_since(Instant::now()))?
@@ -937,12 +1158,241 @@ fn begin_worker_exit(
     // On any refusal the original ChildWorker, charges and reserved history
     // remain owned; the existing Supervisor turn retries this same exit.
     drains.begin(identity, pool.as_mut())?;
-    let child = workers
+    let mut child = workers
         .remove(&project)
         .context("native exit child changed")?;
+    // A running in-process owner is never waited for here. It joins the
+    // stopping owners, still charged, and the actor's turn reaps it once its
+    // exit is observed. One already observed to exit is reaped at once.
+    if child.child.in_process() && !matches!(child.child.try_wait(), Ok(Some(_))) {
+        stop_in_process(project, child, Instant::now());
+        return Ok(());
+    }
     drop(child);
     drains.child_reaped(identity)?;
     Ok(())
+}
+
+/// One in-process owner asked to stop. It stays here, with its admission,
+/// query and provider charges, until its thread's exit is observed.
+struct Stopping {
+    project: ProjectBinding,
+    worker: ChildWorker,
+    requested: Instant,
+    drain_requested: bool,
+    /// The typed reason, once quarantined. Quarantine never releases anything.
+    quarantined: Option<&'static str>,
+}
+
+/// What one non-blocking poll of a stopping owner observed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopProgress {
+    Pending,
+    /// First observation that the owner cannot stop; the reason's code.
+    Quarantined(&'static str),
+    /// The owner's thread returned; it may now be reaped.
+    Exited,
+}
+
+impl Stopping {
+    fn new(project: ProjectBinding, mut worker: ChildWorker, requested: Instant) -> Self {
+        // Closing the control carrier is the stop request.
+        worker.input.take();
+        Self {
+            project,
+            worker,
+            requested,
+            drain_requested: false,
+            quarantined: None,
+        }
+    }
+
+    /// One step of the pure stop policy at `now`; it never waits.
+    fn poll(&mut self, now: Instant) -> StopProgress {
+        if matches!(self.worker.child.try_wait(), Ok(Some(_))) {
+            return StopProgress::Exited;
+        }
+        if self.quarantined.is_some() {
+            return StopProgress::Pending;
+        }
+        // An owner that reported itself stuck is quarantined at once.
+        if let Some(code) = self.worker.quarantine_reason() {
+            self.quarantined = Some(code);
+            return StopProgress::Quarantined(code);
+        }
+        match crate::worker_host::stop_step(
+            true,
+            self.requested,
+            now,
+            OWNER_STOP_GRACE,
+            IN_PROCESS_DRAIN,
+            self.drain_requested,
+        ) {
+            // An in-process owner is never killed.
+            StopStep::Wait | StopStep::Kill => StopProgress::Pending,
+            StopStep::Drain => {
+                // The cooperative equivalent of the kill: work stops at its
+                // next safe point and stays unsettled for the next owner.
+                if let Some(scope) = &self.worker.scope {
+                    scope.execution.drain();
+                }
+                self.drain_requested = true;
+                StopProgress::Pending
+            }
+            StopStep::Quarantine => {
+                self.quarantined = Some(STOP_DEADLINE_CODE);
+                StopProgress::Quarantined(STOP_DEADLINE_CODE)
+            }
+        }
+    }
+}
+
+thread_local! {
+    /// The supervisor actor's stopping in-process owners. Only the thread that
+    /// started an owner (the actor, or a test) holds and polls its entry.
+    static STOPPING: std::cell::RefCell<Vec<Stopping>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn stop_in_process(project: ProjectBinding, worker: ChildWorker, now: Instant) {
+    let stopping = Stopping::new(project, worker, now);
+    STOPPING.with(|entries| entries.borrow_mut().push(stopping));
+}
+
+/// A previous owner of `project` has not been observed to exit.
+fn stopping_project(project: ProjectBinding) -> bool {
+    STOPPING.with(|entries| {
+        entries
+            .borrow()
+            .iter()
+            .any(|entry| entry.project == project)
+    })
+}
+
+fn stopping_is_empty() -> bool {
+    STOPPING.with(|entries| entries.borrow().is_empty())
+}
+
+/// Whether every stopping owner is quarantined, and the identities they hold.
+fn stopping_quarantined() -> (bool, Vec<WorkerIdentity>) {
+    STOPPING.with(|entries| {
+        let entries = entries.borrow();
+        (
+            entries.iter().all(|entry| entry.quarantined.is_some()),
+            entries
+                .iter()
+                .filter(|entry| entry.quarantined.is_some())
+                .filter_map(|entry| entry.worker.identity)
+                .collect(),
+        )
+    })
+}
+
+/// One observation of the stopping owners for the actor's turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopEvent {
+    Quarantined {
+        project: ProjectBinding,
+        code: &'static str,
+    },
+    /// The owner's exit was observed and it was reaped. `quarantined` keeps
+    /// the record of a quarantine that its later exit ended.
+    Reaped {
+        project: ProjectBinding,
+        quarantined: Option<&'static str>,
+    },
+}
+
+/// Poll every stopping owner once, without waiting. An exited owner is
+/// finalized (endpoint, reply reader, catalog reap receipt) by its Drop and
+/// only then marked reaped for its resource drain; nothing is released for an
+/// owner whose exit was not observed.
+fn poll_stopping_owners(drains: &mut WorkerResourceDrains, now: Instant) -> Vec<StopEvent> {
+    let mut events = Vec::new();
+    let exited = STOPPING.with(|entries| {
+        let mut entries = entries.borrow_mut();
+        let mut exited = Vec::new();
+        let mut index = 0;
+        while index < entries.len() {
+            match entries[index].poll(now) {
+                StopProgress::Pending => index += 1,
+                StopProgress::Quarantined(code) => {
+                    events.push(StopEvent::Quarantined {
+                        project: entries[index].project,
+                        code,
+                    });
+                    index += 1;
+                }
+                StopProgress::Exited => exited.push(entries.remove(index)),
+            }
+        }
+        exited
+    });
+    // Finalize outside the collection's borrow.
+    for entry in exited {
+        let Stopping {
+            project,
+            worker,
+            quarantined,
+            ..
+        } = entry;
+        let identity = worker.identity;
+        drop(worker);
+        if let Some(identity) = identity
+            && drains.contains(identity)
+        {
+            let _ = drains.child_reaped(identity);
+        }
+        events.push(StopEvent::Reaped {
+            project,
+            quarantined,
+        });
+    }
+    events
+}
+
+/// Apply stopping-owner observations: a quarantine blocks its project with
+/// its typed reason; a quarantined owner's later exit returns the project to
+/// the normal failed-exit restart and backoff rules, keeping a log record.
+fn record_stop_events(
+    events: Vec<StopEvent>,
+    root: &Path,
+    backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
+    quarantined: &mut BTreeMap<ProjectBinding, &'static str>,
+    log: &crate::service_logs::Log,
+) {
+    for event in events {
+        match event {
+            StopEvent::Quarantined { project, code } => {
+                quarantined.insert(project, code);
+                log.record_code(
+                    airk_core::service_logs::LogKind::WorkerFailed,
+                    Some(project),
+                    None,
+                    Some(code),
+                );
+                eprintln!(
+                    "airk: project owner for {project} cannot reach a safe point ({code}); \
+                     it keeps its lease and the project stays blocked; restart the service to recover"
+                );
+            }
+            StopEvent::Reaped {
+                project,
+                quarantined: Some(_),
+            } => {
+                quarantined.remove(&project);
+                log.record_code(
+                    airk_core::service_logs::LogKind::WorkerStopped,
+                    Some(project),
+                    None,
+                    Some(QUARANTINE_RELEASED_CODE),
+                );
+                worker_failed(root, backoff, project, Instant::now());
+            }
+            StopEvent::Reaped {
+                quarantined: None, ..
+            } => {}
+        }
+    }
 }
 
 /// Borrowed identity and gate from the existing Supervisor resource owner.
@@ -1148,6 +1598,9 @@ fn start_worker(
         drains.for_project(project).is_empty(),
         ConnectionSetupPending::Draining
     );
+    // A previous in-process owner, including a quarantined one or one that
+    // failed to start, keeps this project until its exit is observed.
+    ensure!(!stopping_project(project), ConnectionSetupPending::Draining);
     let saved = ServiceRegistry::open_saved(root)?.recovery_budget(
         &project.to_string(),
         crate::runtime_pair::engine_identity()?,
@@ -1355,6 +1808,8 @@ impl Supervisor {
                 let mut pool_recovery = PoolRecovery::new_owned(Instant::now(),ownership.clone(),instance);
                 let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
+                // Projects whose in-process owner is quarantined, with its reason.
+                let mut quarantined = BTreeMap::<ProjectBinding, &'static str>::new();
                 let mut waiting = BTreeMap::<ProjectBinding, WaitSample>::new();
                 let mut restarting = BTreeMap::<ProjectBinding, Option<WorkerIdentity>>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
@@ -1411,10 +1866,18 @@ impl Supervisor {
                         }
                         continue;
                     }
+                    // An owner that reported itself stuck is stopped now; the
+                    // poll below quarantines it. Nothing here waits for it.
+                    let stuck: Vec<_> = workers.iter().filter(|(_, worker)| worker.quarantine_reason().is_some()).map(|(project, _)| *project).collect();
+                    for project in stuck {
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
+                    }
                     let exiting: Vec<_> = workers.iter().filter(|(_, worker)| worker.exiting).map(|(project, _)| *project).collect();
                     for project in exiting {
                         let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
+                    let stop_events = poll_stopping_owners(&mut resource_drains, Instant::now());
+                    record_stop_events(stop_events, &root, &mut backoff, &mut quarantined, &log);
                     let _ = poll_worker_exits(&mut resource_drains,
 &mut pool,
 &mut pool_recovery,
@@ -1559,7 +2022,8 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                     #[cfg(windows)]
                     let provider_rss = pool.as_ref().map(Pool::descendant_rss).transpose().ok().map(Option::unwrap_or_default);
                     let observations = std::iter::once(std::process::id())
-                        .chain(workers.values().map(|worker| worker.child.id()))
+                        // An in-process owner is part of the service's own resident set.
+                        .chain(workers.values().filter_map(|worker| worker.child.id()))
                         .chain(pool.as_ref().and_then(crate::service_inference::process_id))
                         .chain(
                             std::iter::once(source_pid.load(std::sync::atomic::Ordering::Acquire))
@@ -1587,7 +2051,7 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                     resources.observe(rss, available, complete && available.is_some());
                     // Registry I/O must never occur while cached observations
                     // are locked by health/console readers.
-                    let idle_safe = workers.is_empty() && resource_drains.is_empty() && restarting.is_empty()
+                    let idle_safe = workers.is_empty() && resource_drains.is_empty() && restarting.is_empty() && stopping_is_empty()
                         && !provider_error && pending_providers == 0
                         && registry.as_ref().is_some_and(|registry| {
                             registry.pending_projects(1).is_ok_and(|page| page.is_empty())
@@ -1613,11 +2077,14 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                             })
                             .collect();
                         cache.restarting = restarting.keys().copied().collect();
+                        // An open restart circuit and a quarantined owner both
+                        // block automatic starts; the log record names which.
                         cache.blocked = backoff
                             .iter()
                             .filter_map(|(project, (_, attempts))| {
                                 (*attempts >= 3).then_some(*project)
                             })
+                            .chain(quarantined.keys().copied())
                             .collect();
                         cache.snapshot = resources.snapshot();
                         cache.observed = Instant::now();
@@ -1920,7 +2387,7 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                         Ok(Envelope::Checkpoint { operation_id, seal, reply }) => {
                             let result = (|| -> Result<Vec<protocol::WorkerCheckpointObservation>> {
                                 ensure!(checkpoint_pause.load(std::sync::atomic::Ordering::Acquire), "worker checkpoint admission is not closed");
-                                ensure!(resource_drains.is_empty() && restarting.is_empty(), CheckpointResourcesPending);
+                                ensure!(resource_drains.is_empty() && restarting.is_empty() && stopping_is_empty(), CheckpointResourcesPending);
                                 checkpoint_workers(&mut workers, operation_id, seal)
                             })();
                             if seal && result.as_ref().is_ok_and(|workers| workers.iter().all(|worker| worker.sealed && worker.durable_boundary)) { checkpoint_frozen = true; }
@@ -2078,7 +2545,13 @@ WorkerAdmission {
                             reply,
                         }) => {
                             let current = workers.get(&project).and_then(|worker| worker.identity);
-                            let response = if current != expected {
+                            let response = if quarantined.contains_key(&project) {
+                                // A project restart cannot end a stuck owner's
+                                // native call; only a service restart can.
+                                ControlResponse::Failure {
+                                    code: "project_owner_quarantined".into(),
+                                }
+                            } else if current != expected {
                                 ControlResponse::Failure {
                                     code: "project_worker_changed".into(),
                                 }
@@ -2252,7 +2725,10 @@ WorkerAdmission {
                                 drains: &mut resource_drains,
                                 });
                         }
+                        // A quarantined previous owner ends the restart too:
+                        // only a service restart can recover that project.
                         if workers.contains_key(&project)
+                            || quarantined.contains_key(&project)
                             || backoff
                                 .get(&project)
                                 .is_some_and(|(_, attempts)| *attempts >= 3)
@@ -2542,17 +3018,23 @@ WorkerAdmission {
                 // Children stop before the service lock is released. Interrupted jobs retain receipts.
                 // Shutdown retains both owning children and accepted grants
                 // until the same native child+provider barriers complete.
+                // A quarantined owner never reaches its exit here; once every
+                // remaining owner is quarantined, the service's own exit is what
+                // releases them, as an explicit service restart requires.
                 loop {
                     for project in workers.keys().copied().collect::<Vec<_>>() {
                         let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
+                    let stop_events = poll_stopping_owners(&mut resource_drains, Instant::now());
+                    record_stop_events(stop_events, &root, &mut backoff, &mut quarantined, &log);
                     let _ = poll_worker_exits(&mut resource_drains,
 &mut pool,
 &mut pool_recovery,
 &mut resources,
 &policy,
 WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
-                    if workers.is_empty() && resource_drains.identities().iter().all(|identity| resource_drains.released(*identity).unwrap_or(false)) { break; }
+                    let (all_quarantined, held) = stopping_quarantined();
+                    if workers.is_empty() && all_quarantined && resource_drains.identities().iter().all(|identity| held.contains(identity) || resource_drains.released(*identity).unwrap_or(false)) { break; }
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 if let Ok(mut policy) = policy.lock() { policy.ownership_lost(); }
@@ -2851,6 +3333,297 @@ mod tests {
         assert_eq!(samples[&project].job, first);
         assert_eq!(samples[&project].reason, WaitReason::EmbeddingRecovery);
         assert_eq!(samples.len(), 1024);
+    }
+
+    fn owner_identity(byte: u8) -> WorkerIdentity {
+        WorkerIdentity {
+            service: Incarnation::from_bytes([byte; 16]),
+            worker: Incarnation::from_bytes([byte.wrapping_add(1); 16]),
+            project: ProjectBinding::from_bytes([byte; 32]),
+            fencing_generation: 1,
+        }
+    }
+
+    /// An in-process owner whose thread holds its project lease inside a
+    /// native call with no safe point, until `release` sends or is dropped.
+    fn held_thread_owner(
+        root: &Path,
+        identity: WorkerIdentity,
+        scope: crate::worker_scope::WorkerScope,
+    ) -> Result<(ChildWorker, mpsc::Sender<()>)> {
+        let (acquired, held) = mpsc::channel();
+        let (release, gate) = mpsc::channel::<()>();
+        let lease_root = root.to_owned();
+        let handle = std::thread::spawn(move || -> Result<()> {
+            let lease = ProjectLease::acquire(&lease_root, identity.project)?;
+            let _ = acquired.send(());
+            let _ = gate.recv();
+            drop(lease);
+            Ok(())
+        });
+        held.recv_timeout(Duration::from_secs(10))
+            .context("fixture owner did not take its lease")?;
+        let (_replies, output) = mpsc::sync_channel(1);
+        let worker = ChildWorker {
+            exiting: false,
+            read_settlement: None,
+            catalog_gate: None,
+            catalog_pending: None,
+            catalog_quarantined: false,
+            derived: false,
+            _containment: None,
+            child: WorkerHost::Thread(OwnerThread::new(handle)),
+            scope: Some(scope),
+            input: None,
+            output,
+            reader: None,
+            stderr: None,
+            identity: Some(identity),
+            role: protocol::role(identity.worker),
+            runtime: root.to_owned(),
+            last_renewal: Instant::now(),
+            pool_binding: None,
+            provider_helpers: Vec::new(),
+            provider_in_process: false,
+            #[cfg(feature = "local-inference")]
+            provider_completed: None,
+            pool_pending: false,
+            last_status: Instant::now(),
+            waiting: None,
+        };
+        Ok((worker, release))
+    }
+
+    /// Poll the stopping owners at the real clock until one event is observed.
+    fn next_stop_events(drains: &mut WorkerResourceDrains) -> Result<Vec<StopEvent>> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let events = poll_stopping_owners(drains, Instant::now());
+            if !events.is_empty() {
+                return Ok(events);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "stopping owner exit was not observed"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_stuck_in_process_owner_is_quarantined_with_its_lease_and_reaped_after_its_own_exit()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let identity = owner_identity(31);
+        let scope = crate::worker_scope::WorkerScope::new();
+        let (worker, release) = held_thread_owner(&root, identity, scope.clone())?;
+        let mut drains = WorkerResourceDrains::default();
+        drains.reserve_history(identity, vec![])?;
+        let start = Instant::now();
+        let at = |seconds| start + Duration::from_secs(seconds);
+        stop_in_process(identity.project, worker, start);
+        assert!(stopping_project(identity.project));
+        // Manual clock: the stop grace, then a drain, then one quarantine.
+        assert!(poll_stopping_owners(&mut drains, at(9)).is_empty());
+        assert!(!scope.execution.draining());
+        assert!(poll_stopping_owners(&mut drains, at(10)).is_empty());
+        assert!(scope.execution.draining());
+        assert!(poll_stopping_owners(&mut drains, at(29)).is_empty());
+        assert_eq!(
+            poll_stopping_owners(&mut drains, at(30)),
+            vec![StopEvent::Quarantined {
+                project: identity.project,
+                code: STOP_DEADLINE_CODE,
+            }]
+        );
+        assert!(poll_stopping_owners(&mut drains, at(3600)).is_empty());
+        // Quarantine releases nothing: the owner's own thread keeps its lease,
+        // its resource drain stays charged and its project stays blocked.
+        assert_eq!(stopping_quarantined(), (true, vec![identity]));
+        assert!(ProjectLease::acquire(&root, identity.project).is_err());
+        assert_eq!(
+            drains.poll(identity, None, |_, _, _| Ok(false))?,
+            DrainProgress::ChildPending
+        );
+        assert!(stopping_project(identity.project));
+        // The stuck call later returns on its own: the owner is reaped
+        // normally, and the event keeps the record of its quarantine.
+        release.send(())?;
+        assert_eq!(
+            next_stop_events(&mut drains)?,
+            vec![StopEvent::Reaped {
+                project: identity.project,
+                quarantined: Some(STOP_DEADLINE_CODE),
+            }]
+        );
+        assert!(stopping_is_empty());
+        assert_eq!(
+            drains.poll(identity, None, |_, _, _| Ok(false))?,
+            DrainProgress::Ready
+        );
+        drop(ProjectLease::acquire(&root, identity.project)?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_owner_that_reports_itself_stuck_is_quarantined_at_once_and_its_project_blocked()
+    -> Result<()> {
+        use airk_kernel::service_execution::StuckReason;
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let identity = owner_identity(41);
+        let scope = crate::worker_scope::WorkerScope::new();
+        let (worker, release) = held_thread_owner(&root, identity, scope.clone())?;
+        // The owner's own query deadline marks its scope; it never exits.
+        scope.execution.quarantine(StuckReason::QueryDeadline);
+        assert_eq!(
+            worker.quarantine_reason(),
+            Some("owner_quarantined_query_deadline")
+        );
+        let mut drains = WorkerResourceDrains::default();
+        let start = Instant::now();
+        stop_in_process(identity.project, worker, start);
+        let quarantine = poll_stopping_owners(&mut drains, start);
+        assert_eq!(
+            quarantine,
+            vec![StopEvent::Quarantined {
+                project: identity.project,
+                code: "owner_quarantined_query_deadline",
+            }]
+        );
+        let (log, guard) = crate::service_logs::Log::start(root.clone(), identity.service);
+        let mut backoff = BTreeMap::new();
+        let mut quarantined = BTreeMap::new();
+        record_stop_events(quarantine, &root, &mut backoff, &mut quarantined, &log);
+        assert_eq!(
+            quarantined.get(&identity.project),
+            Some(&"owner_quarantined_query_deadline")
+        );
+        // Quarantine alone is not counted as a restart attempt.
+        assert!(backoff.is_empty());
+        release.send(())?;
+        let reaped = next_stop_events(&mut drains)?;
+        record_stop_events(reaped, &root, &mut backoff, &mut quarantined, &log);
+        // Its later exit returns the project to the failed-exit backoff rules.
+        assert!(quarantined.is_empty());
+        assert!(backoff.contains_key(&identity.project));
+        drop(log);
+        drop(guard);
+        let codes = crate::service_logs::recent(&root, 8)?
+            .records
+            .into_iter()
+            .filter(|record| record.project == Some(identity.project))
+            .map(|record| (record.kind, record.code))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            vec![
+                (
+                    airk_core::service_logs::LogKind::WorkerFailed,
+                    Some("owner_quarantined_query_deadline".to_owned())
+                ),
+                (
+                    airk_core::service_logs::LogKind::WorkerStopped,
+                    Some(QUARANTINE_RELEASED_CODE.to_owned())
+                ),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn production_owner_start_runs_in_the_service_holds_its_lease_and_is_reaped() -> Result<()> {
+        // The production entry point, `ChildWorker::spawn`, with the real
+        // `runtime_pair::engine_identity()`. A test image has no runtime
+        // receipt beside it, which is the single-executable identity.
+        let owner = tempfile::Builder::new()
+            .prefix("airk-production-start-")
+            .tempdir_in(std::env::temp_dir().canonicalize()?)?;
+        let root = owner.path().join("control");
+        local_ipc::prepare_root(&root)?;
+        let service = new_instance_id()?;
+        let mut registry = ServiceRegistry::open(&root, service)?;
+        let source = owner.path().join("source");
+        let data = owner.path().join("data");
+        for path in [&source, &data] {
+            std::fs::create_dir(path)?;
+        }
+        std::fs::write(source.join("memo.md"), "# Production owner\n")?;
+        airk_store::service::data_scope::bind(&data, &root, registry.incarnation()?)?;
+        let registration =
+            airk_kernel::service_projects::registration(&source, &data, "production")?;
+        registry.register(&registration)?;
+        let project = registration.binding;
+        let worker = ChildWorker::spawn(&root, project, service, false)?;
+        let identity = worker.identity.context("production owner identity")?;
+        assert_eq!((identity.service, identity.project), (service, project));
+        // No process of its own: the owner is a thread of this process.
+        assert!(worker.child.in_process());
+        assert_eq!(worker.child.id(), None);
+        assert!(ProjectLease::acquire(&root, project).is_err());
+        stop_in_process(project, worker, Instant::now());
+        let mut drains = WorkerResourceDrains::default();
+        assert_eq!(
+            next_stop_events(&mut drains)?,
+            vec![StopEvent::Reaped {
+                project,
+                quarantined: None,
+            }]
+        );
+        assert!(stopping_is_empty());
+        drop(ProjectLease::acquire(&root, project)?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_in_process_project_owner_starts_holds_its_lease_and_is_reaped_without_blocking()
+    -> Result<()> {
+        let owner = tempfile::Builder::new()
+            .prefix("airk-in-process-start-")
+            .tempdir_in(std::env::temp_dir().canonicalize()?)?;
+        let root = owner.path().join("control");
+        local_ipc::prepare_root(&root)?;
+        let service = new_instance_id()?;
+        let mut registry = ServiceRegistry::open(&root, service)?;
+        let source = owner.path().join("source");
+        let data = owner.path().join("data");
+        for path in [&source, &data] {
+            std::fs::create_dir(path)?;
+        }
+        std::fs::write(source.join("memo.md"), "# In-process owner\n")?;
+        airk_store::service::data_scope::bind(&data, &root, registry.incarnation()?)?;
+        let registration = airk_kernel::service_projects::registration(&source, &data, "owner")?;
+        registry.register(&registration)?;
+        let project = registration.binding;
+        // The production thread host, carriers, scope binding and handshake.
+        let engine = airk_core::identity::Sha256Digest::from_bytes([53; 32]);
+        let worker = ChildWorker::start_in_process(&root, project, service, false, engine)?;
+        let identity = worker.identity.context("in-process owner identity")?;
+        assert_eq!((identity.service, identity.project), (service, project));
+        assert!(identity.fencing_generation > 0);
+        assert!(worker.child.in_process());
+        assert_eq!(worker.child.id(), None);
+        assert!(ProjectLease::acquire(&root, project).is_err());
+        // Stopping returns at once; the actor's poll reaps the owner after
+        // its own exit, and only then is its lease free.
+        let requested = Instant::now();
+        stop_in_process(project, worker, requested);
+        assert!(requested.elapsed() < OWNER_STOP_GRACE);
+        assert!(stopping_project(project));
+        let mut drains = WorkerResourceDrains::default();
+        assert_eq!(
+            next_stop_events(&mut drains)?,
+            vec![StopEvent::Reaped {
+                project,
+                quarantined: None,
+            }]
+        );
+        assert!(stopping_is_empty());
+        drop(ProjectLease::acquire(&root, project)?);
+        Ok(())
     }
 
     #[cfg(unix)]

@@ -458,3 +458,12 @@ async fn ordinary_update_refuses_a_registry_without_a_catalog_and_keeps_existing
     }
     Ok(())
 }
+
+#[test]
+fn a_registered_login_entry_starts_the_service_through_the_os_manager_only() {
+    // Both CLI election sites (`start_selected_with_binding`, `start_verified_checked`)
+    // route through this decision: with login startup registered the OS manager
+    // starts the one service; a CLI never spawns `serve` itself.
+    assert_eq!(start_route(true), StartRoute::OsManager);
+    assert_eq!(start_route(false), StartRoute::OnDemandChild);
+}

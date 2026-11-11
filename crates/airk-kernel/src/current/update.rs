@@ -762,10 +762,13 @@ impl CurrentUpdater<'_> {
         let before_units = semantic.as_ref().map_or(0, |s| s.cache.stats.vector_units);
         let planning = semantic.as_ref().map(|s| (s.model, s.selection, s.defer));
         let store = self.store;
+        // The producer is part of this worker's job: keep its owner bindings.
+        let inherited = crate::service_execution::Inherited::capture();
         std::thread::scope(|scope| -> Result<()> {
             let (sender, receiver) =
                 std::sync::mpsc::sync_channel::<Result<Planned>>(MAX_BATCH_CHUNKS * 2);
             let producer = scope.spawn(move || {
+                let _bound = inherited.bind();
                 let result = (|| -> Result<()> {
                     let mut captured_bytes = 0usize;
                     for input in inputs {

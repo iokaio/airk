@@ -2271,3 +2271,40 @@ fn standalone_adoption_commands_refuse_before_any_installation_access() {
     }
     assert!(!missing.exists());
 }
+
+#[test]
+fn https_catalog_services_never_idle_exit_when_started_on_demand() {
+    // Authority-1 catalogs serve agents directly over HTTPS; nothing would
+    // restart an idle-exited service for them (one-airk.md §7).
+    assert_eq!(on_demand_idle_exit(Some(1)), None);
+    assert_eq!(on_demand_idle_exit(Some(2)), None);
+    assert_eq!(on_demand_idle_exit(Some(0)), Some("180"));
+    assert_eq!(on_demand_idle_exit(None), Some("180"));
+    let owner = tempfile::tempdir().unwrap();
+    assert_eq!(
+        saved_catalog_authority(owner.path()),
+        None,
+        "no saved registry reads as unknown, never as authority 1"
+    );
+}
+
+#[test]
+fn explicit_login_uninstall_opt_out_is_recorded_reported_and_cleared() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?.join("install");
+    local_ipc::prepare_root(&root)?;
+    // A fresh or replaced installation starts without the record.
+    assert!(!login_opted_out(&root)?);
+    assert_eq!(login_opt_out_report(&root), serde_json::json!(false));
+    record_login_opt_out(&root)?;
+    assert!(login_opted_out(&root)?);
+    assert_eq!(login_opt_out_report(&root), serde_json::json!(true));
+    // An explicit `runtime login install` clears it; clearing is idempotent.
+    clear_login_opt_out(&root)?;
+    clear_login_opt_out(&root)?;
+    assert!(!login_opted_out(&root)?);
+    // A damaged record is reported as unknown, never as "not opted out".
+    fs::write(root.join(LOGIN_OPT_OUT), b"not a record")?;
+    assert_eq!(login_opt_out_report(&root), serde_json::Value::Null);
+    Ok(())
+}

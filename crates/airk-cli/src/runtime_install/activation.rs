@@ -328,6 +328,24 @@ async fn start_for_intent(
     start_selected_with_binding(root, approval, main, Some(intent.manager), Some(binding)).await
 }
 
+/// Who starts a stopped service. A registered login/startup entry means the OS
+/// manager owns the one service process and is asked to start it; only an
+/// installation without one (never registered, removed, or refused) starts the
+/// detached on-demand `serve` child. A CLI command never becomes the service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StartRoute {
+    OsManager,
+    OnDemandChild,
+}
+
+pub(super) fn start_route(manager_owns_restart: bool) -> StartRoute {
+    if manager_owns_restart {
+        StartRoute::OsManager
+    } else {
+        StartRoute::OnDemandChild
+    }
+}
+
 async fn start_selected_with_binding(
     root: &Path,
     approval: &Approval,
@@ -347,7 +365,7 @@ async fn start_selected_with_binding(
         expected_manager.is_none_or(|expected| expected == managed),
         "startup ownership changed during activation"
     );
-    if !managed {
+    if start_route(managed) == StartRoute::OnDemandChild {
         if let Some(binding) = binding {
             return start_for_operation(root, approval, main, binding).await;
         }
@@ -395,7 +413,7 @@ pub(super) async fn start_verified_checked(
         "runtime selection identity mismatch"
     );
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
-    if !manager.owns_restart()? {
+    if start_route(manager.owns_restart()?) == StartRoute::OnDemandChild {
         return start_with_digest_checked(
             root,
             &verified.approval,

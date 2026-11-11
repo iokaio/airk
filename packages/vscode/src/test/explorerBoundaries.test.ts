@@ -13,7 +13,7 @@ const compiled = path.resolve(__dirname, '..');
 const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
-const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class IntentJournal', 'class PrivateIntentStore', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
+const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class NativeSession', 'class IntentJournal', 'class PrivateIntentStore', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
 
 function sources(directory: string): string[] {
     if (!fs.existsSync(directory)) { return []; }
@@ -165,5 +165,89 @@ test('Built Explorer bundles contain no host implementation copies', { skip: !fs
         const text = fs.readFileSync(file, 'utf8');
         for (const marker of HOST_MARKERS) { assert.ok(!text.includes(marker), `${name} contains ${marker}`); }
         assert.doesNotMatch(text, /\brequire\s*\(\s*["']vscode["']/, `${name} loads the VS Code API`);
+    }
+});
+
+// One-process boundary (docs/simplify/one-process-ledger.md, step D): an editor
+// window starts AIRK only through its one `service session` child. Every other
+// process start in production TypeScript is listed here, reviewed, with its reason.
+const PROCESS_STARTS: Record<string,string> = {
+    'nativeSession.ts#launchSession:spawn': 'the one per-window `airk service session` child',
+    'nativeSession.ts#windowlessOneShot:runText': 'no editor window (the uninstall worker): one temporary command',
+    'nativeSession.ts#differentBuildOneShot:runText': 'explicit fallback for a different-build predecessor image',
+    'serviceClient.ts#NativeControlTransport.constructor:spawn': 'per-client console for a different-build runtime, or outside a window',
+    'native.ts#runText:runSystemText': 'the gated one-shot primitive itself',
+    'native.ts#runSystemText:execFile': 'the one-shot primitive itself',
+    'native.ts#prepareHelper:runText': 'dead primitive without a production caller; pending evidence-based deletion',
+    'native.ts#runJson:runText': 'dead primitive without a production caller; pending evidence-based deletion',
+    'uninstallHook.ts#startUninstallWorker:spawn': 'window-less uninstall worker (Node, not AIRK)',
+    'serviceExtension.ts#ServiceExtension.openTools:createTerminal': 'the user-opened `tools shell` terminal',
+    'cliInstall.ts#installPath:runSystemText': 'PowerShell for the user PATH, never AIRK',
+    'cliRemove.ts#removeShellIntegration:runSystemText': 'PowerShell for the user PATH, never AIRK',
+    'privateDirectory.ts#run:execFile': 'fixed operating-system ACL tool, never AIRK',
+};
+const CHILD_PROCESS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']);
+function processStarts(): string[] {
+    const sites: string[] = [];
+    for (const file of sources(source).filter(name => !path.relative(source, name).startsWith('test' + path.sep))) {
+        const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+        const name = path.relative(source, file).split(path.sep).join('/');
+        const named = new Map<string, string>(), namespaces = new Set<string>();
+        for (const statement of tree.statements) {
+            if (!ts.isImportDeclaration(statement) || !statement.importClause || !ts.isStringLiteral(statement.moduleSpecifier)) { continue; }
+            const specifier = statement.moduleSpecifier.text, bindings = statement.importClause.namedBindings;
+            const startsProcesses = specifier === 'node:child_process' || specifier === 'child_process';
+            if (startsProcesses && bindings && ts.isNamespaceImport(bindings)) { namespaces.add(bindings.name.text); }
+            if (bindings && ts.isNamedImports(bindings)) {
+                for (const element of bindings.elements) {
+                    const original = (element.propertyName ?? element.name).text;
+                    if (startsProcesses && CHILD_PROCESS.has(original) || specifier === './native' && ['runText', 'runSystemText'].includes(original)) { named.set(element.name.text, original); }
+                }
+            }
+        }
+        if (name === 'native.ts') { named.set('runText', 'runText'); named.set('runSystemText', 'runSystemText'); }
+        const owner = (node: ts.Node) => {
+            const names: string[] = [];
+            for (let current = node.parent; current; current = current.parent) {
+                if ((ts.isFunctionDeclaration(current) || ts.isMethodDeclaration(current)) && current.name) { names.unshift(current.name.getText()); }
+                else if (ts.isConstructorDeclaration(current)) { names.unshift('constructor'); }
+                else if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && current.initializer && (ts.isArrowFunction(current.initializer) || ts.isFunctionExpression(current.initializer))) { names.unshift(current.name.text); }
+                else if (ts.isClassDeclaration(current) && current.name) { names.unshift(current.name.text); }
+            }
+            return names.join('.') || '<module>';
+        };
+        const visit = (node: ts.Node): void => {
+            if (ts.isCallExpression(node)) {
+                const callee = node.expression;
+                const started = ts.isIdentifier(callee) ? named.get(callee.text)
+                    : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && namespaces.has(callee.expression.text) && CHILD_PROCESS.has(callee.name.text) ? callee.name.text
+                        : ts.isPropertyAccessExpression(callee) && callee.name.text === 'createTerminal' ? 'createTerminal' : undefined;
+                if (started) { sites.push(`${name}#${owner(node)}:${started}`); }
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(tree);
+    }
+    return sites.sort();
+}
+
+test('production TypeScript starts processes only at the reviewed one-process sites', () => {
+    const sites = processStarts();
+    assert.ok(sites.length > 0, 'zero observed sites means the scan selected nothing');
+    assert.deepEqual(sites, Object.keys(PROCESS_STARTS).sort(), 'a new process start needs review: route AIRK commands through the window session');
+});
+
+test('dead one-shot primitives and the raw one-shot runner keep no other production importer', () => {
+    for (const file of sources(source).filter(name => !path.relative(source, name).startsWith('test' + path.sep))) {
+        const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+        for (const statement of tree.statements) {
+            if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== './native') { continue; }
+            const bindings = statement.importClause?.namedBindings;
+            const imported = bindings && ts.isNamedImports(bindings) ? bindings.elements.map(element => (element.propertyName ?? element.name).text) : [];
+            // nativeSession.ts alone keeps the explicit one-shot fallbacks listed above.
+            for (const dead of ['prepareHelper', 'runJson', 'joinScheduledIndex', ...(path.basename(file) === 'nativeSession.ts' ? [] : ['runText'])]) {
+                assert.ok(!imported.includes(dead), `${path.relative(source, file)} imports ${dead}; native commands go through the window session (nativeText)`);
+            }
+        }
     }
 });

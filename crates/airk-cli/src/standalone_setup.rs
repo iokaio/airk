@@ -113,8 +113,25 @@ pub fn installation(explicit: Option<&Path>) -> Result<PathBuf> {
         .map_or_else(crate::runtime_install::default_install_root, Ok)
 }
 
+/// The exact instruction for agents that referenced a replaced installation.
+pub fn reconnect_instruction(client_references: &Value, installed_cli: Option<&Path>) -> String {
+    let command =
+        installed_cli.map_or_else(|| "airk".to_owned(), |cli| format!("\"{}\"", cli.display()));
+    format!(
+        "Reconnect every coding agent that used the replaced installation: an agent entry that starts one of {} or connects to {} no longer works. From the agent's working folder run {command} setup --client claude (or --client codex) --root <agent working folder>, then replace the old entry with the printed HTTPS configuration. In VS Code, use AIRK Explorer > Reconnect.",
+        client_references["executables"],
+        client_references["http_endpoint"]
+            .as_str()
+            .unwrap_or("no saved HTTPS endpoint"),
+    )
+}
+
 /// The expected manifest digest comes from an explicitly trusted distributor or
 /// user, never from hashing the same untrusted payload and trusting its result.
+///
+/// Before 1.9.0 an installed predecessor is replaced, never upgraded in place,
+/// through the same boundary as `runtime replace-installation`. The returned
+/// receipt carries its `client_references`.
 pub async fn install_payload(
     install: &Path,
     source: &Path,
@@ -122,13 +139,58 @@ pub async fn install_payload(
     yes: bool,
     rebuild: bool,
     prompt: &mut impl SetupPrompt,
-) -> Result<()> {
+) -> Result<Option<Value>> {
     approved.parse::<Sha256Digest>()?;
     ensure!(
         crate::runtime_pair::digest_file(&source.join(crate::install_files::main_name()))?
             == crate::runtime_pair::current_executable_sha256()?,
         "run setup using the reviewed payload's own AIRK executable before installing it"
     );
+    let operation_id =
+        match crate::runtime_install::pending_replacement_operation(install, approved)? {
+            Some(operation) => operation,
+            None => framed_digest(
+                b"airk/standalone-reinstall/1",
+                &[airk_kernel::service_broker::new_instance_id()?.as_bytes()],
+            )
+            .to_string(),
+        };
+    let (replace, plan) =
+        crate::runtime_install::replacement_plan(install, approved, Some(&operation_id), None)?;
+    let replaced = if replace {
+        ensure!(
+            !rebuild,
+            "this version replaces the earlier AIRK installation instead of upgrading it; --rebuild-indexes does not apply"
+        );
+        confirm(
+            prompt,
+            yes,
+            &format!(
+                "AIRK {} replaces the earlier installation instead of upgrading it. These AIRK folders are removed, including their saved indexes; your source folders are not touched: {}. Agents that use these executables or this endpoint must be reconnected afterwards: {}",
+                env!("CARGO_PKG_VERSION"),
+                plan["locations"],
+                plan["client_references"]
+            ),
+        )?;
+        let receipt = crate::runtime_install::replace_installation(
+            install,
+            approved,
+            Some(&operation_id),
+            None,
+        )?;
+        if let Some(residue) = receipt["residue"]
+            .as_array()
+            .filter(|residue| !residue.is_empty())
+        {
+            prompt.message(&format!(
+                "Replacement left residue to review: {}",
+                Value::Array(residue.clone())
+            ))?;
+        }
+        Some(receipt)
+    } else {
+        None
+    };
     let prior = if install.join("selected.json").try_exists()? {
         Some(crate::runtime_install::selected(install)?.0)
     } else {
@@ -148,7 +210,7 @@ pub async fn install_payload(
             approved,
             crate::runtime_install::VerificationBasis::TrustedDistribution,
         )?;
-        return Ok(());
+        return Ok(replaced);
     }
     confirm(
         prompt,
@@ -158,6 +220,18 @@ pub async fn install_payload(
             install.display()
         ),
     )?;
+    if replaced.is_none() {
+        // Consume fresh-install admission after confirmation and before staging.
+        let receipt = crate::runtime_install::replace_installation(
+            install,
+            approved,
+            Some(&operation_id),
+            None,
+        )?;
+        if receipt["plan"]["reason"] == "installation_already_replaced" {
+            return Ok(None);
+        }
+    }
     let rebuild = if prior.is_some() && !yes && !rebuild {
         match prompt.answer("Upgrade: [1] migrate existing indexes, [2] rebuild from saved sources (previous state preserved). Choice [1]:")?.as_str() {
             ""|"1"=>false,"2"=>true,_=>bail!("select migration or rebuilding; no runtime was staged"),
@@ -185,9 +259,18 @@ pub async fn install_payload(
         }
         None => {
             crate::runtime_install::activate(install, approved).await?;
+            // A fresh installation starts at login and survives a reboot. A
+            // refusal (OS policy, unqualified adapter) keeps the on-demand
+            // service and is reported; it never fails the installation.
+            match crate::runtime_install::install_login_startup(install).await {
+                Ok(_) => prompt.message("AIRK starts automatically when you sign in.")?,
+                Err(error) => prompt.message(&format!(
+                    "AIRK could not register login startup, so the service starts on demand: {error:#}"
+                ))?,
+            }
         }
     }
-    Ok(())
+    Ok(replaced)
 }
 
 pub async fn uninstall(

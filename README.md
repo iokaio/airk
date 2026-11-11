@@ -1,28 +1,60 @@
 # AIRK: Local Search for Coding Agents
 
-**1.8.18 manual-test candidate:** this unpublished Windows x64 candidate
-contains the focused closeout of the accepted simplification work. The
-[working record](docs/releases/release-1.8.18.md) describes its changes
-and compatibility boundary; the
-[release-readiness ledger](docs/simplify/release-readiness.md) identifies
-the exact VSIX, artifact hashes, completed checks, failures and remaining gates
-as qualification proceeds. Package verification, installed-editor acceptance
-and release qualification have separate receipts. The earlier 1.8.16 VSIX
-passed package verification but failed installed-editor acceptance; its
-[stop record](docs/research/installer-stop-2026-11-09.md) retains those
-failures. Publication remains a separate action.
+**Stopped source checkpoint (10 November 2026).** Manual installation of the
+1.8.23 candidate reported an HTTP cleanup refusal. The native eligibility fix
+is committed but untested. No installer was rebuilt for that fix. Installer
+repair, builds and qualification are stopped at the user's direction; retained
+artifact receipts describe their original inputs.
 
-**1.8.16 clean-break baseline:** every installation older than 1.8.16 must use
-fresh AIRK state and rebuild its indexes. Preserve reviewed source selections and
-supported preferences; original source files remain untouched. Old index IDs,
-grants, credentials and pending operations do not carry authority into the new
-state. Verify shutdown and remove ownership-proven legacy installation artifacts
-through the native reset lifecycle. From 1.8.16 onward, ordinary upgrades require
-the supported persisted state contract as well as an approved runtime version.
+**1.8.23 Windows debug manual-test candidate (10 November 2026).** This
+unpublished correction removes automatic index creation from Reconnect and makes
+installation through **1.9.0 inclusive** fully uninstall the owned predecessor,
+including the same build, before starting empty. Ordinary editor reopening only
+reconnects. The [1.8.23 working record](docs/releases/release-1.8.23.md) describes
+the source changes and remaining gates. The Windows debug runtime, native ZIP and VSIX have been built and package-verified. Native/extension source manifests and lockfiles are now
+synchronized at 1.8.23; scoped native and extension checks and package verification passed. Full release qualification remains pending.
+
+The previous [1.8.22 manual-test artifact](docs/releases/release-1.8.22.md) failed
+this policy: Reconnect created an index before rejecting its valid search scope.
+Its original version, hashes and failed evidence remain unchanged. The
+[task ledger](docs/simplify/one-process-ledger.md#manual-test-installer-correction-10-november-2026)
+records reproductions and source validation. Installed-editor acceptance and Linux/macOS qualification of 1.8.23 remain
+pending. Publication remains a separate action.
+
+**One resident process:** exactly one `airk.exe` stays resident per user and
+installation: the AIRK service. Indexing, cleanup and source watching run
+inside it. Each VS Code window adds one `airk service session`
+that exits with the window. Commands you type, installer steps, at most one
+PDF parser and a `tools shell` you open are the only other AIRK processes.
+Stable, preview and custom installations each have their own service. See
+[process ownership](docs/process-model.md).
+
+**Service lifecycle:** every installation and upgrade registers per-user login
+startup (Windows Task Scheduler or a Linux user systemd unit), unless you ran
+`airk runtime login uninstall`. The service never exits when idle, keeps
+running after VS Code closes and starts again after a reboot. If the operating
+system refuses the registration, AIRK starts on demand instead and reports why.
+
+**Agents connect directly over HTTPS:** agents use the service's
+`https://127.0.0.1:<port>/mcp` endpoint, and no AIRK process runs per agent.
+Claude Code and Codex get their token from a one-shot
+`airk runtime http-credential` helper. If an installation replaced an earlier
+one and left an agent entry broken, Explorer warns you (notification, banner,
+status bar and Management → Agents). **Reconnect** fixes the entry after one
+confirmation, using an existing index. Reconnect does not create indexes; use
+Indexing → Index library explicitly before reconnecting. See [agent setup](docs/agent-integration.md#reconnecting-after-a-replacement).
+
+**Empty installation through 1.9.0 inclusive:** fully uninstall the owned
+predecessor before installing, including the same build. Do not recreate saved
+indexes or resume their jobs or watching. Original source files remain untouched.
+Ordinary editor reopening reconnects instead of reinstalling. Unproven shutdown
+or incomplete owned cleanup blocks installation. The persisted state contract
+remains `airk-state/1`, with baseline version 1.8.16; this installer correction
+does not change it. Later version upgrades require both versions greater than
+1.9.0 and the supported state contract.
 The development line will be qualified before a public **1.9.0** release; 1.9.0
 is a future release target, not the current package version.
-See the [1.8.16 working record](docs/releases/release-1.8.16.md). Implementation
-and installed qualification of this revised policy remain incomplete.
+See the [1.8.23 working record](docs/releases/release-1.8.23.md). Installed qualification of this revised policy remain pending.
 Management → Service → Runtime → **Complete runtime diagnostics** opens, copies
 or exports the full cached native JSON with its capture time. It makes no new
 native read; summary copies disclose their subset. Cached data is not live proof.
@@ -55,25 +87,23 @@ successful native uninstall. This differs from the VSIX's existing reviewed
 terminal integration. Inno compilation and real registry/signing round-trips
 remain unqualified; the 13 static/mocked checks are not installed acceptance.
 
-The reset rebuilds every saved index from its reviewed sources and supported
-preferences, including restored pause/watch policy. It verifies predecessor
-process exit and removes ownership-proven legacy state and executables;
-incomplete or unproven cleanup stays visible. Existing terminals need reopening
+Installation does not replay saved indexes. It verifies predecessor process
+exit and removes owned index storage, state and executables; incomplete or
+unproven cleanup blocks successor setup. Existing terminals need reopening
 to inherit installed CLI PATH changes. If Explorer still runs old extension
 JavaScript, use **Restart Extensions** once to activate the replacement loader.
 Public-release and full-matrix qualification remain incomplete. The
-[working record](docs/releases/release-1.8.18.md) records exact candidate, package and installed
-acceptance scopes and preserves failed evidence.
+[working record](docs/releases/release-1.8.23.md) records the Windows debug candidate and pending installed acceptance scopes and preserves failed evidence.
 
-**1.8.18 source builds on the unpublished One AIRK implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.18 working record](docs/releases/release-1.8.18.md) tracks current candidate and installed acceptance. The 1.8.16 and 1.8.14 records retain historical implementation evidence. Earlier binaries keep their original versions and hashes.
+**1.8.23 builds on the unpublished One AIRK implementation; its Windows debug candidate is built and package-verified.** The [One AIRK implementation](docs/one-airk.md) supplies the single-executable HTTPS runtime. The [1.8.23 working record](docs/releases/release-1.8.23.md) tracks this correction; 1.8.22 retains its failed manual-test evidence, and the 1.8.20, 1.8.19 and 1.8.18 records are dated history. The 1.8.16 and 1.8.14 records retain historical implementation evidence. Earlier binaries keep their original versions and hashes.
 
-Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
-not reusable index state. The reset preserves only reviewed sources and supported
-preferences. It rebuilds fresh indexes and requires clients to reconnect with new
-authority. Old AIRK-owned indexes, state, runtimes and launchers are removed only
-through proven ownership and lifecycle checks; incomplete cleanup remains visible.
-Supported upgrades within the 1.8.16+ state contract retain their own admission,
-checkpoint and compatibility checks. Installed/platform qualification is pending.
+Legacy runtime, launcher and index formats are cleanup inputs. Installation
+does not preserve their indexing authority or recreate their indexes. Old
+AIRK-owned indexes, state, runtimes and launchers are removed only through proven
+ownership and lifecycle checks. Unknown historical or unowned residue is reported
+and cannot be treated as proven cleanup; this is not a universal purge of every
+historical installation. Explicit new index setup establishes new authority.
+Installed/platform qualification is recorded separately.
 
 HTTPS uses normal certificate validation with an installation-local CA; clients
 do not ignore certificate errors or discard their existing trusted CAs. Native
@@ -156,11 +186,11 @@ The [parser-training fork guide](docs/parser-training.md) shows how to inspect t
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order. For the initial transition from older AIRK code, use **Restart Extensions** in VS Code’s Extensions pane to activate the new loader.
 
-**Workbench implementation introduced in 1.7.2:** a secondary-sidebar evidence transcript with editable plans, recipes, cited results, copy/export and bounded local sessions. Agents can use the same native `parse` tool to prepare or execute explicit read-only plans. Learned requests propose an editable plan; review its operation and arguments, then explicitly run it. Automatic learned execution remains disabled pending qualification. See the [implementation record](docs/workbench/implementation.md). Native/extension source versions are synchronized at **1.8.18** for this candidate; packaging, qualification and any later release promotion remain separate.
+**Workbench implementation introduced in 1.7.2:** a secondary-sidebar evidence transcript with editable plans, recipes, cited results, copy/export and bounded local sessions. Agents can use the same native `parse` tool to prepare or execute explicit read-only plans. Learned requests propose an editable plan; review its operation and arguments, then explicitly run it. Automatic learned execution remains disabled pending qualification. See the [implementation record](docs/workbench/implementation.md). Native/extension source versions are synchronized at **1.8.23** for the candidate build; packaging, qualification and any later release promotion remain separate.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
-The Workbench development catalog exposes 29 tools, including read-only `parse` plan preparation/execution and grant-bound `query_scope` discovery; the preceding 1.6.4 catalog has 27 tools. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Cold MCP verification survives individual status timeouts, so later polls reuse the same authenticated setup. CLI request-epoch preparation uses a bounded wait for explicit busy/uncertain registry responses and retains failure codes. macOS inference shutdown releases the owned ONNX environment after sessions drain, before native library cleanup. Connection checks keep unknown readiness distinct from a confirmed unavailable index. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](docs/releases/release-1.6.4.md). [Process ownership and counts](docs/process-model.md) explains the shared workers, per-connection frontends and retained Windows launcher layers.
+The Workbench development catalog exposes 29 tools, including read-only `parse` plan preparation/execution and grant-bound `query_scope` discovery; the preceding 1.6.4 catalog has 27 tools. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Cold MCP verification survives individual status timeouts, so later polls reuse the same authenticated setup. CLI request-epoch preparation uses a bounded wait for explicit busy/uncertain registry responses and retains failure codes. macOS inference shutdown releases the owned ONNX environment after sessions drain, before native library cleanup. Connection checks keep unknown readiness distinct from a confirmed unavailable index. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](docs/releases/release-1.6.4.md). [Process ownership](docs/process-model.md) explains the current one-resident-process model and keeps the earlier per-connection frontend and Windows launcher layers as dated history.
 
 **Introduced in 1.6.0 — offline semantic index optimization.** Two bundled INT8 MiniLM exports replace the previous FP32 model. Native CPU detection chooses unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64. Installation and rebuilding require no model download. Upgrade rebuilds semantic vectors and caches while preserving text/fact evidence, pause and semantic opt-out settings. See the [1.6.0 record](docs/releases/release-1.6.0.md) and [optimization rationale](docs/semantic-index-optimization.md).
 
@@ -233,13 +263,13 @@ AIRK indexes local code and documents and serves bounded, cited evidence to codi
 
 ## Native service ownership
 
-A per-user service owns authenticated HTTPS ingress, registration, durable work and resource policy. Its asynchronous adapter routes canonical evidence reads to project workers; source scanning and inference do not execute in the serialized metadata actor. The service owns shared in-process inference with bounded admission and truthful completion barriers.
+A per-user service owns authenticated HTTPS ingress, registration, durable work and resource policy. It is the only resident AIRK process: project owners, cleanup owners and the source watcher run inside it, and an owner that does not drain by its deadline is quarantined (its project reports a stuck owner and the other projects keep running) until an explicit service restart. Its asynchronous adapter routes canonical evidence reads to those in-process project owners; source scanning and inference do not execute in the serialized metadata actor. The service owns shared in-process inference with bounded admission and truthful completion barriers.
 
-The modern approved payload contains one native `airk` executable with embedded MiniLM assets and static CPU ONNX Runtime. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Index/source workers can still use the same approved image, so one distributed executable does not promise one OS process for every workload. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of 1.8.14 remains pending. Earlier runtime-pair evidence retains its original version and scope.
+The modern approved payload contains one native `airk` executable with embedded MiniLM assets and static CPU ONNX Runtime. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one `airk service session` per VS Code window, CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of 1.8.23 remains pending. Earlier runtime-pair evidence retains its original version and scope.
 
 The modern Mac layout keeps that one main image inside its GUI-less signed app bundle, with a macOS 13.3 deployment target and direct managed service startup. Static inference and model license notices remain in the distribution. See the [current signing contract](docs/native-signing.md) and [native installation](docs/service-installation.md). Signing, lifecycle and installed-platform qualification remain separate from portable ownership/package checks.
 
-Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. Native workers own indexing and source watching. Automatic watching explicitly continues after editor windows close; login startup is a separate opt-in choice.
+Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. In-process native owners handle indexing and source watching. Automatic watching explicitly continues after editor windows close. Login startup is registered on every installation and upgrade unless the user ran `airk runtime login uninstall`.
 
 ## Historical 1.4 namespace transition
 

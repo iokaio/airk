@@ -4,6 +4,8 @@ use crate::{
     local_ipc::{self, Listener, Stream},
     project_protocol::{self as protocol, Command, Reply},
     service_ipc,
+    worker_scope::Residency,
+    worker_transport::{FrameSink, FrameSource, StdinFrames, StdoutFrames},
 };
 use airk_core::service::{ConnectionGrant, JobKind, JobOutcome, MAX_FRAME_BYTES, WorkerIdentity};
 use airk_kernel::{
@@ -23,6 +25,7 @@ use std::{
 
 // All accepted blocking kernel work finishes before the process exits. Retain the OS
 // ownership handle until that exit, including error paths through the async runtime.
+// An in-process owner instead holds it until its last thread and runtime exit.
 static PROCESS_LEASE: OnceLock<Arc<ProjectLease>> = OnceLock::new();
 
 fn retry_semantic_turn<T>(mut turn: impl FnMut() -> Result<T>, budget: Duration) -> Result<T> {
@@ -112,6 +115,24 @@ struct State {
     closing: Arc<AtomicBool>,
     admission: Arc<admission::QueryAdmission>,
     scopes: Arc<Mutex<scopes::Scopes>>,
+    /// An in-process owner's execution slots; `None` for a child process.
+    execution: Option<airk_kernel::service_execution::ExecutionScope>,
+}
+impl State {
+    /// A quarantined in-process owner accepts no further work of any kind.
+    fn quarantined(&self) -> bool {
+        self.execution
+            .as_ref()
+            .is_some_and(|scope| scope.stuck().is_some())
+    }
+}
+
+/// A stopped in-process owner reached a safe point: whatever it was doing is
+/// left unsettled for the next fenced owner, never reported as a failure.
+fn draining(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<airk_kernel::service_execution::Draining>())
 }
 
 #[derive(Default)]
@@ -165,23 +186,35 @@ fn record_watch_roots(kernel: &Kernel, registry: &mut ServiceRegistry, lease: &P
     let recorded = roots.and_then(|roots| {
         registry.record_watch_roots(lease, &roots.into_values().collect::<Vec<_>>())
     });
-    if recorded.is_err() {
-        let _ = registry.invalidate_watch_roots(lease);
+    match recorded {
+        Ok(_) => {}
+        // A drain interrupted the observation; the recorded roots are not
+        // known to be wrong, so they are not invalidated.
+        Err(error) if draining(&error) => {}
+        Err(_) => {
+            let _ = registry.invalidate_watch_roots(lease);
+        }
     }
 }
 
 fn observe_maintenance(
     kernel: &Kernel,
-) -> (
+) -> Result<(
     airk_core::service::MaintenanceObservation,
     Option<crate::service_logs::FailureDetail>,
-) {
+)> {
     let result = kernel.maintain_service_collection();
+    // An interrupted cleanup is not a failed one; it must not settle the job.
+    if let Err(error) = &result
+        && draining(error)
+    {
+        anyhow::bail!(airk_kernel::service_execution::Draining);
+    }
     let detail = result
         .as_ref()
         .err()
         .map(crate::service_logs::FailureDetail::capture);
-    (
+    Ok((
         airk_core::service::MaintenanceObservation {
             pending_incarnations: result.as_ref().ok().map(|report| report.pending),
             pending_objects: result.as_ref().is_ok_and(|report| report.pending_objects),
@@ -193,7 +226,7 @@ fn observe_maintenance(
                 .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
         },
         detail,
-    )
+    ))
 }
 async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let Some(grant): Option<ConnectionGrant> =
@@ -253,7 +286,9 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 return Ok(());
             };
             ensure!(
-                !state.closing.load(Ordering::Acquire) && Instant::now() < authorized_until,
+                !state.closing.load(Ordering::Acquire)
+                    && !state.quarantined()
+                    && Instant::now() < authorized_until,
                 "project authorization expired"
             );
             ensure!(
@@ -283,7 +318,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 .min(read_context.as_ref().map_or(query_deadline, |context| tokio::time::Instant::from_std(context.deadline())));
             let Some(admission) = state.admission.while_open(&mut stream, admission_deadline, || {
                 use airk_core::service::AdmissionError;
-                if state.closing.load(Ordering::Acquire) {
+                if state.closing.load(Ordering::Acquire) || state.quarantined() {
                     return Err(AdmissionError::Draining);
                 }
                 if Instant::now() >= authorized_until {
@@ -343,12 +378,21 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             }).await {
                 Ok(response) => response,
-                Err(_) => {
-                    // Cancelling a protocol future does not stop accepted native
-                    // work or release its object lease. Exit this lock-bearing
-                    // worker; only the supervisor's confirmed reap frees capacity.
-                    std::process::exit(75);
-                }
+                // Cancelling a protocol future does not stop accepted native
+                // work or release its object lease; only the supervisor's
+                // confirmed reap frees capacity.
+                Err(_) => match &state.execution {
+                    // A child exits this lock-bearing worker.
+                    None => std::process::exit(75),
+                    // In process, this owner quarantines itself instead: it
+                    // admits nothing more, its service charges stay held until
+                    // its exit is observed, and the owner's lease is held until
+                    // its thread, and so this stuck read, returns.
+                    Some(scope) => {
+                        scope.quarantine(airk_kernel::service_execution::StuckReason::QueryDeadline);
+                        anyhow::bail!("project query passed its deadline; the owner is quarantined");
+                    }
+                },
             };
             let value = response.unwrap_or_else(|error| {
                 if response_kernel.scope_observation().is_some()
@@ -626,8 +670,26 @@ fn reconcile_semantic_setup(
 }
 
 pub async fn run() -> Result<()> {
-    let init: protocol::Init = service_ipc::read_frame(&mut std::io::stdin().lock())?
+    let mut commands = StdinFrames;
+    let init: protocol::Init = FrameSource::<protocol::Init>::recv(&mut commands)?
         .context("missing private project initialization")?;
+    serve(
+        init,
+        Box::new(commands),
+        Box::new(StdoutFrames),
+        Residency::Process,
+    )
+    .await
+}
+
+/// One lock-bearing project owner over either control carrier. The frames,
+/// their order and every identity check are the same for both carriers.
+pub(crate) async fn serve(
+    init: protocol::Init,
+    mut commands: Box<dyn FrameSource<Command>>,
+    mut replies: Box<dyn FrameSink<Reply>>,
+    residency: Residency,
+) -> Result<()> {
     local_ipc::prepare_root(&init.runtime)?;
     let mut lease = ProjectLease::acquire(&init.runtime, init.project)?;
     let mut registry = ServiceRegistry::open(&init.runtime, init.service)?;
@@ -640,12 +702,23 @@ pub async fn run() -> Result<()> {
         .is_some_and(|state| state.authority_contract >= 1);
     let registration = registry.get(init.project)?.registration;
     airk_kernel::service_projects::validate_retained(&registration)?;
+    let _caches = crate::worker_scope::CollectionCaches::release_on_exit(
+        &registration.data_root,
+        &registration.collection,
+    );
     let epoch = registry.admit_worker(&mut lease)?;
     let lease = Arc::new(lease);
-    ensure!(
-        PROCESS_LEASE.set(lease.clone()).is_ok(),
-        "project role already owns a process lease"
-    );
+    match residency.scope() {
+        None => {
+            ensure!(
+                PROCESS_LEASE.set(lease.clone()).is_ok(),
+                "project role already owns a process lease"
+            );
+        }
+        // Held until this owner's thread and runtime returned, never by this
+        // body alone, so an early return cannot release it under a stuck call.
+        Some(scope) => scope.retain_lease(lease.clone())?,
+    }
     let identity = WorkerIdentity {
         service: init.service,
         worker: init.worker,
@@ -654,10 +727,7 @@ pub async fn run() -> Result<()> {
     };
     let role = protocol::role(init.worker);
     let mut listener = Listener::bind(&local_ipc::endpoint(&init.runtime, &role)?)?;
-    service_ipc::write_frame(
-        &mut std::io::stdout().lock(),
-        &Reply::Ready { identity, role },
-    )?;
+    replies.send(Reply::Ready { identity, role })?;
     // A late child may receive a buffered Init after its parent died. It cannot touch
     // collection state until the service accounts its lock-bearing generation.
     let Some(Command::Activate {
@@ -665,7 +735,7 @@ pub async fn run() -> Result<()> {
         allowance,
         pool,
         pool_pending,
-    }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
+    }) = commands.recv()?
     else {
         anyhow::bail!("project owner was not activated")
     };
@@ -675,25 +745,35 @@ pub async fn run() -> Result<()> {
             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
-    crate::embedding_pool_client::install(
+    // Activation can take long. A stop requested meanwhile (an in-process
+    // drain, which exists before `install`) is observed at each phase
+    // boundary below; leaving there settles nothing and replays nothing.
+    airk_kernel::service_execution::checkpoint()?;
+    let helper = crate::embedding_pool_client::PoolHandle::new(
         &init.runtime,
         identity,
         pool.map(|access| *access),
         pool_pending,
     )?;
+    match residency.scope() {
+        None => helper.install_process()?,
+        Some(scope) => scope.connector.install(helper.connector())?,
+    }
     let storage = airk_store::service::data_scope::bind(
         Path::new(&registration.data_root),
         &init.runtime,
         registry.incarnation()?,
     )?;
     #[cfg(unix)]
-    crate::unix_guardian::install(
-        &init.runtime,
-        registry.incarnation()?,
-        identity,
-        &lease,
-        &std::env::current_exe()?,
-    )?;
+    if residency.scope().is_none() {
+        crate::unix_guardian::install(
+            &init.runtime,
+            registry.incarnation()?,
+            identity,
+            &lease,
+            &std::env::current_exe()?,
+        )?;
+    }
     // A staged participant starts as an unprivileged metadata observer. Only
     // its actually claimed native job can attach a private split permit later.
     let refresh_pending = registry.pending_reference_refresh(init.project)?;
@@ -741,7 +821,15 @@ pub async fn run() -> Result<()> {
                 rebuild_project,
             )
         });
-    airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
+    match residency.scope() {
+        None => {
+            airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?
+        }
+        Some(scope) => scope
+            .execution
+            .install(Path::new(&registration.data_root), identity)?,
+    }
+    airk_kernel::service_execution::checkpoint()?;
     let receipt = if split_write_fenced {
         None
     } else {
@@ -765,26 +853,31 @@ pub async fn run() -> Result<()> {
     {
         registry.catalog_record_policy_job(index.id, snapshot.operation_id)?;
     }
+    airk_kernel::service_execution::checkpoint()?;
     // Only an actually opened retained index can become an automatic audit
     // candidate. A fresh/unprepared registration remains ordinary setup work.
     let initial_integrity_failure = if split_write_fenced {
         None
     } else {
-        observe_native_integrity(
+        match observe_native_integrity(
             &kernel,
             &mut registry,
             lease.clone(),
             &storage,
             identity,
             None,
-        )
-        .err()
-        .map(|error| integrity_observation_code(&error).to_owned())
+        ) {
+            Ok(_) => None,
+            // A drained observation is not an integrity failure.
+            Err(error) if draining(&error) => return Err(error),
+            Err(error) => Some(integrity_observation_code(&error).to_owned()),
+        }
     };
     if !split_write_fenced {
         record_watch_roots(&kernel, &mut registry, &lease);
         let _ = reconcile_semantic_setup(&kernel, &mut registry, &lease, init.engine);
     }
+    airk_kernel::service_execution::checkpoint()?;
     // Recovery is durable desired work, admitted by the service rather than an
     // unaccounted startup replay. Failed recovery leaves the owner reachable.
     if !split_write_fenced
@@ -827,6 +920,7 @@ pub async fn run() -> Result<()> {
             },
         )?;
     }
+    airk_kernel::service_execution::checkpoint()?;
     let mut broker = Broker::new(
         init.service,
         BrokerLimits {
@@ -859,23 +953,25 @@ pub async fn run() -> Result<()> {
         closing: closing.clone(),
         admission: Default::default(),
         scopes: Arc::new(Mutex::new(scopes::Scopes::new(identity, scopes_required))),
+        execution: residency.scope().map(|scope| scope.execution.clone()),
     });
-    service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Activated)?;
+    replies.send(Reply::Activated)?;
+    let mut control = commands;
     let (sender, mut commands) = mpsc::channel(8);
     let control_closing = closing.clone();
     let control_activity = activity.clone();
     let control_admission = state.admission.clone();
     let control_scopes = state.scopes.clone();
+    let control_helper = helper.clone();
     std::thread::Builder::new()
         .name("airk-project-control".into())
         .spawn(move || {
-            let mut input = std::io::stdin().lock();
-            while let Ok(Some(command)) = service_ipc::read_frame::<_, Command>(&mut input) {
+            while let Ok(Some(command)) = control.recv() {
                 if sender.blocking_send(command).is_err() {
                     break;
                 }
             }
-            crate::embedding_pool_client::close();
+            control_helper.close();
             control_closing.store(true, Ordering::Release);
             if let Ok(mut scopes) = control_scopes.lock() {
                 scopes.close();
@@ -933,7 +1029,7 @@ pub async fn run() -> Result<()> {
                 let mut source_completion = None;
                 use airk_store::service::registry::RecoveryCondition;
                 let mut recovery_condition = RecoveryCondition::Delay;
-                let mut outcome = if registry.cancellation_requested(job.id)? {
+                let attempted = if registry.cancellation_requested(job.id)? {
                     if matches!(job.kind, JobKind::Verify | JobKind::Repair) {
                         audit_drain = registry
                             .drained_verify_before_execution(&job_lease, &job_storage, job.id)
@@ -954,21 +1050,35 @@ pub async fn run() -> Result<()> {
                             );
                             if split_job {
                                 return crate::project_worker_split::execute(
-                                    &kernel, &mut registry, &job_lease,
-                                    job.id, init.engine, &init.runtime,
+                                    &kernel,
+                                    &mut registry,
+                                    &job_lease,
+                                    job.id,
+                                    init.engine,
+                                    &init.runtime,
                                 );
                             }
-                            if let Some(source_work) = registry.catalog_source_work(&job_lease, job.id)? {
+                            if let Some(source_work) =
+                                registry.catalog_source_work(&job_lease, job.id)?
+                            {
                                 let airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { plan, .. } = &source_work.begin.operation else {
                                     anyhow::bail!("source work lacks its accepted plan");
                                 };
-                                registry.record_watch_roots(&job_lease, &plan.after.aliases.values().cloned().collect::<Vec<_>>())?;
+                                registry.record_watch_roots(
+                                    &job_lease,
+                                    &plan.after.aliases.values().cloned().collect::<Vec<_>>(),
+                                )?;
                                 let prepared = source_configuration::prepare(
-                                    &kernel, &source_work, &work, init.engine)?;
+                                    &kernel,
+                                    &source_work,
+                                    &work,
+                                    init.engine,
+                                )?;
                                 let result = registry.qualify_catalog_source_result(
                                     &job_lease, job.id, prepared.native(),
                                     &serde_json::json!({"updated":true,"source_pass_requested":true}))?;
-                                registry.record_configuration_result(&job_lease, job.id, &result)?;
+                                registry
+                                    .record_configuration_result(&job_lease, job.id, &result)?;
                                 source_completion = Some(prepared);
                                 return Ok(JobOutcome::Succeeded { revision: None });
                             }
@@ -1253,7 +1363,7 @@ pub async fn run() -> Result<()> {
                         airk_kernel::service_execution::progress_phase(
                             airk_core::service_progress::WorkPhase::Retiring,
                         );
-                        let (maintenance, maintenance_detail) = observe_maintenance(&kernel);
+                        let (maintenance, maintenance_detail) = observe_maintenance(&kernel)?;
                         let _ = registry.record_maintenance(&job_lease, &maintenance);
                         let failed = kind == JobKind::Maintain && maintenance.failed;
                         if failed {
@@ -1272,8 +1382,16 @@ pub async fn run() -> Result<()> {
                             Ok(outcome)
                         }
                     })
+                };
+                // A stopped in-process owner drained at a safe point. Like the
+                // kill it replaces, nothing is settled: the claimed job stays
+                // for the next fenced owner's recovery.
+                if let Err(error) = &attempted
+                    && draining(error)
+                {
+                    anyhow::bail!(airk_kernel::service_execution::Draining);
                 }
-                .unwrap_or_else(|error| {
+                let mut outcome = attempted.unwrap_or_else(|error| {
                     audit_drain =
                         airk_store::service::registry::AuditDrainProof::from_error(&error);
                     if audit_drain.is_some()
@@ -1579,16 +1697,19 @@ pub async fn run() -> Result<()> {
                 let integrity_failure = if split_job {
                     last_integrity_failure.clone()
                 } else {
-                    observe_native_integrity(
+                    match observe_native_integrity(
                         &kernel,
                         &mut registry,
                         job_lease.clone(),
                         &job_storage,
                         identity,
                         verify_admission,
-                    )
-                    .err()
-                    .map(|error| integrity_observation_code(&error).to_owned())
+                    ) {
+                        Ok(_) => None,
+                        // A drained observation reports no new integrity state.
+                        Err(error) if draining(&error) => last_integrity_failure.clone(),
+                        Err(error) => Some(integrity_observation_code(&error).to_owned()),
+                    }
                 };
                 if integrity_failure != last_integrity_failure {
                     job_status
@@ -1655,7 +1776,7 @@ pub async fn run() -> Result<()> {
                         let durable_boundary = !busy.load(Ordering::Acquire) && status.active.is_none() && active_queries == 0;
                         if seal && durable_boundary {
                             checkpoint_sealed = true;
-                            crate::embedding_pool_client::close();
+                            helper.close();
                         }
                         let observation = protocol::WorkerCheckpointObservation {
                             schema:1, identity, operation_id, engine_sha256:init.engine,
@@ -1663,20 +1784,20 @@ pub async fn run() -> Result<()> {
                             active_queries,
                             durable_boundary,
                         };
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Checkpoint { observation })?;
+                        replies.send(Reply::Checkpoint { observation })?;
                         idle = Instant::now();
                     },
                     Some(Command::GrantAdmin { identity: expected, caller, nonce }) => {
-                        let grant = if expected == identity && !closing.load(Ordering::Acquire) {
+                        let grant = if expected == identity && !closing.load(Ordering::Acquire) && !state.quarantined() {
                             state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
                                 .issue_native_admin(identity,caller,Instant::now(),Duration::from_secs(15)).map_err(anyhow::Error::from)
                         } else { Err(anyhow::anyhow!("foreign native administrative worker")) };
                         let reply = Reply::AdminGrant {identity,nonce,grant:grant.ok()};
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        replies.send(reply)?;
                         idle=Instant::now();
                     },
                     Some(Command::ResolveSourceChange {identity:expected,nonce,begin_operation}) => {
-                        let admitted=expected==identity && busy.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_ok();
+                        let admitted=expected==identity && !state.quarantined() && busy.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_ok();
                         let observation=if admitted {
                             let resolved=(||->Result<_>{
                                 let mut registry=ServiceRegistry::open(&state.control,identity.service)?;
@@ -1686,30 +1807,31 @@ pub async fn run() -> Result<()> {
                             resolved.ok().map(Box::new)
                         } else {None};
                         state.admission.completed();
-                        service_ipc::write_frame(&mut std::io::stdout().lock(),&Reply::SourceChangeResolution {identity,nonce,observation})?;
+                        replies.send(Reply::SourceChangeResolution {identity,nonce,observation})?;
                         idle=Instant::now();
                     },
                     Some(Command::InstallScope { identity: expected, authority, lease_generation, expires_unix_ms }) => {
                         let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
                             .install(expected, *authority, lease_generation, expires_unix_ms);
                         let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        replies.send(reply)?;
                     },
                     Some(Command::RenewScopeLease { identity: expected, authority, previous, lease_generation, expires_unix_ms }) => {
                         let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
                             .renew_scope_lease(expected, *authority, previous, lease_generation, expires_unix_ms);
                         let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        replies.send(reply)?;
                     },
                     Some(Command::RevokeScope { identity: expected, scope }) => {
                         let revoked = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.revoke(expected, scope);
                         state.admission.completed();
                         let reply = if revoked.is_ok() { Reply::ScopeRevoked { identity, scope } } else { Reply::Failed };
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        replies.send(reply)?;
                     },
                     Some(Command::GrantScoped { identity: expected, caller, scope }) => {
                         let grant = (|| -> Result<ConnectionGrant> {
                             ensure!(expected == identity, "scope identity mismatch");
+                            ensure!(!state.quarantined(), "project owner is quarantined");
                             let mut scopes = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?;
                             scopes.check(Some(scope))?;
                             let mut grant = state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
@@ -1718,34 +1840,34 @@ pub async fn run() -> Result<()> {
                             Ok(grant)
                         })();
                         let reply = match grant { Ok(grant) => Reply::Grant { grant }, Err(_) => Reply::Failed };
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        replies.send(reply)?;
                         idle = Instant::now();
                     },
                     Some(Command::ConfigureQueries { identity:expected, concurrency }) => {
                         let accepted = expected == identity && state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
                             .configure_queries(identity, concurrency, Instant::now()).is_ok();
                         state.admission.completed();
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted { Reply::QueriesConfigured } else { Reply::Failed })?;
+                        replies.send(if accepted { Reply::QueriesConfigured } else { Reply::Failed })?;
                     },
                     Some(Command::Renew{identity:expected})=>{
                         let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
-                        service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
+                        replies.send(if renewed{Reply::Renewed}else{Reply::Failed})?;
                     },
                     Some(Command::ConfigurePool{identity:expected,pool,pool_pending})=>{
                         let accepted=expected==identity && (if pool_pending{
-                            crate::embedding_pool_client::update_pending(pool.map(|access| *access),true)
-                        }else{crate::embedding_pool_client::update(pool.map(|access| *access))}).is_ok();
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
+                            helper.update_pending(pool.map(|access| *access),true)
+                        }else{helper.update(pool.map(|access| *access))}).is_ok();
+                        replies.send(if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
                     },
                     Some(Command::RunJob{identity:expected, allowance})=>{
-                        let accepted=!checkpoint_sealed && expected==identity && allowance.identity==identity && allowance.validate().is_ok()
+                        let accepted=!checkpoint_sealed && !state.quarantined() && expected==identity && allowance.identity==identity && allowance.validate().is_ok()
                             && !busy.swap(true, Ordering::AcqRel);
                         let accepted=if accepted {
                             airk_kernel::service_execution::activate(&allowance)?;
                             {let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;status.active=Some(allowance.id);status.finished=None;status.failure=None;}
                             work_sender.try_send(allowance).is_ok()
                         }else{false};
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::WorkAccepted}else{Reply::Failed})?;
+                        replies.send(if accepted{Reply::WorkAccepted}else{Reply::Failed})?;
                         idle=Instant::now();
                     },
                     Some(Command::WorkStatus{identity:expected,control,keep_for_maintenance,freshness})=>{
@@ -1754,13 +1876,13 @@ pub async fn run() -> Result<()> {
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled,control.yield_to_source)?;}
                         let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
                         let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),failure:status.failure.clone(),integrity_observation_failure:status.integrity_observation_failure.take(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
-                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        replies.send(reply)?;
                     },
                     Some(Command::Grant{caller})=>{
                         let legacy = state.scopes.lock().map_err(|_|anyhow::anyhow!("scope policy unavailable"))?.legacy_allowed();
-                        let grant=if legacy {state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.issue(identity,caller,Instant::now(),Duration::from_secs(15))} else {Err(airk_core::service::AdmissionError::InvalidGrant)};
+                        let grant=if legacy && !state.quarantined() {state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.issue(identity,caller,Instant::now(),Duration::from_secs(15))} else {Err(airk_core::service::AdmissionError::InvalidGrant)};
                         let reply=match grant{Ok(grant)=>Reply::Grant{grant},Err(_)=>Reply::Failed};
-                        service_ipc::write_frame(&mut std::io::stdout().lock(),&reply)?;
+                        replies.send(reply)?;
                         idle=Instant::now();
                     },
                     Some(Command::Stop|Command::Activate{..})|None=>break,
@@ -1776,9 +1898,17 @@ pub async fn run() -> Result<()> {
                 state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.expire();
                 if busy.load(Ordering::Acquire) && airk_kernel::service_execution::watchdog() {
                     // A native call that never reaches a safe boundary cannot be
-                    // canceled by dropping its future. The parent retains the
-                    // work allowance until this process actually exits.
-                    std::process::exit(76);
+                    // canceled by dropping its future.
+                    match &state.execution {
+                        // The parent retains the work allowance until this
+                        // process actually exits.
+                        None => std::process::exit(76),
+                        // In process, this owner quarantines itself: it admits
+                        // no further work, its stuck job thread keeps the lease,
+                        // and the supervisor observes the reason and blocks the
+                        // project while every other project keeps running.
+                        Some(scope) => scope.quarantine(airk_kernel::service_execution::StuckReason::WorkStalled),
+                    }
                 }
                 if jobs.is_finished(){break;}
                 if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire){idle=Instant::now();}
@@ -1788,7 +1918,7 @@ pub async fn run() -> Result<()> {
             }
         }
     }
-    crate::embedding_pool_client::close();
+    helper.close();
     closing.store(true, Ordering::Release);
     state
         .scopes
@@ -1805,6 +1935,14 @@ pub async fn run() -> Result<()> {
     let mut registry = jobs.await??;
     let mut state = Arc::try_unwrap(state)
         .map_err(|_| anyhow::anyhow!("project query handlers survived drain"))?;
+    // A quarantined owner did not drain: a native call may still be running.
+    // Its native owner state is left for recovery, exactly as after a kill.
+    if let Some(reason) = state.execution.as_ref().and_then(|scope| scope.stuck()) {
+        anyhow::bail!(
+            "project owner quarantined ({}); its native state is left for recovery",
+            reason.code()
+        );
+    }
     state.tools.close().await?;
     // Only the explicit positive capability API arms a session. Strict owners
     // take the no-op path; never clear based solely on child exit or socket EOF.

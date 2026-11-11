@@ -3,7 +3,7 @@ import { execFile, ExecFileException } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { McpSessionError, McpStdioSession } from './mcpStdioSession';
+import { McpSessionError, McpStdioSession, type McpStdioOptions } from './mcpStdioSession';
 import { McpHttpSession } from './mcpHttpSession';
 import { httpMaterial } from './serviceHttp';
 import { readRetryDelay } from './readRetry';
@@ -101,9 +101,17 @@ export class NativeProcessError extends Error {
     readonly nativeMessage?: string;
     readonly pendingIndexRevision?: number;
     readonly scanPaused: boolean;
-    constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
+    /** A command that ran in this window's `service session` reports the same
+     * streams as its one-shot process, without an exit status; a deadline
+     * there cancels it cooperatively instead of terminating a process. */
+    static fromSession(command: string, stderr: string, elapsedMs: number, timeoutMs: number, timedOut = false): NativeProcessError {
+        const error = Object.assign(new Error(timedOut ? 'AIRK session command deadline exceeded' : 'AIRK session command failed'), { killed: timedOut }) as ExecFileException;
+        return new NativeProcessError(command, error, stderr, elapsedMs, timeoutMs, 'session');
+    }
+    constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number,
+        readonly origin: 'process' | 'session' = 'process') {
         let nativeMessage: string | undefined, retryableGateContention = false, scanPaused = false, pendingIndexRevision: number | undefined;
-        if (error.code === 1 && !error.killed && !error.signal) {
+        if (origin === 'session' ? !error.killed : error.code === 1 && !error.killed && !error.signal) {
             try {
                 // execFile already bounds captured output. Parse before applying
                 // the diagnostic display limit: JSON escaping can expand a valid
@@ -135,9 +143,10 @@ export class NativeProcessError extends Error {
         const timedOut = !!error.killed && timeoutMs > 0 && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
         const code = typeof error.code === 'number' && (error.code < 0 || error.code >= 0x80000000)
             ? `${error.code} (0x${(error.code >>> 0).toString(16).padStart(8, '0')})` : error.code;
-        const details = [code != null ? `exit code ${code}` : undefined,
+        const details = (origin === 'session' ? [timedOut ? 'cancelled in the window session' : 'failed in the window session', `elapsed ${elapsedMs} ms`]
+            : [code != null ? `exit code ${code}` : undefined,
             error.signal ? `signal ${error.signal}` : undefined, error.killed ? 'terminated' : undefined,
-            `elapsed ${elapsedMs} ms`].filter(Boolean).join('; ');
+            `elapsed ${elapsedMs} ms`]).filter(Boolean).join('; ');
         const diagnostic = boundedDiagnostic(nativeMessage ?? (stderr.trim() || error.message));
         super(`${path.basename(command)} ${timedOut ? `timed out (limit ${timeoutMs} ms)` : 'failed'}: ${details}\n${diagnostic}`);
         this.name = 'NativeProcessError';
@@ -280,13 +289,13 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
     } finally { session?.close(); }
 }
 
-/** Start Explorer Assistance exactly as an agent entry would and check its tool inventory and bundled help. */
-export async function probeAssistance(entry: ServerEntry, cwd: string, clientVersion = 'development'): Promise<{ tools: string[]; version: string }> {
+/** Qualify Explorer Assistance through an explicitly injected transport. Default stdio remains retired. */
+export async function probeAssistance(entry: ServerEntry, cwd: string, clientVersion = 'development', launch?: McpStdioOptions['launch']): Promise<{ tools: string[]; version: string }> {
     const deadline = Date.now() + 30000;
     const remaining = () => Math.max(1, deadline - Date.now());
     let session: McpStdioSession | undefined;
     try {
-        const opened = await McpStdioSession.open({ command: entry.command, args: [...entry.args], cwd, clientName: 'airk-extension-check', clientVersion }, remaining());
+        const opened = await McpStdioSession.open({ command: entry.command, args: [...entry.args], cwd, clientName: 'airk-extension-check', clientVersion, launch }, remaining());
         session = opened.session;
         if (opened.initialize?.serverInfo?.name !== ASSISTANCE_SERVER_NAME) { throw new Error('The server is not AIRK Explorer Assistance.'); }
         const tools: string[] = (await session.request('tools/list', {}, remaining())).tools.map((tool: { name: string }) => tool.name);

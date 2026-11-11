@@ -125,31 +125,43 @@ impl<J: Send + 'static, R: Send + 'static> OrderedPool<J, R> {
         let incoming = Arc::new(Mutex::new(incoming));
         self.input = Some(input);
         self.output = Some(output);
+        // Extraction threads do part of the caller's work: a PDF waiting for
+        // the parser slot observes the caller's interruption and this pool's.
+        let outer = crate::pdf_slot::current_interruption();
         for ordinal in 0..self.execution.workers {
             let incoming = Arc::clone(&incoming);
             let outgoing = outgoing.clone();
             let cancelled = Arc::clone(&self.cancelled);
+            let probe: crate::pdf_slot::Interruption = {
+                let cancelled = Arc::clone(&self.cancelled);
+                let outer = outer.clone();
+                Arc::new(move || {
+                    cancelled.load(Ordering::Acquire) || outer.as_ref().is_some_and(|probe| probe())
+                })
+            };
             let work = self.work;
             self.workers.push(
                 std::thread::Builder::new()
                     .name(format!("airk-extract-{ordinal}"))
                     .spawn(move || {
-                        loop {
-                            let next = match incoming.lock() {
-                                Ok(receiver) => receiver.recv(),
-                                Err(_) => break,
-                            };
-                            let Ok((id, job)) = next else {
-                                break;
-                            };
-                            if cancelled.load(Ordering::Acquire) {
-                                break;
+                        crate::pdf_slot::with_interruption(probe, || {
+                            loop {
+                                let next = match incoming.lock() {
+                                    Ok(receiver) => receiver.recv(),
+                                    Err(_) => break,
+                                };
+                                let Ok((id, job)) = next else {
+                                    break;
+                                };
+                                if cancelled.load(Ordering::Acquire) {
+                                    break;
+                                }
+                                let result = execute(job, work);
+                                if outgoing.send((id, result)).is_err() {
+                                    break;
+                                }
                             }
-                            let result = execute(job, work);
-                            if outgoing.send((id, result)).is_err() {
-                                break;
-                            }
-                        }
+                        })
                     })
                     .context("start extraction worker")?,
             );

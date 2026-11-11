@@ -58,6 +58,17 @@ export function publishedStatusPending(status:RecordValue,collection:string,proj
 }
 
 export interface NativeTestFailure {error:unknown;context?:RecordValue}
+/** Attempt every owned closer, then preserve all failures through canonical Stop/disposal. */
+export async function finishNativeFixture(fixture:Pick<NativeServiceFixture,'dispose'>,
+    closers:readonly (()=>unknown|Promise<unknown>)[],failure?:NativeTestFailure,
+    sessions:readonly {diagnosticSnapshot():unknown}[]=[]):Promise<void>{
+    const errors:unknown[]=failure?[failure.error]:[];
+    const closed=await Promise.allSettled(closers.map(close=>Promise.resolve().then(close)));
+    for(const result of closed)if(result.status==='rejected')errors.push(result.reason);
+    const error=errors.length>1?new AggregateError(errors,'Native body and owned session cleanup failed'):errors[0];
+    await fixture.dispose(errors.length?{...failure,error}:undefined,sessions);
+    if(errors.length)throw error;
+}
 /** Test diagnostics preserve the original error and actual captured native reply. */
 export function nativeFailureDetail(error:unknown):RecordValue {
     if(error instanceof AggregateError)return {name:error.name,message:error.message,
@@ -214,9 +225,15 @@ export class NativeServiceFixture {
     }
     async embedding():Promise<RecordValue>{
         const deadline=Date.now()+15000;
+        let refusal:ServiceError|undefined;
         while(true){
-            try{return await this.client!.rpc('embedding_status','embedding_status');}
-            catch(error){if(!(error instanceof ServiceError)||error.code!=='embedding_observation_busy'||Date.now()>=deadline)throw error;}
+            if(refusal&&Date.now()>=deadline)throw refusal;
+            try{
+                const observed=await this.client!.rpc('embedding_status','embedding_status');
+                if(Date.now()>=deadline)throw Object.assign(new Error('Owned embedding status observation deadline exhausted'),{nativeResponse:observed});
+                return observed;
+            }
+            catch(error){if(!(error instanceof ServiceError)||error.code!=='embedding_observation_busy'||Date.now()>=deadline)throw error;refusal=error;}
             await new Promise(resolve=>setTimeout(resolve,50));
         }
     }
@@ -226,13 +243,19 @@ export class NativeServiceFixture {
             catch(error){if(!(error instanceof ServiceError)||error.code!=='embedding_already_running')throw error;}
         }
         const deadline=Date.now()+90000;
-        while(Date.now()<deadline){const observed=await this.embedding();if(observed.available)return observed;await new Promise(resolve=>setTimeout(resolve,50));}
+        while(Date.now()<deadline){
+            const observed=await this.embedding();
+            if(Date.now()>=deadline)throw Object.assign(new Error('Owned helper observation deadline exhausted'),{nativeResponse:observed});
+            if(observed.available)return observed;
+            await new Promise(resolve=>setTimeout(resolve,50));
+        }
         throw new Error('Owned helper did not become available');
     }
     async waitJob(id:string):Promise<RecordValue>{
         const deadline=Date.now()+180000;
         while(Date.now()<deadline){
-            const job=record((await this.client!.rpc({job:{id}},'job')).job);
+            const response=await this.client!.rpc({job:{id}},'job'),job=record(response.job);
+            if(Date.now()>=deadline)throw Object.assign(new Error('Owned native job observation deadline exhausted'),{nativeResponse:response});
             if(['succeeded','failed','canceled'].includes(String(job.state)))return job;
             await new Promise(resolve=>setTimeout(resolve,25));
         }
@@ -267,7 +290,8 @@ export class NativeServiceFixture {
         const id=String(record(created.plan).id),deadline=Date.now()+180000;
         const wait=async(phase:string)=>{
             while(Date.now()<deadline){
-                const plan=record((await this.client!.rpc({plan:{id}},'plan')).plan);
+                const response=await this.client!.rpc({plan:{id}},'plan'),plan=record(response.plan);
+                if(Date.now()>=deadline)throw Object.assign(new Error('Owned repair observation deadline exhausted'),{nativeResponse:response});
                 if(plan.phase===phase)return plan;
                 await new Promise(resolve=>setTimeout(resolve,25));
             }

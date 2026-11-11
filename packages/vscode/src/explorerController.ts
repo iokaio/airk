@@ -23,6 +23,8 @@ import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explo
 import { LaunchSpec } from './model';
 import { saveStudioInWorkspace } from './explorerWorkspaceIO';
 import { openAgentInstructions } from './explorerWorkspaceIO';
+import { checkAgentConfigHealth, type AgentConfigHealth } from './agentConfigHealth';
+import type { AgentConfigAlerts, AgentConfigHealthView } from './explorerContracts';
 import { validateStudio } from './explorerStrategies';
 import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
@@ -79,6 +81,10 @@ export interface ExplorerHost {
     /** This window's agent drafts (Suggestions Inbox). */
     readonly suggestions: SuggestionStore;
     readonly handoffs?: HandoffStore;
+    /** Host check of one project's agent files with native HTTPS observations and the reconnect ledger. */
+    agentConfigHealth?(root: string, check: () => void): Promise<AgentConfigHealth>;
+    /** Current proactive agent-configuration alert, when findings remain. */
+    agentConfigAlerts?(): AgentConfigAlerts | undefined;
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
@@ -224,6 +230,7 @@ export class ExplorerController implements vscode.Disposable {
             connectionCheck: this.host.connectionCheck?.(),
             startup,
             runtimeUpgrade,
+            ...(this.host.trusted() && this.host.agentConfigAlerts?.() ? { agentConfigAlerts: this.host.agentConfigAlerts() } : {}),
             trusted: this.host.trusted(),
             workspaceTrusted: this.host.workspaceTrusted?.(),
             nativeExecutionEnabled: this.host.nativeExecutionEnabled?.(),
@@ -688,6 +695,20 @@ export class ExplorerController implements vscode.Disposable {
                 const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
                 if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
                 return openAgentInstructions(spec.root, message.agent, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
+            }
+            case 'agents.configHealth': {
+                this.requireAuthorization();
+                if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
+                if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+                // Read-only: the project's own agent files, rechecked for trust and selection around every read.
+                const check = () => {
+                    this.requireAuthorization();
+                    if (!vscode.workspace.isTrusted) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                    if (epoch !== this.selectionEpoch) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                };
+                const health = await (this.host.agentConfigHealth?.(displayPath(spec.root), check) ?? checkAgentConfigHealth(displayPath(spec.root), { check }));
+                return { project: message.project, checked: health.checked, findings: health.findings } satisfies AgentConfigHealthView;
             }
             case 'details.copy': {
                 this.requireAuthorization();

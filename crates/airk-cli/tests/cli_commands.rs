@@ -44,6 +44,308 @@ fn json_ok(args: &[&str]) -> Result<Value> {
         .with_context(|| format!("airk {} printed no JSON", args.join(" ")))
 }
 
+fn replacement_json(owner: &Path, args: &[&str]) -> Result<Value> {
+    let output = common::fixture_command(owner, args)?;
+    ensure!(
+        output.status.success(),
+        "replacement fixture command failed: {}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_slice(&output.stdout)
+        .context("replacement fixture did not return complete native JSON")
+}
+
+#[test]
+fn replacement_installation_flags_are_enforced_and_fresh_admission_replays_without_state()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let install = owner.path().join("install");
+    let install = install.to_str().context("UTF8 install path")?;
+    let candidate = "a".repeat(64);
+    let operation = "b".repeat(64);
+    let base = [
+        "runtime",
+        "replace-installation",
+        "--install-dir",
+        install,
+        "--candidate-sha256",
+        &candidate,
+    ];
+    for flags in [
+        vec!["--reinstall"],
+        vec!["--operation-id", &operation],
+        vec!["--generation-id", &operation],
+    ] {
+        let args = base.iter().copied().chain(flags).collect::<Vec<_>>();
+        let output = common::fixture_command(owner.path(), &args)?;
+        ensure!(
+            !output.status.success(),
+            "incomplete installer authorization accepted: {args:?}"
+        );
+        ensure!(
+            String::from_utf8_lossy(&output.stderr).contains("required"),
+            "unexpected parser failure: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut args = base.to_vec();
+    args.extend([
+        "--reinstall",
+        "--operation-id",
+        &operation,
+        "--generation-id",
+        &operation,
+        "--apply",
+    ]);
+    let admitted = replacement_json(owner.path(), &args)?;
+    ensure!(
+        admitted["replaced"] == false && admitted["plan"]["reason"] == "no_installation",
+        "{admitted}"
+    );
+    ensure!(
+        !Path::new(install).exists(),
+        "admission must not create a service namespace or an index"
+    );
+    fs::create_dir(install)?;
+    fs::write(
+        Path::new(install).join("successor.txt"),
+        b"do not reset this successor",
+    )?;
+    let replay = replacement_json(owner.path(), &args)?;
+    ensure!(
+        replay["replaced"] == false && replay["plan"]["reason"] == "installation_already_replaced",
+        "{replay}"
+    );
+    ensure!(fs::read(Path::new(install).join("successor.txt"))? == b"do not reset this successor");
+    Ok(())
+}
+
+#[test]
+fn same_build_cli_replacement_removes_saved_indexes_and_reactivation_starts_empty() -> Result<()> {
+    use airk_store::service::registry::ServiceRegistry;
+    let mut owner = tempfile::tempdir()?;
+    let mut source_owner = tempfile::tempdir()?;
+    owner.disable_cleanup(true);
+    source_owner.disable_cleanup(true);
+    let owner_path = owner.path().canonicalize()?;
+    let source = source_owner.path().canonicalize()?;
+    struct StopOnDrop<'a> {
+        install: std::path::PathBuf,
+        owner: &'a mut tempfile::TempDir,
+        source: &'a mut tempfile::TempDir,
+        predecessor: Option<common::FixtureForeground>,
+        passed: bool,
+    }
+    impl Drop for StopOnDrop<'_> {
+        fn drop(&mut self) {
+            let stopped = common::shutdown_installed_fixture(&self.install, self.owner.path());
+            let child = self
+                .predecessor
+                .as_mut()
+                .map(|child| child.require_exited().or_else(|_| child.shutdown_raw()))
+                .transpose();
+            let complete = match (stopped, child) {
+                (Ok(()), Ok(_)) => Ok(()),
+                (Err(stop), Err(child)) => Err(anyhow::anyhow!(
+                    "canonical Stop: {stop:#}; owned predecessor: {child:#}"
+                )),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            };
+            match complete {
+                Ok(()) if self.passed => {
+                    self.owner.disable_cleanup(false);
+                    self.source.disable_cleanup(false);
+                }
+                Ok(()) => eprintln!(
+                    "failed replacement fixture retained after verified Stop: owner={}, source={}",
+                    self.owner.path().display(),
+                    self.source.path().display()
+                ),
+                Err(error) => {
+                    let receipt = json!({"cleanup_complete":false,"install":self.install,"owner":self.owner.path(),"source":self.source.path(),"reason":format!("{error:#}")});
+                    let recorded = serde_json::to_vec(&receipt)
+                        .map_err(std::io::Error::other)
+                        .and_then(|bytes| {
+                            fs::write(self.owner.path().join("cleanup-incomplete.json"), bytes)
+                        });
+                    if let Err(record_error) = recorded {
+                        eprintln!("could not retain fixture cleanup receipt: {record_error}");
+                    }
+                    eprintln!(
+                        "replacement fixture cleanup incomplete; owner={}, source={} retained: {error:#}",
+                        self.owner.path().display(),
+                        self.source.path().display()
+                    );
+                }
+            }
+        }
+    }
+    let mut cleanup = StopOnDrop {
+        install: owner_path.join("install"),
+        owner: &mut owner,
+        source: &mut source_owner,
+        predecessor: None,
+        passed: false,
+    };
+    let (install, control, _) = common::installed_runtime_fixture(&owner_path)?;
+    let old_namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
+    let selection: Value = serde_json::from_slice(&fs::read(install.join("selected.json"))?)?;
+    let digest = selection["active"].as_str().context("selected digest")?;
+    let data = owner_path.join("custom-indexes");
+    fs::write(source.join("original.txt"), b"keep original source")?;
+    let install_path = install.to_str().context("UTF8 install")?;
+    cleanup.predecessor = Some(common::FixtureForeground::spawn(&install, &owner_path)?);
+    cleanup.predecessor.as_mut().unwrap().wait_ready()?;
+    let (cold_namespace, cold_resources) =
+        common::observe_empty_installed_fixture(&install, &owner_path, "cold-before-setup")?;
+    ensure!(
+        cold_namespace == old_namespace,
+        "cold baseline crossed predecessor namespace"
+    );
+    common::setup_fixture_project(&control, &source, &data, "before-reinstall")?;
+    cleanup.predecessor.as_mut().unwrap().shutdown_raw()?;
+    ensure!(
+        !ServiceRegistry::open_saved(&control)?
+            .bindings()?
+            .is_empty()
+    );
+    let previous_selection = fs::read(install.join("selected.json"))?;
+    let previous_registry = fs::read(control.join("service-1.4.sqlite3"))?;
+    let different = if digest == "0".repeat(64) {
+        "1".repeat(64)
+    } else {
+        "0".repeat(64)
+    };
+    let unidentified = common::fixture_command(
+        &owner_path,
+        &[
+            "runtime",
+            "replace-installation",
+            "--install-dir",
+            install_path,
+            "--candidate-sha256",
+            &different,
+            "--apply",
+        ],
+    )?;
+    ensure!(
+        !unidentified.status.success()
+            && String::from_utf8_lossy(&unidentified.stderr)
+                .contains("replacement_operation_required"),
+        "unidentified replacement was not refused: {}{}",
+        String::from_utf8_lossy(&unidentified.stdout),
+        String::from_utf8_lossy(&unidentified.stderr)
+    );
+    ensure!(
+        fs::read(install.join("selected.json"))? == previous_selection
+            && fs::read(control.join("service-1.4.sqlite3"))? == previous_registry
+            && data.exists(),
+        "refused replacement changed owned state"
+    );
+    cleanup.predecessor = Some(common::FixtureForeground::spawn(&install, &owner_path)?);
+    cleanup.predecessor.as_mut().unwrap().wait_ready()?;
+    let token = "c".repeat(64);
+    let receipt = replacement_json(
+        &owner_path,
+        &[
+            "runtime",
+            "replace-installation",
+            "--install-dir",
+            install_path,
+            "--candidate-sha256",
+            digest,
+            "--reinstall",
+            "--operation-id",
+            &token,
+            "--generation-id",
+            &token,
+            "--apply",
+        ],
+    )?;
+    ensure!(receipt["replaced"] == true, "{receipt}");
+    cleanup.predecessor.as_mut().unwrap().require_exited()?;
+    ensure!(
+        !install.exists() && !data.exists(),
+        "the old installation and external registered indexes survived"
+    );
+    let payload = owner_path.join("payload");
+    let state = owner_path.join("state");
+    replacement_json(
+        &owner_path,
+        &[
+            "runtime",
+            "stage",
+            "--source",
+            payload.to_str().unwrap(),
+            "--install-dir",
+            install_path,
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--approved-sha256",
+            digest,
+            "--verification-basis",
+            "organization-digest",
+        ],
+    )?;
+    replacement_json(
+        &owner_path,
+        &[
+            "runtime",
+            "activate",
+            "--install-dir",
+            install_path,
+            "--runtime-sha256",
+            digest,
+        ],
+    )?;
+    let (new_namespace, fresh_resources) =
+        common::observe_empty_installed_fixture(&install, &owner_path, "fresh-after-reinstall")?;
+    let mut cold = serde_json::to_value(cold_resources)?;
+    let mut fresh = serde_json::to_value(fresh_resources)?;
+    // Preserve complete samples above. These host telemetry fields may change
+    // with time; all configuration, policy headroom and work charges must match
+    // the independently observed empty predecessor exactly.
+    for field in [
+        "observed_rss_bytes",
+        "available_memory_bytes",
+        "telemetry_complete",
+        "pressure",
+    ] {
+        cold.as_object_mut()
+            .context("cold resources object")?
+            .remove(field)
+            .context("cold resource telemetry field missing")?;
+        fresh
+            .as_object_mut()
+            .context("fresh resources object")?
+            .remove(field)
+            .context("fresh resource telemetry field missing")?;
+    }
+    ensure!(
+        cold == fresh,
+        "fresh resource configuration/reservations differ from independently captured cold baseline: before={cold}, after={fresh}"
+    );
+    ensure!(
+        new_namespace != old_namespace,
+        "live reinstallation reused old namespace"
+    );
+    common::shutdown_installed_fixture(&install, &owner_path)?;
+    common::observe_empty_stopped_fixture(&state.join("control"), &owner_path, new_namespace)?;
+    let registry = ServiceRegistry::open_saved(&state.join("control"))?;
+    ensure!(
+        registry.incarnation()? != old_namespace,
+        "reinstall reused the old namespace"
+    );
+    ensure!(
+        registry.bindings()?.is_empty() && registry.pending_projects(32)?.is_empty(),
+        "reinstallation created projects or indexing jobs"
+    );
+    ensure!(fs::read(source.join("original.txt"))? == b"keep original source");
+    cleanup.passed = true;
+    Ok(())
+}
+
 #[test]
 fn standalone_uninstall_without_confirmation_preserves_the_explicit_installation() -> Result<()> {
     let owner = tempfile::tempdir()?;
@@ -404,6 +706,21 @@ fn native_http_commands_preserve_private_selection_and_revocation() -> Result<()
             .context("credential path missing")?,
     );
     let credential_bytes = fs::read(credential)?;
+    // The header helper for agents started outside VS Code prints exactly the
+    // owner-private bearer of the existing connection; it enrolls nothing.
+    let header = || {
+        let mut command = runtime("http-credential");
+        command.args(["--connection-id", &id, "--format", "header-json"]);
+        command
+    };
+    assert_eq!(
+        value(&mut header())?,
+        json!({"Authorization": format!("Bearer {}", std::str::from_utf8(&credential_bytes)?)})
+    );
+    assert!(
+        fs::read(credential)? == credential_bytes,
+        "the header helper must not rotate credentials"
+    );
     let owned = lookup(&id)?;
     assert_eq!(owned["status"], "owned");
     assert_eq!(owned["connection"], enrolled);
@@ -536,6 +853,13 @@ fn native_http_commands_preserve_private_selection_and_revocation() -> Result<()
         }
     };
     let credential_after_revoke = credential_snapshot()?;
+    let refused_header = header().output()?;
+    assert!(!refused_header.status.success() && refused_header.stdout.is_empty());
+    assert!(
+        !String::from_utf8_lossy(&refused_header.stderr)
+            .contains(std::str::from_utf8(&credential_bytes)?),
+        "a refused header helper never prints the revoked token"
+    );
     let unavailable = lookup(&id)?;
     assert_eq!(unavailable["status"], "unavailable");
     assert_eq!(unavailable["code"], "owned_connection_revoked");
@@ -1000,6 +1324,11 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
 /// editor are exercised elsewhere; each entry names that test so it cannot silently rot.
 const ELSEWHERE: &[(&str, &str, &str)] = &[
     (
+        "runtime replace-installation",
+        "crates/airk-cli/src/runtime_install/replacement/tests.rs",
+        "fn replacement_removes_only_airk_locations_of_a_pre_1_9_installation",
+    ),
+    (
         "runtime lookup-http-connection",
         "this file",
         "native_http_commands_preserve_private_selection_and_revocation",
@@ -1438,6 +1767,7 @@ const HERE: &[&str] = &[
     "pause",
     "projects",
     "read",
+    "runtime http-credential",
     "refs",
     "relationships",
     "resume",
@@ -1445,6 +1775,7 @@ const HERE: &[&str] = &[
     "service logs",
     "service prepare-registration",
     "service register",
+    "service session",
     "service requests forget",
     "service requests list",
     "service requests prepare",
@@ -1462,6 +1793,101 @@ const HERE: &[&str] = &[
     "usage report",
     "watch",
 ];
+
+/// One window's session: hello first, offline invokes answer exactly what the
+/// one-shot process prints, long-lived roles are refused, and stdin EOF ends
+/// the process. Every wait observes a frame or the exit under a deadline.
+#[test]
+fn service_session_matches_one_shot_output_and_exits_on_eof() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
+    const DEADLINE: Duration = Duration::from_secs(60);
+    let mut child = airk()
+        .args(["service", "session"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut input = child.stdin.take().context("session stdin")?;
+    let mut output = child.stdout.take().context("session stdout")?;
+    let (frames, responses) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        loop {
+            let mut prefix = [0u8; 4];
+            if output.read_exact(&mut prefix).is_err() {
+                break;
+            }
+            let mut body = vec![0; u32::from_be_bytes(prefix) as usize];
+            if output.read_exact(&mut body).is_err()
+                || frames.send(serde_json::from_slice::<Value>(&body)).is_err()
+            {
+                break;
+            }
+        }
+    });
+    let (exited, exit) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = exited.send(child.wait());
+    });
+    let mut send = |value: Value| -> Result<()> {
+        let body = serde_json::to_vec(&value)?;
+        input.write_all(&u32::try_from(body.len())?.to_be_bytes())?;
+        input.write_all(&body)?;
+        input.flush()?;
+        Ok(())
+    };
+    let next = || -> Result<Value> { Ok(responses.recv_timeout(DEADLINE)??) };
+    let id = |n: u8| format!("{n:02x}").repeat(16);
+
+    send(json!({"id":id(1),"request":{"hello":{"protocol":1}}}))?;
+    let image = format!(
+        "{:x}",
+        Sha256::digest(fs::read(env!("CARGO_BIN_EXE_airk"))?)
+    );
+    assert_eq!(
+        next()?,
+        json!({"id":id(1),"outcome":{"status":"hello","protocol":1,"version":env!("CARGO_PKG_VERSION"),"executable_sha256":image}})
+    );
+    let missing = tempfile::tempdir()?.path().join("missing-control");
+    let missing = missing.to_str().context("fixture path")?;
+    let cases: [&[&str]; 4] = [
+        &["--version"],
+        &["runtime", "bogus"],
+        &["runtime", "location", "--channel", "stable"],
+        &[
+            "service",
+            "logs",
+            "--runtime-dir",
+            missing,
+            "--format",
+            "text",
+        ],
+    ];
+    for (n, argv) in cases.iter().enumerate() {
+        let one_shot = run(argv)?;
+        let n = u8::try_from(n)? + 2;
+        send(json!({"id":id(n),"request":{"invoke":{"argv":argv,"deadline_ms":60000}}}))?;
+        assert_eq!(
+            next()?,
+            json!({"id":id(n),"outcome":{"status":"invoked","success":one_shot.status.success(),
+                "stdout":String::from_utf8(one_shot.stdout)?,"stderr":String::from_utf8(one_shot.stderr)?}}),
+            "{argv:?}"
+        );
+    }
+    send(
+        json!({"id":id(9),"request":{"invoke":{"argv":["serve","--runtime-dir",missing],"deadline_ms":60000}}}),
+    )?;
+    assert_eq!(
+        next()?,
+        json!({"id":id(9),"outcome":{"status":"failed","code":"session_command_refused","retryable":false}})
+    );
+    drop(input);
+    let status = exit
+        .recv_timeout(DEADLINE)
+        .context("session did not exit after stdin EOF")??;
+    ensure!(status.success(), "session exit: {status}");
+    Ok(())
+}
 
 fn reference_commands() -> Result<Vec<String>> {
     let reference = fs::read_to_string(

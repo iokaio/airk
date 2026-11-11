@@ -143,6 +143,17 @@ async fn handle(
         .await
         .unwrap_or_else(|_| failure("service_request_outcome_unknown"))
 }
+/// The console relay with its exact filter, engine digest, optional runtime pin
+/// and instance fence; shared by `service console` and `service session`.
+pub(crate) async fn relay(
+    root: &Path,
+    method: ControlMethod,
+    engine: &str,
+    runtime: Option<&str>,
+) -> ControlResponse {
+    metadata_only(handle(root, method, engine, runtime).await)
+}
+
 /// Same-version/engine and instance-fenced metadata call for native frontends.
 /// No connection grant or evidence response can leave through this adapter.
 pub async fn request(root: &Path, method: ControlMethod) -> Result<ControlResponse> {
@@ -172,9 +183,7 @@ pub async fn run(root: &Path, runtime: Option<airk_core::identity::Sha256Digest>
         };
         let response = Response {
             id: request.id,
-            response: metadata_only(
-                handle(root, request.method, &engine, runtime.as_deref()).await,
-            ),
+            response: relay(root, request.method, &engine, runtime.as_deref()).await,
         };
         let mut bytes = Vec::new();
         if service_ipc::write_frame(&mut bytes, &response).is_err() {

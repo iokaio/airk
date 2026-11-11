@@ -173,6 +173,11 @@ impl Kernel {
                     deadline,
                     &|| crate::service_execution::checkpoint().is_err(),
                 );
+                // The probe above only stops the read. An interrupted check is
+                // not a mismatch: a drain or cancellation leaves this witness
+                // with its own typed error instead of trying the next path or
+                // ending in "no witness within bounds".
+                crate::service_execution::checkpoint()?;
                 charged = charged
                     .checked_add(check.bytes_read)
                     .ok_or_else(|| anyhow::anyhow!("split witness byte accounting overflow"))?;

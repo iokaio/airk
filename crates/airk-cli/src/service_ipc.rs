@@ -54,8 +54,12 @@ pub fn read_frame<R: Read, T: DeserializeOwned>(reader: &mut R) -> io::Result<Op
     read_frame_limited(reader, MAX_FRAME_BYTES)
 }
 
+/// Largest explicit codec budget any caller may request (the per-window session's
+/// response frames). Ordinary control frames keep [`MAX_FRAME_BYTES`].
+pub const MAX_CODEC_BYTES: usize = 16 * 1024 * 1024;
+
 fn check_limit(limit: usize) -> io::Result<()> {
-    if limit == 0 || limit > 4 * 1024 * 1024 {
+    if limit == 0 || limit > MAX_CODEC_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid IPC codec budget",

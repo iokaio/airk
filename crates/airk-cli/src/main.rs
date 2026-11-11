@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The 1.4 CLI is a native service client. Source/store ownership stays in workers.
+use airk_cli::cli_io::CliIo;
 use airk_core::service::{ControlMethod, ControlResponse, JobKind};
 use anyhow::{Context, Result, ensure};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
@@ -10,6 +11,7 @@ use std::{
 };
 #[cfg(feature = "parser-training")]
 mod parser_training;
+mod session_commands;
 mod tools;
 #[derive(clap::Args, Default, serde::Serialize)]
 struct EvidenceOptions {
@@ -737,6 +739,16 @@ enum ServiceCommand {
         #[arg(long)]
         runtime_sha256: Option<airk_core::identity::Sha256Digest>,
     },
+    /// One editor window's framed native helper on stdin/stdout; exits on EOF or owner loss.
+    ///
+    /// Serves hello, metadata-only control relays (each naming its control directory and
+    /// optional runtime pin) and allowlisted one-shot commands run in this process. It is a
+    /// client, never the service, and starts the service only through `runtime ensure/start`.
+    Session {
+        /// Exit when the launching process exits, even if stdin stays open.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set, value_name = "BOOL")]
+        parent_watch: bool,
+    },
     /// Print recent service log records (--limit), export all retained logs (--all) or the raw job-error ring (--raw).
     Logs {
         #[arg(long)]
@@ -878,7 +890,7 @@ fn write_new(path: &std::path::Path, value: &Value) -> Result<()> {
     file.write_all(b"\n")?;
     Ok(())
 }
-async fn explorer_command(cli: &Cli, action: &ExplorerCommand) -> Result<()> {
+async fn explorer_command(cli: &Cli, action: &ExplorerCommand, io: &CliIo) -> Result<()> {
     use airk_mcp::explorer_offline as offline;
     let arguments = |io: &ExplorerIo| -> Result<serde_json::Map<String, Value>> {
         match serde_json::from_str(&io.args).context("--args must be one JSON object")? {
@@ -947,7 +959,7 @@ async fn explorer_command(cli: &Cli, action: &ExplorerCommand) -> Result<()> {
         }
     };
     write_new(output, &value)?;
-    print_json(&json!({"written":output,"ok":ok}))?;
+    print_json(io, &json!({"written":output,"ok":ok}))?;
     ensure!(
         ok,
         "result written to {} reports a problem",
@@ -955,7 +967,7 @@ async fn explorer_command(cli: &Cli, action: &ExplorerCommand) -> Result<()> {
     );
     Ok(())
 }
-async fn list_projects(cli: &Cli, runtime_dir: Option<&std::path::Path>) -> Result<()> {
+async fn list_projects(cli: &Cli, runtime_dir: Option<&std::path::Path>, io: &CliIo) -> Result<()> {
     let control = match runtime_dir {
         Some(control) => control.to_path_buf(),
         None => airk_cli::runtime_install::installed_control(&install_root(cli)?).await?,
@@ -988,7 +1000,10 @@ async fn list_projects(cli: &Cli, runtime_dir: Option<&std::path::Path>) -> Resu
             None => break,
         }
     }
-    print_json(&json!({"default_project":cli.service_project,"projects":projects}))
+    print_json(
+        io,
+        &json!({"default_project":cli.service_project,"projects":projects}),
+    )
 }
 #[derive(Subcommand)]
 enum ClientRequestCommand {
@@ -1194,8 +1209,8 @@ fn build_cli_help_catalog() -> std::collections::BTreeMap<String, String> {
     catalog
 }
 
-fn print_json(value: &impl serde::Serialize) -> Result<()> {
-    println!("{}", serde_json::to_string(value)?);
+fn print_json(io: &CliIo, value: &impl serde::Serialize) -> Result<()> {
+    io.line(serde_json::to_string(value)?);
     Ok(())
 }
 fn bounded(input: impl Read, limit: u64) -> Result<Vec<u8>> {
@@ -1229,17 +1244,29 @@ fn main() -> std::process::ExitCode {
     match run_cli() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            if std::env::var("AIRK_ERROR_FORMAT").as_deref() == Ok("json") {
-                eprintln!(
-                    "{}",
-                    json!({"airk_error":1,"code":"operation_failed","retryable":false,"message":format!("{error:#}").chars().take(4096).collect::<String>()})
-                );
-            } else {
-                eprintln!("Error: {error:#}");
-            }
+            eprintln!("{}", error_line(&error));
             std::process::ExitCode::FAILURE
         }
     }
+}
+/// The final diagnostic line of a failed command (`AIRK_ERROR_FORMAT=json`
+/// selects the typed body). Shared by the process and `service session`.
+fn error_line(error: &anyhow::Error) -> String {
+    if std::env::var("AIRK_ERROR_FORMAT").as_deref() == Ok("json") {
+        json!({"airk_error":1,"code":"operation_failed","retryable":false,"message":format!("{error:#}").chars().take(4096).collect::<String>()}).to_string()
+    } else {
+        format!("Error: {error:#}")
+    }
+}
+/// A failed native read prints its complete result on stdout before the
+/// diagnostic line, exactly as the one-shot process does.
+fn report_failure(error: &anyhow::Error, io: &CliIo) {
+    if let Some(native) = error.downcast_ref::<airk_cli::usage_client::NativeReadFailure>()
+        && print_json(io, native.body()).is_err()
+    {
+        io.error_line("Error: native read result could not be rendered");
+    }
+    io.error_line(error_line(error));
 }
 fn run_cli() -> Result<()> {
     if std::env::args_os()
@@ -1305,7 +1332,7 @@ fn run_cli() -> Result<()> {
     if let Err(error) = &result
         && let Some(native) = error.downcast_ref::<airk_cli::usage_client::NativeReadFailure>()
     {
-        print_json(native.body())?;
+        print_json(&CliIo::process(), native.body())?;
     }
     result
 }
@@ -1324,10 +1351,15 @@ async fn run() -> Result<()> {
     let matches = Cli::command().get_matches();
     let explicit_root =
         matches.value_source("root") == Some(clap::parser::ValueSource::CommandLine);
-    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    dispatch(cli, explicit_root, &executable, &CliIo::process()).await
+}
+/// One parsed command, writing through `io`. The process and `service session`
+/// share this exact implementation; the session admits only its allowlist.
+async fn dispatch(mut cli: Cli, explicit_root: bool, executable: &Path, io: &CliIo) -> Result<()> {
     cli.validate_setup()?;
     if matches!(cli.command, Command::Mcp { .. } | Command::Bridge { .. }) {
-        airk_cli::runtime_pair::require_legacy_stdio(&executable)?;
+        airk_cli::runtime_pair::require_legacy_stdio(executable)?;
     }
     ensure!(
         cli.service_runtime_dir.is_none()
@@ -1433,7 +1465,9 @@ async fn run() -> Result<()> {
                 output,
             );
         }
-        Command::Runtime { action } => return airk_cli::runtime_install::run(action).await,
+        Command::Runtime { action } => {
+            return airk_cli::runtime_install::run_with(action, io).await;
+        }
         Command::Setup {
             client,
             connection_id,
@@ -1449,6 +1483,7 @@ async fn run() -> Result<()> {
                 explorer_descriptor.as_deref(),
                 standalone,
                 explicit_root,
+                io,
             )
             .await;
         }
@@ -1484,15 +1519,18 @@ async fn run() -> Result<()> {
             )
             .await;
         }
-        Command::Service { action } => return service(&cli, action).await,
+        Command::Service {
+            action: ServiceCommand::Session { parent_watch },
+        } => return session_commands::run(*parent_watch, executable),
+        Command::Service { action } => return service(&cli, action, io).await,
         Command::ModelCatalog => {
             let mut report = serde_json::to_value(airk_kernel::inspect_model_catalog()?)?;
             report["bundled_model"] = json!({"manifest":airk_cli::bundled_assets::manifest()?});
-            return print_json(&report);
+            return print_json(io, &report);
         }
         Command::Tools { action }
             if cli.combined_session.is_none()
-                && tools::inspect_selected(action, cli.catalog_session.is_some())? =>
+                && tools::inspect_selected(action, cli.catalog_session.is_some(), io)? =>
         {
             return Ok(());
         }
@@ -1604,11 +1642,11 @@ async fn run() -> Result<()> {
             )
             .await;
         }
-        Command::Init => return initialize(&cli).await,
+        Command::Init => return initialize(&cli, io).await,
         Command::Projects { runtime_dir } => {
-            return list_projects(&cli, runtime_dir.as_deref()).await;
+            return list_projects(&cli, runtime_dir.as_deref(), io).await;
         }
-        Command::Explorer { action } => return explorer_command(&cli, action).await,
+        Command::Explorer { action } => return explorer_command(&cli, action, io).await,
         Command::Index { full: true } => anyhow::bail!(
             "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC"
         ),
@@ -1642,7 +1680,7 @@ async fn run() -> Result<()> {
                 }
             }
         };
-        return tools::run_backend(action, backend, defaults).await;
+        return tools::run_backend(action, backend, defaults, io).await;
     }
     let project = if let Some(selection) = &cli.catalog_session {
         let selected = airk_cli::service_frontend::resolve_scoped(
@@ -1697,7 +1735,7 @@ async fn run() -> Result<()> {
                     .await?
                 }
             };
-            print_json(&value)
+            print_json(io, &value)
         }
         Command::Configure { file, stdin: _ } => {
             let bytes = match file {
@@ -1706,7 +1744,7 @@ async fn run() -> Result<()> {
                     airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
                 )?,
                 None => bounded(
-                    std::io::stdin(),
+                    io.stdin(),
                     airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
                 )?,
             };
@@ -1714,6 +1752,7 @@ async fn run() -> Result<()> {
                 &project.control,
                 registration.binding,
                 serde_json::from_slice(&bytes)?,
+                io,
             )
             .await
         }
@@ -1746,10 +1785,10 @@ async fn run() -> Result<()> {
                     .await?
                 };
                 if let Some(text) = value.as_str() {
-                    print!("{text}");
+                    io.text(text);
                     Ok(())
                 } else {
-                    print_json(&value)
+                    print_json(io, &value)
                 }
             }
             UsageCommand::Policy => {
@@ -1773,7 +1812,7 @@ async fn run() -> Result<()> {
                     )
                     .await?
                 };
-                print_json(&airk_cli::usage_client::require_native_success(value)?)
+                print_json(io, &airk_cli::usage_client::require_native_success(value)?)
             }
             UsageCommand::Import {
                 file,
@@ -1792,6 +1831,7 @@ async fn run() -> Result<()> {
                     "local-tokenizer provenance requires usage calibrate"
                 );
                 print_json(
+                    io,
                     &json!({"preview":measurement,"input_sha256":input_sha256,"collection":registration.collection,"recorded":false,"link_validation":"Native execution verifies retained request links and collection scope."}),
                 )
             }
@@ -1832,7 +1872,7 @@ async fn run() -> Result<()> {
                     },
                     _ => unreachable!(),
                 };
-                configure(&project.control, registration.binding, draft).await
+                configure(&project.control, registration.binding, draft, io).await
             }
         },
         Command::Mcp { .. } => unreachable!("MCP resolves saved bindings before service election"),
@@ -1845,18 +1885,28 @@ async fn run() -> Result<()> {
                 Path::new(&registration.data_root),
                 &registration.collection,
                 cli.catalog_session.clone(),
+                io,
             )
             .await
         }
         Command::Setup { .. } | Command::Uninstall { .. } => {
             unreachable!("setup handled before project resolution")
         }
-        Command::Index { .. } => job(&project.control, registration.binding, JobKind::Index).await,
-        Command::SetupModel => {
-            job(&project.control, registration.binding, JobKind::ModelSetup).await
+        Command::Index { .. } => {
+            job(&project.control, registration.binding, JobKind::Index, io).await
         }
-        Command::Inspect => job(&project.control, registration.binding, JobKind::Inspect).await,
+        Command::SetupModel => {
+            job(
+                &project.control,
+                registration.binding,
+                JobKind::ModelSetup,
+                io,
+            )
+            .await
+        }
+        Command::Inspect => job(&project.control, registration.binding, JobKind::Inspect, io).await,
         Command::Pause | Command::Resume => print_control(
+            io,
             airk_cli::console_client::request(
                 &project.control,
                 ControlMethod::Pause {
@@ -1867,6 +1917,7 @@ async fn run() -> Result<()> {
             .await?,
         ),
         Command::Watch { mode } => print_control(
+            io,
             airk_cli::console_client::request(
                 &project.control,
                 ControlMethod::ConfigureWatch {
@@ -1890,6 +1941,7 @@ async fn run() -> Result<()> {
                 Path::new(&registration.data_root),
                 &registration.collection,
                 cli.catalog_session.clone(),
+                io,
             )
             .await
         }
@@ -1901,7 +1953,7 @@ fn install_root(cli: &Cli) -> Result<PathBuf> {
         None => airk_cli::runtime_install::caller_install_root(),
     }
 }
-async fn initialize(cli: &Cli) -> Result<()> {
+async fn initialize(cli: &Cli, io: &CliIo) -> Result<()> {
     ensure!(
         cli.service_runtime_dir.is_none(),
         "raw service registration requires explicit service metadata commands"
@@ -1928,7 +1980,7 @@ async fn initialize(cli: &Cli) -> Result<()> {
     )
     .await?;
     let ControlResponse::Registered { project } = response else {
-        print_control(response)?;
+        print_control(io, response)?;
         anyhow::bail!("registration was not acknowledged")
     };
     ensure!(
@@ -1940,24 +1992,29 @@ async fn initialize(cli: &Cli) -> Result<()> {
             == registration,
         "changed prepared storage identity"
     );
-    print_json(&project)
+    print_json(io, &project)
 }
 async fn job(
     control: &Path,
     project: airk_core::service::ProjectBinding,
     kind: JobKind,
+    io: &CliIo,
 ) -> Result<()> {
     let nonce = airk_cli::client_requests::prepare(control, project, kind).await?;
-    eprintln!(
+    io.error_line(format_args!(
         "Saved CLI request {nonce}; use 'airk service requests --runtime-dir <control> list/retry' for uncertain outcomes."
-    );
-    print_json(&airk_cli::client_requests::submit(control, nonce).await?)?;
+    ));
+    print_json(
+        io,
+        &airk_cli::client_requests::submit(control, nonce).await?,
+    )?;
     airk_cli::client_requests::forget(control, nonce)
 }
 async fn configure(
     control: &Path,
     project: airk_core::service::ProjectBinding,
     draft: airk_cli::service_configuration::Draft,
+    io: &CliIo,
 ) -> Result<()> {
     use airk_core::service::JobOutcome;
     let nonce = airk_cli::client_requests::prepare(control, project, JobKind::Inspect).await?;
@@ -1988,14 +2045,17 @@ async fn configure(
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     let nonce = airk_cli::client_requests::prepare_configuration(control, project, draft).await?;
-    eprintln!(
+    io.error_line(format_args!(
         "Saved CLI configuration request {nonce}; retry only with its saved key after uncertain outcomes."
-    );
-    print_json(&airk_cli::client_requests::submit(control, nonce).await?)?;
+    ));
+    print_json(
+        io,
+        &airk_cli::client_requests::submit(control, nonce).await?,
+    )?;
     airk_cli::client_requests::forget(control, nonce)
 }
-fn print_control(response: ControlResponse) -> Result<()> {
-    print_json(&response)?;
+fn print_control(io: &CliIo, response: ControlResponse) -> Result<()> {
+    print_json(io, &response)?;
     match response {
         ControlResponse::Failure { code }
             if airk_cli::client_requests::refusal_guidance(&code).is_some() =>
@@ -2017,9 +2077,9 @@ fn print_control(response: ControlResponse) -> Result<()> {
     }
     Ok(())
 }
-async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
+async fn service(cli: &Cli, action: &ServiceCommand, io: &CliIo) -> Result<()> {
     match action {
-        ServiceCommand::Legacy { action } => airk_cli::legacy_startup::run(action),
+        ServiceCommand::Legacy { action } => airk_cli::legacy_startup::run_with(action, io),
         ServiceCommand::Requests {
             runtime_dir,
             action,
@@ -2032,50 +2092,55 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
                 let nonce =
                     airk_cli::client_requests::prepare_configuration(runtime_dir, *project, draft)
                         .await?;
-                print_json(&json!({"prepared":nonce,"submitted":false}))
+                print_json(io, &json!({"prepared":nonce,"submitted":false}))
             }
             ClientRequestCommand::List => {
-                print_json(&airk_cli::client_requests::list(runtime_dir)?)
+                print_json(io, &airk_cli::client_requests::list(runtime_dir)?)
             }
             ClientRequestCommand::Prepare { project, kind } => {
                 let kind = serde_json::from_value(json!(kind))?;
                 let nonce = airk_cli::client_requests::prepare(runtime_dir, *project, kind).await?;
-                print_json(&json!({"prepared":nonce,"submitted":false}))
+                print_json(io, &json!({"prepared":nonce,"submitted":false}))
             }
             ClientRequestCommand::Retry { nonce } => {
-                print_json(&airk_cli::client_requests::submit(runtime_dir, *nonce).await?)?;
+                print_json(
+                    io,
+                    &airk_cli::client_requests::submit(runtime_dir, *nonce).await?,
+                )?;
                 airk_cli::client_requests::forget(runtime_dir, *nonce)
             }
             ClientRequestCommand::Forget { nonce } => {
                 airk_cli::client_requests::forget(runtime_dir, *nonce)?;
-                print_json(&json!({"forgotten":nonce,"native_work_canceled":false}))
+                print_json(io, &json!({"forgotten":nonce,"native_work_canceled":false}))
             }
         },
-        ServiceCommand::PrepareRegistration => {
-            print_json(&airk_cli::service_registration::prepare(
+        ServiceCommand::PrepareRegistration => print_json(
+            io,
+            &airk_cli::service_registration::prepare(
                 &cli.root,
                 cli.data_dir
                     .as_deref()
                     .context("registration preparation requires explicit --data-dir")?,
                 &cli.collection,
-            )?)
-        }
+            )?,
+        ),
         ServiceCommand::PrepareStorage {
             runtime_dir,
             project,
-        } => print_json(&airk_cli::service_registration::prepare_storage(
-            runtime_dir,
-            *project,
-        )?),
+        } => print_json(
+            io,
+            &airk_cli::service_registration::prepare_storage(runtime_dir, *project)?,
+        ),
         ServiceCommand::PrepareConfiguration {
             runtime_dir,
             project,
         } => {
             let draft = serde_json::from_slice(&bounded(
-                std::io::stdin(),
+                io.stdin(),
                 airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
             )?)?;
             print_json(
+                io,
                 &airk_cli::service_configuration::prepare(runtime_dir, *project, draft).await?,
             )
         }
@@ -2083,13 +2148,16 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
             runtime_dir,
             runtime_sha256,
         } => airk_cli::console_client::run(runtime_dir, *runtime_sha256).await,
+        ServiceCommand::Session { .. } => {
+            anyhow::bail!("service session runs only as the process's own command")
+        }
         ServiceCommand::RecordError {
             runtime_dir,
             operation,
         } => {
-            let input = bounded(std::io::stdin(), 16384)?;
+            let input = bounded(io.stdin(), 16384)?;
             airk_cli::service_logs::record_client_error(runtime_dir, operation, &input)?;
-            print_json(&serde_json::json!({"recorded":true}))
+            print_json(io, &serde_json::json!({"recorded":true}))
         }
         ServiceCommand::Logs {
             runtime_dir,
@@ -2109,12 +2177,9 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
                         airk_cli::service_logs::export_raw_to(runtime_dir, file.as_file_mut())?;
                     file.as_file().sync_all()?;
                     file.persist_noclobber(output)?;
-                    return print_json(&serde_json::json!({"written_bytes":written}));
+                    return print_json(io, &serde_json::json!({"written_bytes":written}));
                 }
-                std::io::Write::write_all(
-                    &mut std::io::stdout().lock(),
-                    &airk_cli::service_logs::export_raw(runtime_dir)?,
-                )?;
+                io.bytes(&airk_cli::service_logs::export_raw(runtime_dir)?)?;
                 return Ok(());
             }
             anyhow::ensure!(
@@ -2140,13 +2205,13 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
                 file.as_file().sync_all()?;
                 let written = file.as_file().metadata()?.len();
                 file.persist_noclobber(output)?;
-                return print_json(&serde_json::json!({"written_bytes":written}));
+                return print_json(io, &serde_json::json!({"written_bytes":written}));
             }
             if format == "text" {
-                println!("{}", airk_cli::service_logs::render(&page)?);
+                io.line(airk_cli::service_logs::render(&page)?);
                 Ok(())
             } else {
-                print_json(&page)
+                print_json(io, &page)
             }
         }
         ServiceCommand::Register { runtime_dir } => {
@@ -2158,6 +2223,7 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
                 &cli.collection,
             )?;
             print_control(
+                io,
                 airk_cli::console_client::request(runtime_dir, ControlMethod::Register { project })
                     .await?,
             )
@@ -2168,7 +2234,7 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
             stdin,
         } => {
             let bytes = if *stdin {
-                bounded(std::io::stdin(), airk_core::service::MAX_FRAME_BYTES as u64)?
+                bounded(io.stdin(), airk_core::service::MAX_FRAME_BYTES as u64)?
             } else {
                 bounded(
                     std::fs::File::open(request_file.as_ref().context("request file required")?)?,
@@ -2184,7 +2250,10 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
                 "metadata RPC cannot expose evidence credentials; use mcp or tools"
             );
             // Transport success and native application status are distinct in this raw metadata API.
-            print_json(&airk_cli::console_client::request(runtime_dir, method).await?)
+            print_json(
+                io,
+                &airk_cli::console_client::request(runtime_dir, method).await?,
+            )
         }
         ServiceCommand::Health { runtime_dir } => {
             let response =
@@ -2193,9 +2262,10 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
                 matches!(response, ControlResponse::Health { .. }),
                 "service health unavailable or incompatible"
             );
-            print_json(&response)
+            print_json(io, &response)
         }
         ServiceCommand::Shutdown { runtime_dir } => print_control(
+            io,
             airk_cli::console_client::request(runtime_dir, ControlMethod::Shutdown).await?,
         ),
     }
@@ -2556,6 +2626,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
     controls.resolve()?;
     Ok((tool, value))
 }
+#[allow(clippy::too_many_arguments)] // The parsed setup inputs stay explicit.
 async fn run_setup(
     cli: &Cli,
     selected_client: Option<SetupClient>,
@@ -2564,11 +2635,14 @@ async fn run_setup(
     explorer_descriptor: Option<&Path>,
     options: &StandaloneSetupArgs,
     explicit_root: bool,
+    io: &CliIo,
 ) -> Result<()> {
     use airk_cli::standalone_setup::{Client as StandaloneClient, SetupPrompt};
     let mut terminal = airk_cli::standalone_setup::Terminal;
     let install = airk_cli::standalone_setup::installation(cli.service_install_dir.as_deref())?;
-    if let (Some(source), Some(approved)) = (&options.runtime_source, options.approved_sha256) {
+    let replaced_installation = if let (Some(source), Some(approved)) =
+        (&options.runtime_source, options.approved_sha256)
+    {
         airk_cli::standalone_setup::install_payload(
             &install,
             source,
@@ -2577,8 +2651,10 @@ async fn run_setup(
             options.rebuild_indexes,
             &mut terminal,
         )
-        .await?;
-    }
+        .await?
+    } else {
+        None
+    };
     let installed_cli = if install.join("selected.json").try_exists()? {
         Some(airk_cli::runtime_install::selected(&install)?.1)
     } else {
@@ -2588,10 +2664,21 @@ async fn run_setup(
         terminal.message(&format!("Installed AIRK executable: {executable:?}"))?;
         terminal.message("Run that executable with setup or uninstall, or add its directory to PATH. Setup does not change shell startup files.")?;
     }
+    let reconnect = replaced_installation.as_ref().map(|receipt| {
+        airk_cli::standalone_setup::reconnect_instruction(
+            &receipt["client_references"],
+            installed_cli.as_deref(),
+        )
+    });
+    if let Some(reconnect) = &reconnect {
+        terminal.message(reconnect)?;
+    }
     if options.install_only {
         return print_json(
+            io,
             &json!({"native_installed":true,"client_enrolled":false,"install_dir":install,
-            "cli_executable":installed_cli,"commands":{"setup":["setup"],"uninstall":["uninstall"]},"next":"Run the installed executable with setup to review an index scope and connect a coding agent. The executable directory is not added to PATH automatically."}),
+            "cli_executable":installed_cli,"commands":{"setup":["setup"],"uninstall":["uninstall"]},"next":"Run the installed executable with setup to review an index scope and connect a coding agent. The executable directory is not added to PATH automatically.",
+            "replaced_installation":replaced_installation,"reconnect":reconnect}),
         );
     }
     let guided = existing_connection_id.is_none()
@@ -2688,7 +2775,8 @@ async fn run_setup(
         "launch":launch_instructions,
         "trust":"Use normal CA validation. Native launch adds this installation CA without replacing existing public or enterprise roots; no OS trust change is performed.",
         "credential":"The native launcher reads the protected credential into the child process environment. Token bytes are never printed or placed in project configuration.",
-        "command_path":"Use cli_executable as the full command path, or add its directory to PATH yourself; setup does not modify shell startup files."});
+        "command_path":"Use cli_executable as the full command path, or add its directory to PATH yourself; setup does not modify shell startup files.",
+        "replaced_installation":replaced_installation,"reconnect":reconnect});
     let launch = options.launch || guided && !options.yes && terminal.interactive();
     if launch {
         let recovery = format!(
@@ -2718,7 +2806,7 @@ async fn run_setup(
                 ))?
                 .eq_ignore_ascii_case("y")
         {
-            return print_json(&output);
+            return print_json(io, &output);
         }
         terminal.message(&format!(
             "Launching {} in {}",
@@ -2740,7 +2828,7 @@ async fn run_setup(
             std::process::exit(status);
         }
     } else {
-        print_json(&output)?;
+        print_json(io, &output)?;
     }
     Ok(())
 }

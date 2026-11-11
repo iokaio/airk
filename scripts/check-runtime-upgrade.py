@@ -40,6 +40,42 @@ def runtime_binary(runtime, platform=sys.platform):
     return path
 
 
+def apply_fixture_replacement(invoke, binary, install, candidate):
+    """One explicit full uninstall, durably identified before staging a successor."""
+    operation = secrets.token_hex(32)
+    return invoke(binary, "runtime", "replace-installation", "--install-dir", install,
+                  "--candidate-sha256", candidate, "--reinstall", "--operation-id", operation, "--apply")
+
+
+def validate_fresh_replacement(inspected, rpc, expected_namespace):
+    """Require complete current native evidence; absent observations are not empty."""
+    report = inspected.get("clean_break") if isinstance(inspected, dict) else None
+    if (not isinstance(expected_namespace, str) or not re.fullmatch(r"[0-9a-f]{32}", expected_namespace)
+            or not isinstance(report, dict) or inspected.get("registry_namespace") != expected_namespace
+            or "clean_break_error" not in inspected or inspected["clean_break_error"] is not None
+            or report.get("required") is not False or report.get("installed_contract") != "airk-state/1"
+            or report.get("registrations_complete") is not True
+            or report.get("registrations_scope") != "current_registry"
+            or report.get("registrations") != []):
+        raise RuntimeError("Fresh replacement lacks a complete empty current native registration roster")
+
+    def complete_page(method):
+        response = rpc(method)
+        page = response.get("page") if isinstance(response, dict) else None
+        if not isinstance(page, dict) or "continuation" not in page or page["continuation"] is not None:
+            raise RuntimeError("Fresh replacement catalog page is incomplete or not empty")
+        return response
+
+    pages, revision = {}, None
+    for kind in ("indexes", "projects"):
+        rows, observed = catalog_page_items(complete_page, kind)
+        page = observed[0]["page"]
+        if rows or page["namespace"] != expected_namespace or revision is not None and page["revision"] != revision:
+            raise RuntimeError("Fresh replacement retained catalog entries or crossed native catalog identity")
+        pages[kind], revision = observed, page["revision"]
+    return {"inspection": inspected, "registrations": report["registrations"], "catalog_pages": pages}
+
+
 def clean_break_required(predecessor, candidate):
     def version(value):
         if not isinstance(value, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", value):
@@ -1280,121 +1316,165 @@ def run_clean_break(args, new, old):
             (install / "activation.json").write_text(json.dumps(intent), encoding="utf-8")
             receipt["superseded_activation"] = {"candidate": interrupted_identity, "phase": "drain", "journal": seeded_journal}
         receipt["retained_payloads_before_stage"] = sorted(path.name for path in (install / "runtimes").iterdir())
-        candidate_staged = True
-        invoke(binary, "runtime", "stage", "--source", new, "--install-dir", install, "--state-dir", old_state,
-            "--approved-sha256", new_identity, "--verification-basis", "organization-digest")
-        started = time.monotonic()
-        selected = invoke(binary, "runtime", "activate", "--install-dir", install, "--runtime-sha256", new_identity,
-            "--expected-active", old_identity)
-        receipt["activation_elapsed_seconds"] = time.monotonic()-started
-        if os.path.lexists(install / "activation.json"):
-            raise RuntimeError("Clean break left an ordinary activation intent pending")
-        if os.path.lexists(install / "upgrade-journal.json"):
-            raise RuntimeError("Clean break left the predecessor's unfinished upgrade journal active")
-        if seeded_journal is not None:
-            evidence = install / f"upgrade-journal.superseded-{seeded_journal['operation']}.json"
-            if hashlib.sha256(evidence.read_bytes()).hexdigest() != seeded_journal["sha256"]:
-                raise RuntimeError("Clean break did not retain the superseded upgrade journal bytes")
-        if selected.get("active") != new_identity:
-            raise RuntimeError("Clean break did not select the reviewed candidate")
-        client.wait(timeout=10)
-        receipt["connected_client_terminated"] = True
-        if census is None:
-            receipt["predecessor_processes_after"] = darwin_client_exit(client.pid, client.returncode, receipt["predecessor_client_image"])
-        health = invoke(binary, "runtime", "ensure", "--install-dir", install)
-        if (health.get("runtime_sha256") != new_identity or health.get("version") != receipt["version"]
-                or health.get("instance") == old_health["instance"]):
-            raise RuntimeError("Clean-break successor health differs from the reviewed new runtime")
-        receipt["health"] = health
-        old_jobs = ({item["indexed_job"]["id"] for item in originals}
-            | {item["configured"]["completed"]["id"] for item in originals}
-            | {receipt["discarded_pending_work"]["accepted"]["job"]["id"]})
-        deadline = time.monotonic()+180
-        receipt["rebuild_observations"] = []
-        for _ in range(512):
-            diagnosis = invoke(binary, "runtime", "diagnose", "--install-dir", install)
-            receipt["rebuild_observations"].append(diagnosis)
-            rebuild = validate_clean_break_rebuild(diagnosis, originals, old_namespace, old_jobs, new_identity, old_identity)
-            if rebuild is not None and rebuild["stage"] == "ready" and rebuild["cleanup"]["complete"]:
-                break
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Clean-break rebuild or owned cleanup did not complete; no request replay")
-            time.sleep(.1)
+        if args.replacement:
+            # Through 1.9.0, or for an explicit same-build install, fully remove
+            # the owned predecessor before staging a fresh empty successor.
+            started = time.monotonic()
+            plan = invoke(binary, "runtime", "replace-installation", "--install-dir", install,
+                          "--candidate-sha256", new_identity)
+            receipt["replacement_plan"] = plan
+            if plan.get("required") is not True or plan.get("reason") != "replace_before_1_9_0":
+                raise RuntimeError("Replacement plan did not require removing the predecessor")
+            replaced = apply_fixture_replacement(invoke, binary, install, new_identity)
+            receipt["replacement"] = replaced
+            receipt["replacement_elapsed_seconds"] = time.monotonic() - started
+            if replaced.get("replaced") is not True or replaced.get("residue"):
+                raise RuntimeError("Replacement did not remove the previous installation completely")
+            for path in (install, old_state):
+                if os.path.lexists(path):
+                    raise RuntimeError(f"Replacement left {path}")
+            client.wait(timeout=10)
+            receipt["connected_client_terminated"] = True
+            if census is not None:
+                census._wait_for_exit(10)
+                after = census._scan()
+                if after["processes"]:
+                    raise RuntimeError("Predecessor processes survived replacement")
+                receipt["predecessor_processes_after"] = {"captured_identities_exited": True, "after": after}
+            candidate_staged = True
+            invoke(binary, "runtime", "stage", "--source", new, "--install-dir", install, "--state-dir", root / "state-new",
+                   "--approved-sha256", new_identity, "--verification-basis", "organization-digest")
+            selected = invoke(binary, "runtime", "activate", "--install-dir", install, "--runtime-sha256", new_identity)
+            if selected.get("active") != new_identity:
+                raise RuntimeError("Fresh install did not select the candidate")
+            health = invoke(binary, "runtime", "ensure", "--install-dir", install)
+            if health.get("runtime_sha256") != new_identity or health.get("version") != receipt["version"]:
+                raise RuntimeError("Fresh install health differs from the candidate")
+            receipt["health"] = health
+            inspected = invoke(binary, "runtime", "inspect", "--install-dir", install)
+            fresh = validate_fresh_replacement(inspected, lambda method: rpc(binary, root / "state-new" / "control", method),
+                                               (health.get("catalog_clock") or {}).get("namespace"))
+            receipt["fresh_registrations"] = fresh["registrations"]
+            receipt["fresh_native_observation"] = fresh
+            if invoke(binary, "runtime", "replace-installation", "--install-dir", install,
+                      "--candidate-sha256", new_identity).get("required") is not False:
+                raise RuntimeError("Replacement would repeat over its own fresh install")
         else:
-            raise RuntimeError("Clean-break observation count exceeded its finite budget")
-        control = Path(rebuild["successor_control"])
-        # The original native canonical root has already been retired. Compare
-        # its captured identity without resolving a now-nonexistent directory.
-        if location_key(control) == location_key(old_control) or rebuild["successor_namespace"] == old_namespace:
-            raise RuntimeError("Clean break reused the original control root or namespace")
-        marker = json.loads((control / "airk-state-contract.json").read_text(encoding="utf-8"))
-        validate_clean_break_baseline(marker, rebuild, control, install)
-        receipt["state_contract"] = marker
-        receipt["obsolete_cleanup"] = validate_clean_break_cleanup(rebuild, originals, old_control, new_identity, old_identity)
-        # Exactly every payload present before the replacement was staged is retired.
-        if sorted(receipt["obsolete_cleanup"]["runtimes"]["retired_runtimes"]) != receipt["retained_payloads_before_stage"]:
-            raise RuntimeError("Clean break did not retire exactly the payloads present before replacement")
-        if census is not None:
-            receipt["predecessor_processes_after"] = census.verify_retired_gone(receipt["obsolete_cleanup"], timeout=10)
-        if os.path.lexists(old_state) or os.path.lexists(old_control) or any(os.path.lexists(item["registration"]["data_root"]) for item in originals):
-            raise RuntimeError("Clean-break completion left prior owned state or index artifacts")
-        if sorted(path.name for path in (install / "runtimes").iterdir()) != [new_identity]:
-            raise RuntimeError("Clean-break completion left a predecessor runtime payload")
-        if any(os.path.lexists(install / name) for name in ("airk-launcher.exe", "airk-launcher", "launcher.json")):
-            raise RuntimeError("Clean-break completion left a legacy launcher artifact")
-        new_rpc = lambda method: rpc(binary, control, method)
-        receipt["old_authority_reads"] = []
-        for identifier in sorted(old_jobs):
-            absent = rpc(binary, control, {"job": {"id": identifier}}, allow_failure=True)
-            if absent.get("status") != "failure":
-                raise RuntimeError("Successor still exposes a predecessor indexing job")
-            receipt["old_authority_reads"].append(absent)
-        request = receipt["discarded_pending_work"]["request"]
-        old_request = rpc(binary, control, {"request_receipt": {
-            "project": request["project"], "caller": request["caller"], "key": request["key"]}}, allow_failure=True)
-        if (old_request.get("status") != "failure"
-                and not (old_request.get("status") == "request_receipt"
-                    and old_request.get("expired") is True and old_request.get("job") is None)):
-            raise RuntimeError("Clean-break successor retained accepted predecessor request authority")
-        receipt["old_authority_reads"].append(old_request)
-        new_items, pages = catalog_page_items(new_rpc, "indexes")
-        active = [row["value"] for row in new_items if row.get("kind") == "index" and row["value"].get("tombstone") is False]
-        if {row["backing"]["binding"] for row in active} != {row["replacement"]["binding"] for row in rebuild["indexes"]} or len(active) != 2:
-            raise RuntimeError("Fresh catalog does not contain exactly all replacement indexes")
-        old_index_ids = {item["selection"]["index_id"] for item in originals if item["selection"] is not None}
-        if any(item["id"] in old_index_ids for item in active):
-            raise RuntimeError("Clean-break fresh catalog reused an old Index identity")
-        grants, grant_pages = catalog_page_items(new_rpc, "grants")
-        if grants:
-            raise RuntimeError("Clean break unexpectedly carried old grants or enrolled new clients automatically")
-        receipt["fresh_catalog_before_enrollment"] = {"index_pages": pages, "grant_pages": grant_pages}
-        receipt["fresh_connections"] = []
-        for row in rebuild["indexes"]:
-            fixture = next(item for item in originals if item["registration"] == row["original"])
-            watching = new_rpc({"watch": {"project": row["replacement"]["binding"]}})
-            if watching.get("observation", {}).get("enabled") is not fixture["watch"]:
-                raise RuntimeError("Clean break changed a saved watch preference")
-            inspection = new_rpc({"inspection": {"project": row["replacement"]["binding"]}})
-            snapshot = (inspection.get("observation") or {}).get("snapshot", {})
-            if (inspection.get("status") != "inspection" or inspection.get("project") != row["replacement"]["binding"]
-                    or snapshot.get("project") != row["replacement"]["binding"]
-                    or snapshot.get("vectors_enabled") is not fixture["vectors"]):
-                raise RuntimeError("Clean-break replacement did not preserve the supported vector opt-out")
-            selection, reviewed = fresh_clean_break_selection(new_rpc, row["replacement"])
-            connection_root = root / ("connection-"+row["replacement"]["binding"][:12])
-            connection_root.mkdir()
-            read = verify_https_reconnect(invoke, binary, install, control, connection_root, row["replacement"], selection,
-                digest(old_configuration), fixture["source_text"].encode(), command=command)
-            receipt["fresh_connections"].append({"original": row["original"], "replacement": row["replacement"],
-                "watch": watching, "inspection": inspection, "selection": selection, "review": reviewed, "https": read})
-        if census is None:
-            receipt["predecessor_processes_after"] = darwin_client_exit(client.pid, client.returncode,
-                receipt["predecessor_client_image"], receipt["obsolete_cleanup"])
-        after_cleanup = new_rpc("health")
-        if (after_cleanup.get("status") != "health" or after_cleanup.get("observation", {}).get("instance") != health["instance"]
-                or after_cleanup["observation"].get("runtime_sha256") != new_identity):
-            raise RuntimeError("Clean-break cleanup restarted or replaced the selected service")
-        receipt["health_after_cleanup"] = after_cleanup
+            candidate_staged = True
+            invoke(binary, "runtime", "stage", "--source", new, "--install-dir", install, "--state-dir", old_state,
+                "--approved-sha256", new_identity, "--verification-basis", "organization-digest")
+            started = time.monotonic()
+            selected = invoke(binary, "runtime", "activate", "--install-dir", install, "--runtime-sha256", new_identity,
+                "--expected-active", old_identity)
+            receipt["activation_elapsed_seconds"] = time.monotonic()-started
+            if os.path.lexists(install / "activation.json"):
+                raise RuntimeError("Clean break left an ordinary activation intent pending")
+            if os.path.lexists(install / "upgrade-journal.json"):
+                raise RuntimeError("Clean break left the predecessor's unfinished upgrade journal active")
+            if seeded_journal is not None:
+                evidence = install / f"upgrade-journal.superseded-{seeded_journal['operation']}.json"
+                if hashlib.sha256(evidence.read_bytes()).hexdigest() != seeded_journal["sha256"]:
+                    raise RuntimeError("Clean break did not retain the superseded upgrade journal bytes")
+            if selected.get("active") != new_identity:
+                raise RuntimeError("Clean break did not select the reviewed candidate")
+            client.wait(timeout=10)
+            receipt["connected_client_terminated"] = True
+            if census is None:
+                receipt["predecessor_processes_after"] = darwin_client_exit(client.pid, client.returncode, receipt["predecessor_client_image"])
+            health = invoke(binary, "runtime", "ensure", "--install-dir", install)
+            if (health.get("runtime_sha256") != new_identity or health.get("version") != receipt["version"]
+                    or health.get("instance") == old_health["instance"]):
+                raise RuntimeError("Clean-break successor health differs from the reviewed new runtime")
+            receipt["health"] = health
+            old_jobs = ({item["indexed_job"]["id"] for item in originals}
+                | {item["configured"]["completed"]["id"] for item in originals}
+                | {receipt["discarded_pending_work"]["accepted"]["job"]["id"]})
+            deadline = time.monotonic()+180
+            receipt["rebuild_observations"] = []
+            for _ in range(512):
+                diagnosis = invoke(binary, "runtime", "diagnose", "--install-dir", install)
+                receipt["rebuild_observations"].append(diagnosis)
+                rebuild = validate_clean_break_rebuild(diagnosis, originals, old_namespace, old_jobs, new_identity, old_identity)
+                if rebuild is not None and rebuild["stage"] == "ready" and rebuild["cleanup"]["complete"]:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Clean-break rebuild or owned cleanup did not complete; no request replay")
+                time.sleep(.1)
+            else:
+                raise RuntimeError("Clean-break observation count exceeded its finite budget")
+            control = Path(rebuild["successor_control"])
+            # The original native canonical root has already been retired. Compare
+            # its captured identity without resolving a now-nonexistent directory.
+            if location_key(control) == location_key(old_control) or rebuild["successor_namespace"] == old_namespace:
+                raise RuntimeError("Clean break reused the original control root or namespace")
+            marker = json.loads((control / "airk-state-contract.json").read_text(encoding="utf-8"))
+            validate_clean_break_baseline(marker, rebuild, control, install)
+            receipt["state_contract"] = marker
+            receipt["obsolete_cleanup"] = validate_clean_break_cleanup(rebuild, originals, old_control, new_identity, old_identity)
+            # Exactly every payload present before the replacement was staged is retired.
+            if sorted(receipt["obsolete_cleanup"]["runtimes"]["retired_runtimes"]) != receipt["retained_payloads_before_stage"]:
+                raise RuntimeError("Clean break did not retire exactly the payloads present before replacement")
+            if census is not None:
+                receipt["predecessor_processes_after"] = census.verify_retired_gone(receipt["obsolete_cleanup"], timeout=10)
+            if os.path.lexists(old_state) or os.path.lexists(old_control) or any(os.path.lexists(item["registration"]["data_root"]) for item in originals):
+                raise RuntimeError("Clean-break completion left prior owned state or index artifacts")
+            if sorted(path.name for path in (install / "runtimes").iterdir()) != [new_identity]:
+                raise RuntimeError("Clean-break completion left a predecessor runtime payload")
+            if any(os.path.lexists(install / name) for name in ("airk-launcher.exe", "airk-launcher", "launcher.json")):
+                raise RuntimeError("Clean-break completion left a legacy launcher artifact")
+            new_rpc = lambda method: rpc(binary, control, method)
+            receipt["old_authority_reads"] = []
+            for identifier in sorted(old_jobs):
+                absent = rpc(binary, control, {"job": {"id": identifier}}, allow_failure=True)
+                if absent.get("status") != "failure":
+                    raise RuntimeError("Successor still exposes a predecessor indexing job")
+                receipt["old_authority_reads"].append(absent)
+            request = receipt["discarded_pending_work"]["request"]
+            old_request = rpc(binary, control, {"request_receipt": {
+                "project": request["project"], "caller": request["caller"], "key": request["key"]}}, allow_failure=True)
+            if (old_request.get("status") != "failure"
+                    and not (old_request.get("status") == "request_receipt"
+                        and old_request.get("expired") is True and old_request.get("job") is None)):
+                raise RuntimeError("Clean-break successor retained accepted predecessor request authority")
+            receipt["old_authority_reads"].append(old_request)
+            new_items, pages = catalog_page_items(new_rpc, "indexes")
+            active = [row["value"] for row in new_items if row.get("kind") == "index" and row["value"].get("tombstone") is False]
+            if {row["backing"]["binding"] for row in active} != {row["replacement"]["binding"] for row in rebuild["indexes"]} or len(active) != 2:
+                raise RuntimeError("Fresh catalog does not contain exactly all replacement indexes")
+            old_index_ids = {item["selection"]["index_id"] for item in originals if item["selection"] is not None}
+            if any(item["id"] in old_index_ids for item in active):
+                raise RuntimeError("Clean-break fresh catalog reused an old Index identity")
+            grants, grant_pages = catalog_page_items(new_rpc, "grants")
+            if grants:
+                raise RuntimeError("Clean break unexpectedly carried old grants or enrolled new clients automatically")
+            receipt["fresh_catalog_before_enrollment"] = {"index_pages": pages, "grant_pages": grant_pages}
+            receipt["fresh_connections"] = []
+            for row in rebuild["indexes"]:
+                fixture = next(item for item in originals if item["registration"] == row["original"])
+                watching = new_rpc({"watch": {"project": row["replacement"]["binding"]}})
+                if watching.get("observation", {}).get("enabled") is not fixture["watch"]:
+                    raise RuntimeError("Clean break changed a saved watch preference")
+                inspection = new_rpc({"inspection": {"project": row["replacement"]["binding"]}})
+                snapshot = (inspection.get("observation") or {}).get("snapshot", {})
+                if (inspection.get("status") != "inspection" or inspection.get("project") != row["replacement"]["binding"]
+                        or snapshot.get("project") != row["replacement"]["binding"]
+                        or snapshot.get("vectors_enabled") is not fixture["vectors"]):
+                    raise RuntimeError("Clean-break replacement did not preserve the supported vector opt-out")
+                selection, reviewed = fresh_clean_break_selection(new_rpc, row["replacement"])
+                connection_root = root / ("connection-"+row["replacement"]["binding"][:12])
+                connection_root.mkdir()
+                read = verify_https_reconnect(invoke, binary, install, control, connection_root, row["replacement"], selection,
+                    digest(old_configuration), fixture["source_text"].encode(), command=command)
+                receipt["fresh_connections"].append({"original": row["original"], "replacement": row["replacement"],
+                    "watch": watching, "inspection": inspection, "selection": selection, "review": reviewed, "https": read})
+            if census is None:
+                receipt["predecessor_processes_after"] = darwin_client_exit(client.pid, client.returncode,
+                    receipt["predecessor_client_image"], receipt["obsolete_cleanup"])
+            after_cleanup = new_rpc("health")
+            if (after_cleanup.get("status") != "health" or after_cleanup.get("observation", {}).get("instance") != health["instance"]
+                    or after_cleanup["observation"].get("runtime_sha256") != new_identity):
+                raise RuntimeError("Clean-break cleanup restarted or replaced the selected service")
+            receipt["health_after_cleanup"] = after_cleanup
         completed = True
     except BaseException as error:
         primary_error = error
@@ -1443,6 +1523,8 @@ def main():
     parser.add_argument("--previous-runtime", type=Path, required=True)
     parser.add_argument("--interrupted-runtime", type=Path,
                         help="Stage a superseded candidate and seed its exact pre-probe intent in this fictional fixture")
+    parser.add_argument("--replacement", action="store_true",
+                        help="Clean break only: replace the predecessor (stop, remove, fresh install) instead of rebuilding it")
     parser.add_argument("--retained-runtime", type=Path, action="append", default=[],
                         help="Clean break only: also stage this authentic payload before the replacement (repeatable)")
     parser.add_argument("--output", type=Path, required=True)
@@ -1462,6 +1544,8 @@ def main():
         parser.error("Reviewed setup is only supported for the positive indexed upgrade fixture")
     if args.semantic_old and args.source_state != "indexed":
         parser.error("Semantic predecessor qualification requires an explicitly indexed old fixture")
+    if args.replacement and not args.clean_break:
+        parser.error("--replacement applies only to the clean-break fixture")
     if args.retained_runtime and not args.clean_break:
         parser.error("--retained-runtime applies only to the clean-break fixture")
     if args.clean_break and (args.source_state != "indexed" or args.semantic_old):

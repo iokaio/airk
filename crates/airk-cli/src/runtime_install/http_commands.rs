@@ -9,6 +9,28 @@ use airk_core::{
 #[cfg(test)]
 mod tests;
 
+/// The header helper for agents started outside VS Code. It authenticates the
+/// owner-private credential of an existing, unrevoked connection against the
+/// saved installation binding. It needs no running service and never starts
+/// one, enrolls, rotates or writes; error messages never contain the token.
+pub(super) fn credential_header(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
+    let control = crate::install_layout::saved_control(install)?;
+    let (binding, _) = crate::http_endpoint::trust::saved_identity(&control)?;
+    let private = control.join("http-1");
+    let token = crate::http_endpoint::read_client_token(&private, id)?;
+    let store = crate::http_endpoint::CredentialStore::read_existing(&private, binding)?;
+    let now: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis()
+        .try_into()?;
+    let authenticated = store.authenticate(&token, now)?;
+    ensure!(
+        authenticated.connection_id == id,
+        "native HTTP connection identity changed"
+    );
+    Ok(serde_json::json!({ "Authorization": format!("Bearer {token}") }))
+}
+
 async fn control(install: &Path) -> Result<(PathBuf, ServiceHealth)> {
     ensure!(
         !state_contract::required(install)?,

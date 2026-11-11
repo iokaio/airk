@@ -20,6 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(crate) type FixtureForeground = reviewed::FixtureForeground;
 type Scope = (PathBuf, PathBuf, String);
 static FIXTURES: OnceLock<Mutex<HashMap<Scope, Weak<Service>>>> = OnceLock::new();
 
@@ -132,6 +133,34 @@ pub fn native_command() -> Command {
 /// reviewed evidence fixtures, without constructing a background fixture owner.
 pub fn installed_runtime_fixture(owner: &Path) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
     reviewed::installed_runtime(owner)
+}
+
+pub fn fixture_command(owner: &Path, args: &[&str]) -> anyhow::Result<std::process::Output> {
+    reviewed::fixture_command(owner, args)
+}
+
+pub fn observe_empty_installed_fixture(
+    install: &Path,
+    owner: &Path,
+    label: &str,
+) -> anyhow::Result<(
+    airk_core::identity::Incarnation,
+    airk_core::service_resources::ResourceSnapshot,
+)> {
+    reviewed::observe_empty_installed_fixture(install, owner, label)
+}
+
+pub fn observe_empty_stopped_fixture(
+    control: &Path,
+    owner: &Path,
+    namespace: airk_core::identity::Incarnation,
+) -> anyhow::Result<()> {
+    reviewed::observe_empty_stopped_fixture(control, owner, namespace)
+}
+
+/// Stop only this private fixture's current namespace through canonical lifecycle receipts.
+pub fn shutdown_installed_fixture(install: &Path, owner: &Path) -> anyhow::Result<()> {
+    reviewed::shutdown_installed_fixture(install, owner)
 }
 
 pub fn setup_fixture_project(

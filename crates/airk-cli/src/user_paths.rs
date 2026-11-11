@@ -269,6 +269,71 @@ fn mac_directories(
     )
 }
 
+/// Only the default layout selected by this exact installation. Other channels
+/// and another installation in the same channel retain independent ownership.
+pub(crate) fn owned_install_locations(install: &Path) -> Result<Vec<PathBuf>> {
+    if !is_default_install(install)? {
+        return Ok(Vec::new());
+    }
+    let actual = canonical_location(install)?;
+    for channel in [Channel::Stable, Channel::Preview] {
+        let historical = UserPaths::historical(channel)?;
+        if let Some(locations) = owned_layout_locations(historical, &actual)? {
+            return Ok(locations);
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn owned_layout_locations(historical: UserPaths, actual: &Path) -> Result<Option<Vec<PathBuf>>> {
+    let channel = historical.channel;
+    if canonical_location(&historical.install)? == actual {
+        return Ok(Some(vec![
+            historical.install,
+            historical.configuration,
+            historical.data,
+            historical.state,
+            historical.cache,
+            historical.logs,
+        ]));
+    }
+    let current = historical.install.with_file_name(channel.leaf("runtime"));
+    if canonical_location(&current)? == actual {
+        let state = historical.state.with_file_name(channel.leaf("service-v1"));
+        let logs = if historical.logs.starts_with(&historical.state) {
+            state.join(historical.logs.strip_prefix(&historical.state)?)
+        } else {
+            historical.logs.with_file_name(channel.leaf("logs-v1"))
+        };
+        return Ok(Some(vec![
+            current,
+            historical
+                .configuration
+                .with_file_name(channel.leaf("settings")),
+            historical.data.with_file_name(channel.leaf("index-v1")),
+            state,
+            historical.cache.with_file_name(channel.leaf("cache-v1")),
+            logs,
+        ]));
+    }
+    Ok(None)
+}
+
+/// True when `install` is one of the default installation roots.
+pub(crate) fn is_default_install(install: &Path) -> Result<bool> {
+    let actual = canonical_location(install)?;
+    for channel in [Channel::Stable, Channel::Preview] {
+        let historical = UserPaths::historical(channel)?;
+        let current = historical.install.with_file_name(channel.leaf("runtime"));
+        if canonical_location(&historical.install)? == actual
+            || canonical_location(&current)? == actual
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl UserPaths {
     pub(crate) fn discover(channel: Channel, probe: InstallationProbe) -> Result<Self> {
         let mut paths = Self::historical(channel)?;
@@ -411,6 +476,46 @@ mod tests {
             cache: base.join("cache").join(leaf),
             logs: base.join("state").join(leaf).join("logs"),
         }
+    }
+
+    #[test]
+    fn replacement_locations_preserve_other_channels_and_independent_default_layouts() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let stable = fixture_paths(&base, Channel::Stable);
+        let preview = fixture_paths(&base, Channel::Preview);
+        fs_fixture_sentinel(&preview.install)?;
+        let current = stable.install.with_file_name("runtime");
+        let locations =
+            owned_layout_locations(stable, &current)?.context("stable current layout")?;
+        assert!(locations.contains(&current));
+        assert!(
+            !locations.contains(&base.join("service-1.4")),
+            "historical install is independent"
+        );
+        assert!(
+            locations
+                .iter()
+                .all(|path| !path.starts_with(&preview.install)
+                    && !path.starts_with(&preview.state)
+                    && !path.starts_with(&preview.data))
+        );
+        assert!(
+            owned_layout_locations(preview, &current)?.is_none(),
+            "stable cannot authorize preview roots"
+        );
+        assert_eq!(
+            std::fs::read(base.join("service-1.4-preview").join("source.txt"))?,
+            b"other installation source"
+        );
+        Ok(())
+    }
+
+    fn fs_fixture_sentinel(path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)?;
+        std::fs::write(path.join("source.txt"), b"other installation source")?;
+        Ok(())
     }
 
     #[test]

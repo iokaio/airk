@@ -1,28 +1,60 @@
 # AIRK: Local Search for Coding Agents
 
-**1.8.18 manual-test candidate:** this unpublished Windows x64 candidate
-contains the focused closeout of the accepted simplification work. The
-[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.18.md) describes its changes
-and compatibility boundary; the
-[release-readiness ledger](https://github.com/iokaio/airk/blob/main/docs/simplify/release-readiness.md) identifies
-the exact VSIX, artifact hashes, completed checks, failures and remaining gates
-as qualification proceeds. Package verification, installed-editor acceptance
-and release qualification have separate receipts. The earlier 1.8.16 VSIX
-passed package verification but failed installed-editor acceptance; its
-[stop record](https://github.com/iokaio/airk/blob/main/docs/research/installer-stop-2026-11-09.md) retains those
-failures. Publication remains a separate action.
+**Stopped source checkpoint (10 November 2026).** Manual installation of the
+1.8.23 candidate reported an HTTP cleanup refusal. The native eligibility fix
+is committed but untested. No installer was rebuilt for that fix. Installer
+repair, builds and qualification are stopped at the user's direction; retained
+artifact receipts describe their original inputs.
 
-**1.8.16 clean-break baseline:** every installation older than 1.8.16 must use
-fresh AIRK state and rebuild its indexes. Preserve reviewed source selections and
-supported preferences; original source files remain untouched. Old index IDs,
-grants, credentials and pending operations do not carry authority into the new
-state. Verify shutdown and remove ownership-proven legacy installation artifacts
-through the native reset lifecycle. From 1.8.16 onward, ordinary upgrades require
-the supported persisted state contract as well as an approved runtime version.
+**1.8.23 Windows debug manual-test candidate (10 November 2026).** This
+unpublished correction removes automatic index creation from Reconnect and makes
+installation through **1.9.0 inclusive** fully uninstall the owned predecessor,
+including the same build, before starting empty. Ordinary editor reopening only
+reconnects. The [1.8.23 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.23.md) describes
+the source changes and remaining gates. The Windows debug runtime, native ZIP and VSIX have been built and package-verified. Native/extension source manifests and lockfiles are now
+synchronized at 1.8.23; scoped native and extension checks and package verification passed. Full release qualification remains pending.
+
+The previous [1.8.22 manual-test artifact](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.22.md) failed
+this policy: Reconnect created an index before rejecting its valid search scope.
+Its original version, hashes and failed evidence remain unchanged. The
+[task ledger](https://github.com/iokaio/airk/blob/main/docs/simplify/one-process-ledger.md#manual-test-installer-correction-10-november-2026)
+records reproductions and source validation. Installed-editor acceptance and Linux/macOS qualification of 1.8.23 remain
+pending. Publication remains a separate action.
+
+**One resident process:** exactly one `airk.exe` stays resident per user and
+installation: the AIRK service. Indexing, cleanup and source watching run
+inside it. Each VS Code window adds one `airk service session`
+that exits with the window. Commands you type, installer steps, at most one
+PDF parser and a `tools shell` you open are the only other AIRK processes.
+Stable, preview and custom installations each have their own service. See
+[process ownership](https://github.com/iokaio/airk/blob/main/docs/process-model.md).
+
+**Service lifecycle:** every installation and upgrade registers per-user login
+startup (Windows Task Scheduler or a Linux user systemd unit), unless you ran
+`airk runtime login uninstall`. The service never exits when idle, keeps
+running after VS Code closes and starts again after a reboot. If the operating
+system refuses the registration, AIRK starts on demand instead and reports why.
+
+**Agents connect directly over HTTPS:** agents use the service's
+`https://127.0.0.1:<port>/mcp` endpoint, and no AIRK process runs per agent.
+Claude Code and Codex get their token from a one-shot
+`airk runtime http-credential` helper. If an installation replaced an earlier
+one and left an agent entry broken, Explorer warns you (notification, banner,
+status bar and Management → Agents). **Reconnect** fixes the entry after one
+confirmation, using an existing index. Reconnect does not create indexes; use
+Indexing → Index library explicitly before reconnecting. See [agent setup](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md#reconnecting-after-a-replacement).
+
+**Empty installation through 1.9.0 inclusive:** fully uninstall the owned
+predecessor before installing, including the same build. Do not recreate saved
+indexes or resume their jobs or watching. Original source files remain untouched.
+Ordinary editor reopening reconnects instead of reinstalling. Unproven shutdown
+or incomplete owned cleanup blocks installation. The persisted state contract
+remains `airk-state/1`, with baseline version 1.8.16; this installer correction
+does not change it. Later version upgrades require both versions greater than
+1.9.0 and the supported state contract.
 The development line will be qualified before a public **1.9.0** release; 1.9.0
 is a future release target, not the current package version.
-See the [1.8.16 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.16.md). Implementation
-and installed qualification of this revised policy remain incomplete.
+See the [1.8.23 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.23.md). Installed qualification of this revised policy remain pending.
 Management → Service → Runtime → **Complete runtime diagnostics** opens, copies
 or exports the full cached native JSON with its capture time. It makes no new
 native read; summary copies disclose their subset. Cached data is not live proof.
@@ -55,25 +87,23 @@ successful native uninstall. This differs from the VSIX's existing reviewed
 terminal integration. Inno compilation and real registry/signing round-trips
 remain unqualified; the 13 static/mocked checks are not installed acceptance.
 
-The reset rebuilds every saved index from its reviewed sources and supported
-preferences, including restored pause/watch policy. It verifies predecessor
-process exit and removes ownership-proven legacy state and executables;
-incomplete or unproven cleanup stays visible. Existing terminals need reopening
+Installation does not replay saved indexes. It verifies predecessor process
+exit and removes owned index storage, state and executables; incomplete or
+unproven cleanup blocks successor setup. Existing terminals need reopening
 to inherit installed CLI PATH changes. If Explorer still runs old extension
 JavaScript, use **Restart Extensions** once to activate the replacement loader.
 Public-release and full-matrix qualification remain incomplete. The
-[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.18.md) records exact candidate, package and installed
-acceptance scopes and preserves failed evidence.
+[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.23.md) records the Windows debug candidate and pending installed acceptance scopes and preserves failed evidence.
 
-**1.8.18 source builds on the unpublished One AIRK implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/main/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.18 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.18.md) tracks current candidate and installed acceptance. The 1.8.16 and 1.8.14 records retain historical implementation evidence. Earlier binaries keep their original versions and hashes.
+**1.8.23 builds on the unpublished One AIRK implementation; its Windows debug candidate is built and package-verified.** The [One AIRK implementation](https://github.com/iokaio/airk/blob/main/docs/one-airk.md) supplies the single-executable HTTPS runtime. The [1.8.23 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.23.md) tracks this correction; 1.8.22 retains its failed manual-test evidence, and the 1.8.20, 1.8.19 and 1.8.18 records are dated history. The 1.8.16 and 1.8.14 records retain historical implementation evidence. Earlier binaries keep their original versions and hashes.
 
-Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
-not reusable index state. The reset preserves only reviewed sources and supported
-preferences. It rebuilds fresh indexes and requires clients to reconnect with new
-authority. Old AIRK-owned indexes, state, runtimes and launchers are removed only
-through proven ownership and lifecycle checks; incomplete cleanup remains visible.
-Supported upgrades within the 1.8.16+ state contract retain their own admission,
-checkpoint and compatibility checks. Installed/platform qualification is pending.
+Legacy runtime, launcher and index formats are cleanup inputs. Installation
+does not preserve their indexing authority or recreate their indexes. Old
+AIRK-owned indexes, state, runtimes and launchers are removed only through proven
+ownership and lifecycle checks. Unknown historical or unowned residue is reported
+and cannot be treated as proven cleanup; this is not a universal purge of every
+historical installation. Explicit new index setup establishes new authority.
+Installed/platform qualification is recorded separately.
 
 HTTPS uses normal certificate validation with an installation-local CA; clients
 do not ignore certificate errors or discard their existing trusted CAs. Native

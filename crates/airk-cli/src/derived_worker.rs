@@ -2,7 +2,8 @@
 //! Private inactive-project owner. No query endpoint, Kernel or inference session.
 use crate::{
     project_protocol::{self as protocol, Command, Reply},
-    service_ipc,
+    worker_scope::Residency,
+    worker_transport::{FrameSink, FrameSource, StdinFrames, StdoutFrames},
 };
 use airk_core::{
     service::{JobOutcome, WorkerIdentity},
@@ -21,38 +22,92 @@ use std::{
 
 static PROCESS_LEASE: OnceLock<Arc<ProjectLease>> = OnceLock::new();
 
+/// The cleanup job thread, joined on every return from [`serve`], including
+/// early `?` returns: an in-process owner's thread then ends only after its
+/// accepted cleanup did, exactly what a process exit proved for a child.
+struct CleanupJob {
+    closing: Arc<AtomicBool>,
+    task: Option<std::thread::JoinHandle<Result<()>>>,
+}
+impl CleanupJob {
+    /// Join a finished or previous job, reporting its own failure.
+    fn join(&mut self) -> Result<()> {
+        match self.task.take() {
+            Some(task) => task
+                .join()
+                .map_err(|_| anyhow::anyhow!("cleanup thread panicked"))?,
+            None => Ok(()),
+        }
+    }
+    fn finished(&self) -> bool {
+        self.task.as_ref().is_some_and(|task| task.is_finished())
+    }
+}
+impl Drop for CleanupJob {
+    fn drop(&mut self) {
+        // A closing owner leaves running work unsettled for the next owner.
+        self.closing.store(true, Ordering::Release);
+        let _ = self.join();
+    }
+}
+
 pub fn run() -> Result<()> {
-    let init: protocol::Init = service_ipc::read_frame(&mut std::io::stdin().lock())?
+    let mut commands = StdinFrames;
+    let init: protocol::Init = FrameSource::<protocol::Init>::recv(&mut commands)?
         .context("missing private cleanup initialization")?;
+    serve(
+        init,
+        Box::new(commands),
+        Box::new(StdoutFrames),
+        Residency::Process,
+    )
+}
+
+/// One inactive-project cleanup owner over either control carrier. An
+/// in-process owner's caller binds its scope on the calling thread.
+pub(crate) fn serve(
+    init: protocol::Init,
+    mut commands: Box<dyn FrameSource<Command>>,
+    mut replies: Box<dyn FrameSink<Reply>>,
+    residency: Residency,
+) -> Result<()> {
     crate::local_ipc::prepare_root(&init.runtime)?;
     let mut lease = ProjectLease::acquire(&init.runtime, init.project)?;
     let mut registry = ServiceRegistry::open(&init.runtime, init.service)?;
     let epoch = registry.admit_derived_worker(&mut lease)?;
     let registration = registry.validate_inactive_worker(&lease)?;
-    let lease = Arc::new(lease);
-    ensure!(
-        PROCESS_LEASE.set(lease.clone()).is_ok(),
-        "cleanup role already owns a process lease"
+    // Dropped after the cleanup job joins and its collection closes.
+    let _caches = crate::worker_scope::CollectionCaches::release_on_exit(
+        &registration.data_root,
+        &registration.collection,
     );
+    let lease = Arc::new(lease);
+    match residency.scope() {
+        None => {
+            ensure!(
+                PROCESS_LEASE.set(lease.clone()).is_ok(),
+                "cleanup role already owns a process lease"
+            );
+        }
+        // Held until this owner's thread returns, never by this body alone.
+        Some(scope) => scope.retain_lease(lease.clone())?,
+    }
     let identity = WorkerIdentity {
         service: init.service,
         worker: init.worker,
         project: init.project,
         fencing_generation: epoch,
     };
-    service_ipc::write_frame(
-        &mut std::io::stdout().lock(),
-        &Reply::Ready {
-            identity,
-            role: protocol::role(init.worker),
-        },
-    )?;
+    replies.send(Reply::Ready {
+        identity,
+        role: protocol::role(init.worker),
+    })?;
     let Some(Command::Activate {
         identity: accepted,
         pool,
         pool_pending,
         ..
-    }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
+    }) = commands.recv()?
     else {
         anyhow::bail!("cleanup worker was not activated")
     };
@@ -60,14 +115,30 @@ pub fn run() -> Result<()> {
         accepted == identity && pool.is_none() && !pool_pending,
         "cleanup activation identity or role differs"
     );
-    airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
+    match residency.scope() {
+        None => {
+            airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?
+        }
+        Some(scope) => scope
+            .execution
+            .install(Path::new(&registration.data_root), identity)?,
+    }
+    // A stop requested during activation is observed here, before any
+    // recovery or acknowledgement; nothing is settled by leaving now.
+    airk_kernel::service_execution::checkpoint()?;
     let collection = Collection::existing(
         Path::new(&registration.data_root),
         &registration.root,
         &registration.collection,
     )?;
     registry.recover_jobs(&lease)?;
-    service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Activated)?;
+    airk_kernel::service_execution::checkpoint()?;
+    replies.send(Reply::Activated)?;
+    let stuck = || {
+        residency
+            .scope()
+            .is_some_and(|scope| scope.execution.stuck().is_some())
+    };
     let status = Arc::new(Mutex::new(protocol::WorkObservation {
         waiting_for: None,
         failure: None,
@@ -78,28 +149,25 @@ pub fn run() -> Result<()> {
         progress: None,
     }));
     let closing = Arc::new(AtomicBool::new(false));
-    let mut task: Option<std::thread::JoinHandle<Result<()>>> = None;
+    let mut job = CleanupJob {
+        closing: closing.clone(),
+        task: None,
+    };
     let mut checkpoint_sealed = false;
-    loop {
-        let Some(command) = service_ipc::read_frame(&mut std::io::stdin().lock())? else {
-            break;
-        };
+    while let Some(command) = commands.recv()? {
         let reply = match command {
             Command::Checkpoint {
                 identity: expected,
                 operation_id,
                 seal,
             } if expected == identity => {
-                if task.as_ref().is_some_and(|task| task.is_finished()) {
-                    task.take()
-                        .expect("observed cleanup task")
-                        .join()
-                        .map_err(|_| anyhow::anyhow!("cleanup thread panicked"))??;
+                if job.finished() {
+                    job.join()?;
                 }
                 let status = status
                     .lock()
                     .map_err(|_| anyhow::anyhow!("cleanup status unavailable"))?;
-                let durable_boundary = task.is_none() && status.active.is_none();
+                let durable_boundary = job.task.is_none() && status.active.is_none();
                 if seal && durable_boundary {
                     checkpoint_sealed = true;
                 }
@@ -125,6 +193,7 @@ pub fn run() -> Result<()> {
                 identity: expected,
                 allowance,
             } if !checkpoint_sealed
+                && !stuck()
                 && expected == identity
                 && allowance.identity == identity
                 && allowance.validate().is_ok() =>
@@ -137,11 +206,7 @@ pub fn run() -> Result<()> {
                 if busy {
                     Reply::Failed
                 } else {
-                    if let Some(previous) = task.take() {
-                        previous
-                            .join()
-                            .map_err(|_| anyhow::anyhow!("cleanup thread panicked"))??;
-                    }
+                    job.join()?;
                     airk_kernel::service_execution::activate(&allowance)?;
                     {
                         let mut status = status
@@ -157,10 +222,15 @@ pub fn run() -> Result<()> {
                     let status = status.clone();
                     let closing = closing.clone();
                     let engine = init.engine;
-                    task = Some(std::thread::spawn(move || {
+                    let scope = residency.scope().cloned();
+                    job.task = Some(std::thread::spawn(move || {
+                        let _bound = scope
+                            .as_ref()
+                            .map(crate::worker_scope::WorkerScope::bind_thread);
                         let mut registry = ServiceRegistry::open(&runtime, identity.service)?;
                         if let Some(job) = registry.claim_job_id(&lease, allowance.job)? {
                             let mut failure_detail = None;
+                            let mut drained = false;
                             let outcome =
                                 airk_kernel::service_execution::run(allowance.clone(), || {
                                     registry.validate_inactive_worker(&lease)?;
@@ -185,7 +255,9 @@ pub fn run() -> Result<()> {
                                             let mut removed = 0u64;
                                             loop {
                                                 if closing.load(Ordering::Acquire) {
-                                                    anyhow::bail!("cleanup owner is draining")
+                                                    anyhow::bail!(
+                                                        airk_kernel::service_execution::Draining
+                                                    )
                                                 }
                                                 airk_kernel::service_execution::checkpoint()?;
                                                 if registry.cancellation_requested(job.id)? {
@@ -214,6 +286,9 @@ pub fn run() -> Result<()> {
                                     Ok(JobOutcome::Succeeded { revision: None })
                                 })
                                 .unwrap_or_else(|error| {
+                                    drained = error.chain().any(|cause| {
+                                        cause.is::<airk_kernel::service_execution::Draining>()
+                                    });
                                     if error.is::<airk_kernel::service_execution::Canceled>() {
                                         JobOutcome::Canceled
                                     } else {
@@ -226,8 +301,9 @@ pub fn run() -> Result<()> {
                                     }
                                 });
                             // Parent EOF is not user cancellation or a failed completed effect.
-                            // Leave running work for the next fenced owner to recover.
-                            if !closing.load(Ordering::Acquire) {
+                            // Leave running work for the next fenced owner to recover; a
+                            // drained in-process owner leaves it exactly the same way.
+                            if !closing.load(Ordering::Acquire) && !drained {
                                 if let (JobOutcome::Failed { code }, Some(detail)) =
                                     (&outcome, failure_detail)
                                 {
@@ -262,7 +338,18 @@ pub fn run() -> Result<()> {
                 ..
             } if expected == identity => {
                 if airk_kernel::service_execution::watchdog() {
-                    std::process::exit(76);
+                    // Cleanup never reached a safe boundary after cancellation.
+                    match residency.scope() {
+                        // A child exits; its parent keeps the work allowance
+                        // until it observes that exit.
+                        None => std::process::exit(76),
+                        // In process, this owner quarantines itself: it takes
+                        // no more work, its stuck thread keeps the lease, and
+                        // its supervisor observes the reason.
+                        Some(scope) => scope
+                            .execution
+                            .quarantine(airk_kernel::service_execution::StuckReason::WorkStalled),
+                    }
                 }
                 if let Some(control) = control {
                     airk_kernel::service_execution::control(
@@ -278,11 +365,8 @@ pub fn run() -> Result<()> {
                     .map_err(|_| anyhow::anyhow!("cleanup status unavailable"))?
                     .clone();
                 observation.progress = airk_kernel::service_execution::progress().map(Box::new);
-                if task.as_ref().is_some_and(|task| task.is_finished()) {
-                    task.take()
-                        .expect("observed cleanup task")
-                        .join()
-                        .map_err(|_| anyhow::anyhow!("cleanup thread panicked"))??;
+                if job.finished() {
+                    job.join()?;
                 }
                 Reply::WorkStatus { observation }
             }
@@ -294,12 +378,8 @@ pub fn run() -> Result<()> {
             Command::Stop => break,
             _ => Reply::Failed,
         };
-        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+        replies.send(reply)?;
     }
     closing.store(true, Ordering::Release);
-    if let Some(task) = task {
-        task.join()
-            .map_err(|_| anyhow::anyhow!("cleanup thread panicked"))??;
-    }
-    Ok(())
+    job.join()
 }

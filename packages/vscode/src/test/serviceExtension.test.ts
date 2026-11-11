@@ -93,6 +93,7 @@ test('service activation advertises reviewed bindings without indexing and prese
     const http=await standaloneHttp(context,binding,[registration]);
     let discoveries=0,ensures=0,stopped=false,provider:any;const outputShows:Array<[string,boolean]>=[];
     context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
+    context.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>({required:false,reason:'fixture',locations:[]}));
     context.mock.method(RuntimeHost.prototype,'discover',async()=>{discoveries++;return {bundle:{},installDir:root,installed:true,location:{},inspection:{
         selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:'1.4.0',verification_basis:'trusted_distribution'},
         executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir}};});
@@ -198,7 +199,7 @@ test('service activation advertises reviewed bindings without indexing and prese
                 inspection:{selection:{active:active.runtimeSha256},approval:{manifest_sha256:active.runtimeSha256,version:active.version,
                     verification_basis:'trusted_distribution'},executable:active.executable,launcher:active.launcher,control_dir:active.controlDir}});
             scoped.host={
-                discover:async()=>observed(),binding:()=>active,
+                discover:async()=>observed(),replacementPlan:async()=>({required:false,reason:'fixture',locations:[]}),binding:()=>active,
                 supersedePending:async()=>false,
                 retirePrevious:async()=>{calls.push('retire');},
                 retireLegacyCaches:async()=>{calls.push('remove-old-caches');return {scope:'context-only'};},
@@ -296,7 +297,7 @@ test('service activation advertises reviewed bindings without indexing and prese
                 const observed=()=>({bundle:{digest},installDir:root,installed:true,location:{user_paths:{launcher:root}},
                     inspection:{selection:{active:active.runtimeSha256},approval:{manifest_sha256:active.runtimeSha256,version:active.version,verification_basis:'trusted_distribution'},
                         executable:active.executable,launcher:active.launcher,control_dir:active.controlDir,rebuild}});
-                scoped.host={discover:async()=>observed(),binding:()=>active,supersedePending:async()=>false,
+                scoped.host={discover:async()=>observed(),replacementPlan:async()=>({required:false,reason:'fixture',locations:[]}),binding:()=>active,supersedePending:async()=>false,
                     reviewTransition:async(current:any,action:string)=>{assert.equal(current,previous);assert.equal(action,'upgrade');calls.push('review');return {action};},
                     transition:async(current:any,_review:any,report:(message:string,stage:string)=>void)=>{assert.equal(current,previous);calls.push('activate');report('Staging runtime','staging');report('Activating runtime','activating');active=next;},
                     reconnect:async()=>{calls.push('reconnect');assert.ok(exact,'a historical rebuild must reach upgrade review before reconnecting');return active;},
@@ -336,6 +337,7 @@ test('selected Explorer project is available while other root waits without narr
     const workspace=new ServiceWorkspace(storage,{reviewProject:async(_binding,opened)=>registrations[opened===source?0:1],registerProject:async(_binding,review)=>review},()=>true);
     for(const [index,opened] of [source,other].entries())await workspace.register(binding,opened,registrations[index].data_root,registrations[index].collection,async()=>true);
     context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
+    context.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>({required:false,reason:'fixture',locations:[]}));
     let stopped=false,exactFailure=false;
     context.mock.method(RuntimeHost.prototype,'discover',async()=>({bundle:{},installDir:root,installed:true,location:{},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:binding.verificationBasis},executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir,lifecycle:{explicitly_stopped:stopped}}}) as any);
     let selectedOutcome='registered',selectedProject=registrations[0].binding;

@@ -6,7 +6,6 @@ import { BootstrapObservation, LegacyStartupTarget, nativeRunner, RuntimeHost, R
 import { RecordValue, ServiceError, record } from './serviceClient';
 import { LOCAL_LOG_ACTIONS, LOCAL_DIAGNOSTIC_ACTIONS, ServiceConsoleController } from './serviceConsoleController';
 import { ServiceConsoleState } from './serviceConsoleView';
-import { runText } from './native';
 import * as fs from 'node:fs/promises';
 import { DiagnosticCaptures } from './diagnosticCaptures';
 import { recordDiagnosticFailure } from './diagnosticLogs';

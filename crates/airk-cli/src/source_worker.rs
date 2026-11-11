@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Read-only directory notifications in a separately supervised lightweight process.
 use crate::{
-    service_ipc,
     source_protocol::{self as protocol, Command, Reply},
+    worker_scope::Residency,
+    worker_transport::{FrameSink, FrameSource, StdinFrames, StdoutFrames},
 };
 use airk_core::service::PROTOCOL_VERSION;
 use airk_kernel::source_watch::{Binding, SourceWatcher};
@@ -69,47 +70,61 @@ fn install_policy_observation(
 #[cfg(test)]
 mod policy_tests;
 
-fn reply(reply: &Reply) -> Result<()> {
-    Ok(service_ipc::write_frame(
-        &mut std::io::stdout().lock(),
-        reply,
-    )?)
+pub fn run() -> Result<()> {
+    let mut commands = StdinFrames;
+    let init: protocol::Init = FrameSource::<protocol::Init>::recv(&mut commands)?
+        .context("watcher initialization missing")?;
+    serve(
+        init,
+        Box::new(commands),
+        Box::new(StdoutFrames),
+        Residency::Process,
+    )
 }
 
-pub fn run() -> Result<()> {
-    let init: protocol::Init = service_ipc::read_frame(&mut std::io::stdin().lock())?
-        .context("watcher initialization missing")?;
+/// The one source watcher over either control carrier. Its watch lease lives
+/// for the process, or, in process, until this function returns.
+pub(crate) fn serve(
+    init: protocol::Init,
+    mut commands: Box<dyn FrameSource<Command>>,
+    mut replies: Box<dyn FrameSink<Reply>>,
+    residency: Residency,
+) -> Result<()> {
+    let mut reply = |reply: Reply| -> Result<()> { Ok(replies.send(reply)?) };
     ensure!(
         init.protocol == PROTOCOL_VERSION && init.version == env!("CARGO_PKG_VERSION"),
         "incompatible watcher initialization"
     );
     crate::local_ipc::prepare_root(&init.runtime)?;
-    OWNERSHIP
-        .set(airk_store::service::SourceWatchLease::acquire(
-            &init.runtime,
-        )?)
-        .map_err(|_| anyhow::anyhow!("watcher ownership already established"))?;
-    reply(&Reply::Ready {
+    let ownership = airk_store::service::SourceWatchLease::acquire(&init.runtime)?;
+    let _ownership = match residency {
+        Residency::Process => {
+            OWNERSHIP
+                .set(ownership)
+                .map_err(|_| anyhow::anyhow!("watcher ownership already established"))?;
+            None
+        }
+        Residency::Service(_) => Some(ownership),
+    };
+    reply(Reply::Ready {
         service: init.service,
         worker: init.worker,
     })?;
-    let activation: Command = service_ipc::read_frame(&mut std::io::stdin().lock())?
-        .context("watcher activation missing")?;
+    let activation: Command = commands.recv()?.context("watcher activation missing")?;
     ensure!(
         matches!(activation,Command::Activate {service,worker} if service==init.service && worker==init.worker),
         "watcher activation identity mismatch"
     );
     // No source traversal or native directory registration precedes activation.
     let mut watcher = SourceWatcher::new();
-    reply(&Reply::Activated)?;
+    reply(Reply::Activated)?;
     let closing = Arc::new(AtomicBool::new(false));
     let reader_closing = closing.clone();
     let (sender, receiver) = mpsc::sync_channel(8);
     std::thread::Builder::new()
         .name("airk-watch-control".into())
         .spawn(move || {
-            let mut input = std::io::stdin().lock();
-            while let Ok(Some(command)) = service_ipc::read_frame::<_, Command>(&mut input) {
+            while let Ok(Some(command)) = commands.recv() {
                 if sender.send(command).is_err() {
                     break;
                 }
@@ -151,13 +166,13 @@ pub fn run() -> Result<()> {
                         })
                         .collect::<Vec<_>>();
                     for target in &targets {
-                        reply(&Reply::Event {
+                        reply(Reply::Event {
                             project: target.project,
                             configuration_epoch: target.configuration_epoch,
                             sequence: target.sequence,
                         })?;
                     }
-                    reply(&Reply::Checkpoint {
+                    reply(Reply::Checkpoint {
                         service,
                         worker,
                         operation_id,
@@ -198,7 +213,7 @@ pub fn run() -> Result<()> {
                     }
                     // This synchronous owner turn has discarded its retained
                     // traversal plan before it acknowledges the exact fence.
-                    reply(&Reply::PolicyFenced {
+                    reply(Reply::PolicyFenced {
                         service,
                         worker,
                         project,
@@ -226,7 +241,7 @@ pub fn run() -> Result<()> {
                     }
                     // No retained configuration is restored here. Only a new
                     // native registry observation may install another binding.
-                    reply(&Reply::PolicyReleased {
+                    reply(Reply::PolicyReleased {
                         service,
                         worker,
                         project,
@@ -246,7 +261,7 @@ pub fn run() -> Result<()> {
                         init.service,
                     )?;
                     let result = registry.purge_removed_project_turn(project);
-                    reply(&Reply::RemovalResult {
+                    reply(Reply::RemovalResult {
                         project,
                         complete: matches!(result, Ok(true)),
                         failed: result.is_err(),
@@ -269,7 +284,7 @@ pub fn run() -> Result<()> {
                             && *prior == stamp
                             && now.duration_since(*since) >= Duration::from_secs(10)
                         {
-                            reply(&Reply::MissingSource {
+                            reply(Reply::MissingSource {
                                 project,
                                 registration_epoch,
                                 configuration_epoch,
@@ -406,7 +421,7 @@ pub fn run() -> Result<()> {
         }
         watcher.poll()?;
         for observation in watcher.observations(16) {
-            reply(&Reply::Observation {
+            reply(Reply::Observation {
                 project: observation.project,
                 configuration_epoch: observation.epoch,
                 native_roots: observation.native_roots,
@@ -416,7 +431,7 @@ pub fn run() -> Result<()> {
             })?;
         }
         for event in watcher.notices(16)? {
-            reply(&Reply::Event {
+            reply(Reply::Event {
                 project: event.project,
                 configuration_epoch: event.epoch,
                 sequence: event.sequence,
@@ -424,7 +439,7 @@ pub fn run() -> Result<()> {
         }
         if last_pulse.elapsed() >= Duration::from_millis(250) {
             let (directories, projects) = watcher.counts();
-            reply(&Reply::Pulse {
+            reply(Reply::Pulse {
                 watched_directories: directories,
                 projects,
                 pending_events: watcher.pending_count(),

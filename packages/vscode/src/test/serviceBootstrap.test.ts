@@ -15,6 +15,49 @@ import { diagnosticPreview } from '../serviceConsoleView';
 import {predecessorHttpFixture} from './fixtures/predecessorHttpFixture';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
 
+test('replacement transports the same explicit installation operation through plan and apply',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),operation='61'.repeat(32),calls:string[][]=[];
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        calls.push([...args]);return args.includes('--apply')?{replaced:true}:{required:true,expected_predecessor:'ef'.repeat(32),reason:'replace_before_1_9_0',locations:[]};
+    });
+    try{
+        await (host as any).replacementPlan(install,operation);
+        await (host as any).replaceInstallation(install,operation,undefined,'ef'.repeat(32));
+        const expected=['runtime','replace-installation','--install-dir',install,'--candidate-sha256',f.digest,'--reinstall','--operation-id',operation];
+        assert.deepEqual(calls,[expected,[...expected,'--expected-predecessor','ef'.repeat(32),'--apply']]);
+    }finally{await f.cleanup();}
+});
+
+test('replacement accepts only an authenticated completed-operation replay as a no-op',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),operation='62'.repeat(32);
+    let reason='installation_already_replaced';
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>args[1]==='self-test'
+        ?{protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1}
+        :{replaced:false,plan:{required:false,expected_predecessor:'ef'.repeat(32),reason,locations:[]}});
+    try{
+        assert.equal((await (host as any).replaceInstallation(install,operation)).replaced,false);
+        await assert.rejects(host.replaceInstallation(install),/native_replacement_unconfirmed/);
+        reason='same_runtime';
+        await assert.rejects((host as any).replaceInstallation(install,operation),/native_replacement_unconfirmed/);
+    }finally{await f.cleanup();}
+});
+
+test('replacement carries the host generation separately and consumes fresh installation admission',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),operation='63'.repeat(32),generation='64'.repeat(32),calls:string[][]=[];
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        calls.push([...args]);return args.includes('--apply')?{replaced:false,plan:{required:false,expected_predecessor:'ef'.repeat(32),reason:'no_installation',locations:[]}}:{required:false,expected_predecessor:'ef'.repeat(32),reason:'no_installation',locations:[]};
+    });
+    try{
+        await (host as any).replacementPlan(install,operation,generation);
+        assert.equal((await (host as any).replaceInstallation(install,operation,generation)).replaced,false);
+        const expected=['runtime','replace-installation','--install-dir',install,'--candidate-sha256',f.digest,'--reinstall','--operation-id',operation,'--generation-id',generation];
+        assert.deepEqual(calls,[expected,[...expected,'--apply']]);
+        await assert.rejects((host as any).replacementPlan(install,undefined,generation),/installation_operation_required/);
+    }finally{await f.cleanup();}
+});
+
 test('predecessor command inspection requests the disposal purpose without weakening ordinary inspection',async()=>{
     const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
@@ -277,9 +320,10 @@ async function transitionFixture(version='1.4.0',diagnosis:RecordValue={}){
     const [major,minor,patch]=version.split('.').map(Number),modern=major>1||major===1&&(minor>8||minor===8&&patch>=14);
     const f=modern?await modernBindingFixture(version):await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     await fs.mkdir(path.join(install,'control'));
-    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version,cleanBreakPolicy:RecordValue|undefined;
+    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version,cleanBreakPolicy:RecordValue|undefined,loginRefusal:string|undefined,loginOptOut=false;
     const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
-        control_dir:path.join(install,'control'),managed_policy:null,approval:{version:selectedVersion,manifest_sha256:active,verification_basis:'trusted_distribution'},...(cleanBreakPolicy?{clean_break:cleanBreakPolicy}:{})});
+        control_dir:path.join(install,'control'),managed_policy:null,approval:{version:selectedVersion,manifest_sha256:active,verification_basis:'trusted_distribution'},...(cleanBreakPolicy?{clean_break:cleanBreakPolicy}:{}),
+        startup_manager:{user_opted_out:loginOptOut}});
     const run:NativeRunner=async(command,args)=>{
         assert.equal(command,path.join(f.source,f.main));calls.push([...args]);
         switch(args[1]){
@@ -290,6 +334,7 @@ async function transitionFixture(version='1.4.0',diagnosis:RecordValue={}){
             case 'inspect-candidate':{const target=args[args.indexOf('--runtime-sha256')+1];return {runtime_sha256:target,metadata_only:true,selection_changed:false,executed:false,
                 approval:{version:candidateVersion,manifest_sha256:target,verification_basis:'trusted_distribution'}};}
             case 'stage':return {};
+            case 'login':assert.deepEqual(args.slice(2),['--install-dir',install,'install']);if(loginRefusal)throw new ServiceError(loginRefusal);return {installed:true,loaded:true,running:true};
             case 'abort-activation':{
                 assert.equal(args[args.indexOf('--expected-candidate')+1],pending?.candidate);
                 assert.equal(args[args.indexOf('--expected-active')+1],active);
@@ -305,6 +350,7 @@ async function transitionFixture(version='1.4.0',diagnosis:RecordValue={}){
     };
     const host=new RuntimeHost(f.root,version,{channel:'stable',installDir:install},run);
     return {f,host,calls,install,binding:()=>host.binding(inspection(),install),setActive:(value:string)=>{active=value;},
+        setLoginRefusal:(value:string)=>{loginRefusal=value;},setLoginOptOut:(value:boolean)=>{loginOptOut=value;},
         setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;},setCleanBreakPolicy:(value:RecordValue)=>{cleanBreakPolicy=value;}};
 }
 
@@ -479,10 +525,40 @@ test('runtime upgrade uses only its host-owned review and supplies the exact nat
             assert.equal(t.calls.slice(before).filter(args=>args[1]==='activate').length,0);
         });assert.equal(result.active,t.f.digest);
         assert.deepEqual(stages,['staging','activating']);
-        const mutations=t.calls.slice(before);assert.deepEqual(mutations.map(args=>args[1]),['stage','activate']);
+        const mutations=t.calls.slice(before);assert.deepEqual(mutations.map(args=>args[1]),['stage','activate','inspect','login'],'an upgraded payload also starts at login after checking the user opt-out');
         assert.equal(mutations[0][mutations[0].indexOf('--approved-sha256')+1],t.f.digest);
         assert.equal(mutations[1][mutations[1].indexOf('--expected-active')+1],binding.runtimeSha256);
         await assert.rejects(t.host.transition(binding,review),/runtime_transition_not_reviewed/);
+    }finally{await t.f.cleanup();}
+});
+
+test('every installed payload registers login startup; a refusal keeps the upgrade and is reported',async()=>{
+    for(const refusal of [undefined,'fixture_task_scheduler_policy_denied']){
+        const t=await transitionFixture();
+        try{
+            if(refusal)t.setLoginRefusal(refusal);
+            const binding=t.binding(),review=await t.host.reviewTransition(binding,'upgrade');
+            assert.equal((await t.host.transition(binding,review)).active,t.f.digest,'the activation receipt is returned either way');
+            assert.equal(t.calls.filter(args=>args[1]==='login').length,1);
+            if(refusal){assert.equal(t.host.startupRegistration?.registered,false);assert.match(t.host.startupRegistration&&'error' in t.host.startupRegistration?t.host.startupRegistration.error:'',new RegExp(refusal));}
+            else assert.deepEqual(t.host.startupRegistration,{registered:true});
+            t.host.startupRegistration=undefined;
+            const current=t.binding();t.setCandidateVersion('1.4.0');
+            const rollback=await t.host.reviewTransition(current,'rollback');await t.host.transition(current,rollback);
+            assert.equal(t.calls.filter(args=>args[1]==='login').length,1,'selecting an already installed payload does not register again');
+            assert.equal(t.host.startupRegistration,undefined);
+        }finally{await t.f.cleanup();}
+    }
+});
+
+test('an upgrade keeps login startup off after the user removed it',async()=>{
+    const t=await transitionFixture();
+    try{
+        t.setLoginOptOut(true);
+        const binding=t.binding(),review=await t.host.reviewTransition(binding,'upgrade');
+        assert.equal((await t.host.transition(binding,review)).active,t.f.digest);
+        assert.equal(t.calls.filter(args=>args[1]==='login').length,0,'a recorded user opt-out is never overridden');
+        assert.deepEqual(t.host.startupRegistration,{registered:false,optedOut:true});
     }finally{await t.f.cleanup();}
 });
 
@@ -613,6 +689,7 @@ test('discovery does not install/start and concurrent first use shares one appro
         case'location':return {protocol:1,install_dir:install};
         case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install,{mode:0o700});return {};
         case'activate':selected=true;return {};
+        case'login':assert.deepEqual(args.slice(2),['--install-dir',install,'install']);return {installed:true,loaded:true,running:true};
         case'inspect':assert.ok(selected);return inspection();
         case'diagnose':return {live_service_health:'not_checked'};
         case'ensure':return {state:'ready'};
@@ -625,7 +702,35 @@ test('discovery does not install/start and concurrent first use shares one appro
         const first=host.ensure(),second=host.ensure();assert.equal(first,second);
         const binding=await first;assert.equal(binding.runtimeSha256,f.digest);assert.equal(binding.verificationBasis,'trusted_distribution');
         assert.equal(calls.filter(args=>args[1]==='stage').length,1);assert.equal(calls.filter(args=>args[1]==='activate').length,1);
+        const order=calls.map(args=>args[1]).filter(action=>['activate','login','ensure'].includes(action));
+        assert.deepEqual(order,['activate','login','ensure'],'a fresh install registers login startup before the service is ensured');
+        assert.deepEqual(host.startupRegistration,{registered:true});
         await host.ensure();assert.equal(calls.filter(args=>args[1]==='activate').length,1,'selected approved payload is reused');
+        assert.equal(calls.filter(args=>args[1]==='login').length,1,'an existing installation is never re-registered');
+    } finally {await f.cleanup();}
+});
+test('a refused login startup registration keeps the fresh on-demand installation and is reported',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];let selected=false;
+    const inspection=()=>({selection:{active:f.digest,previous:null},executable:path.join(install,'runtimes',f.digest,f.main),launcher:null,
+        control_dir:path.join(install,'control'),managed_policy:null,approval:{version:'1.4.0',manifest_sha256:f.digest,verification_basis:'trusted_distribution'}});
+    const run:NativeRunner=async(_command,args)=>{calls.push([...args]);switch(args[1]){
+        case'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        case'location':return {protocol:1,install_dir:install};
+        case'stage':await fs.mkdir(install,{mode:0o700});return {};
+        case'activate':selected=true;return {};
+        case'login':throw new ServiceError('fixture_task_scheduler_policy_denied');
+        case'inspect':assert.ok(selected);return inspection();
+        case'diagnose':return {live_service_health:'not_checked'};
+        case'ensure':return {state:'ready'};
+        default:throw new Error('Unexpected native fixture action');
+    }};
+    try {
+        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},run);
+        const binding=await host.ensure();assert.equal(binding.runtimeSha256,f.digest);
+        assert.equal(host.startupRegistration?.registered,false);
+        assert.match(host.startupRegistration&&'error' in host.startupRegistration?host.startupRegistration.error:'',/fixture_task_scheduler_policy_denied/);
+        assert.equal(calls.filter(args=>args[1]==='ensure').length,1,'the on-demand service is still ensured');
+        assert.equal(calls.filter(args=>args[1]==='login').length,1,'a refusal is not retried in a loop');
     } finally {await f.cleanup();}
 });
 test('runtime bootstrap rechecks authorization after asynchronous native observations',async()=>{

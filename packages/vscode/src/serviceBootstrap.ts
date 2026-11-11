@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import * as fs from 'node:fs/promises';
 import { HttpConnectionInfo, HttpSelection, validateHttpConnection, validateEndpoint, matchesImportedHttpOrigin, validateAttachmentRetirement,validatePredecessorHttpLookup,type PredecessorHttpLookup,type PredecessorHttpScope } from './serviceHttp';
 import * as path from 'node:path';
-import { runText } from './native';
+import { nativeText, SessionControlTransport, windowNativeSession } from './nativeSession';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
 import type { LifecycleIntent } from './serviceIntents';
 import {validateNativeLegacyBinding} from './indexingCatalog';
@@ -26,12 +26,15 @@ export interface RuntimeOptions {
     managed?: { source: string; approvedSha256: string; lifecycle: 'external' | 'user-on-demand'; stateDir?: string };
 }
 export type NativeRunner = (command: string, args: string[], timeout?: number,input?:string) => Promise<RecordValue>;
+/** In an editor window every command runs in that window's one native session. */
 export const nativeRunner: NativeRunner = async (command,args,timeout=60000,input) => {
-    const text=await runText(command,args,path.dirname(command),timeout,undefined,undefined,input);
+    const text=await nativeText(command,args,timeout,input);
     if(Buffer.byteLength(text)>2*1024*1024){throw new ServiceError('bootstrap_response_oversize',false);}
     return record(JSON.parse(text));
 };
-export interface VerifiedBundle { main: string; helper?: string; source: string; digest: string; version: string; platform: string }
+export interface VerifiedBundle { main: string; helper?: string; source: string; digest: string; version: string; platform: string;
+    /** Inventory digest of the main executable image. */
+    mainSha256?: string }
 export interface RuntimeBinding {
     installDir: string; controlDir: string; executable: string; launcher: string | null;
     /** Version-free launcher that currently forwards to this installation, when published. */
@@ -248,10 +251,10 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
         if(Object.keys(payload).length!==1||payload[main]!==files[main]||!files[main]||names.some(name=>/(?:^|\/)(?:airk-embed|airk-launcher)(?:\.exe)?$/.test(name)))throw new ServiceError('single_image_runtime_required');
         const metadata=(await boundedJson(path.join(source,'airk-runtime.json'),16384)).value;
         if(Object.keys(metadata).sort().join(',')!=='airk_sha256,arch,os,schema,version'||metadata.schema!==2||metadata.version!==version||metadata.os!==os||metadata.arch!==arch||metadata.airk_sha256!==files[main])throw new ServiceError('single_image_runtime_metadata_mismatch');
-        return {main:path.join(source,main),source,digest,version,platform};
+        return {main:path.join(source,main),mainSha256:String(files[main]),source,digest,version,platform};
     }
     if(payload[main]!==files[main]||payload[helper]!==files[helper]||!files[main]||!files[helper]){throw new ServiceError('runtime_pair_missing');}
-    return {main:path.join(source,main),helper:path.join(source,helper),source,digest,version,platform};
+    return {main:path.join(source,main),mainSha256:String(files[main]),helper:path.join(source,helper),source,digest,version,platform};
 }
 /** Early UX only: native runtime ownership and ancestor checks remain authoritative. */
 export function validateRuntimeInstallDirectory(installDir:string,
@@ -276,6 +279,8 @@ export class RuntimeHost {
     private preparing?:Promise<RuntimeBinding>;
     private discovering?:{execution:Promise<BootstrapObservation>;full?:Promise<BootstrapObservation>;connections:number;fullSettled:boolean};
     private tested?:Promise<void>;
+    /** Login startup outcome of this host's most recent fresh installation. */
+    startupRegistration?:{registered:true}|{registered:false;error:string}|{registered:false;optedOut:true};
     private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
     private readonly projectReviews=new WeakSet<ProjectRegistrationReview>();
     private readonly legacyReviews=new WeakSet<LegacyStartupReview>();
@@ -294,7 +299,12 @@ export class RuntimeHost {
         this.active();const result=await this.run(command,args,timeout,input);this.active();return result;
     }
     private verified():Promise<VerifiedBundle>{
-        this.bundle??=verifyBundledRuntime(this.extensionPath,this.version).catch(error=>{this.bundle=undefined;throw error;});return this.bundle;
+        this.bundle??=verifyBundledRuntime(this.extensionPath,this.version).then(bundle=>{
+            // The window session runs only this verified bundle image.
+            try{if(bundle.mainSha256)windowNativeSession()?.offer({path:bundle.main,sha256:bundle.mainSha256,version:bundle.version});}
+            catch{/* An unusable image leaves the session unbound; its requests then fail explicitly. */}
+            return bundle;
+        }).catch(error=>{this.bundle=undefined;throw error;});return this.bundle;
     }
     private discovery():NonNullable<RuntimeHost['discovering']>{
         if(this.discovering)return this.discovering;
@@ -420,6 +430,7 @@ export class RuntimeHost {
                     await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',installDir,
                         '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
                     await this.invoke(bundle.main,['runtime','activate','--install-dir',installDir,'--runtime-sha256',bundle.digest],180000);
+                    this.startupRegistration=await this.registerLoginStartup(bundle.main,installDir);
                 }
                 if(selection?.active&&runtimeVersion(record(inspected?.approval).version)!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
                 if(selection?.active&&runtimeCleanBreakRequired(runtimeVersion(record(inspected?.approval).version),this.version,inspected?.clean_break))throw new ServiceError('clean_break_required_before_connection');
@@ -434,6 +445,22 @@ export class RuntimeHost {
             }
         }
         throw lastError;
+    }
+    /** Each installed payload (a fresh installation, which also follows a
+     * replacement, and an upgrade or clean break) starts at login, so the service
+     * keeps running after the editor closes and after a reboot; the native OS
+     * manager then owns its starts. A refusal (OS policy, unqualified platform
+     * adapter) keeps the on-demand service and is reported; it never fails the
+     * installation. An upgrade honors the user's explicit `runtime login
+     * uninstall`, which native records as `startup_manager.user_opted_out`; a
+     * fresh installation has no such record. */
+    private async registerLoginStartup(main:string,installDir:string,honorOptOut=false):Promise<{registered:true}|{registered:false;error:string}|{registered:false;optedOut:true}>{
+        if(honorOptOut){
+            const inspected=await this.invoke(main,['runtime','inspect','--install-dir',installDir]);this.active();
+            if(record(inspected.startup_manager??{}).user_opted_out===true)return {registered:false,optedOut:true};
+        }
+        try{await this.invoke(main,['runtime','login','--install-dir',installDir,'install'],180000);return {registered:true};}
+        catch(error){this.active();return {registered:false,error:(error instanceof Error?error.message:String(error)).slice(0,512)};}
     }
     binding(inspection:RecordValue,installDir:string):RuntimeBinding {
         const selection=record(inspection.selection),approval=record(inspection.approval),managed=inspection.managed_policy?record(inspection.managed_policy):undefined;
@@ -579,8 +606,11 @@ export class RuntimeHost {
         if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
         if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
         if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak))throw new ServiceError('clean_break_required_before_connection');
-        return new ServiceClient(new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,
-            '--runtime-sha256',binding.runtimeSha256],timeout));
+        // A view onto this window's one session. Outside a window (no session)
+        // the former per-client console process remains.
+        const session=windowNativeSession();
+        return new ServiceClient(session?new SessionControlTransport(session,binding.executable,binding.controlDir,binding.runtimeSha256,timeout)
+            :new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,'--runtime-sha256',binding.runtimeSha256],timeout));
     }
     async snapshot(binding:RuntimeBinding,after:string|null=null,revision:number|null=null):Promise<RecordValue>{
         this.active();const bundle=await this.verified();
@@ -678,6 +708,27 @@ export class RuntimeHost {
         const bundle=await this.verified();
         const result=await this.invoke(bundle.main,['runtime','lookup-http-connection','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--connection-id',connectionId,'--purpose','predecessor-cleanup','--predecessor',scope.predecessor],60000);
         try{return validatePredecessorHttpLookup(result,binding.runtimeSha256,connectionId,scope);}catch{throw new ServiceError('predecessor_http_ownership_unconfirmed',false,result);}
+    }
+    /** Through 1.9.0 installation requires an empty successor. A repeated
+     * operation is reconciled by native receipt; ordinary reconnect has no ID. */
+    async replacementPlan(installDir:string,operationId?:string,generationId?:string):Promise<RecordValue>{
+        this.active();const bundle=await this.verified();
+        if(operationId!==undefined)identifier(operationId,32);
+        if(generationId!==undefined){identifier(generationId,32);if(!operationId)throw new ServiceError('installation_operation_required');}
+        const result=await this.invoke(bundle.main,['runtime','replace-installation','--install-dir',installDir,'--candidate-sha256',bundle.digest,...(operationId?['--reinstall','--operation-id',operationId]:[]),...(generationId?['--generation-id',generationId]:[])],60000);
+        if(typeof result.required!=='boolean'||typeof result.reason!=='string'||!Array.isArray(result.locations)||typeof result.expected_predecessor!=='string'||!/^[a-f0-9]{64}$/.test(result.expected_predecessor))throw new ServiceError('invalid_native_replacement_plan',false,result);
+        return result;
+    }
+    /** Stop the previous installation and remove its AIRK folders. Source folders are never touched. */
+    async replaceInstallation(installDir:string,operationId?:string,generationId?:string,expectedPredecessor?:string):Promise<RecordValue>{
+        this.active();const bundle=await this.verified();
+        if(operationId!==undefined)identifier(operationId,32);
+        if(generationId!==undefined){identifier(generationId,32);if(!operationId)throw new ServiceError('installation_operation_required');}
+        if(expectedPredecessor!==undefined)identifier(expectedPredecessor,32);
+        const result=await this.invoke(bundle.main,['runtime','replace-installation','--install-dir',installDir,'--candidate-sha256',bundle.digest,...(operationId?['--reinstall','--operation-id',operationId]:[]),...(generationId?['--generation-id',generationId]:[]),...(expectedPredecessor?['--expected-predecessor',expectedPredecessor]:[]),'--apply'],300000);
+        const admitted=operationId!==undefined&&result.replaced===false&&record(result.plan).required===false&&['installation_already_replaced','no_installation'].includes(String(record(result.plan).reason));
+        if(result.replaced!==true&&!admitted)throw new ServiceError('native_replacement_unconfirmed',false,result);
+        return result;
     }
     async lookupHttpConnection(binding:RuntimeBinding,connectionId:string,reattachment?:{connection:HttpConnectionInfo;client:string}):Promise<RecordValue>{
         this.active();identifier(connectionId,16);const bundle=await this.verified();
@@ -836,7 +887,10 @@ export class RuntimeHost {
         const selected=await this.invoke(bundle.main,['runtime','activate','--install-dir',binding.installDir,
             '--runtime-sha256',review.target,'--expected-active',review.expectedActive,...(review.rebuildIndexes?['--rebuild-indexes']:[])],180000);
         if(selected.schema!==1||selected.active!==review.target)throw new ServiceError('crossed_runtime_activation_receipt',true);
-        this.transitionReviews.delete(review);return selected;
+        this.transitionReviews.delete(review);
+        // Every installed payload starts at login, not only a fresh installation.
+        if(review.action==='upgrade'||review.cleanBreak)this.startupRegistration=await this.registerLoginStartup(bundle.main,binding.installDir,true);
+        return selected;
     }
     async supersedePending(binding:RuntimeBinding,diagnosis:RecordValue|undefined):Promise<boolean>{
         if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak??diagnosis?.clean_break))return false;

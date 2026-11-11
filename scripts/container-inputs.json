@@ -59,6 +59,7 @@
     "fixtures/schema/airk-state-1/usage.supplemental.objects.json",
     "fixtures/wire/catalog_receipt.json",
     "fixtures/wire/read_retry_decisions.json",
+    "fixtures/wire/session_frames.json",
     "packages/vscode/src/test/diagnosticLogs.test.ts",
     "packages/vscode/src/test/extensionUninstall.test.ts",
     "packages/vscode/src/test/fixtures/httpAuthorityDigest.json",

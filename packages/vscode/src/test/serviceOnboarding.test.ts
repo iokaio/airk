@@ -25,6 +25,283 @@ import {IntentJournal,INTENT_PREFIX,INTENT_LIMIT,INTENT_MAX_TOTAL_BYTES,chargedR
 
 const scopedJournalIntent=(namespace:string,nonce:string)=>({enqueue:{project:'21'.repeat(32),caller:'22'.repeat(16),kind:'index' as const,key:{namespace,epoch:1,nonce}}});
 
+test('explicit same-runtime installation binds plan and apply to one fresh operation without indexing',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const operations:(string|undefined)[]=[],applied:(string|undefined)[]=[];
+    try{
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string)=>{
+            operations.push(operation);return {required:true,expected_predecessor:'ef'.repeat(32),reason:'replace_before_1_9_0',locations:[]};
+        });
+        const apply=RuntimeHost.prototype.replaceInstallation;
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async function(this:RuntimeHost,install:string,operation?:string){
+            applied.push(operation);return apply.call(this,install);
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.equal(operations.length,1);assert.match(operations[0]??'',/^[a-f0-9]{64}$/);
+        assert.deepEqual(applied,operations);
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.catalog_index_setup_apply),false);
+        await f.commands.get('airk.installCli')!();
+        assert.equal(operations.length,2);assert.notEqual(operations[1],operations[0],'another explicit installation is a new operation');
+    }finally{await f.close();}
+});
+
+test('one VSIX installation generation reuses its operation while ordinary reopen stays empty',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const operations:(string|undefined)[]=[],completed=new Set<string>(),applied:string[]=[];
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356400000');
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string)=>{
+            operations.push(operation);return {required:!!operation&&!completed.has(operation),expected_predecessor:'ef'.repeat(32),reason:operation&&completed.has(operation)?'installation_already_replaced':'replace_before_1_9_0',locations:[]};
+        });
+        const apply=RuntimeHost.prototype.replaceInstallation;
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async function(this:RuntimeHost,install:string,operation?:string){
+            assert.match(operation??'',/^[a-f0-9]{64}$/);completed.add(operation!);applied.push(operation!);return apply.call(this,install);
+        });
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();await f.refreshFolders();
+        assert.ok(operations.length>=2);assert.equal(new Set(operations).size,1);assert.equal(applied.length,1);
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.catalog_index_setup_apply),false);
+    }finally{await f.close();}
+});
+
+test('concurrent explicit and automatic proposals preserve the exact native-accepted operation for interrupted retry',{timeout:10000},async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.23',runtimeVersion:'1.8.23'});
+    const held:{release:()=>Promise<void>}[]=[];
+    let interruptNative=()=>{};
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356416846');
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.replacementOperation==='function');
+        assert.ok(controller);
+        const observed=await controller.runtime().discover(),storage=f.context.globalState,update=storage.update.bind(storage);
+        context.mock.method(storage,'update',async(key:string,value:unknown)=>{
+            if(key.startsWith('airk.installOperation.1.')&&held.length<2){
+                return new Promise<void>((resolve,reject)=>{
+                    let published=false;
+                    held.push({release:async()=>{if(published)return;published=true;try{await update(key,value);resolve();}catch(error){reject(error);}}});
+                });
+            }
+            await update(key,value);
+        });
+        const explicit=controller.replacementOperation(observed,true),automatic=controller.replacementOperation(observed,false);
+        assert.equal(held.length,2,'both proposals observed no pending host record before either publication');
+        await held[0].release();const first=await explicit;
+        assert.match(first.operationId,/^[a-f0-9]{64}$/);assert.match(first.generationId,/^[a-f0-9]{64}$/);
+        assert.notEqual(first.operationId,first.generationId,'explicit installation and automatic generation have distinct identities');
+        type Accepted={install:string;candidate:string;operation:string;generation:string};
+        let accepted:Accepted|undefined,started!:()=>void;
+        const nativeStarted=new Promise<void>(resolve=>{started=resolve;}),nativeInterrupted=new Promise<void>(resolve=>{interruptNative=resolve;});
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(install:string,operation?:string,generation?:string)=>{
+            assert.equal(install,observed.installDir);
+            if(accepted){
+                if(operation!==accepted.operation)throw new ServiceError('replacement_in_progress');
+                assert.equal(generation,accepted.generation);assert.equal(accepted.candidate,observed.bundle.digest);
+            }
+            return {install,required:true,expected_predecessor:'ef'.repeat(32),reason:accepted?'resume_installation_replacement':'replace_before_1_9_0',candidate_version:'1.8.23',locations:[],
+                client_references:{executables:[],http_endpoint:null,ca_sha256:null}};
+        });
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async(install:string,operation?:string,generation?:string)=>{
+            assert.equal(operation,first.operationId);assert.equal(generation,first.generationId);
+            accepted={install,candidate:observed.bundle.digest,operation:operation!,generation:generation!};started();
+            await nativeInterrupted;
+            throw new ServiceError('fictional_interrupted_owned_cleanup',true,{accepted});
+        });
+        const interrupted=controller.replacePreviousInstallation(observed,first.operationId,first.generationId).then(
+            ()=>new Error('fictional native interruption was not observed'),(error:unknown)=>error);
+        await Promise.race([nativeStarted,interrupted.then((error:unknown)=>{throw error;})]);
+        await held[1].release();const second=await automatic;
+        assert.equal(second.operationId,first.generationId,'the automatic proposal publishes last while the explicit native operation is accepted');
+        interruptNative();const failure=await interrupted;
+        assert.ok(failure instanceof ServiceError&&failure.code==='fictional_interrupted_owned_cleanup');
+        const records=[...f.values.entries()].filter(([key])=>key.startsWith('airk.installOperation.1.')).map(([,value])=>value as any);
+        assert.equal(records.length,2,'independent live proposals retain independent durable journals');
+        assert.deepEqual(records.map(value=>[value.operation,value.candidate]).sort(),[[first.operationId,observed.bundle.digest],[second.operationId,observed.bundle.digest]].sort());
+        const retry=await controller.replacementOperation(observed,false);
+        assert.deepEqual({operation:retry.operationId,generation:retry.generationId},{operation:accepted!.operation,generation:accepted!.generation},
+            'retry follows the accepted native operation, not whichever host proposal last overwrote shared storage');
+        const plan=await controller.runtime().replacementPlan(observed.installDir,retry.operationId,retry.generationId);
+        assert.equal(plan.reason,'resume_installation_replacement');
+        assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.configure_watch||value.catalog_index_setup_apply),false);
+    }finally{interruptNative();for(const item of held)await item.release();await f.close();}
+});
+
+test('an older loaded update host recovers the same installation generation from the verified installed manifest',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const completed=new Set<string>(),plans:{operation?:string;generation?:string}[]=[];let applies=0;
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.managedExtensionContext'),true);
+        await fs.writeFile(path.join(f.context.extensionPath,'package.json'),JSON.stringify({name:'airk',publisher:'iokaio',version:'1.8.22',__metadata:{installedTimestamp:1794356400400}}));
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string,generation?:string)=>{
+            plans.push({operation,generation});assert.match(operation??'',/^[a-f0-9]{64}$/);assert.equal(operation,generation);
+            return {required:!completed.has(operation!),expected_predecessor:'ef'.repeat(32),reason:completed.has(operation!)?'installation_already_replaced':'replace_before_1_9_0',locations:[]};
+        });
+        const apply=RuntimeHost.prototype.replaceInstallation;
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async function(this:RuntimeHost,install:string,operation?:string,generation?:string){
+            applies++;completed.add(operation!);completed.add(generation!);const result=await apply.call(this,install);
+            f.binding.cleanBreak={required:false,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:{schema:1}};return result;
+        });
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.equal(applies,1,'the first upgrade from an older loader still has an explicit native operation');
+        const marker={binding:'57'.repeat(32),root:f.folders[0].uri.fsPath,data_root:path.join(f.root,'data','old-loader'),collection:'old-loader'};
+        f.registrations.set(marker.binding,marker);
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356400400');
+        await f.refreshFolders();await f.refreshFolders();
+        assert.equal(new Set(plans.map(plan=>plan.generation)).size,1,'raw fallback and current loader Symbol produce the same operation identity');
+        assert.equal(applies,1);assert.deepEqual(f.registrations.get(marker.binding),marker);
+        assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.catalog_index_setup_apply),false);
+    }finally{await f.close();}
+});
+
+test('an older loaded update host refuses a mismatched installed manifest before replacement or native mutation',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    let plans=0,applies=0;
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.managedExtensionContext'),true);
+        await fs.writeFile(path.join(f.context.extensionPath,'package.json'),JSON.stringify({name:'airk',publisher:'iokaio',version:'1.8.21',__metadata:{installedTimestamp:1794356400400}}));
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>{plans++;return {required:true,expected_predecessor:'ef'.repeat(32),reason:'replace_before_1_9_0',locations:[]};});
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async()=>{applies++;return {replaced:true};});
+        const ensures=f.state.ensured;f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.ok(f.calls.some(line=>line.includes('AIRK installation manifest')));
+        assert.equal(plans,0);assert.equal(applies,0);assert.equal(f.state.ensured,ensures);assert.equal(f.writes.length,0);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installOperation.1.')),false);
+    }finally{await f.close();}
+});
+
+test('an older loaded update host never invents an installation generation from missing or malformed metadata',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const plans:{operation?:string;generation?:string}[]=[];
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.managedExtensionContext'),true);
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string,generation?:string)=>{
+            plans.push({operation,generation});return {required:true,expected_predecessor:'ef'.repeat(32),reason:'replace_before_1_9_0',locations:[]};
+        });
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async(_install:string,operation?:string,generation?:string)=>{
+            assert.equal(operation,undefined);assert.equal(generation,undefined);throw new ServiceError('replacement_operation_required');
+        });
+        const ensures=f.state.ensured;f.settings.set('cli.autoInstall',true);
+        for(const metadata of [undefined,{},null,[],{installedTimestamp:'1794356400400'},{installedTimestamp:-1}]){
+            await fs.writeFile(path.join(f.context.extensionPath,'package.json'),JSON.stringify({name:'airk',publisher:'iokaio',version:'1.8.22',__metadata:metadata}));
+            await f.refreshFolders();
+        }
+        assert.equal(plans.length,6);assert.ok(plans.every(plan=>plan.operation===undefined&&plan.generation===undefined));
+        assert.equal(f.state.ensured,ensures);assert.equal(f.writes.length,0);assert.equal(f.registrations.size,0);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installOperation.1.')),false);
+    }finally{await f.close();}
+});
+
+test('a fresh installation consumes its native no-installation operation before a later reopen preserves an explicit index',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,fresh:true,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const completed=new Set<string>(),admitted:string[]=[],marker=path.join(f.root,'explicit-index.marker');let present=false,removals=0;
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356400100');
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string)=>({required:present&&!completed.has(operation??''),expected_predecessor:'ef'.repeat(32),reason:completed.has(operation??'')?'installation_already_replaced':present?'replace_before_1_9_0':'no_installation',locations:[]}));
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async(_install:string,operation?:string,generation?:string)=>{
+            assert.match(operation??'',/^[a-f0-9]{64}$/);admitted.push(operation!);completed.add(operation!);if(generation)completed.add(generation);
+            if(present){removals++;f.registrations.clear();await fs.rm(marker,{force:true});}
+            return {replaced:false,plan:{required:false,expected_predecessor:'ef'.repeat(32),reason:'no_installation',locations:[]}};
+        });
+        const ensure=RuntimeHost.prototype.ensure;
+        context.mock.method(RuntimeHost.prototype,'ensure',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['ensure']>){const binding=await ensure.apply(this,args);present=true;return binding;});
+        f.state.noticeAction='Set up';f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.equal(admitted.length,1,'native operation is consumed even though no predecessor needs removal');assert.equal(removals,0);
+        const index={binding:'54'.repeat(32),root:f.folders[0].uri.fsPath,data_root:path.join(f.root,'data','explicit'),collection:'explicit'};
+        f.registrations.set(index.binding,index);await fs.writeFile(marker,'user-created index');
+        await f.refreshFolders();await f.refreshFolders();
+        assert.equal(removals,0);assert.equal(admitted.length,1);assert.deepEqual(f.registrations.get(index.binding),index);
+        assert.equal(await fs.readFile(marker,'utf8'),'user-created index');
+        assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.catalog_index_setup_apply),false);
+    }finally{await f.close();}
+});
+
+test('an explicit installation also consumes its current VSIX generation before ordinary reopening',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const completed=new Set<string>(),plans:{operation?:string;generation?:string}[]=[],applied:{operation?:string;generation?:string}[]=[];
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356400200');
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string,generation?:string)=>{
+            plans.push({operation,generation});return {required:!completed.has(operation??''),expected_predecessor:'ef'.repeat(32),reason:completed.has(operation??'')?'installation_already_replaced':'replace_before_1_9_0',locations:[]};
+        });
+        const apply=RuntimeHost.prototype.replaceInstallation;
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async function(this:RuntimeHost,install:string,operation?:string,generation?:string){
+            assert.match(operation??'',/^[a-f0-9]{64}$/);assert.match(generation??'',/^[a-f0-9]{64}$/);
+            applied.push({operation,generation});completed.add(operation!);completed.add(generation!);f.registrations.clear();
+            return apply.call(this,install);
+        });
+        await f.commands.get('airk.installCli')!();assert.equal(applied.length,1);assert.notEqual(applied[0].operation,applied[0].generation);
+        const marker={binding:'55'.repeat(32),root:f.folders[0].uri.fsPath,data_root:path.join(f.root,'data','after-install'),collection:'after-install'};
+        f.registrations.set(marker.binding,marker);f.settings.set('cli.autoInstall',true);await f.refreshFolders();await f.refreshFolders();
+        assert.equal(applied.length,1,'the generation alias prevents a second uninstall');assert.deepEqual(f.registrations.get(marker.binding),marker);
+        assert.equal(plans.at(-1)?.operation,applied[0].generation);
+        assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.catalog_index_setup_apply),false);
+    }finally{await f.close();}
+});
+
+test('a completed replacement from another window rediscovers the successor instead of reusing predecessor Stop state',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const controller=f.context.subscriptions.find((item:any)=>typeof item.resolveAgentSpec==='function'),discover=RuntimeHost.prototype.discover,apply=RuntimeHost.prototype.replaceInstallation;
+    const freshControl=path.join(f.root,'other-window-successor');let replaced=false,successorReads=0,applies=0;
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356400300');
+        context.mock.method(RuntimeHost.prototype,'discover',async function(this:RuntimeHost){
+            const observed=await discover.call(this);
+            if(replaced)successorReads++;else if(observed.inspection)observed.inspection.lifecycle={explicitly_stopped:true};
+            return observed;
+        });
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>({required:!replaced,expected_predecessor:'ef'.repeat(32),reason:replaced?'installation_already_replaced':'replace_before_1_9_0',locations:[]}));
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async function(this:RuntimeHost,install:string){
+            applies++;await apply.call(this,install);
+            // The other window completed setup: its service has fresh contract
+            // authority and is already available, beyond the fixture's staging gap.
+            f.state.replacedAt=undefined;f.state.stopped=false;f.state.nativeInstance='76'.repeat(16);
+            f.binding.cleanBreak={required:false,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:{schema:1}};
+            replaced=true;f.binding.controlDir=freshControl;await fs.mkdir(path.join(freshControl,'http-1'),{recursive:true});
+            return {replaced:false,plan:{required:false,expected_predecessor:'ef'.repeat(32),reason:'installation_already_replaced',locations:[]}};
+        });
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.equal(applies,1);assert.ok(successorReads>0,'apply replay must refresh the complete native observation');
+        assert.equal(controller.binding?.controlDir,freshControl);assert.equal(f.calls.some(line=>line.includes('service_explicitly_stopped')),false);
+        assert.equal(f.calls.includes('upgrade-applied'),false,'the completed successor must not enter the old rebuild path');
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
+test('host cleanup resumes from the same completed native operation after a failure following uninstall',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    const controller=f.context.subscriptions.find((item:any)=>typeof item.resolveAgentSpec==='function'),apply=RuntimeHost.prototype.replaceInstallation;
+    const executable=f.binding.executable,operations:string[]=[],references={executables:[executable],http_endpoint:null,ca_sha256:null};let removed=false,cleanups=0;
+    try{
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async(_install:string,operation?:string)=>{
+            operations.push(operation??'');return {required:!removed,expected_predecessor:'ef'.repeat(32),reason:removed?'installation_already_replaced':'replace_before_1_9_0',locations:[],client_references:references};
+        });
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async function(this:RuntimeHost,install:string){removed=true;return apply.call(this,install);});
+        const retire=controller.retireReplacedHostArtifacts.bind(controller);
+        context.mock.method(controller,'retireReplacedHostArtifacts',async(observed:any,pending:any)=>{
+            cleanups++;assert.ok(pending.references.executables.includes(executable));
+            if(cleanups===1)throw new ServiceError('fixture_host_cleanup_interrupted');
+            await retire(observed,pending);
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.equal(cleanups,1);assert.equal(f.calls.filter(value=>value==='installation-replaced').length,1);
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installOperation.1.')),'incomplete host cleanup retains the accepted operation');
+        await f.commands.get('airk.installCli')!();
+        assert.equal(cleanups,2);assert.equal(f.calls.filter(value=>value==='installation-replaced').length,1,'retry never repeats native uninstall');
+        assert.equal(new Set(operations).size,1);assert.match(operations[0],/^[a-f0-9]{64}$/);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installOperation.1.')),false);
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
+test('explicit managed installation is refused through its owning installer without touching the live installation',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.22',runtimeVersion:'1.8.22'});
+    let plans=0,applies=0;
+    try{
+        f.settings.set('service.managedSource',f.root);f.settings.set('service.managedSha256','ab'.repeat(32));
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>{plans++;return {required:false,expected_predecessor:'ef'.repeat(32),reason:'fixture',locations:[]};});
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async()=>{applies++;return {replaced:true};});
+        const ensures=f.state.ensured;await f.commands.get('airk.installCli')!();
+        assert.ok(f.calls.some(line=>line.includes('managed_runtime_reinstall_requires_owning_installer')));
+        assert.equal(plans,0);assert.equal(applies,0);assert.equal(f.state.ensured,ensures);assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
 for(const late of [false,true])test(`published clean-break Genesis discards a full predecessor journal so a new User Stop is durable while indexes build${late?' after a late old-window Memento write':''}`,async context=>{
     const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
     const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),old=new IntentJournal(f.intentStorage,f.binding.controlDir,'34'.repeat(16));
@@ -113,6 +390,26 @@ for(const changed of ['operation','file'] as const)test(`clean-break journal cle
         const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function');assert.equal(controller.cleanBreakClientResult.complete,false);
         assert.match(JSON.stringify(controller.cleanBreakClientResult),changed==='operation'?/crossed_native_operation/:/changed|blocked/);
         assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
+test('an installer before 1.9.0 replaces a different installation, then installs fresh without creating an index',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.19',runtimeVersion:'1.8.11',installedVersion:'1.8.19'});
+    try{
+        f.state.replacementPlan={required:true,expected_predecessor:'ef'.repeat(32),reason:'replace_before_1_9_0',installed_version:'1.8.11',locations:['fixture-previous']};
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.calls.filter(call=>call==='installation-replaced').length,1,'replaced exactly once');
+        assert.ok(f.calls.some(call=>String(call).startsWith('Removing the previous AIRK 1.8.11 installation')));
+        assert.ok(f.calls.includes('fixture agents notice'),'agents outside VS Code are told to reconnect');
+        assert.equal(f.binding.version,'1.8.19');
+        assert.ok(!f.calls.includes('upgrade-reviewed')&&!f.calls.includes('upgrade-applied'),'no in-place upgrade or clean-break rebuild');
+        assert.equal(f.writes.some(value=>'catalog_index_setup_apply' in value||'enqueue' in value),false,'no index is created');
+        // A second explicit installation of the identical build still requires
+        // full native uninstall; ordinary window reopen is covered separately.
+        f.state.replacementPlan={required:true,expected_predecessor:'ef'.repeat(32),reason:'replace_before_1_9_0',installed_version:'1.8.19',locations:['fixture-previous']};
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.calls.filter(call=>call==='installation-replaced').length,2);
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.catalog_index_setup_apply),false);
     }finally{await f.close();}
 });
 
@@ -1066,6 +1363,29 @@ test('first installation waits for review: dismiss and defer change nothing pers
         assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
         await f.commands.get('airk.setUp')!();
         assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
+    }finally{await f.close();}
+});
+
+test('a valid installation generation does not admit native replacement or retain an operation when first setup is deferred',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,fresh:true,registered:false,bundledVersion:'1.8.23',runtimeVersion:'1.8.23'});
+    const admitted:{operation?:string;generation?:string}[]=[];
+    try{
+        Reflect.set(f.context,Symbol.for('iokaio.airk.installationGeneration'),'1794356416846');
+        context.mock.method(RuntimeHost.prototype,'replacementPlan',async()=>({required:false,expected_predecessor:'ef'.repeat(32),reason:'no_installation',locations:[]}));
+        context.mock.method(RuntimeHost.prototype,'replaceInstallation',async(_install:string,operation?:string,generation?:string)=>{
+            admitted.push({operation,generation});
+            return {replaced:false,plan:{required:false,expected_predecessor:'ef'.repeat(32),reason:'no_installation',locations:[]}};
+        });
+        f.state.noticeAction='Not now';f.settings.set('cli.autoInstall',true);
+        await f.refreshFolders();
+        assert.equal(f.notices.filter(value=>value.message==='Set up AIRK on this computer?').length,1);
+        assert.deepEqual(admitted,[],'the native no-installation receipt is a persistent installation effect and waits for accepted setup');
+        assert.deepEqual([...f.values.keys()].filter(key=>key.startsWith('airk.installOperation.1.')),[],
+            'a deferred first install cannot leave an old-candidate operation that blocks a later candidate');
+        assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
+        assert.equal(f.writes.some(value=>value.reserve_project||value.enqueue||value.configure_watch||value.catalog_index_setup_apply),false);
+        await f.refreshFolders();
+        assert.deepEqual(admitted,[],'ordinary folder changes respect the saved deferral');
     }finally{await f.close();}
 });
 

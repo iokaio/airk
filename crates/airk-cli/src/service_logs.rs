@@ -50,6 +50,7 @@ const RECORD_BYTES: usize = 768;
 const READ_BYTES: usize = 64 << 10;
 
 mod raw;
+pub(crate) const OWNER_RECORDS: [&str; 2] = [OWNER, raw::OWNER];
 pub use raw::export as export_raw;
 pub use raw::export_to as export_raw_to;
 pub use raw::record_client_error;
@@ -73,6 +74,28 @@ fn expected_owner(root: &Path) -> Result<Owner> {
             ],
         ),
     })
+}
+
+/// Metadata-only ownership proof for installer retirement. Unlike opening a
+/// log reader/writer, this never creates directories or changes permissions.
+pub(crate) fn has_saved_owner(parent: &Path, control: &Path) -> Result<bool> {
+    if crate::install_layout::log_parent(control)? != parent {
+        return Ok(false);
+    }
+    let expected = expected_owner(control)?;
+    let mut found = false;
+    for name in OWNER_RECORDS {
+        let receipt = parent.join(name);
+        if exists(&receipt)? {
+            let bytes = crate::install_files::read_bounded(&receipt, 4096)?;
+            ensure!(
+                serde_json::from_slice::<Owner>(&bytes)? == expected,
+                "foreign diagnostic log ownership"
+            );
+            found = true;
+        }
+    }
+    Ok(found)
 }
 fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {

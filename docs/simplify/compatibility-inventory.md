@@ -1,5 +1,14 @@
 # AIRK compatibility inventory (S1.1 / R1)
 
+## Installer repair addendum — 10 November 2026
+
+The primary reviewed this bounded deletion as part of the authorized installer
+ownership repair. The following draft and dated rows retain their original scope.
+
+| Retired item | Surviving duty owner | Reviewed evidence |
+|---|---|---|
+| `user_paths::owned_default_locations`, the all-channel/default-name authority catalog | `user_paths::owned_install_locations` discovers only the selected installation's channel/layout; native layout, data-scope, log and launcher receipts decide deletion ownership | Source search found the catalog's only caller was the erroneous name-authority shortcut removed by this repair. Scoped discovery is unchanged and `user_paths::tests::replacement_locations_preserve_other_channels_and_independent_default_layouts` passed in `artifacts/one-process/installer-review-native-diagnostic-r2.json`. The foreign-owner regression separately reproduced the unsafe plan in `installer-review-foreign-observation-r3.json`; canonical ownership correction remains subject to the combined validation. |
+
 **Draft for S1 review, 9 November 2026; proposal only — authorizes no deletion.**
 
 This is the compatibility inventory required by [simplify-plan.md](../simplify-plan.md)
