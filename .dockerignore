@@ -29,6 +29,8 @@ fixtures/schema/airk-state-1/**
 fixtures/split/**
 !fixtures/split/i2/
 fixtures/split/i2/**
+!fixtures/split/i4/
+fixtures/split/i4/**
 !fixtures/wire/
 fixtures/wire/**
 !packages/vscode/
@@ -107,6 +109,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i2/error_lines.json
 !fixtures/split/i2/exit_codes.json
 !fixtures/split/i2/version.json
+!fixtures/split/i4/i4_cases.json
 !fixtures/wire/airkctl_session_frames.json
 !fixtures/wire/catalog_receipt.json
 !fixtures/wire/native_outcomes.json

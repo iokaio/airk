@@ -451,6 +451,7 @@ pub mod service_lifecycle;
 pub mod storage_format;
 
 pub mod inference_provider;
+pub mod install_record;
 pub mod rebuild;
 pub mod usage_page;
 
