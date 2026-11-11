@@ -140,7 +140,8 @@ def capture(binary, cases_path, out, fixture_base=None, timeout=120):
     golden = {"schema": GOLDEN_SCHEMA, "program": binary.stem, "platform": sys.platform,
               "cases": results}
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    Path(out).write_text(json.dumps(golden, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    Path(out).write_text(json.dumps(golden, indent=1, ensure_ascii=False) + "\n", encoding="utf-8",
+                         newline="\n")
     return golden
 
 
