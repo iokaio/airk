@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Opt-in CI worker stderr tails. Never archive service databases or source trees.
+#[cfg(test)]
 use anyhow::{Context, Result};
 use std::{
-    fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    fs::File,
+    io::{Seek, SeekFrom, Write},
+    path::PathBuf,
     process::Child,
     sync::{Arc, Mutex},
     thread::JoinHandle,
 };
+#[cfg(test)]
+use std::{fs::OpenOptions, io::Read, path::Path};
 
+// Only a child owner has a stderr pipe; in-process owners have none.
+#[cfg(test)]
 const TAIL_BYTES: usize = 4096;
 
 pub(crate) fn directory() -> Option<PathBuf> {
@@ -41,6 +46,7 @@ impl Tail {
         self.file.flush()
     }
 
+    #[cfg(test)]
     fn append(&mut self, bytes: &[u8]) {
         self.bytes.extend_from_slice(bytes);
         if self.bytes.len() > TAIL_BYTES {
@@ -57,6 +63,7 @@ pub(crate) struct WorkerStderr {
 }
 
 impl WorkerStderr {
+    #[cfg(test)]
     pub(crate) fn start(child: &mut Child, role: &str, parent: &Path) -> Result<Self> {
         std::fs::create_dir_all(parent)?;
         // Exclusive files under the explicitly supplied CI destination. The

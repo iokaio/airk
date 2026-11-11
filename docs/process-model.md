@@ -5,6 +5,27 @@
 > helper that this page describes is neither built nor started. See
 > [architecture](architecture.md). The text below is otherwise unchanged.
 
+> **Note, 10 November 2026 (workers inside the service):** the service no longer
+> starts `airk-index`, `airk-source` or `project-worker`/`derived-worker`/
+> `source-worker` processes, and its project owners never start a Unix
+> `process-guardian`. Each project and cleanup owner runs on its own service
+> thread with its own runtime, lock and execution scope; the source watcher is
+> one service thread. The per-project query endpoint keeps its name and protocol
+> and is now served by the service process. The only `airk` child the service
+> still creates is the short-lived isolated PDF parser, in its Windows job or
+> Unix process group with the 512 MiB / 10 s CPU / 15 s limits. At most one
+> parser is alive in the whole service at a time: each document gets its own,
+> created and torn down for that document, and the next waits (in arrival
+> order, up to 60 seconds, then a capacity failure) until the previous one has
+> exited and been reaped. A waiting document stops at once, without starting a
+> parser, when its owner drains, is canceled or stalls. A stopped owner
+> gets the former 10-second stop period and then is asked to drain at its next
+> safe point; one that still has not exited 20 seconds later (25 seconds for
+> the watcher), or whose native call trips the existing stall watchdog, makes
+> the whole service exit with code 76 so its manager restarts it. One stuck
+> project therefore restarts the service; it is named on standard error first.
+> The worker rows of the table below are historical.
+
 AIRK uses one elected service per user/machine installation and independent collections. That does not mean one executable process per VS Code window. Agents, Explorer, native workers and Windows launchers have different owners and lifetimes.
 
 ## What each process does

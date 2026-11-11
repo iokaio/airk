@@ -5,7 +5,12 @@ use crate::{
     project_protocol::{self as protocol, Command as WorkerCommand, Reply},
     service_inference::Pool,
     service_ipc,
+    worker_host::{ObservedExit, OwnerThread, StopStep, WorkerHost},
+    worker_transport::{FrameSink, FrameSource},
 };
+// Only the child-process owner fixtures still start processes here.
+#[cfg(test)]
+use crate::worker_transport::StreamFrames;
 use airk_core::{
     identity::Incarnation,
     service::{ControlResponse, MAX_FRAME_BYTES, ProjectBinding, QueryAllowance, WorkerIdentity},
@@ -13,10 +18,11 @@ use airk_core::{
 use airk_kernel::service_broker::{Broker, new_instance_id};
 use airk_store::service::{EmbeddingLease, ProjectLease, registry::ServiceRegistry};
 use anyhow::{Context, Result, ensure};
+#[cfg(test)]
+use std::process::{Child, Command, Stdio};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, SyncSender},
@@ -78,9 +84,12 @@ struct ChildWorker {
     catalog_pending: Option<catalog::Pending>,
     catalog_quarantined: bool,
     derived: bool,
-    _containment: crate::child_job::ChildJob,
-    child: Child,
-    input: Option<ChildStdin>,
+    /// Present only for a child host; an in-process owner has no job object.
+    _containment: Option<crate::child_job::ChildJob>,
+    child: WorkerHost,
+    /// The in-process owner's slots, used to ask it to drain.
+    scope: Option<crate::worker_scope::WorkerScope>,
+    input: Option<Box<dyn FrameSink<WorkerCommand>>>,
     output: Receiver<Reply>,
     reader: Option<std::thread::JoinHandle<()>>,
     stderr: Option<crate::process_diagnostics::WorkerStderr>,
@@ -132,7 +141,7 @@ pub(crate) fn complete_provider_authorizations(
     Ok(())
 }
 
-fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
+fn clean_disconnected_exit(child: &mut impl ObservedExit, error: &anyhow::Error) -> bool {
     let disconnected = error.chain().any(|cause| {
         cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
             matches!(
@@ -149,13 +158,23 @@ fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
     // Observe its actual exit without sending Stop or releasing ownership first.
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        match child.try_wait() {
+        match child.observed_exit() {
             Ok(Some(status)) => return status.success(),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => return false,
         }
     }
 }
+
+/// The further time an in-process owner has, after the existing 10-second
+/// stop period, to reach a safe point once asked to drain. It covers the
+/// 15-second bound of an isolated PDF parse that may be in progress.
+const IN_PROCESS_DRAIN: Duration = Duration::from_secs(20);
+/// An in-process project owner's thread stack, matching the CLI thread that
+/// ran a child project owner.
+const OWNER_STACK_BYTES: usize = 8 << 20;
+/// In-process control frames queue like bytes in a child's pipes.
+const CONTROL_FRAMES: usize = 16;
 fn retire_helper(
     pool: &mut Option<Pool>,
     gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
@@ -195,38 +214,68 @@ fn retire_helper(
 impl Drop for ChildWorker {
     fn drop(&mut self) {
         if let Some(mut input) = self.input.take() {
-            let _ = service_ipc::write_frame(&mut input, &WorkerCommand::Stop);
+            let _ = input.send(WorkerCommand::Stop);
         }
-        let until = Instant::now() + Duration::from_secs(10);
+        let requested = Instant::now();
+        let mut drain_requested = false;
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
                 // Unknown wait state never authorizes a numerical PID signal.
                 // Retain ownership/admission until native exit is observable.
                 Err(_) => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) => {
-                    let _ = self.child.kill();
-                    if self.child.wait().is_ok() {
-                        break;
+                Ok(None) => match crate::worker_host::stop_step(
+                    self.child.in_process(),
+                    requested,
+                    Instant::now(),
+                    Duration::from_secs(10),
+                    IN_PROCESS_DRAIN,
+                    drain_requested,
+                ) {
+                    StopStep::Wait => std::thread::sleep(Duration::from_millis(25)),
+                    StopStep::Kill => {
+                        if let Some(child) = self.child.child_mut() {
+                            let _ = child.kill();
+                            if child.wait().is_ok() {
+                                break;
+                            }
+                        }
+                        // Failed native wait is uncertainty, never a reap receipt
+                        // or permission to release accepted resource ownership.
+                        std::thread::sleep(Duration::from_millis(25));
                     }
-                    // Failed native wait is uncertainty, never a reap receipt
-                    // or permission to release accepted resource ownership.
-                    std::thread::sleep(Duration::from_millis(25));
-                }
+                    StopStep::Drain => {
+                        // The cooperative equivalent of the kill: accepted work
+                        // stops at its next safe point and stays unsettled for
+                        // the next fenced owner, exactly as after a kill.
+                        if let Some(scope) = &self.scope {
+                            scope.execution.drain();
+                        }
+                        drain_requested = true;
+                    }
+                    StopStep::ExitService => crate::worker_host::exit_service_for_stuck_owner(
+                        &format!("project owner {}", self.role),
+                    ),
+                },
             }
         }
-        self._containment.drain();
+        if let Some(containment) = &self._containment {
+            containment.drain();
+        }
         #[cfg(unix)]
-        if let Some(identity) = self.identity {
+        if !self.child.in_process()
+            && let Some(identity) = self.identity
+        {
             crate::unix_guardian::wait_for_worker(&self.runtime, identity);
         }
         let _ = local_ipc::remove_exited_endpoint(&self.runtime, &self.role);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
-        if let Some(stderr) = self.stderr.take() {
-            stderr.finish(&mut self.child);
+        if let Some(stderr) = self.stderr.take()
+            && let Some(child) = self.child.child_mut()
+        {
+            stderr.finish(child);
         }
         if let (Some(gate), Some(identity)) = (&self.catalog_gate, self.identity) {
             let _ = gate.observe_worker_reaped(identity);
@@ -238,6 +287,53 @@ impl Drop for ChildWorker {
             );
         }
     }
+}
+
+/// Replies queue one at a time; an undrained reply closes the carrier, as a
+/// child's reply reader always did.
+fn spawn_reply_reader(
+    mut output: Box<dyn FrameSource<Reply>>,
+    sender: SyncSender<Reply>,
+) -> Result<std::thread::JoinHandle<()>> {
+    Ok(std::thread::Builder::new()
+        .name("airk-project-replies".into())
+        .spawn(move || {
+            while let Ok(Some(reply)) = output.recv() {
+                if sender.try_send(reply).is_err() {
+                    break;
+                }
+            }
+        })?)
+}
+
+/// The body of an in-process owner's thread. Like a child process exit, it
+/// returns only after the owner's runtime has finished every blocking task,
+/// so the owner's lease is released before the supervisor observes the exit.
+fn run_in_process(
+    init: protocol::Init,
+    commands: Box<dyn FrameSource<WorkerCommand>>,
+    replies: Box<dyn FrameSink<Reply>>,
+    scope: crate::worker_scope::WorkerScope,
+    derived: bool,
+) -> Result<()> {
+    let _bound = scope.bind_thread();
+    let residency = crate::worker_scope::Residency::Service(scope.clone());
+    if derived {
+        return crate::derived_worker::serve(init, commands, replies, residency);
+    }
+    // The same two-worker runtime shape that served a child project owner.
+    // Every runtime thread, including its blocking pool, binds this owner.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("airk-project-runtime")
+        .on_thread_start(move || scope.bind_for_thread_life())
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(crate::project_worker::serve(
+        init, commands, replies, residency,
+    ));
+    drop(runtime);
+    result
 }
 
 impl ChildWorker {
@@ -292,26 +388,92 @@ impl ChildWorker {
         }
         Ok(())
     }
+    /// Production start: every project and cleanup owner runs in the service.
     fn spawn(
         root: &Path,
         project: ProjectBinding,
         service: Incarnation,
         derived: bool,
     ) -> Result<Self> {
-        let executable = crate::process_roles::executable(
-            &std::env::current_exe()?.canonicalize()?,
-            crate::process_roles::Role::Index,
-        )?;
-        Self::spawn_image(
+        Self::start_in_process(
             root,
             project,
             service,
             derived,
-            &executable,
             crate::runtime_pair::engine_identity()?,
         )
     }
 
+    /// One owner on a service thread. The control protocol, its frames, the
+    /// handshake and every identity check are those of a child owner.
+    fn start_in_process(
+        root: &Path,
+        project: ProjectBinding,
+        service: Incarnation,
+        derived: bool,
+        engine: airk_core::identity::Sha256Digest,
+    ) -> Result<Self> {
+        let worker = new_instance_id()?;
+        let (commands, command_source) =
+            crate::worker_transport::channel::<WorkerCommand>(CONTROL_FRAMES);
+        let (replies, reply_source) = crate::worker_transport::channel::<Reply>(CONTROL_FRAMES);
+        let scope = crate::worker_scope::WorkerScope::new();
+        let init = protocol::Init {
+            engine,
+            runtime: root.into(),
+            project,
+            service,
+            worker,
+        };
+        let owner_scope = scope.clone();
+        let handle = std::thread::Builder::new()
+            .name("airk-project-owner".into())
+            .stack_size(OWNER_STACK_BYTES)
+            .spawn(move || {
+                run_in_process(
+                    init,
+                    Box::new(command_source),
+                    Box::new(replies),
+                    owner_scope,
+                    derived,
+                )
+            })
+            .context("start project owner")?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut process = Self {
+            exiting: false,
+            read_settlement: None,
+            catalog_gate: None,
+            catalog_pending: None,
+            catalog_quarantined: false,
+            derived,
+            child: WorkerHost::Thread(OwnerThread::new(handle)),
+            _containment: None,
+            scope: Some(scope),
+            input: Some(Box::new(commands)),
+            output: receiver,
+            reader: None,
+            stderr: None,
+            identity: None,
+            role: protocol::role(worker),
+            runtime: root.into(),
+            last_renewal: Instant::now(),
+            pool_binding: None,
+            provider_helpers: Vec::new(),
+            provider_in_process: false,
+            #[cfg(feature = "local-inference")]
+            provider_completed: None,
+            pool_pending: false,
+            last_status: Instant::now(),
+            waiting: None,
+        };
+        process.reader = Some(spawn_reply_reader(Box::new(reply_source), sender)?);
+        process.finish_start(project, service, worker)?;
+        Ok(process)
+    }
+
+    /// The existing child-process owner, kept for its process fixtures.
+    #[cfg(test)]
     fn spawn_image(
         root: &Path,
         project: ProjectBinding,
@@ -345,8 +507,10 @@ impl ChildWorker {
             crate::native_process::spawn(&mut command).context("start project owner")?;
         let containment =
             crate::native_process::attach_owned(&mut child, crate::child_job::ChildJob::attach)?;
-        let input = child.stdin.take().context("project input missing")?;
-        let mut output = child.stdout.take().context("project output missing")?;
+        let mut input = child.stdin.take().context("project input missing")?;
+        let output: Box<dyn FrameSource<Reply>> = Box::new(StreamFrames(
+            child.stdout.take().context("project output missing")?,
+        ));
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
             exiting: false,
@@ -355,9 +519,10 @@ impl ChildWorker {
             catalog_pending: None,
             catalog_quarantined: false,
             derived,
-            child,
-            _containment: containment,
-            input: Some(input),
+            child: WorkerHost::Child(child),
+            _containment: Some(containment),
+            scope: None,
+            input: None,
             output: receiver,
             reader: None,
             stderr: None,
@@ -376,24 +541,15 @@ impl ChildWorker {
         };
         if let Some(directory) = diagnostic_directory {
             process.stderr = Some(crate::process_diagnostics::WorkerStderr::start(
-                &mut process.child,
+                process.child.child_mut().context("project child missing")?,
                 &process.role,
                 &directory,
             )?);
         }
-        process.reader = Some(
-            std::thread::Builder::new()
-                .name("airk-project-replies".into())
-                .spawn(move || {
-                    while let Ok(Some(reply)) = service_ipc::read_frame(&mut output) {
-                        if sender.try_send(reply).is_err() {
-                            break;
-                        }
-                    }
-                })?,
-        );
+        process.reader = Some(spawn_reply_reader(output, sender)?);
+        // Init is the only frame of its type; the boxed carrier owns the rest.
         service_ipc::write_frame(
-            process.input.as_mut().context("project input missing")?,
+            &mut input,
             &protocol::Init {
                 engine,
                 runtime: root.into(),
@@ -402,7 +558,19 @@ impl ChildWorker {
                 worker,
             },
         )?;
-        let reply = process
+        process.input = Some(Box::new(StreamFrames(input)));
+        process.finish_start(project, service, worker)?;
+        Ok(process)
+    }
+
+    /// The owner's first reply must name exactly the generation it was started as.
+    fn finish_start(
+        &mut self,
+        project: ProjectBinding,
+        service: Incarnation,
+        worker: Incarnation,
+    ) -> Result<()> {
+        let reply = self
             .output
             .recv_timeout(Duration::from_secs(10))
             .context("project startup failed or timed out")?;
@@ -413,14 +581,14 @@ impl ChildWorker {
                         && identity.worker == worker
                         && identity.project == project
                         && identity.fencing_generation > 0
-                        && role == process.role,
+                        && role == self.role,
                     "project owner identity mismatch"
                 );
-                process.identity = Some(identity);
+                self.identity = Some(identity);
             }
             _ => anyhow::bail!("project owner failed initialization"),
         }
-        Ok(process)
+        Ok(())
     }
 
     fn grant(&mut self) -> Result<ControlResponse> {
@@ -429,12 +597,12 @@ impl ChildWorker {
             "native read worker is retiring"
         );
         self.require_catalog_ready()?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::Grant {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::Grant {
                 caller: local_ipc::caller_identity()?,
-            },
-        )?;
+            })?;
         let reply = self
             .output
             .recv_timeout(Duration::from_secs(3))
@@ -472,15 +640,15 @@ impl ChildWorker {
             pool.as_ref().is_some_and(|access| access.in_process),
         )?;
         let pool_pending = helper_pending && !self.derived && pool_binding.is_none();
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::Activate {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::Activate {
                 identity,
                 allowance,
                 pool: pool.map(Box::new),
                 pool_pending,
-            },
-        )?;
+            })?;
         ensure!(
             matches!(
                 self.output.recv_timeout(Duration::from_secs(10))?,
@@ -504,9 +672,8 @@ impl ChildWorker {
             pool_binding,
             pool.as_ref().is_some_and(|access| access.in_process),
         )?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::ConfigurePool {
+        self.input.as_mut().context("project input missing")?.send(
+            WorkerCommand::ConfigurePool {
                 identity: self.identity.context("project identity missing")?,
                 pool: pool.map(Box::new),
                 pool_pending,
@@ -592,13 +759,13 @@ impl ChildWorker {
         );
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::RunJob {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::RunJob {
                 identity,
                 allowance,
-            },
-        )?;
+            })?;
         ensure!(
             matches!(
                 self.output.recv_timeout(Duration::from_secs(3))?,
@@ -616,15 +783,15 @@ impl ChildWorker {
     ) -> Result<protocol::WorkObservation> {
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::WorkStatus {
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::WorkStatus {
                 identity,
                 control,
                 keep_for_maintenance,
                 freshness: freshness.map(Box::new),
-            },
-        )?;
+            })?;
         let Reply::WorkStatus { observation } = self.output.recv_timeout(Duration::from_secs(3))?
         else {
             anyhow::bail!("project work status failed")
@@ -643,10 +810,10 @@ impl ChildWorker {
     fn renew(&mut self) -> Result<()> {
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::Renew { identity },
-        )?;
+        self.input
+            .as_mut()
+            .context("project input missing")?
+            .send(WorkerCommand::Renew { identity })?;
         ensure!(
             matches!(
                 self.output.recv_timeout(Duration::from_secs(3))?,
@@ -660,9 +827,8 @@ impl ChildWorker {
     fn configure_queries(&mut self, concurrency: usize) -> Result<()> {
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
-        service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::ConfigureQueries {
+        self.input.as_mut().context("project input missing")?.send(
+            WorkerCommand::ConfigureQueries {
                 identity,
                 concurrency,
             },
@@ -812,17 +978,15 @@ fn checkpoint_workers(
         let identity = worker
             .identity
             .context("checkpoint worker identity missing")?;
-        service_ipc::write_frame(
-            worker
-                .input
-                .as_mut()
-                .context("checkpoint worker input missing")?,
-            &WorkerCommand::Checkpoint {
+        worker
+            .input
+            .as_mut()
+            .context("checkpoint worker input missing")?
+            .send(WorkerCommand::Checkpoint {
                 identity,
                 operation_id,
                 seal,
-            },
-        )?;
+            })?;
         let Reply::Checkpoint { observation } = worker
             .output
             .recv_timeout(until.saturating_duration_since(Instant::now()))?
@@ -1559,7 +1723,8 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                     #[cfg(windows)]
                     let provider_rss = pool.as_ref().map(Pool::descendant_rss).transpose().ok().map(Option::unwrap_or_default);
                     let observations = std::iter::once(std::process::id())
-                        .chain(workers.values().map(|worker| worker.child.id()))
+                        // An in-process owner is part of the service's own resident set.
+                        .chain(workers.values().filter_map(|worker| worker.child.id()))
                         .chain(pool.as_ref().and_then(crate::service_inference::process_id))
                         .chain(
                             std::iter::once(source_pid.load(std::sync::atomic::Ordering::Acquire))

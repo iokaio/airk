@@ -693,43 +693,43 @@ fn accepted_vectors_checkpoint_phase(mut fixture: NativeFixture) -> Result<()> {
         "held compute crossed worker"
     );
     let operation = new_instance_id()?;
-    let observe = |fixture: &mut NativeFixture,
-                   project,
-                   seal|
-     -> Result<protocol::WorkerCheckpointObservation> {
-        let mut owner = fixture.control.owner.borrow_mut();
-        let worker = owner
-            .workers
-            .get_mut(&project)
-            .context("checkpoint worker absent")?;
-        let identity = worker
-            .identity
-            .context("checkpoint worker identity absent")?;
-        service_ipc::write_frame(
-            worker.input.as_mut().context("worker input closed")?,
-            &WorkerCommand::Checkpoint {
-                identity,
-                operation_id: operation,
-                seal,
-            },
-        )?;
-        let Reply::Checkpoint { observation } =
-            worker.output.recv_timeout(Duration::from_secs(5))?
-        else {
-            anyhow::bail!("native worker checkpoint response missing")
+    let observe =
+        |fixture: &mut NativeFixture,
+         project,
+         seal|
+         -> Result<protocol::WorkerCheckpointObservation> {
+            let mut owner = fixture.control.owner.borrow_mut();
+            let worker = owner
+                .workers
+                .get_mut(&project)
+                .context("checkpoint worker absent")?;
+            let identity = worker
+                .identity
+                .context("checkpoint worker identity absent")?;
+            worker.input.as_mut().context("worker input closed")?.send(
+                WorkerCommand::Checkpoint {
+                    identity,
+                    operation_id: operation,
+                    seal,
+                },
+            )?;
+            let Reply::Checkpoint { observation } =
+                worker.output.recv_timeout(Duration::from_secs(5))?
+            else {
+                anyhow::bail!("native worker checkpoint response missing")
+            };
+            ensure!(
+                observation.schema == 1
+                    && observation.identity == identity
+                    && observation.operation_id == operation
+                    && observation.admission_closed
+                    && observation.engine_sha256
+                        == crate::runtime_pair::engine_identity_at(&fixture.main)?,
+                "crossed native worker checkpoint response: {}",
+                serde_json::to_string(&observation)?
+            );
+            Ok(observation)
         };
-        ensure!(
-            observation.schema == 1
-                && observation.identity == identity
-                && observation.operation_id == operation
-                && observation.admission_closed
-                && observation.engine_sha256
-                    == crate::runtime_pair::engine_identity_at(&fixture.main)?,
-            "crossed native worker checkpoint response: {}",
-            serde_json::to_string(&observation)?
-        );
-        Ok(observation)
-    };
     let pending = observe(&mut fixture, project, false)?;
     ensure!(
         !pending.durable_boundary

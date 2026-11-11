@@ -845,10 +845,12 @@ impl ChildWorker {
             gate: gate.clone(),
             expected,
         });
-        if let Err(error) = service_ipc::write_frame(
-            self.input.as_mut().context("project input missing")?,
-            &command,
-        ) {
+        if let Err(error) = self
+            .input
+            .as_mut()
+            .context("project input missing")?
+            .send(command)
+        {
             self.catalog_quarantined = true;
             return Err(error.into());
         }

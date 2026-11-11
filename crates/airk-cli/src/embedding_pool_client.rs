@@ -485,19 +485,56 @@ impl Connector for HubConnector {
     }
 }
 static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
+
+/// One project owner's helper authority. A child-process owner installs it
+/// for the whole process; an in-process owner keeps its own handle and binds
+/// its connector only on that owner's threads.
+#[derive(Clone)]
+pub(crate) struct PoolHandle(Arc<Hub>);
+impl PoolHandle {
+    pub(crate) fn new(
+        runtime: &Path,
+        identity: airk_core::service::WorkerIdentity,
+        access: Option<protocol::Access>,
+        pending: bool,
+    ) -> Result<Self> {
+        let hub = Arc::new(Hub::new(runtime, identity)?);
+        hub.update_pending(access, pending)?;
+        Ok(Self(hub))
+    }
+    pub(crate) fn connector(&self) -> Arc<dyn Connector> {
+        Arc::new(HubConnector(self.0.clone()))
+    }
+    /// The child-process installation: exactly once per process.
+    pub(crate) fn install_process(&self) -> Result<()> {
+        ensure!(
+            HUB.set(self.0.clone()).is_ok(),
+            "pool connector already installed"
+        );
+        embedding_worker::install_connector(self.connector())
+    }
+    pub(crate) fn update(&self, access: Option<protocol::Access>) -> Result<()> {
+        self.0.update(access)
+    }
+    pub(crate) fn update_pending(
+        &self,
+        access: Option<protocol::Access>,
+        pending: bool,
+    ) -> Result<()> {
+        self.0.update_pending(access, pending)
+    }
+    pub(crate) fn close(&self) {
+        self.0.close();
+    }
+}
+
 pub fn install(
     runtime: &Path,
     identity: airk_core::service::WorkerIdentity,
     access: Option<protocol::Access>,
     pending: bool,
 ) -> Result<()> {
-    let hub = Arc::new(Hub::new(runtime, identity)?);
-    hub.update_pending(access, pending)?;
-    ensure!(
-        HUB.set(hub.clone()).is_ok(),
-        "pool connector already installed"
-    );
-    embedding_worker::install_connector(Arc::new(HubConnector(hub)))
+    PoolHandle::new(runtime, identity, access, pending)?.install_process()
 }
 pub fn update(access: Option<protocol::Access>) -> Result<()> {
     HUB.get()

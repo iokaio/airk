@@ -42,9 +42,13 @@ fn exit_capacity_refusal_retains_child_and_closes_all_fresh_admission() -> Resul
         catalog_pending: None,
         catalog_quarantined: false,
         derived: false,
-        _containment: containment,
-        input: child.stdin.take(),
-        child,
+        _containment: Some(containment),
+        scope: None,
+        input: child
+            .stdin
+            .take()
+            .map(|input| Box::new(StreamFrames(input)) as Box<dyn FrameSink<WorkerCommand>>),
+        child: WorkerHost::Child(child),
         output: receiver,
         reader: None,
         stderr: None,

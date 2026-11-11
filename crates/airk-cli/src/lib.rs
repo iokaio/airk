@@ -46,6 +46,9 @@ mod service_management;
 pub mod service_registration;
 pub mod service_runtime;
 pub mod standalone_setup;
+mod worker_host;
+mod worker_scope;
+mod worker_transport;
 
 pub mod bundled_assets;
 pub mod derived_worker;

@@ -134,6 +134,7 @@ impl ScanLimits {
 mod documents;
 pub mod inventory;
 pub mod ocr;
+pub mod pdf_slot;
 pub mod pdf_worker;
 mod prose;
 mod provider_process;

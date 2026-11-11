@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One bounded watcher child, metadata-only delivery, and independent cached observations.
+//! One bounded in-process watcher, metadata-only delivery, and independent cached observations.
 use crate::{
-    native_process, service_ipc,
     source_protocol::{self as protocol, Command, Reply},
+    worker_host::{OwnerThread, StopStep, WorkerHost},
+    worker_transport::{FrameSink, FrameSource},
 };
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
@@ -18,7 +19,6 @@ use anyhow::{Context, Result, ensure};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    process::{Child, Command as ProcessCommand, Stdio},
     sync::{
         Arc, Condvar, Mutex, Weak,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -106,13 +106,20 @@ struct WatchReport {
     traversal: Option<WatchTraversal>,
 }
 enum Outgoing {
-    Initialize(protocol::Init),
     Commands(Vec<Command>),
 }
 
+/// In-process watcher control frames queue like bytes in a child's pipes.
+const WATCH_FRAMES: usize = 64;
+/// After the existing 5-second stop period, the watcher's further time to
+/// leave its loop; it has no native call that blocks longer than a turn.
+const WATCH_DRAIN: Duration = Duration::from_secs(20);
+
+/// The one source watcher, on its own service thread. Its memory is bounded by
+/// its validated directory, project and pending-event limits and is observed as
+/// part of the service's resident set; it has no process of its own to kill.
 struct WatchChild {
-    process: Child,
-    _containment: crate::child_job::ChildJob,
+    process: WorkerHost,
     worker: Incarnation,
     sender: Option<SyncSender<Outgoing>>,
     writer: Option<std::thread::JoinHandle<()>>,
@@ -123,22 +130,39 @@ struct WatchChild {
 }
 impl Drop for WatchChild {
     fn drop(&mut self) {
+        // Closing the command carrier is the watcher's stop request.
         self.sender.take();
-        let until = Instant::now() + Duration::from_secs(5);
+        let requested = Instant::now();
+        let mut drain_requested = false;
         loop {
             match self.process.try_wait() {
                 Ok(Some(_)) => break,
                 Err(_) => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) => {
-                    let _ = self.process.kill();
-                    let _ = self.process.wait();
-                    break;
-                }
+                Ok(None) => match crate::worker_host::stop_step(
+                    self.process.in_process(),
+                    requested,
+                    Instant::now(),
+                    Duration::from_secs(5),
+                    WATCH_DRAIN,
+                    drain_requested,
+                ) {
+                    StopStep::Wait => std::thread::sleep(Duration::from_millis(25)),
+                    StopStep::Kill => {
+                        if let Some(child) = self.process.child_mut() {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                        break;
+                    }
+                    // The closed carrier already asks the loop to return.
+                    StopStep::Drain => drain_requested = true,
+                    StopStep::ExitService => {
+                        crate::worker_host::exit_service_for_stuck_owner("source watcher")
+                    }
+                },
             }
         }
-        self._containment.drain();
-        // Killing owned descendants also releases inherited pipe endpoints.
+        // The watcher returned, so both carriers are closed.
         if let Some(writer) = self.writer.take() {
             let _ = writer.join();
         }
@@ -148,29 +172,228 @@ impl Drop for WatchChild {
         self.pid.store(0, Ordering::Release);
     }
 }
+/// Validate and record one watcher's replies until its carrier closes.
+fn observe_replies(
+    mut output: Box<dyn FrameSource<Reply>>,
+    observed: &Mutex<Replies>,
+    ready: &SyncSender<Reply>,
+    service: Incarnation,
+    worker: Incarnation,
+) {
+    while let Ok(Some(reply)) = output.recv() {
+        match reply {
+            Reply::Checkpoint {
+                service: reply_service,
+                worker: reply_worker,
+                operation_id,
+                targets,
+            } => {
+                if reply_service != service || reply_worker != worker || targets.len() > 1024 {
+                    break;
+                }
+                let mut projects = BTreeSet::new();
+                if targets.iter().any(|target| {
+                    target.sequence == 0
+                        || target.sequence > i64::MAX as u64
+                        || !projects.insert(target.project)
+                }) {
+                    break;
+                }
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                if observed.checkpoint.is_some() {
+                    break;
+                }
+                observed.checkpoint = Some(checkpoint::Barrier {
+                    operation_id,
+                    targets,
+                });
+            }
+            Reply::PolicyFenced {
+                service: reply_service,
+                worker: reply_worker,
+                project,
+                operation_id,
+                nonce,
+            }
+            | Reply::PolicyReleased {
+                service: reply_service,
+                worker: reply_worker,
+                project,
+                operation_id,
+                nonce,
+            } => {
+                if reply_service != service || reply_worker != worker {
+                    break;
+                }
+                let released = matches!(reply, Reply::PolicyReleased { .. });
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                if !observed.policy_acks.contains_key(&project)
+                    && observed.policy_acks.len() >= 1024
+                {
+                    break;
+                }
+                observed
+                    .policy_acks
+                    .insert(project, (operation_id, nonce, released));
+                observed.pulse = Some(Instant::now());
+            }
+            Reply::Ready { .. } | Reply::Activated => {
+                if ready.try_send(reply).is_err() {
+                    break;
+                }
+            }
+            Reply::Pulse {
+                watched_directories,
+                projects,
+                pending_events,
+            } => {
+                if !protocol::valid_pulse(watched_directories, projects, pending_events) {
+                    break;
+                }
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                observed.pulse = Some(Instant::now());
+                observed.directories = Some(watched_directories);
+                observed.projects = Some(projects);
+                observed.pending = Some(pending_events);
+            }
+            Reply::RemovalResult {
+                project,
+                complete,
+                failed,
+            } => {
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                if !observed.removal_results.contains_key(&project)
+                    && observed.removal_results.len() >= 1024
+                {
+                    break;
+                }
+                observed.removal_results.insert(project, (complete, failed));
+                // Queued cleanup batches can delay the periodic
+                // pulse; each valid result also proves liveness.
+                observed.pulse = Some(Instant::now());
+            }
+            Reply::MissingSource {
+                project,
+                registration_epoch,
+                configuration_epoch,
+            } => {
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                if !observed.missing.contains_key(&project) && observed.missing.len() >= 1024 {
+                    break;
+                }
+                observed
+                    .missing
+                    .insert(project, (registration_epoch, configuration_epoch));
+            }
+            Reply::Observation {
+                project,
+                configuration_epoch,
+                native_roots,
+                backend,
+                failure,
+                traversal,
+            } => {
+                if native_roots > 17
+                    || traversal
+                        .as_ref()
+                        .is_some_and(|value| value.validate().is_err())
+                {
+                    break;
+                }
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                if !observed.observations.contains_key(&project)
+                    && observed.observations.len() >= 1024
+                {
+                    break;
+                }
+                if observed
+                    .observations
+                    .get(&project)
+                    .is_none_or(|report| report.epoch <= configuration_epoch)
+                {
+                    observed.observations.insert(
+                        project,
+                        WatchReport {
+                            epoch: configuration_epoch,
+                            native: native_roots,
+                            backend,
+                            failure,
+                            traversal,
+                        },
+                    );
+                }
+            }
+            Reply::Event {
+                project,
+                configuration_epoch,
+                sequence,
+            } => {
+                if sequence == 0 || sequence > i64::MAX as u64 {
+                    break;
+                }
+                let Ok(mut observed) = observed.lock() else {
+                    break;
+                };
+                if !observed.events.contains_key(&project) && observed.events.len() >= 1024 {
+                    break;
+                }
+                if observed.events.get(&project).is_none_or(|(epoch, seq)| {
+                    *epoch < configuration_epoch
+                        || (*epoch == configuration_epoch && *seq <= sequence)
+                }) {
+                    observed
+                        .events
+                        .insert(project, (configuration_epoch, sequence));
+                }
+            }
+        }
+    }
+    if let Ok(mut observed) = observed.lock() {
+        observed.alive = false;
+    }
+}
+
 impl WatchChild {
     fn start(root: &Path, service: Incarnation, pid: Arc<AtomicU32>) -> Result<Self> {
         // Unknown predecessor capacity stays reserved until its OS lease releases.
         drop(SourceWatchLease::acquire(root)?);
         let worker = new_instance_id()?;
-        let mut command = ProcessCommand::new(crate::process_roles::executable(
-            &std::env::current_exe()?,
-            crate::process_roles::Role::Source,
-        )?);
-        command
-            .arg("source-worker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let mut process = native_process::spawn(&mut command)?;
-        let containment = crate::child_job::ChildJob::attach(&mut process)?;
-        let mut input = process.stdin.take().context("watcher input missing")?;
-        let mut output = process.stdout.take().context("watcher output missing")?;
+        let (mut input, commands) = crate::worker_transport::channel::<Command>(WATCH_FRAMES);
+        let (outbound, output) = crate::worker_transport::channel::<Reply>(WATCH_FRAMES);
+        let init = protocol::Init {
+            protocol: PROTOCOL_VERSION,
+            version: env!("CARGO_PKG_VERSION").into(),
+            runtime: root.into(),
+            service,
+            worker,
+        };
+        let process = WorkerHost::Thread(OwnerThread::new(
+            std::thread::Builder::new()
+                .name("airk-source-watch".into())
+                .spawn(move || {
+                    crate::source_worker::serve(
+                        init,
+                        Box::new(commands),
+                        Box::new(outbound),
+                        crate::worker_scope::Residency::Service(
+                            crate::worker_scope::WorkerScope::new(),
+                        ),
+                    )
+                })
+                .context("start source watcher")?,
+        ));
         let replies = Arc::new(Mutex::new(Replies {
             alive: true,
             ..Replies::default()
@@ -179,7 +402,6 @@ impl WatchChild {
         let (ready, handshake) = mpsc::sync_channel(2);
         let mut child = Self {
             process,
-            _containment: containment,
             worker,
             sender: None,
             writer: None,
@@ -188,205 +410,15 @@ impl WatchChild {
             started: Instant::now(),
             pid,
         };
-        child.pid.store(child.process.id(), Ordering::Release);
+        // Only a separate watcher process has resident memory of its own.
+        child
+            .pid
+            .store(child.process.id().unwrap_or(0), Ordering::Release);
         child.reader = Some(
             std::thread::Builder::new()
                 .name("airk-watch-replies".into())
                 .spawn(move || {
-                    while let Ok(Some(reply)) = service_ipc::read_frame::<_, Reply>(&mut output) {
-                        match reply {
-                            Reply::Checkpoint {
-                                service: reply_service,
-                                worker: reply_worker,
-                                operation_id,
-                                targets,
-                            } => {
-                                if reply_service != service
-                                    || reply_worker != worker
-                                    || targets.len() > 1024
-                                {
-                                    break;
-                                }
-                                let mut projects = BTreeSet::new();
-                                if targets.iter().any(|target| {
-                                    target.sequence == 0
-                                        || target.sequence > i64::MAX as u64
-                                        || !projects.insert(target.project)
-                                }) {
-                                    break;
-                                }
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                if observed.checkpoint.is_some() {
-                                    break;
-                                }
-                                observed.checkpoint = Some(checkpoint::Barrier {
-                                    operation_id,
-                                    targets,
-                                });
-                            }
-                            Reply::PolicyFenced {
-                                service: reply_service,
-                                worker: reply_worker,
-                                project,
-                                operation_id,
-                                nonce,
-                            }
-                            | Reply::PolicyReleased {
-                                service: reply_service,
-                                worker: reply_worker,
-                                project,
-                                operation_id,
-                                nonce,
-                            } => {
-                                if reply_service != service || reply_worker != worker {
-                                    break;
-                                }
-                                let released = matches!(reply, Reply::PolicyReleased { .. });
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                if !observed.policy_acks.contains_key(&project)
-                                    && observed.policy_acks.len() >= 1024
-                                {
-                                    break;
-                                }
-                                observed
-                                    .policy_acks
-                                    .insert(project, (operation_id, nonce, released));
-                                observed.pulse = Some(Instant::now());
-                            }
-                            Reply::Ready { .. } | Reply::Activated => {
-                                if ready.try_send(reply).is_err() {
-                                    break;
-                                }
-                            }
-                            Reply::Pulse {
-                                watched_directories,
-                                projects,
-                                pending_events,
-                            } => {
-                                if !protocol::valid_pulse(
-                                    watched_directories,
-                                    projects,
-                                    pending_events,
-                                ) {
-                                    break;
-                                }
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                observed.pulse = Some(Instant::now());
-                                observed.directories = Some(watched_directories);
-                                observed.projects = Some(projects);
-                                observed.pending = Some(pending_events);
-                            }
-                            Reply::RemovalResult {
-                                project,
-                                complete,
-                                failed,
-                            } => {
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                if !observed.removal_results.contains_key(&project)
-                                    && observed.removal_results.len() >= 1024
-                                {
-                                    break;
-                                }
-                                observed.removal_results.insert(project, (complete, failed));
-                                // Queued cleanup batches can delay the periodic
-                                // pulse; each valid result also proves liveness.
-                                observed.pulse = Some(Instant::now());
-                            }
-                            Reply::MissingSource {
-                                project,
-                                registration_epoch,
-                                configuration_epoch,
-                            } => {
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                if !observed.missing.contains_key(&project)
-                                    && observed.missing.len() >= 1024
-                                {
-                                    break;
-                                }
-                                observed
-                                    .missing
-                                    .insert(project, (registration_epoch, configuration_epoch));
-                            }
-                            Reply::Observation {
-                                project,
-                                configuration_epoch,
-                                native_roots,
-                                backend,
-                                failure,
-                                traversal,
-                            } => {
-                                if native_roots > 17
-                                    || traversal
-                                        .as_ref()
-                                        .is_some_and(|value| value.validate().is_err())
-                                {
-                                    break;
-                                }
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                if !observed.observations.contains_key(&project)
-                                    && observed.observations.len() >= 1024
-                                {
-                                    break;
-                                }
-                                if observed
-                                    .observations
-                                    .get(&project)
-                                    .is_none_or(|report| report.epoch <= configuration_epoch)
-                                {
-                                    observed.observations.insert(
-                                        project,
-                                        WatchReport {
-                                            epoch: configuration_epoch,
-                                            native: native_roots,
-                                            backend,
-                                            failure,
-                                            traversal,
-                                        },
-                                    );
-                                }
-                            }
-                            Reply::Event {
-                                project,
-                                configuration_epoch,
-                                sequence,
-                            } => {
-                                if sequence == 0 || sequence > i64::MAX as u64 {
-                                    break;
-                                }
-                                let Ok(mut observed) = observed.lock() else {
-                                    break;
-                                };
-                                if !observed.events.contains_key(&project)
-                                    && observed.events.len() >= 1024
-                                {
-                                    break;
-                                }
-                                if observed.events.get(&project).is_none_or(|(epoch, seq)| {
-                                    *epoch < configuration_epoch
-                                        || (*epoch == configuration_epoch && *seq <= sequence)
-                                }) {
-                                    observed
-                                        .events
-                                        .insert(project, (configuration_epoch, sequence));
-                                }
-                            }
-                        }
-                    }
-                    if let Ok(mut observed) = observed.lock() {
-                        observed.alive = false;
-                    }
+                    observe_replies(Box::new(output), &observed, &ready, service, worker)
                 })?,
         );
         let (sender, receiver) = mpsc::sync_channel::<Outgoing>(8);
@@ -396,14 +428,9 @@ impl WatchChild {
                 .spawn(move || {
                     while let Ok(batch) = receiver.recv() {
                         match batch {
-                            Outgoing::Initialize(init) => {
-                                if service_ipc::write_frame(&mut input, &init).is_err() {
-                                    return;
-                                }
-                            }
                             Outgoing::Commands(commands) => {
                                 for command in commands {
-                                    if service_ipc::write_frame(&mut input, &command).is_err() {
+                                    if input.send(command).is_err() {
                                         return;
                                     }
                                 }
@@ -413,17 +440,7 @@ impl WatchChild {
                 })?,
         );
         child.sender = Some(sender);
-        child
-            .sender
-            .as_ref()
-            .unwrap()
-            .try_send(Outgoing::Initialize(protocol::Init {
-                protocol: PROTOCOL_VERSION,
-                version: env!("CARGO_PKG_VERSION").into(),
-                runtime: root.into(),
-                service,
-                worker,
-            }))?;
+        // The watcher already holds its Init; its first reply is Ready.
         ensure!(
             matches!(handshake.recv_timeout(Duration::from_secs(10))?,Reply::Ready {service:ready_service,worker:ready_worker} if ready_service==service && ready_worker==worker),
             "watcher owner identity mismatch"
@@ -437,6 +454,10 @@ impl WatchChild {
             "watcher activation failed"
         );
         Ok(child)
+    }
+    /// The process that runs the watcher: the service itself when in process.
+    fn host_process_id(&self) -> u32 {
+        self.process.id().unwrap_or_else(std::process::id)
     }
     fn send(&self, commands: Vec<Command>) -> Result<()> {
         ensure!(
@@ -878,7 +899,10 @@ impl SourceSupervisor {
                                     || replies.pulse.unwrap_or(child.started).elapsed()
                                         > Duration::from_secs(15)
                             })
-                            || airk_kernel::service_resource_observations::rss(child.process.id())
+                            || child
+                                .process
+                                .id()
+                                .and_then(airk_kernel::service_resource_observations::rss)
                                 .is_some_and(|bytes| {
                                     bytes > airk_kernel::source_watch::memory_allowance()
                                 })
@@ -1099,7 +1123,7 @@ impl SourceSupervisor {
                                             && Instant::now() >= retry
                                             && let Ok(active) = WatchChild::start(&root, service, pid.clone())
                                         {
-                                            pid.store(active.process.id(), Ordering::Release);
+                                            pid.store(active.process.id().unwrap_or(0), Ordering::Release);
                                             child = Some(active);
                                             sent.clear();
                                         }
@@ -1161,7 +1185,7 @@ impl SourceSupervisor {
                                     {
                                         match WatchChild::start(&root, service, pid.clone()) {
                                             Ok(active) => {
-                                                pid.store(active.process.id(), Ordering::Release);
+                                                pid.store(active.process.id().unwrap_or(0), Ordering::Release);
                                                 child = Some(active);
                                                 sent.clear();
                                             }
@@ -1243,7 +1267,7 @@ impl SourceSupervisor {
                                 && replies
                                     .pulse
                                     .is_some_and(|pulse| pulse.elapsed() < Duration::from_secs(15));
-                            cache.process_id = Some(active.process.id());
+                            cache.process_id = Some(active.host_process_id());
                             cache.directories = replies.directories;
                             cache.projects = replies.projects;
                             cache.pending = replies.pending;

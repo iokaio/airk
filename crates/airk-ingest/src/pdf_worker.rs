@@ -34,12 +34,13 @@ pub fn dispatch() -> Result<bool> {
 pub(crate) fn extract(bytes: &[u8]) -> Result<Vec<String>> {
     extract_inner(bytes).map_err(|error| {
         if error.chain().any(|cause| {
-            cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
-                matches!(
-                    io.kind(),
-                    std::io::ErrorKind::StorageFull | std::io::ErrorKind::OutOfMemory
-                )
-            })
+            cause.is::<crate::pdf_slot::PdfSlotBusy>()
+                || cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                    matches!(
+                        io.kind(),
+                        std::io::ErrorKind::StorageFull | std::io::ErrorKind::OutOfMemory
+                    )
+                })
         }) {
             error.context(CapacityFailure)
         } else {
@@ -79,8 +80,21 @@ fn extract_inner(bytes: &[u8]) -> Result<Vec<String>> {
         args,
         timeout_ms: 15_000,
     };
-    crate::provider_process::run_limited(&spec, directory.path(), &[], 65_536, Some(LIMITS))
-        .context("isolated PDF extraction failed or exceeded its resource budget")?;
+    {
+        // One live parser per process (the whole service). The slot is held
+        // until run_limited returned, after the parser's job or process group
+        // was closed and the child reaped; a waiter observes interruption.
+        let interruption = crate::pdf_slot::current_interruption();
+        let _slot = crate::pdf_slot::process_slot().acquire(
+            &crate::pdf_slot::SystemClock,
+            crate::pdf_slot::SLOT_WAIT,
+            &|| interruption.as_ref().is_some_and(|probe| probe()),
+        )?;
+        #[cfg(test)]
+        let _live = tests::LiveParser::enter();
+        crate::provider_process::run_limited(&spec, directory.path(), &[], 65_536, Some(LIMITS))
+            .context("isolated PDF extraction failed or exceeded its resource budget")?;
+    }
     let output = crate::provider_process::read_capped(
         File::open(directory.path().join("output.json"))?,
         MAX_OUTPUT,
@@ -257,10 +271,75 @@ fn ensure_output_capacity(requested: usize, remaining: usize) -> std::io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+    /// Counts parsers between admission and reaped exit.
+    pub(super) struct LiveParser;
+    impl LiveParser {
+        pub(super) fn enter() -> Self {
+            let now = LIVE.fetch_add(1, Ordering::SeqCst) + 1;
+            PEAK.fetch_max(now, Ordering::SeqCst);
+            Self
+        }
+    }
+    impl Drop for LiveParser {
+        fn drop(&mut self) {
+            LIVE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
     #[test]
     #[ignore = "invoked only by isolated PDF tests"]
     fn worker_fixture() -> Result<()> {
         worker()
+    }
+
+    #[test]
+    fn concurrent_documents_run_one_reaped_parser_at_a_time() -> Result<()> {
+        // Two and then four concurrent extractions, each with a real parser
+        // child that refuses its document and exits.
+        for documents in [2, 4] {
+            PEAK.store(0, Ordering::SeqCst);
+            let failures = std::thread::scope(|threads| {
+                let handles = (0..documents)
+                    .map(|_| threads.spawn(|| extract(b"%PDF-1.4\nmalformed")))
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("extraction panicked"))
+                    .collect::<Vec<_>>()
+            });
+            for failure in failures {
+                let error = failure.unwrap_err();
+                assert!(
+                    error.to_string().contains("PDF extraction refused"),
+                    "{error:#}"
+                );
+            }
+            assert_eq!(PEAK.load(Ordering::SeqCst), 1);
+        }
+        // Every failed parse released the slot.
+        drop(crate::pdf_slot::process_slot().acquire(
+            &crate::pdf_slot::SystemClock,
+            std::time::Duration::ZERO,
+            &|| false,
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn interrupted_work_never_starts_a_parser() {
+        let error = crate::pdf_slot::with_interruption(std::sync::Arc::new(|| true), || {
+            extract(b"%PDF-1.4\nmalformed").unwrap_err()
+        });
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.is::<crate::pdf_slot::PdfSlotInterrupted>()),
+            "{error:#}"
+        );
     }
 
     #[test]

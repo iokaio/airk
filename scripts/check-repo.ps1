@@ -35,6 +35,9 @@ try {
             }
         }
     }
+    # One resident airk per user/machine: no production self-spawn outside the reviewed roster.
+    & python (Join-Path $PSScriptRoot 'check-self-spawn.py')
+    if ($LASTEXITCODE -ne 0) { throw 'Production Rust starts its own executable outside the reviewed roster' }
     git check-ignore temp/README.md | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'temp/ is not ignored' }
     Write-Output "Repository checks passed for $($airkFiles.Count) public files."
