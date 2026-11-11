@@ -6,7 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {LaunchSpec,launchArgs} from '../model';
-import {runText} from '../native';
+import {runText,NativeProcessError} from '../native';
 import {McpStdioSession} from '../mcpStdioSession';
 import {boundedReply,readNative} from './nativeReadRetry';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
@@ -56,10 +56,29 @@ export function publishedStatusPending(status:RecordValue,collection:string,proj
     return true;
 }
 
+export interface NativeTestFailure {error:unknown;context?:RecordValue}
+/** Test diagnostics preserve the original error and actual captured native reply. */
+export function nativeFailureDetail(error:unknown):RecordValue {
+    if(error instanceof AggregateError)return {name:error.name,message:error.message,
+        errors:Array.from(error.errors).slice(0,16).map(nativeFailureDetail),
+        omitted_errors:Math.max(0,error.errors.length-16)};
+    const value=error as {nativeStdout?:string;nativeStderr?:string;nativeResponse?:unknown;detail?:unknown}|null;
+    return {name:error instanceof Error?error.name:typeof error,message:String(error).slice(0,8192),
+        ...(error instanceof Error?{stack:error.stack?.slice(0,8192)}:{}),
+        ...(error instanceof NativeProcessError?{code:error.code,signal:error.signal,killed:error.killed,
+            timedOut:error.timedOut,elapsedMs:error.elapsedMs,timeoutMs:error.timeoutMs}:{}),
+        ...(typeof value?.nativeStdout==='string'?{stdout:value.nativeStdout,stderr:value.nativeStderr,
+            stdio_capture_limit_bytes:16*1024*1024,stdio_maybe_truncated:
+                error instanceof NativeProcessError&&error.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'}:{}),
+        ...(value?.nativeResponse!==undefined?{nativeResponse:value.nativeResponse}:{}),
+        ...(value?.detail!==undefined?{detail:value.detail}:{})};
+}
+
 export class NativeServiceFixture {
     client?:ServiceClient;
     control='';launcher='';
     private retained=false;
+    private lastPhase:RecordValue={phase:'fixture_setup'};
     private constructor(readonly binary:string,readonly owner:string,readonly install:string){}
     static async create(binary:string,mode:'managed'|'owned'='managed'):Promise<NativeServiceFixture>{
         const owner=await fs.realpath(await fs.mkdtemp(path.join(process.env.AIRK_PRIVATE_CENSUS_BASE??os.tmpdir(),'airk-native-')));
@@ -93,6 +112,7 @@ export class NativeServiceFixture {
     }
     async run(args:string[],timeout=120000,input?:string):Promise<RecordValue>{
         const phase=args[0]==='runtime'?`runtime ${args[1]}`:args.includes('prepare-registration')?'prepare-registration':'prepare-storage';
+        this.lastPhase={phase};
         process.stderr.write(`[native fixture] ${phase}\n`);
         try{return record(JSON.parse(await runText(this.binary,args,path.dirname(this.binary),timeout,undefined,undefined,input)));}
         catch(error){process.stderr.write(`[native fixture] ${phase} failed: ${String(error)}\n`);throw error;}
@@ -135,6 +155,7 @@ export class NativeServiceFixture {
             service:{installDir:this.install,project:String(registration.binding)}};
     }
     async tool(spec:LaunchSpec,name:string,args:RecordValue={},deadline?:number):Promise<RecordValue>{
+        this.lastPhase={phase:'tool',tool:name};
         process.stderr.write(`[native fixture] tool ${name}\n`);
         const envelope=record(await readNative(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
             JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command),deadline));
@@ -222,10 +243,9 @@ export class NativeServiceFixture {
         await this.client!.rpc({plan_execute:{id,preview:reviewed.preview_digest,allow_fallback:false}},'plan');
         const completed=await wait('finished');assert.equal(completed.outcome,'succeeded',JSON.stringify(completed));return completed;
     }
-    async retainFailure(error:unknown,sessions:readonly McpStdioSession[]=[]):Promise<void>{
+    async retainFailure(error:unknown,sessions:readonly McpStdioSession[]=[],context?:RecordValue):Promise<void>{
         this.retained=true;
-        const parent=process.env.AIRK_NATIVE_DIAGNOSTIC_DIR;
-        if(!parent)return;
+        const parent=process.env.AIRK_NATIVE_DIAGNOSTIC_DIR??path.join(this.owner,'test-failure-diagnostics');
         try{
             // Reports contain only fictional fixture failures and transport
             // stderr. Never copy fixture databases, source, control or logs.
@@ -234,7 +254,7 @@ export class NativeServiceFixture {
             const disk=await fs.statfs(this.owner).catch(()=>undefined);
             const report={schema:'airk-native-test-failure/1',observed_utc:new Date().toISOString(),
                 fixture_owner:this.owner,
-                error:String(error).slice(0,8192),memory:{total_bytes:os.totalmem(),free_bytes:os.freemem()},
+                error:String(error).slice(0,8192),failure:nativeFailureDetail(error),phase:this.lastPhase,context,memory:{total_bytes:os.totalmem(),free_bytes:os.freemem()},
                 ...(error instanceof ServiceError&&error.nativeResponse?{nativeResponse:error.nativeResponse}:{}),
                 disk:disk?{available_bytes:disk.bavail*disk.bsize,total_bytes:disk.blocks*disk.bsize}:null,
                 sessions:sessions.slice(0,16).map(session=>session.diagnosticSnapshot())};
@@ -245,22 +265,35 @@ export class NativeServiceFixture {
             process.stderr.write(`[native fixture] failure report unavailable: ${String(diagnostic).slice(0,1024)}\n`);
         }
     }
-    async dispose():Promise<void>{
+    async dispose(failure?:NativeTestFailure,sessions:readonly McpStdioSession[]=[]):Promise<void>{
+        const errors:unknown[]=failure?[failure.error]:[];
         let stopped=false;
-        if(this.client){
-            const health=record((await this.client.rpc('health','health')).observation),inspection=await this.run(['runtime','inspect','--install-dir',this.install]);
-            const request={caller:randomBytes(16).toString('hex'),key:await this.client.key(),action:'stop',expected_instance:health.instance,runtime:record(inspection.selection).active,force:false};
-            const receipt=await this.run(['runtime','lifecycle','--install-dir',this.install],180000,JSON.stringify(request));
-            assert.equal(record(receipt.record).phase,'complete',JSON.stringify(receipt));
-            stopped=true;
+        try{
+            if(this.client){
+                const health=record((await this.client.rpc('health','health')).observation),inspection=await this.run(['runtime','inspect','--install-dir',this.install]);
+                const request={caller:randomBytes(16).toString('hex'),key:await this.client.key(),action:'stop',expected_instance:health.instance,runtime:record(inspection.selection).active,force:false};
+                const receipt=await this.run(['runtime','lifecycle','--install-dir',this.install],180000,JSON.stringify(request));
+                assert.equal(record(receipt.record).phase,'complete',JSON.stringify(receipt));
+                stopped=true;
+            }
+        }catch(error){errors.push(error);}
+        finally{
+            // A failed health/inspect/Stop must still close its exact console
+            // adapter. This is not evidence of native Stop or worker absence.
+            try{this.client?.transport.dispose();}catch(error){errors.push(error);}
+            this.client=undefined;
         }
-        this.client?.transport.dispose();this.client=undefined;
-        // Native uninstall authenticates and drains only this fixture's approved
-        // fixture owner. A failed drain preserves the directory for diagnosis.
-        // Fresh managed catalogs intentionally retain their reservation on
-        // detach. Complete native Stop above precedes fixture-owned deletion;
-        // this is not a claim that managed uninstall is supported.
-        if(!stopped&&await fs.stat(this.install).then(()=>true,()=>false))await this.run(['runtime','uninstall','--install-dir',this.install],180000);
+        if(!errors.length&&!stopped){
+            try{if(await fs.stat(this.install).then(()=>true,()=>false))
+                await this.run(['runtime','uninstall','--install-dir',this.install],180000);
+            }catch(error){errors.push(error);}
+        }
+        if(errors.length){
+            const error=errors.length===1?errors[0]:new AggregateError(errors,'Native test and owned cleanup failed');
+            await this.retainFailure(error,sessions,failure?.context);
+            throw error;
+        }
+        // Physical fixture disposal follows only the qualified Stop/uninstall.
         if(this.retained){process.stderr.write(`[native fixture] stopped fixture retained: ${this.owner}\n`);return;}
         const resolved=await fs.realpath(this.owner),temporary=await fs.realpath(process.env.AIRK_PRIVATE_CENSUS_BASE??os.tmpdir());
         assert.equal(path.dirname(resolved),temporary);assert.ok(path.basename(resolved).startsWith('airk-native-'));

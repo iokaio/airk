@@ -585,6 +585,49 @@ fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
     Ok(())
 }
 
+// Caller retains the actual ledger lock and positive complete-collection
+// absence proof. Inventory is read-only; no recovery of another collection.
+pub(super) fn retired_inventory(
+    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    collection: &str,
+) -> Result<Vec<(std::ffi::OsString, File)>> {
+    use crate::service::registry::catalog::setup::storage::SetupFileMode;
+    let mut selected = Vec::new();
+    let mut records = 0;
+    for (visited, entry) in directory.entries()?.enumerate() {
+        ensure!(
+            visited < MAX_RESERVATIONS * 2 + 2,
+            "excessive current quota grant state"
+        );
+        let name = entry?;
+        let text = name.to_str().context("invalid current quota grant name")?;
+        let file = directory.open_file(&name, SetupFileMode::Read)?;
+        ensure!(
+            file.metadata()?.len() <= RECORD_MAX,
+            "oversized current quota grant"
+        );
+        if text.starts_with("grant-") && text.len() <= 128 {
+            // Unpublished atomic-write scratch cannot own a transaction.
+            // Its collection is not authenticated; preserve it without deletion.
+            continue;
+        }
+        let mut bytes = Vec::new();
+        file.try_clone()?
+            .take(RECORD_MAX + 1)
+            .read_to_end(&mut bytes)?;
+        let record = decode_record(Some(&name), &bytes)?;
+        records += 1;
+        ensure!(
+            records <= MAX_RESERVATIONS,
+            "current quota grant count exhausted"
+        );
+        if record.scope.collection == collection {
+            selected.push((name, file));
+        }
+    }
+    Ok(selected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -438,6 +438,87 @@ fn put_scopes(db: &Connection, m: &Membership, grant: Option<GrantId>) -> Result
     }
     Ok(())
 }
+/// Canonical current-reference removal; frozen grant snapshots are never rewritten.
+pub(super) fn remove_membership_references(
+    db: &Connection,
+    p: &QueryProjectId,
+    i: &IndexId,
+    expected_scope_revision: &CatalogRevision,
+    expected_membership_revision: &CatalogRevision,
+) -> Result<()> {
+    changed(db.execute("UPDATE query_projects SET scope_revision=?1,defaults_revision=defaults_revision+EXISTS(SELECT 1 FROM project_default_indexes WHERE project_id=?2 AND index_id=?3) WHERE id=?2 AND scope_revision=?4 AND (defaults_revision<9223372036854775807 OR NOT EXISTS(SELECT 1 FROM project_default_indexes WHERE project_id=?2 AND index_id=?3))",params![number(expected_scope_revision.next()?),p.to_string(),i.to_string(),number(*expected_scope_revision)])?)?;
+    changed(db.execute(
+        "DELETE FROM project_index_memberships WHERE project_id=?1 AND index_id=?2 AND revision=?3",
+        params![
+            p.to_string(),
+            i.to_string(),
+            number(*expected_membership_revision)
+        ],
+    )?)?;
+    // Remove only defaults no longer backed by any selected Project.
+    let exhausted:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM index_contexts WHERE revision=9223372036854775807 AND id IN(SELECT context_id FROM context_default_indexes WHERE index_id=?1 AND NOT EXISTS(SELECT 1 FROM context_projects cp JOIN project_index_memberships m ON m.project_id=cp.project_id WHERE cp.context_id=context_default_indexes.context_id AND m.index_id=context_default_indexes.index_id)))",[i.to_string()],|row|row.get(0))?;
+    ensure!(!exhausted, "context revision exhausted");
+    db.execute("UPDATE index_contexts SET revision=revision+1 WHERE id IN(SELECT context_id FROM context_default_indexes WHERE index_id=?1 AND NOT EXISTS(SELECT 1 FROM context_projects cp JOIN project_index_memberships m ON m.project_id=cp.project_id WHERE cp.context_id=context_default_indexes.context_id AND m.index_id=context_default_indexes.index_id))",[i.to_string()])?;
+    db.execute("DELETE FROM context_default_indexes WHERE index_id=?1 AND NOT EXISTS(SELECT 1 FROM context_projects cp JOIN project_index_memberships m ON m.project_id=cp.project_id WHERE cp.context_id=context_default_indexes.context_id AND m.index_id=context_default_indexes.index_id)",[i.to_string()])?;
+    Ok(())
+}
+
+fn retirement_memberships(
+    db: &Connection,
+    index: IndexId,
+) -> Result<Vec<(QueryProjectId, CatalogRevision, CatalogRevision)>> {
+    let mut statement = db.prepare("SELECT m.project_id,m.revision,p.scope_revision FROM project_index_memberships m JOIN query_projects p ON p.id=m.project_id WHERE m.index_id=?1 ORDER BY m.project_id LIMIT 1025")?;
+    let rows = statement
+        .query_map([index.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    ensure!(
+        rows.len() <= 1024,
+        "retirement Project census exceeds bound"
+    );
+    rows.into_iter()
+        .map(|(project, member, scope)| Ok((project.parse()?, revision(member)?, revision(scope)?)))
+        .collect()
+}
+
+/// Complete current Project/default/context effect disclosure, subject to the
+/// existing whole-preview byte budget. Refuse oversize; never select a subset.
+pub(super) fn retirement_reference_targets(
+    db: &Connection,
+    index: IndexId,
+) -> Result<Vec<(CatalogKind, String)>> {
+    let mut targets = Vec::new();
+    for (project, _, _) in retirement_memberships(db, index)? {
+        targets.push((CatalogKind::Projects, project.to_string()));
+        targets.push((CatalogKind::Memberships, format!("{project}/{index}")));
+    }
+    let contexts = strings(
+        db,
+        "SELECT context_id FROM context_default_indexes WHERE index_id=?1 ORDER BY context_id LIMIT 1025",
+        &index.to_string(),
+    )?;
+    ensure!(
+        contexts.len() <= 1024,
+        "retirement context census exceeds bound"
+    );
+    for context in contexts {
+        targets.push((CatalogKind::Contexts, context));
+    }
+    Ok(targets)
+}
+
+pub(super) fn detach_retired_index_references(db: &Connection, index: IndexId) -> Result<()> {
+    for (project, member, scope) in retirement_memberships(db, index)? {
+        remove_membership_references(db, &project, &index, &scope, &member)?;
+    }
+    super::source_change::require_no_retired_references(db, index)
+}
+
 pub(super) fn mutate(
     db: &Connection,
     request: &CatalogRequest,
@@ -489,13 +570,7 @@ fn mutate_with_context(
             put_scopes(db,m,None)?;
         }
         CatalogOperation::RemoveMembership{project_id:p,index_id:i,expected_scope_revision,expected_membership_revision}=>{
-            changed(db.execute("UPDATE query_projects SET scope_revision=?1,defaults_revision=defaults_revision+EXISTS(SELECT 1 FROM project_default_indexes WHERE project_id=?2 AND index_id=?3) WHERE id=?2 AND scope_revision=?4 AND (defaults_revision<9223372036854775807 OR NOT EXISTS(SELECT 1 FROM project_default_indexes WHERE project_id=?2 AND index_id=?3))",params![number(expected_scope_revision.next()?),p.to_string(),i.to_string(),number(*expected_scope_revision)])?)?;
-            changed(db.execute("DELETE FROM project_index_memberships WHERE project_id=?1 AND index_id=?2 AND revision=?3",params![p.to_string(),i.to_string(),number(*expected_membership_revision)])?)?;
-            // Remove only defaults no longer backed by any selected Project.
-            let exhausted:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM index_contexts WHERE revision=9223372036854775807 AND id IN(SELECT context_id FROM context_default_indexes WHERE index_id=?1 AND NOT EXISTS(SELECT 1 FROM context_projects cp JOIN project_index_memberships m ON m.project_id=cp.project_id WHERE cp.context_id=context_default_indexes.context_id AND m.index_id=context_default_indexes.index_id)))",[i.to_string()],|row|row.get(0))?;
-            ensure!(!exhausted,"context revision exhausted");
-            db.execute("UPDATE index_contexts SET revision=revision+1 WHERE id IN(SELECT context_id FROM context_default_indexes WHERE index_id=?1 AND NOT EXISTS(SELECT 1 FROM context_projects cp JOIN project_index_memberships m ON m.project_id=cp.project_id WHERE cp.context_id=context_default_indexes.context_id AND m.index_id=context_default_indexes.index_id))",[i.to_string()])?;
-            db.execute("DELETE FROM context_default_indexes WHERE index_id=?1 AND NOT EXISTS(SELECT 1 FROM context_projects cp JOIN project_index_memberships m ON m.project_id=cp.project_id WHERE cp.context_id=context_default_indexes.context_id AND m.index_id=context_default_indexes.index_id)",[i.to_string()])?;
+            remove_membership_references(db,p,i,expected_scope_revision,expected_membership_revision)?;
         }
         CatalogOperation::SetProjectDefaults{project_id,expected_defaults_revision,index_ids}=>{
             changed(db.execute("UPDATE query_projects SET defaults_revision=?1 WHERE id=?2 AND defaults_revision=?3",params![number(expected_defaults_revision.next()?),project_id.to_string(),number(*expected_defaults_revision)])?)?;
@@ -599,6 +674,9 @@ fn preview_reserved(
     )?;
     let (kind, id) = target(&r.operation);
     let mut targets = vec![(kind, id)];
+    if let CatalogOperation::RetireIndex { id, .. } = &r.operation {
+        targets.extend(retirement_reference_targets(db, *id)?);
+    }
     let project = match &r.operation {
         CatalogOperation::DeleteProject { id, .. } => Some(*id),
         CatalogOperation::SetMembership { membership, .. } => Some(membership.project_id),

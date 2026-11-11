@@ -2,6 +2,7 @@
 /** Native test reads honor only explicit safe-to-repeat replies, with exact arguments. */
 import {execFile} from 'node:child_process';
 import {NativeProcessError} from '../native';
+import {requireNativeExecution} from '../nativeGate';
 import {readRetryDelay} from '../explorerEvidence';
 import {strict as assert} from 'node:assert';
 import {RecordValue} from '../serviceClient';
@@ -123,4 +124,18 @@ export async function readNative(command:string,args:readonly string[],cwd:strin
         if(result.delay===undefined||performance.now()+result.delay>=deadline)return result.envelope;
         await new Promise(resolve=>setTimeout(resolve,result.delay));
     }
+}
+
+/** One-shot test read with runText's exact process policy and complete failure streams. */
+export function capturedNativeText(command:string,args:readonly string[],cwd:string,timeout:number):Promise<string>{
+    try{requireNativeExecution();}catch(error){return Promise.reject(error);}
+    const started=performance.now();
+    return new Promise((resolve,reject)=>{
+        execFile(command,[...args],{cwd,timeout,maxBuffer:16*1024*1024,windowsHide:true,encoding:'utf8',
+            env:{...process.env,AIRK_CLIENT:'vscode',AIRK_ERROR_FORMAT:'json'}},(error,stdout,stderr)=>{
+            if(error){reject(Object.assign(new NativeProcessError(command,error,stderr,
+                Math.round(performance.now()-started),timeout),{nativeStdout:stdout,nativeStderr:stderr}));}
+            else resolve(stdout);
+        });
+    });
 }

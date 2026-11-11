@@ -454,15 +454,27 @@ fn watch_root_failure_is_conservative_idempotent_and_recovery_invalidates_native
 fn retire_missing_source_cancels_work_preserves_other_projects_and_fences_stale_reports()
 -> Result<()> {
     let owner = tempfile::tempdir()?;
-    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
-    let registration =
-        ProjectRegistration::new("/original".into(), "/derived".into(), "missing".into())?;
-    let other = ProjectRegistration::new("/other".into(), "/other-data".into(), "other".into())?;
+    let base = owner.path().canonicalize()?;
+    for name in ["control", "source", "data", "other-source", "other-data"] {
+        std::fs::create_dir(base.join(name))?;
+    }
+    let control = base.join("control");
+    let mut registry = ServiceRegistry::open(&control, nonce(1))?;
+    let registration = ProjectRegistration::new(
+        base.join("source").to_str().unwrap().into(),
+        base.join("data").to_str().unwrap().into(),
+        "missing".into(),
+    )?;
+    let other = ProjectRegistration::new(
+        base.join("other-source").to_str().unwrap().into(),
+        base.join("other-data").to_str().unwrap().into(),
+        "other".into(),
+    )?;
     let project = registration.binding;
     registry.register(&registration)?;
     registry.register(&other)?;
     registry.configure_watch(project, true)?;
-    let mut lease = ProjectLease::acquire(owner.path(), project)?;
+    let mut lease = ProjectLease::acquire(&control, project)?;
     registry.admit_worker(&mut lease)?;
     let running = registry.enqueue_internal(project, nonce(1), JobKind::Index, nonce(2))?;
     registry
@@ -471,6 +483,7 @@ fn retire_missing_source_cancels_work_preserves_other_projects_and_fences_stale_
     let queued = registry.enqueue_internal(project, nonce(1), JobKind::Vectors, nonce(3))?;
     let sibling = registry.enqueue_internal(other.binding, nonce(1), JobKind::Index, nonce(4))?;
     let observed = registry.watch(project)?;
+    std::fs::remove_dir(base.join("source"))?;
     // A configuration change invalidates the prior observation.
     registry.configure_watch(project, false)?;
     assert!(!registry.retire_missing_source(
@@ -514,7 +527,7 @@ fn retire_missing_source_cancels_work_preserves_other_projects_and_fences_stale_
         observed.configuration_epoch
     )?);
     drop(registry);
-    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    let mut registry = ServiceRegistry::open(&control, nonce(1))?;
     assert!(!registry.is_registered(project)?);
     assert!(
         registry.register(&registration).is_err(),

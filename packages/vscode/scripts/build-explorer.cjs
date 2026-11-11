@@ -158,7 +158,7 @@ async function build() {
         'src/native.ts', 'src/nativeGate.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
         // Shared inert validators and selector DTOs have only pure contract imports and no startup work;
         // neither the Indexing controller nor any browser/UI module belongs in the standalone worker.
-        'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/referenceRefresh.ts',
+        'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/referenceRefresh.ts', 'src/runtimeLegacyRetirement.ts',
         'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
         'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
         /^node_modules\/jsonc-parser\//]);

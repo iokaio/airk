@@ -36,6 +36,8 @@ mod managed;
 #[path = "runtime_upgrade_stop.rs"]
 mod upgrade_stop;
 pub use managed::ManagedLifecycle;
+#[path = "runtime_legacy_retirement.rs"]
+mod legacy_retirement;
 #[path = "runtime_lifecycle.rs"]
 mod lifecycle;
 #[cfg(any(target_os = "macos", test))]
@@ -312,6 +314,35 @@ pub enum RuntimeCommand {
         install_dir: PathBuf,
         #[arg(last = true, required = true)]
         args: Vec<OsString>,
+    },
+    /// Review saved unavailable legacy indexes. No source/data reads or activation.
+    LegacyRetirementCandidates {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        after: Option<airk_core::index_catalog::IndexId>,
+    },
+    /// Create one exact retirement review from a saved upgrade index identity.
+    LegacyRetirementReview {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        index_id: airk_core::index_catalog::IndexId,
+    },
+    /// Explicitly authorize exact reviewed stdin JSON; activation requires separate Resume.
+    LegacyRetirementAuthorize {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Read only the exact saved request on stdin; never authorize/replay/resume.
+    LegacyRetirementReceipt {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Explicit continuation of an already accepted exact request on stdin.
+    LegacyRetirementResume {
+        #[arg(long)]
+        install_dir: PathBuf,
     },
     /// Bounded executable/paired-helper self-test, without collection access or inference.
     SelfTest,

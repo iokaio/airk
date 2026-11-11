@@ -399,6 +399,29 @@ pub(super) async fn resume_catalog_before_lifecycle(
     Ok(true)
 }
 
+/// Read-only binding for explicit legacy retirement before its authorization effect.
+pub(super) fn legacy_retirement_candidate(
+    root: &Path,
+    control: &Path,
+    installer: airk_core::identity::Sha256Digest,
+) -> Result<String> {
+    let intent = pending(root)?.context("legacy activation intent missing")?;
+    intent.validate(root)?;
+    ensure!(
+        intent.phase == Phase::Probe
+            && intent.control == control
+            && (selection(root)? == Some(intent.selected())
+                || (intent.prior.is_none() && selection(root)?.is_none())),
+        "legacy retirement requires its exact saved installer activation"
+    );
+    let (main, _) = verify_runtime(root, &intent.candidate)?;
+    ensure!(
+        runtime_pair::engine_identity_at(&main)? == installer,
+        "pending legacy activation candidate changed"
+    );
+    Ok(intent.candidate)
+}
+
 /// Resume under the same installer ownership, preserving the public selection.
 pub(super) async fn resume(root: &Path) -> Result<()> {
     let mut intent = pending(root)?.context("no pending activation")?;

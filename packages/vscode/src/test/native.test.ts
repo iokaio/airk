@@ -8,7 +8,8 @@ import * as path from 'node:path';
 import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { LaunchSpec, launchArgs, UNIFIED_TOOLS } from '../model';
 import { McpStdioSession } from '../mcpStdioSession';
-import { NativeServiceFixture } from './nativeServiceFixture';
+import { NativeServiceFixture,NativeTestFailure,nativeFailureDetail } from './nativeServiceFixture';
+import {capturedNativeText} from './nativeReadRetry';
 import { record } from '../serviceClient';
 
 test('MCP connection probes preserve unknown readiness separately from confirmed unavailability',async context=>{
@@ -269,6 +270,8 @@ test('bundled helper rejects mismatched platforms and tampered bytes before exec
 // CI/local build script supplies an absolute native binary; ordinary unit runs skip this boundary.
 test('extension native clients index, inspect, approve rebuilds, enforce limits and preserve isolated sources', {skip:!process.env.AIRK_TEST_BINARY,timeout:480000}, async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    let failure:NativeTestFailure|undefined;
+    let phase='native client assertions';
     try{
         await fixture.requireResidentProjects(2);
         const a=await fixture.register('project-a'),b=await fixture.register('project-b');
@@ -315,10 +318,26 @@ test('extension native clients index, inspect, approve rebuilds, enforce limits 
         assert.equal((await fixture.publishedStatus(b)).files,1);
         assert.equal(await fs.readFile(path.join(a.root,'a.py'),'utf8'),'def authenticate_fixture():\n    return True\n');
         assert.equal(await fs.readFile(path.join(b.root,'b.py'),'utf8'),'def second_fixture():\n    return False\n');
-        const usage=record(JSON.parse(await runText(a.command,[...launchArgs(a,'usage'),'report'],path.dirname(a.command),120000)));
+        phase='catalog-scoped usage refusal';
+        await assert.rejects(capturedNativeText(a.command,[...launchArgs(a,'usage'),'report'],path.dirname(a.command),120000),error=>{
+            assert.ok(error instanceof NativeProcessError);
+            assert.equal(error.code,1);assert.equal(error.killed,false);assert.equal(error.signal,null);
+            const refusal=record(JSON.parse(String(nativeFailureDetail(error).stdout)));
+            assert.deepEqual(refusal.error,{schema:1,code:'scoped_read_unavailable',retryable:false});
+            const scope=record(refusal.scope_observation),selected=a.catalogSession!;
+            assert.equal(scope.schema,1);assert.equal(scope.qualifier,'selected_subset');
+            assert.equal(scope.provenance,'user_reviewed_project_grant');
+            assert.deepEqual(scope.grant,{id:selected.grant_id,revision:selected.expected_grant_revision});
+            assert.deepEqual(scope,rebuilt.scope_observation,'refusal preserves the complete actual selected scope');
+            return true;
+        });
+        // The complete usage ledger requires explicit trusted Project administration.
+        // Keep the reviewed evidence selector's refusal above; do not broaden it.
+        phase='administrative usage report';
+        const usage=record(JSON.parse(await capturedNativeText(a.command,[...launchArgs({...a,catalogSession:undefined},'usage'),'report'],path.dirname(a.command),120000)));
         assert.ok(Number(record(usage.report).calls)>0);
         assert.equal(record((await fixture.run(['runtime','inspect','--install-dir',fixture.install])).managed_policy).lifecycle,'user_on_demand');
-    }finally{await fixture.dispose();}
+    }catch(error){failure={error,context:{phase}};}finally{await fixture.dispose(failure);}
 });
 
 test('native queue waits resume the same request and reject untyped or invalid continuations', async () => {
@@ -368,4 +387,34 @@ test('bounded native control stdin is separate from process arguments and closes
     const output=await runText(process.execPath,['-e','let text="";process.stdin.on("data",bytes=>text+=bytes);process.stdin.on("end",()=>process.stdout.write(text));'],undefined,5000,undefined,0,input);
     assert.equal(output,input);
     await assert.rejects(runText(process.execPath,['-e','process.exit(7)'],undefined,5000,undefined,0,'é'.repeat(32769)),/64 KiB/);
+});
+
+test('native fixture cleanup closes transport and preserves primary plus health failure',async()=>{
+    const directory=await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-cleanup-unit-'));
+    const primary=new Error('original body failure'),health=new Error('health unavailable');
+    let disposed=0,retainedCalls=0;
+    let retained:ReturnType<typeof nativeFailureDetail>|undefined;
+    const fixture=Object.create(NativeServiceFixture.prototype) as NativeServiceFixture;
+    Object.assign(fixture,{owner:directory,install:path.join(directory,'not-created'),lastPhase:{phase:'unit'},
+        retainFailure:async(error:unknown)=>{retainedCalls++;retained=nativeFailureDetail(error);}});
+    fixture.client={rpc:async()=>{throw health;},transport:{dispose:()=>{disposed++;}}} as unknown as NonNullable<NativeServiceFixture['client']>;
+    try{
+        await assert.rejects(fixture.dispose({error:primary}),error=>{
+            assert.ok(error instanceof AggregateError);assert.deepEqual(error.errors,[primary,health]);return true;
+        });
+        assert.equal(disposed,1);assert.equal(fixture.client,undefined);
+        assert.ok((await fs.stat(directory)).isDirectory());
+        assert.equal(retainedCalls,1);assert.ok(retained);
+        const savedErrors=retained.errors as {message:string}[];
+        assert.equal(savedErrors[0].message,String(primary));
+        assert.equal(savedErrors[1].message,String(health));
+    }finally{await fs.rm(directory,{recursive:true,force:true});}
+});
+test('native failure detail retains exact process stdout and independent stderr',()=>{
+    const stdout=JSON.stringify({isError:true,structuredContent:{error:{code:'actual_failure',retryable:false}}});
+    const failure=Object.assign(new NativeProcessError('airk',Object.assign(new Error('failed'),{code:1}),
+        'generic stderr',12,120000),{nativeStdout:stdout,nativeStderr:'exact stderr\n'});
+    const detail=nativeFailureDetail(failure);
+    assert.equal(detail.stdout,stdout);assert.equal(detail.stderr,'exact stderr\n');
+    assert.equal(detail.code,1);assert.equal(detail.stdio_maybe_truncated,false);
 });

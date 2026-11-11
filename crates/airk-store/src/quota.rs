@@ -70,6 +70,8 @@ fn inventory_limit_preserves_count_and_fixed_diagnostic_code() -> Result<()> {
 pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
+mod retired;
+pub(crate) use retired::AbsentCollectionSettlement;
 pub mod funding;
 #[cfg(any(unix, windows))]
 pub(crate) mod setup;

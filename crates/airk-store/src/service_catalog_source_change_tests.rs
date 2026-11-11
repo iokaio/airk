@@ -1040,3 +1040,196 @@ fn source_work_legacy_mode_requires_supported_activated_format_and_owner_admissi
     assert!(error.is::<super::super::AdmissionPending>());
     Ok(())
 }
+
+fn retirement_reference_fixture(
+    registry: &ServiceRegistry,
+    request: &CatalogRequest,
+) -> Result<(
+    Vec<airk_core::index_catalog::QueryProjectId>,
+    airk_core::index_catalog::ContextId,
+    airk_core::index_catalog::GrantId,
+)> {
+    use airk_core::index_catalog::{ContextId, GrantId, QueryProjectId};
+    let plan = source_plan(request);
+    let index = plan.sources[0].id;
+    let id = match &request.operation {
+        CatalogOperation::BeginIndexSourceChange { id, .. } => *id,
+        _ => unreachable!(),
+    };
+    let projects = vec![
+        QueryProjectId::from_identity(Incarnation::from_bytes([21; 16])),
+        QueryProjectId::from_identity(Incarnation::from_bytes([22; 16])),
+    ];
+    let context = ContextId::from_identity(Incarnation::from_bytes([23; 16]));
+    let grant = GrantId::from_identity(Incarnation::from_bytes([24; 16]));
+    registry.connection.execute(
+        "INSERT INTO index_access_grants(id,host,revision,revoked) VALUES(?1,?2,1,0)",
+        params![
+            grant.to_string(),
+            Sha256Digest::from_bytes([25; 32]).to_string()
+        ],
+    )?;
+    for project in &projects {
+        registry.connection.execute(
+            "INSERT INTO query_projects VALUES(?1,'Reviewed Project',1,1,1)",
+            [project.to_string()],
+        )?;
+        registry.connection.execute(
+            "INSERT INTO project_index_memberships VALUES(?1,?2,1)",
+            params![project.to_string(), id.to_string()],
+        )?;
+        registry.connection.execute(
+            "INSERT INTO project_index_scopes VALUES(?1,?2,?3,'subtree','')",
+            params![project.to_string(), id.to_string(), index.to_string()],
+        )?;
+        registry.connection.execute(
+            "INSERT INTO project_default_indexes VALUES(?1,?2)",
+            params![project.to_string(), id.to_string()],
+        )?;
+        registry.connection.execute(
+            "INSERT INTO index_access_memberships VALUES(?1,?2,?3,1,1,0,NULL)",
+            params![grant.to_string(), project.to_string(), id.to_string()],
+        )?;
+        registry.connection.execute(
+            "INSERT INTO index_access_scopes VALUES(?1,?2,?3,?4,'subtree','')",
+            params![
+                grant.to_string(),
+                project.to_string(),
+                id.to_string(),
+                index.to_string()
+            ],
+        )?;
+    }
+    registry.connection.execute(
+        "INSERT INTO index_contexts VALUES(?1,?2,?3,'workspace','Reviewed context',1)",
+        params![
+            context.to_string(),
+            Sha256Digest::from_bytes([26; 32]).to_string(),
+            Sha256Digest::from_bytes([27; 32]).to_string()
+        ],
+    )?;
+    for project in &projects {
+        registry.connection.execute(
+            "INSERT INTO context_projects VALUES(?1,?2)",
+            params![context.to_string(), project.to_string()],
+        )?;
+    }
+    registry.connection.execute(
+        "INSERT INTO context_default_indexes VALUES(?1,?2)",
+        params![context.to_string(), id.to_string()],
+    )?;
+    Ok((projects, context, grant))
+}
+
+#[test]
+fn retirement_discloses_and_removes_current_references_without_rewriting_frozen_grants()
+-> Result<()> {
+    use airk_core::catalog_management::{CatalogEntity, CatalogItem};
+    let (_owner, mut registry, begin) = fixture()?;
+    let (projects, context, grant) = retirement_reference_fixture(&registry, &begin)?;
+    let frozen = super::super::operations::read_persisted_grant(&registry.connection, grant)?;
+    let mut request = begin.clone();
+    let id = match &begin.operation {
+        CatalogOperation::BeginIndexSourceChange { id, .. } => *id,
+        _ => unreachable!(),
+    };
+    request.operation = CatalogOperation::RetireIndex {
+        id,
+        expected_definition_revision: CatalogRevision::INITIAL,
+        expected_source_revision: CatalogRevision::INITIAL,
+        reason: IndexRetirementReason::Explicit,
+    };
+    let preview = registry.catalog_preview(&request)?;
+    let expected_revision = CatalogRevision::INITIAL.next()?;
+    for project in &projects {
+        assert!(preview.before.iter().any(|item| matches!(item,CatalogItem::Membership(member) if member.project_id==*project && member.index_id==id)));
+        let after = preview
+            .after
+            .iter()
+            .find_map(|item| match item {
+                CatalogItem::Project(value) if value.id == *project => Some(value),
+                _ => None,
+            })
+            .context("affected Project missing from review")?;
+        assert!(after.default_indexes.is_empty());
+        assert_eq!(after.scope_revision, CatalogRevision::INITIAL.next()?);
+        assert_eq!(after.defaults_revision, CatalogRevision::INITIAL.next()?);
+    }
+    assert!(preview.before.iter().any(|item| matches!(item,CatalogItem::Context(value) if value.id==context && value.index_ids==vec![id])));
+    assert!(preview.after.iter().any(|item| matches!(item,CatalogItem::Context(value) if value.id==context && value.index_ids.is_empty() && value.revision==expected_revision)));
+    // Existing metadata-fixture fence helper; actual native drain/transport proof
+    // remains the combined process regression, never inferred from this unit.
+    apply(&mut registry, &request)?;
+    require_no_retired_references(&registry.connection, id)?;
+    assert_eq!(
+        super::super::operations::read_persisted_grant(&registry.connection, grant)?,
+        frozen
+    );
+    assert_eq!(
+        registry.catalog_state()?.unwrap().revision,
+        request.expected_catalog_revision.next()?
+    );
+    for project in projects {
+        let detail = registry.catalog_detail(&CatalogEntity::Project { id: project }, None)?;
+        assert!(
+            matches!(detail.item,Some(CatalogItem::Project(value)) if value.default_indexes.is_empty())
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn retirement_reference_revision_exhaustion_refuses_complete_preview_without_effects() -> Result<()>
+{
+    let (_owner, mut registry, begin) = fixture()?;
+    let (projects, _, grant) = retirement_reference_fixture(&registry, &begin)?;
+    registry.connection.execute(
+        "UPDATE query_projects SET scope_revision=9223372036854775807 WHERE id=?1",
+        [projects[1].to_string()],
+    )?;
+    let frozen = super::super::operations::read_persisted_grant(&registry.connection, grant)?;
+    let id = match &begin.operation {
+        CatalogOperation::BeginIndexSourceChange { id, .. } => *id,
+        _ => unreachable!(),
+    };
+    let request = CatalogRequest {
+        operation: CatalogOperation::RetireIndex {
+            id,
+            expected_definition_revision: CatalogRevision::INITIAL,
+            expected_source_revision: CatalogRevision::INITIAL,
+            reason: IndexRetirementReason::Explicit,
+        },
+        ..begin
+    };
+    assert!(registry.catalog_preview(&request).is_err());
+    assert_eq!(
+        registry.connection.query_row(
+            "SELECT count(*) FROM project_index_memberships WHERE index_id=?1",
+            [id.to_string()],
+            |row| row.get::<_, i64>(0)
+        )?,
+        2
+    );
+    assert!(!registry.connection.query_row(
+        "SELECT tombstone FROM index_definitions WHERE id=?1",
+        [id.to_string()],
+        |row| row.get::<_, bool>(0)
+    )?);
+    assert_eq!(
+        registry.connection.query_row(
+            "SELECT scope_revision FROM query_projects WHERE id=?1",
+            [projects[0].to_string()],
+            |row| row.get::<_, i64>(0)
+        )?,
+        1
+    );
+    assert_eq!(
+        super::super::operations::read_persisted_grant(&registry.connection, grant)?,
+        frozen
+    );
+    assert_eq!(
+        registry.catalog_state()?.unwrap().revision,
+        request.expected_catalog_revision
+    );
+    Ok(())
+}

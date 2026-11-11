@@ -2,10 +2,12 @@
 //! Every public CLI command has a test. Query and management commands run against a
 //! private headless service; Explorer commands run offline; installer-lifecycle commands
 //! name the native test or qualification script that exercises them. The table is checked
-//! against docs/cli-reference.md, which another test keeps identical to the parser.
+//! against commands discovered from the actual native parser help, independently
+//! of generated docs/cli-reference.md. Another test keeps full documentation exact.
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
@@ -574,6 +576,31 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "launch",
     ),
     (
+        "runtime legacy-retirement-candidates",
+        "scripts/check-runtime-legacy-retirement.py",
+        "f.admin(\"candidates\")",
+    ),
+    (
+        "runtime legacy-retirement-review",
+        "scripts/check-runtime-legacy-retirement.py",
+        "f.admin(\"review\",",
+    ),
+    (
+        "runtime legacy-retirement-authorize",
+        "scripts/check-runtime-legacy-retirement.py",
+        "f.admin(\"authorize\",",
+    ),
+    (
+        "runtime legacy-retirement-receipt",
+        "scripts/check-runtime-legacy-retirement.py",
+        "f.admin(\"receipt\",",
+    ),
+    (
+        "runtime legacy-retirement-resume",
+        "scripts/check-runtime-legacy-retirement.py",
+        "f.admin(\"resume\",",
+    ),
+    (
         "runtime lifecycle",
         "crates/airk-cli/src/runtime_managed_tests.rs",
         "lifecycle",
@@ -740,6 +767,68 @@ fn reference_commands() -> Result<Vec<String>> {
         .collect())
 }
 
+/// Read only Clap's visible Commands table, ignoring wrapped descriptions and
+/// the generated help alias. Never use generated Markdown as command discovery.
+fn help_children(help: &str) -> Result<Vec<String>> {
+    let mut children = Vec::new();
+    let mut table = false;
+    for line in help.lines() {
+        if line == "Commands:" {
+            table = true;
+            continue;
+        }
+        if !table || line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with("  ") {
+            break;
+        }
+        let Some(entry) = line
+            .strip_prefix("  ")
+            .filter(|rest| !rest.starts_with(' '))
+        else {
+            continue; // Wrapped description; it is not a command row.
+        };
+        let name = entry
+            .split_whitespace()
+            .next()
+            .context("empty command row")?;
+        ensure!(
+            name.bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+            "Unexpected native help command row: {line}"
+        );
+        if name != "help" {
+            children.push(name.to_owned());
+        }
+    }
+    Ok(children)
+}
+
+fn parser_commands() -> Result<BTreeSet<String>> {
+    let mut pending = vec![String::new()];
+    let mut commands = BTreeSet::new();
+    while let Some(command) = pending.pop() {
+        ensure!(
+            commands.insert(command.clone()),
+            "Duplicate native command path: {command}"
+        );
+        let args: Vec<&str> = command.split_whitespace().chain(["--help"]).collect();
+        let output = run(&args)?;
+        ensure!(output.status.success(), "airk {command} --help failed");
+        let help = std::str::from_utf8(&output.stdout)?;
+        ensure!(help.contains("Usage:"), "airk {command} --help lacks usage");
+        for child in help_children(help)? {
+            pending.push(if command.is_empty() {
+                child
+            } else {
+                format!("{command} {child}")
+            });
+        }
+    }
+    Ok(commands)
+}
+
 #[test]
 fn every_public_command_has_a_test_and_prints_help() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -754,18 +843,25 @@ fn every_public_command_has_a_test_and_prints_help() -> Result<()> {
         "tools",
         "usage",
     ];
+    // Keep parser discovery independent of stale generated docs. Exercise the
+    // table reader's boundaries without starting any command beyond --help.
+    ensure!(
+        help_children(
+            "Usage: airk [COMMAND]\n\nCommands:\n  runtime  Runtime commands\n           wrapped description\n  help     Generated alias\n\nOptions:\n  --help  Help\n"
+        )? == vec!["runtime".to_owned()]
+    );
+    ensure!(help_children("Usage: airk read [OPTIONS]\n\nOptions:\n  --help  Help\n")?.is_empty());
+    let discovered = parser_commands()?;
+    let documented: BTreeSet<_> = reference_commands()?.into_iter().collect();
     let mut missing = Vec::new();
-    for command in reference_commands()? {
-        let args: Vec<&str> = command.split(' ').filter(|part| !part.is_empty()).collect();
-        let output = run(&[&args[..], &["--help"]].concat())?;
-        ensure!(
-            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("Usage:"),
-            "airk {command} --help failed"
-        );
+    for command in &discovered {
         if groups.contains(&command.as_str()) || HERE.contains(&command.as_str()) {
             continue;
         }
-        match ELSEWHERE.iter().find(|(name, _, _)| *name == command) {
+        match ELSEWHERE
+            .iter()
+            .find(|(name, _, _)| *name == command.as_str())
+        {
             Some((_, "this file", _)) => {}
             Some((_, file, needle)) => {
                 let text = fs::read_to_string(root.join(file))
@@ -778,6 +874,11 @@ fn every_public_command_has_a_test_and_prints_help() -> Result<()> {
             None => missing.push(command),
         }
     }
-    ensure!(missing.is_empty(), "commands without a test: {missing:?}");
+    ensure!(
+        missing.is_empty() && discovered == documented,
+        "commands without a test: {missing:?}; parser commands missing from generated docs: {:?}; stale documented commands: {:?}",
+        discovered.difference(&documented).collect::<Vec<_>>(),
+        documented.difference(&discovered).collect::<Vec<_>>()
+    );
     Ok(())
 }

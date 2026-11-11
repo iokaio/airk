@@ -20,7 +20,7 @@ TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "l
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
 MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
            "usagePanel.js", "usageReport.js", "report.js",
-           "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
+           "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeLegacyRetirement.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",
            "mcpStdioSession.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",

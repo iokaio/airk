@@ -109,6 +109,14 @@ async fn draft_with_readiness(
     nonce: u8,
     require_semantic_ready: bool,
 ) -> Result<SplitDraft> {
+    draft_with_readiness_at_root(f, nonce, false, require_semantic_ready).await
+}
+async fn draft_with_readiness_at_root(
+    f: &Fixture,
+    nonce: u8,
+    shared: bool,
+    require_semantic_ready: bool,
+) -> Result<SplitDraft> {
     let method = ControlMethod::CatalogSplitSourceState {
         index_id: f.indexes[2],
         expected_catalog_revision: revision(f)?,
@@ -140,13 +148,16 @@ async fn draft_with_readiness(
             path: "api".into(),
         }],
         destination_name: "Process split destination".into(),
-        destination_data_root: f
-            .owner
-            .path()
-            .join(format!("split-data-{nonce}"))
-            .to_str()
-            .context("UTF8 destination")?
-            .into(),
+        destination_data_root: if shared {
+            f.registrations[2].data_root.clone()
+        } else {
+            f.owner
+                .path()
+                .join(format!("split-data-{nonce}"))
+                .to_str()
+                .context("UTF8 destination")?
+                .into()
+        },
         destination_collection: format!("split{nonce}"),
         projects: state
             .affected_projects
@@ -208,8 +219,12 @@ async fn draft_with_readiness(
         "escaping selector admitted"
     );
     ensure!(
-        !Path::new(&draft.request.destination_registration.data_root).exists(),
-        "read-only review allocated destination"
+        Path::new(&draft.request.destination_registration.data_root).exists() == shared
+            && !Path::new(&draft.request.destination_registration.data_root)
+                .join("collections-1.4")
+                .join(&draft.request.destination_registration.collection)
+                .exists(),
+        "read-only review allocated destination or changed root presence"
     );
     Ok(*draft)
 }
@@ -698,7 +713,27 @@ async fn split_semantic_ready_destination_has_real_paid_vectors_and_complete_tra
     provider_cutover(true).await
 }
 #[cfg(feature = "embedding-worker")]
+#[tokio::test]
+async fn post_p14_completed_shared_root_current_owned_destination_can_retire_without_changing_original()
+-> Result<()> {
+    provider_cutover_with_retirement(true, false, false).await
+}
+#[cfg(all(windows, feature = "embedding-worker"))]
+#[tokio::test]
+async fn post_p14_interrupted_final_funding_retirement_preserves_ordinary_current_progress()
+-> Result<()> {
+    provider_cutover_with_retirement(true, true, false).await
+}
+#[cfg(feature = "embedding-worker")]
 async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
+    provider_cutover_with_retirement(false, false, require_semantic_ready).await
+}
+#[cfg(feature = "embedding-worker")]
+async fn provider_cutover_with_retirement(
+    shared: bool,
+    interrupt_retirement: bool,
+    require_semantic_ready: bool,
+) -> Result<()> {
     let mut f = Fixture::with_helper()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);
@@ -726,7 +761,12 @@ async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
     fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
     fixture_job(&f, 2, airk_core::service::JobKind::Vectors).await?;
     pause_quiescent_original(&f, 2).await?;
-    let mut capture = metrics::Capture::start(&mut f, &mut _service, "complete").await?;
+    // New lifecycle scenario has no historical complete-workload cost claim.
+    let mut capture = if shared {
+        None
+    } else {
+        metrics::Capture::start(&mut f, &mut _service, "complete").await?
+    };
     let old = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
     let mut old_mcp = McpSession::start(&f)?;
     let vector = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
@@ -765,7 +805,7 @@ async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
     } else {
         None
     };
-    let reviewed = draft_with_readiness(&f, 131, require_semantic_ready).await?;
+    let reviewed = draft_with_readiness_at_root(&f, 131, shared, require_semantic_ready).await?;
     ensure!(
         reviewed.request.require_semantic_ready == require_semantic_ready,
         "native draft lost requested readiness"
@@ -916,14 +956,14 @@ async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
         "real provider-bearing original worker was not captured by native cutover: {obligation:?}"
     );
     ensure!(
-        complete.receipt.funding_release_receipts.len() == 2
+        complete.receipt.funding_release_receipts.len() == if shared { 1 } else { 2 }
             && complete
                 .finalization
                 .as_ref()
                 .context("native finalization absent")?
                 .funding_acknowledged
                 .len()
-                == 2,
+                == if shared { 1 } else { 2 },
         "actual native roots were not acknowledged"
     );
     // Old client authority is never renewed across restrictive original cutover.
@@ -1161,6 +1201,16 @@ async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
     f.assert_sources_unchanged()?;
     if let Some(observer) = capture.take() {
         observer.finish(&f, &mut _service, &complete).await?;
+    }
+    if shared {
+        let mut service = Some(_service);
+        super::permanent_trim::deleted_source_recovery::retire_completed_destination(
+            &mut f,
+            &mut service,
+            &complete,
+            interrupt_retirement,
+        )
+        .await?;
     }
     Ok(())
 }

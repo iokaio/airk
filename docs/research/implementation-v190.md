@@ -9,7 +9,7 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
-**Current checkpoint, 6 November 2026 - P14 selected local qualification results:** P9-P12 remain accepted
+**Retained P14 checkpoint, 6 November 2026 - selected local qualification results:** P9-P12 remain accepted
 for unpublished local development. P13 retained ranking/diversity; no candidate
 or gain is claimed. Current source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
 admission to cold-default split and typed quota-read corrections. Prior source
@@ -5133,3 +5133,190 @@ No full Mac workspace, current Linux/Intel/installed Mac editor, notarization or
 release/publication qualification follows without its actual evidence. Collected
 receipts retain their actual source identities; old artifacts are not relabeled. Earlier
 P12 and other dated records remain unchanged.
+
+## Post-P14 removed-source and storage recovery — 6 November 2026 (qualification in progress)
+
+The follow-up implements explicit index retirement and cleanup after individual
+file, whole-source-root or storage loss, preserving independent indexes and
+immutable grant/receipt history. Retire removes current Project membership and
+default references; a fresh remaining scope requires explicit grant review.
+Missing data is qualified through retained native custody and absence rather
+than recreation. A fresh actual 1.8.7 upgrade has a separate native reviewed
+retirement/authorization/receipt/resume path before activation. This does not
+support taking over an older pending upgrade under a different installer.
+
+The initial post-P14 focused Windows selection on native source
+`d7bda22429831bf84a364d97c7b172876ba4344241fcb0e4823e6dc96da4d83c`
+/ 968 inputs finished with **23 passed / 14 failed**. Its **336.6669 s** wrapper,
+immutable JUnit, complete failure output and source-preservation receipt remain
+failed evidence. The nine new Store legacy cases produced **2 passed / 7 failed**:
+five fixture canonical-order refusals, one missing committed receipt and one
+terminal new-write-marker refusal. Audit found that path-derived A/B bindings
+must be sorted for native plan admission, and that canonical retirement writes
+already set the existing activated catalog's new-write marker through validated
+SQL triggers. Corrections retain all native owner/fence/transaction checks and
+require the interruption tests to reach their actual intended checkpoints.
+CLI consumer/fixture failures and the independent ordinary-cleanup interruption
+regression are tracked separately; these observations are not a passing result.
+
+Current corrected scoped/full Rust, actual predecessor/debug process and
+compiled-host complete-result parity, portable Neo and final local installer
+checks still require their own retained outcomes. Neo testing must end with
+Cargo cleanup and verified target absence. No new optimized/signed Mac campaign,
+Linux/Intel/editor qualification, release promotion or publication is inferred.
+The accepted P14 source `237f8969...` and its earlier `5d8912b1...` evidence above
+retain their original identities and limits. Working version remains **1.8.8**.
+
+### 6 November 2026 - never-started index cleanup correction (qualification in progress)
+
+The first full post-P14 Windows Nextest run on native source
+`4292d19f083a6829fd7932f25d80e7f70d157afb0515e4aa9b371b7cd0a8c838`
+/ 968 inputs completed **2,651 passed / 7 failed**, with **51 selection skips**.
+Six failures exposed a valid metadata-only registration boundary: registration
+can succeed before a worker creates native data ownership, collection storage or
+its writer advisory. Cleanup must remove retired logical references without
+initializing missing state or weakening custody for actual selected credit. The
+seventh failure was the stale generated public CLI reference. All results from
+that completed run remain recorded; it is not a passing workspace gate.
+
+The correction on native source
+`6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
+/ 968 inputs preserves unknown or changed storage and validates zero selected
+effects before permitting logical-only cleanup without an advisory. Actual
+selected-credit disposal still requires its native ownership and advisory.
+Three new regressions cover uninitialized registration, initial binding before a
+first writer, changed/unknown state refusal and shared-root isolation with a real
+unrelated funded operation. One old watch fixture now uses canonical private
+roots and actual source disappearance; its fencing, job and independent-project
+assertions remain intact. The combined correction selection passed **47 tests**
+(**34 new / 13 related**) in **438.126 s** of owner elapsed time, with persistent
+P10 target reuse, Windows incremental compilation and retained Cargo timings.
+
+The preceding source `4292d19f...` 33-case Neo result retains its own identity and
+mandatory Cargo cleanup evidence, including **3.4 GiB reclaimed** and target
+absence. The four actual installed-extension 1.8.7 predecessor process scenarios
+also retain their original matched development runtime identity; they do not
+become new-source process qualification by relabeling. The current-source
+42-case Neo batch, fresh matched DEBUG/process checks and full **2,661-test**
+Windows run remain pending at this dated checkpoint. Their complete outcomes,
+cleanup and timing receipts must be collected separately. Version **1.8.8** is
+still unpublished; no optimized/signed rebuild, final local installer, broader
+platform or publication qualification follows from the focused pass.
+
+### 6 November 2026 - selected current-source recovery validation
+
+On native source
+`6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
+/ 968 inputs, the corrected Windows recovery selection passed **47 tests**.
+The fresh matched DEBUG pair passed all **four** actual public 1.8.7 predecessor
+process scenarios: source-only loss, source and storage loss, returned storage
+and foreign returned storage. The storage-loss scenario also passed the three
+compiled-host read-only review/authorization/applied receipt comparisons.
+Complete CLI/MCP bodies, healthy-index evidence, source preservation and native
+teardown proofs remain part of the scenario evidence. These are development
+runtime results, not optimized installer or installed-editor qualification.
+
+The same source passed **42 selected Mac ARM tests** across 20 owning Cargo
+commands plus formatting, using the saved Neo SSH setup and offline assets.
+Logs and Cargo timings were retained before mandatory `cargo clean`, which
+exited zero; the exact owned target was confirmed absent. This selected portable
+coverage does not establish full Mac workspace, signed distribution, Intel or
+Linux qualification. Earlier source results keep their original identities.
+
+A fresh dependency-policy check passed in **7.970 seconds** with live advisory
+data and locked vet imports. It reported three findings covered by existing
+maintainer-reviewed exceptions: unmaintained `paste` 1.0.15
+(`RUSTSEC-2024-0436`), unmaintained `ttf-parser` 0.25.1
+(`RUSTSEC-2026-0192`) and the moderate `minimatch` 10.2.6 packaging-tool advisory
+(`GHSA-g3hv-75wg-m249`). This is a policy pass with disclosed exceptions, not an
+absence-of-findings claim or an independent audit of every dependency.
+
+The completed full Windows run on this source executed **2,661 tests**:
+**2,660 passed / 1 failed**, with **51 selection skips**. All four restored P14
+long campaigns passed. Nextest ran for **1,652.597 seconds**; its owner elapsed
+time was **1,741.196 seconds**. The sole failure was the public-command test-owner
+inventory: canonical reference regeneration exposed five new retirement commands
+missing their external process-test ownership entries. This completed run remains
+failed evidence; selected recovery passes do not make it a passing workspace gate.
+
+After complete collection, a reviewed test-only correction registered those
+actual process-harness owners and made command discovery independent of stale
+generated documentation. The corrected test-source identity is
+`edde8163ee9b796a11723f5c94db2a6417c4fddc5bf204dec32573fa3d35ad46`
+/ 968 inputs. Its scoped validation and production-input identity review are
+recorded separately from the original full run and its retained JUnit.
+
+Final optimized runtime, package, local installer and installed-host results
+require their own source/artifact evidence. Version **1.8.8** remains unpublished;
+manual acceptance, promotion and publication remain separate.
+
+The retained evidence is `post-p14-debug-process-batch-r6/summary.json`
+(fresh compiled source `6de490d5...`, four scenarios passed),
+`post-p14-native-recovery-r2-qualification.json` and its cleanup/target-absence
+receipts (42 Mac cases), and `post-p14-final-dependency-fresh-r1.json`
+(fresh Cargo/npm advisory policy with all three exception dispositions).
+The exceptions retain their original maintainer review dates and review-by
+limits in `.cargo/audit-exceptions.json`; no new approval is inferred here.
+Earlier failed process and full-suite records remain failed evidence. The
+reviewed inventory correction does not relabel either completed full run as
+passing. No future package or installed-host outcome is inferred.
+
+### 6 November 2026 - final local test-package checkpoint
+
+The corrected owning `cli_commands` suite passed **all 3 tests** in
+**30.6086 s** on test source `edde8163...` / 968 inputs. Independent review
+verified that only this external test file changed from `6de490d5...`; production
+inputs were unchanged. The completed **2,660 passed / 1 failed** full run above
+and the corrected complete owning-suite pass were accepted as combined local
+test evidence. The original full run remains failed; this is not a claim of one
+all-green full invocation.
+
+Current strict workspace Clippy passed in **14.327 s**. The lightweight main,
+workspace build and serial doctests passed in **15.1054 s**, **20.689 s** and
+**15.5437 s** respectively; doctests covered **8 targets / 0 eligible examples**.
+The fresh optimized Windows pair built in **853.0671 s** with incremental
+compilation disabled. Its complete **675-file** runtime seal is
+`f3d00b0dbbf0526db9da42c18d4120285437a52e21deefcce8518d82610895b1`.
+Canonical extension compilation passed in **11.8519 s**.
+
+The first full extension run remains failed evidence: **812 passed / 2 failed /
+3 skipped**. Its private console required separately recorded owned-process
+cleanup; that intervention is not a successful native Stop receipt. Test-only
+fixture corrections preserved typed scope refusals and grant authority, retained
+primary failures during cleanup, and exercised root metadata separately from
+catalog-grant evidence. The final full run over **87 Node test files** passed:
+**820 total / 817 passed / 3 skipped / 0 failed / 0 cancelled**, in
+**213.642421 s** of Node time (**214.310321 s** owner elapsed), against the same
+final optimized runtime and packaged production bytes. The native model
+client check passed with **2 projects / 16 files per project**; isolated
+installation and the complete assistance scenario passed without increasing
+the original assistance deadline.
+
+The local Windows **1.8.8** VSIX is **77,549,374 bytes / 775 entries**, SHA-256
+`1e790218aa7acbbf057e55e51d246197e99f951e16fcc2549d066d07be0da519`.
+Its native archive is SHA-256
+`76492fe9f7743b56357bb0bbd15fa40a2c7cf90bc3c127d01bc0950815ca8dbc`.
+Packaging verified all **675 native files**, **77 current production outputs**
+and the exact frozen Marketplace README; private test artifacts are absent.
+This is a local manual-test package, not a published release or a fresh installed
+VS Code host qualification. Original Mac/debug source identities, historical
+corpus deadline failure, unselected 100k/Linux coverage and other P14 limits
+remain as recorded. Manual acceptance and release promotion remain separate.
+
+Current optimized source is
+`edde8163ee9b796a11723f5c94db2a6417c4fddc5bf204dec32573fa3d35ad46`
+/ 968 inputs. The earlier **42 Mac** and **four DEBUG predecessor** scenarios
+remain actual `6de490d5...` results; the independent complete input map proves
+that the subsequent delta is only `crates/airk-cli/tests/cli_commands.rs`.
+They are not relabeled as freshly executed on the optimized pair.
+
+Retained final records include the combined test acceptance receipt
+`30a1c00cdac167ae5dd92164bcb6c4f4946e1a19f2b684b09cb55b93126d5020`,
+`post-p14-final-windows-r1-producer-evidence/seal.json`, the package seal and
+`post-p14-final-windows-r2-node-summary.json`. Native archive and VSIX packaging
+passed in **15.6835 s / 22.7749 s**; model clients, isolated installation and the
+whole assistance case passed in **27.6625 s / 186.0319 s / 35.945174 s**.
+The final Python suite completed **480 tests / 9 skips** without failures in
+**25.810338 s**.
+These selected/native/extension observations do not infer a newly exercised
+installed VS Code host, Mac optimized/signing repeat or full platform matrix.

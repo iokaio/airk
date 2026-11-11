@@ -1,12 +1,69 @@
 # Guarded project retirement
 
-## Current 1.6.4 removal contract
+## Missing files, source folders and index storage in the 1.8.8 working build
+
+**Post-P14 development behavior; selected local qualification is recorded.**
+Windows recovery tests, the corrected owning CLI suite, actual 1.8.7 upgrade
+process scenarios, Mac portable tests and the final optimized-runtime extension
+suite have passed within their recorded scope. The [working-build
+record](releases/release-1.8.8.md) distinguishes combined test acceptance from the
+original failed full runs and identifies the local test package. Earlier P14
+results retain their original source and package identities. Version **1.8.8**
+remains unpublished; manual installed-editor acceptance and broader platform
+qualification remain separate.
+
+A missing source is not an instruction to forget its index. When storage remains,
+retained evidence can still be available with verification **Off**. **Report**
+labels observed source-verification failures; **Require** enforces verification.
+Resume paused work and explicitly update an existing index to publish individual
+file removals. Retiring the entire index is a separate reviewed choice.
+
+Missing index storage is reported as an unavailable member. For a Project that
+combines indexes, member availability **Report** keeps healthy members' evidence
+and the complete failed-member details. **Require** refuses an incomplete result.
+Source verification and member availability are separate controls. Neither read
+path unregisters an index, recreates a missing folder or silently narrows a grant.
+
+To remove an unwanted index, select it in **Indexing > Index library** and use
+**Prepare native index-retirement review**. Inspect the native effect and apply
+that reviewed request explicitly. Retirement cancels the selected index's work,
+disables its source authority and removes its current Project memberships and
+default references, including context defaults no longer backed by a Project membership. Other memberships,
+associations and independent indexes remain intact. Frozen grants and historical
+receipts remain unchanged: an old grant that names the retired index becomes
+stale; review and use a fresh grant for the desired remaining Project defaults.
+An active reviewed split can require its exact recovery to finish first.
+
+Logical retirement and physical cleanup are reported separately. Cleanup can
+settle a missing collection or a wholly missing data-root ancestor using retained
+native ownership and qualified absence; it does not create replacement folders,
+ledgers or locks merely to remove references. When a shared data root remains,
+cleanup releases only the retired index's proven disposable allocations. A
+surviving owner, unknown file, changed binding or returned foreign storage keeps
+cleanup pending rather than deleting unrelated data or releasing its credit.
+Interrupted cleanup retains its native proof and resumes through the existing
+owner. Source files, other indexes and shared models are preserved. This is
+logical deletion, not secure erasure of earlier results, exports or backups.
+
+Registration can precede the first worker or index build. A reviewed retirement
+can remove that never-started index's current references without initializing
+ownership, quota or writer-advisory files just to clean up. Native cleanup checks
+that no selected storage or credit needs disposal and preserves unrelated files
+and other indexes sharing the data root. Releasing selected credit still requires
+its actual writer advisory and retained native custody. Unknown or changed native
+state keeps cleanup pending; missing ownership is not permission to adopt it.
+
+A fresh upgrade from 1.8.7 can require a different preactivation recovery when an
+old index's source configuration is unavailable. See [explicit legacy upgrade
+retirement](service-installation.md#unavailable-legacy-index-during-upgrade).
+
+## Historical 1.6.4 removal contract
 
 Removal cancels work, stops monitoring and new admission, drains owned workers, then automatically deletes the ownership-matched index, usage ledger and saved project settings. Registry details and job/configuration receipts are removed after files are gone. Opaque identifiers and removal time remain as minimal history and an opt-out marker. Sources and shared model assets are untouched. Pending removal is durable and resumes after interruption; it is not reported complete until deletion finishes. Earlier inactive registrations enter this path during the schema-10 migration. Unknown entries, aliases, ownership failures and held leases defer deletion and report failure. See [1.6.4](releases/release-1.6.4.md).
 
 ## Historical two-step implementation through 1.6.1
 
-The remainder records the earlier unregister/retained-cleanup behavior and its original validation; it is superseded by the current removal contract above.
+The remainder records the earlier unregister/retained-cleanup behavior and its original validation; it is superseded by the later removal contracts above.
 
 Development work for 1.4.0. Unregister and deletion of derived state are separate operations. This contract does not authorize automatic cleanup of 1.3 state or unknown directories.
 

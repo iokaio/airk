@@ -119,7 +119,7 @@ The [MCP developer guide](mcp-developer-guide.md) documents optional indexed-lan
 
 
 
-From 1.5.9, the stdio lifecycle accepts a legacy `initialize` fallback after a discovery probe without retaining a contradictory modern-only metadata requirement. Each connection negotiates independently: Codex, Claude Code, Copilot and other clients can address the same saved project with different supported handshake styles. Client names are diagnostic labels, not routing or compatibility switches. Modern-only requests retain their metadata checks; catalog discovery does not wait for the service, index or editor adapter. See [the 1.5.9 evidence record](releases/release-1.5.9.md). Native protocol fixtures are distinct from qualification inside each assistant application.
+From 1.5.9, the stdio lifecycle accepts a legacy `initialize` fallback after a discovery probe without retaining a contradictory modern-only metadata requirement. Each connection negotiates independently: Codex, Claude Code, Copilot and other clients can address the same saved project with different supported handshake styles. Client names are diagnostic labels, not routing or compatibility switches. Modern-only requests retain their metadata checks; for root-based launches, tool-catalog discovery does not wait for the service, index or editor adapter. See [the 1.5.9 evidence record](releases/release-1.5.9.md). Native protocol fixtures are distinct from qualification inside each assistant application.
 
 
 
@@ -127,7 +127,7 @@ New project-local connections retain a canonical source folder as their scope: `
 
 
 
-The native frontend owns stdio and direct evidence reads. The CLI composes an optional verified extension adapter for offline UI help, templates and window IPC. Kernel/store never depend on the editor. A missing, closed or invalid editor adapter cannot remove native tools or prevent evidence retrieval. Native help, catalog discovery and configured-project listing do not elect the service; the first native observation/query checks the selected runtime and service. Explicit Stop is respected. UI help requires the configured verified extension bundle, but no open window; UI drafts require a matching trusted window.
+The native frontend owns stdio and direct evidence reads. The CLI composes an optional verified extension adapter for offline UI help, templates and window IPC. Kernel/store never depend on the editor. A missing, closed or invalid editor adapter cannot remove native tools or prevent evidence retrieval. For root-based launches, native help, tool-catalog discovery and configured-project listing do not elect the service; the first native observation/query checks the selected runtime and service. Explicit catalog-session and combined-session grant selectors resolve and validate live service authority before MCP metadata bootstrap, so an unavailable service or explicit Stop can refuse those connections before discovery. Both launch paths respect explicit Stop. Root-based registration discovery does not grant evidence access to newly created catalog indexes; use an explicitly reviewed catalog-session or combined-session grant for those indexes. Supported legacy imported-snapshot reads retain their own compatibility contract. UI help requires the configured verified extension bundle, but no open window; UI drafts require a matching trusted window.
 
 
 

@@ -824,6 +824,19 @@ pub(in crate::service::registry) fn require_ready_registration(
     }
     Ok(())
 }
+/// A retired index has no current Project/default/context selection references.
+/// Historical frozen grants, migration mappings and receipts remain immutable.
+pub(in crate::service::registry::catalog) fn require_no_retired_references(
+    db: &Connection,
+    index: IndexId,
+) -> Result<()> {
+    let present: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM project_index_memberships WHERE index_id=?1) OR EXISTS(SELECT 1 FROM project_index_scopes WHERE index_id=?1) OR EXISTS(SELECT 1 FROM project_default_indexes WHERE index_id=?1) OR EXISTS(SELECT 1 FROM context_default_indexes WHERE index_id=?1)",[index.to_string()],|row|row.get(0))?;
+    ensure!(
+        !present,
+        "retired index retains current Project/default references"
+    );
+    Ok(())
+}
 /// Called before legacy retirement or derived purge; the catalog mutation must
 /// already have disabled and tombstoned its canonical mapping in this transaction.
 pub(in crate::service::registry) fn require_retired(
@@ -1371,6 +1384,7 @@ pub(in crate::service::registry) fn mutate(
             expected_source_revision,
             reason,
         } => {
+            super::split::require_retirement(db, *id)?;
             let (saved, definition, source, tombstone, _) = registration(db, *id)?;
             ensure!(
                 definition == *expected_definition_revision && source == *expected_source_revision,
@@ -1401,6 +1415,9 @@ pub(in crate::service::registry) fn mutate(
             if !historical {
                 super::super::unregistration::retire(db, saved.binding, None)?;
             }
+            // Current selection references must not keep a retired index in a
+            // fresh default Project review. Old grant snapshots remain historical.
+            super::operations::detach_retired_index_references(db, *id)?;
             // The validated P5 inactive case preserves its legacy registration,
             // watcher/cleanup state and accepted jobs byte-for-byte. Only the
             // canonical source authority is finalized after the native fence.

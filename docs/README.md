@@ -4,6 +4,14 @@
 
 Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
 
+**Missing sources and storage:** the working source adds [reviewed index
+retirement and cleanup](service-project-retirement.md) for removed files or folders and separate
+[unavailable legacy-index upgrade recovery](service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
+their independent evidence; old grants are never silently narrowed. Post-P14
+recovery has selected Windows native/process and Mac portable validation. Full
+workspace and final installer qualification remain separate; see the working-build
+record for current results and earlier failures.
+
 | Current guide | Scope |
 | --- | --- |
 | [Source verification and explicit reference refresh](source-verification.md) | Dated read-only verification; separately reviewed P12 refresh/requery and its limits |
@@ -13,6 +21,8 @@ Opening a trusted folder does not register or index it. Use **Indexing > Index l
 | [Permanent source exclusions](source-policy.md) | Native enforcement, removal publications and separate reclamation |
 | [Combined Project reads](combined-reads.md) | Unique-index composition, scope and complete member results |
 | [Recommendations](recommendations.md) | Bounded metadata advice and separately reviewed defaults |
+| [Guarded index retirement](service-project-retirement.md) | Missing files/storage, current-reference cleanup and independent indexes |
+| [Unavailable legacy-index upgrade](service-installation.md#unavailable-legacy-index-during-upgrade) | Explicit same-candidate retirement before activation; complete native receipts |
 
 The [1.8.8 working-build record](releases/release-1.8.8.md) and
 [implementation ledger](research/implementation-v190.md) retain exact source/runtime

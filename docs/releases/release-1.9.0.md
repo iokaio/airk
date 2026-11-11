@@ -1,5 +1,13 @@
 # Planned AIRK 1.9.0 release and development checkpoints
 
+Post-P14 removed-source/storage retirement and fresh 1.8.7 legacy upgrade
+recovery are implemented in the working source and under local qualification.
+The [1.8.8 working-build record](release-1.8.8.md#post-p14-removed-source-recovery-6-november-2026-qualification-in-progress)
+separates this follow-up from the retained P14 checkpoints below. The local test
+installer and manual acceptance remain separate; no promotion is claimed.
+
+## Retained phase-plan record
+
 This is the planned promotion record, not a published release. The current
 working version remains **1.8.8**. P9 exclusions, P10 splitting and P11a/P11b
 profile work are accepted for unpublished local development. P12's explicit

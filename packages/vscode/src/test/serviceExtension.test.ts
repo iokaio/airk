@@ -6,6 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { RuntimeHost } from '../serviceBootstrap';
+import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
 import { ServiceWorkspace } from '../serviceWorkspace';
 import { ServiceClient, ServiceError, record } from '../serviceClient';
 
@@ -130,7 +131,41 @@ test('service activation advertises reviewed bindings without indexing and prese
         assert.deepEqual(usageDrafts,[{operation:'usage',mode:'disabled'},{operation:'usage',mode:'aggregates_only'},{operation:'usage',mode:'diagnostic_events'}]);
         stub.workspace.isTrusted=false;assert.deepEqual(await api.getServerDefinitions(),[]);
         const before=ensures;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='workspace_untrusted');assert.equal(ensures,before);
-        stub.workspace.isTrusted=true;extension.deactivate();await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='runtime_client_no_longer_authorized');assert.equal(ensures,before);
+        stub.workspace.isTrusted=true;
+        // Actual owning controller reset/dispose while the actual RuntimeHost is
+        // awaiting location. A permissive host-level guard isolates the Session
+        // generation defense; no native process is executed by this consumer test.
+        for(const lifecycle of ['reset','dispose'])for(const action of ['authorize','resume']){
+            const scoped=new controller.constructor(extensionContext),generation=scoped.generation;
+            let enter!:()=>void,release!:()=>void,held=false,mutations=0;
+            const entered=new Promise<void>(resolve=>{enter=resolve;}),released=new Promise<void>(resolve=>{release=resolve;});
+            const digest='ab'.repeat(32),who='cd'.repeat(16),index='idx_'+'ef'.repeat(16);
+            const preview={schema:1,request_digest:digest,original_backup_digest:digest,original_legacy_data_digest:digest,
+                source_configuration:'pending_metadata',effect:'retire_and_cancel_with_cleanup_pending',affected_work:{jobs:0,job_ids_digest:digest},
+                request:{schema:1,caller:who,key:{namespace:who,epoch:0,nonce:who},upgrade_id:who,plan_digest:digest,installer_identity:digest,index_id:index,
+                    registration:{binding:digest,root:'/fictional/source',data_root:'/fictional/private',collection:'a'},expected_authorizations_digest:digest}};
+            const review={status:'review',preview,review_digest:digest};
+            const host=new RuntimeHost(root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+                if(args[1]==='legacy-retirement-review')return review;
+                mutations++;throw new Error('stale controller dispatched legacy retirement');
+            });
+            context.mock.method(host as any,'verified',async()=>({main:path.join(root,'fictional-main')}));
+            context.mock.method(host as any,'invoke',async(_command:string,args:string[])=>{
+                assert.equal(args[1],'location');if(held){enter();await released;}return {protocol:1,install_dir:root};
+            });
+            const session=new LegacyRetirementSession(host,()=>{
+                try{scoped.trusted();return generation===scoped.generation;}catch{return false;}
+            });
+            scoped.host=host;scoped.legacyRetirement=session;let pending:Promise<unknown>|undefined;
+            try{
+                if(action==='authorize')await session.prepare(index);
+                else session.restore({status:'authorized',authorization:{preview,review_digest:digest}});
+                held=true;pending=action==='authorize'?session.authorize(review):session.resume();await entered;
+                scoped[lifecycle]();assert.equal(scoped.legacyRetirement,undefined);assert.notEqual(scoped.host,host);
+                release();await assert.rejects(pending,/review_stopped/);assert.equal(mutations,0);
+            }finally{release();await Promise.allSettled([pending]);scoped.dispose();}
+        }
+        extension.deactivate();await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='runtime_client_no_longer_authorized');assert.equal(ensures,before);
     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
 });
 
