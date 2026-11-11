@@ -1,0 +1,9 @@
+{
+  "schema": "airk.split-fixture.ui-capabilities/1",
+  "contract": "docs/split/contracts.md section 6 (C9)",
+  "note": "Capability flags a shell provides through its adapter. The UI hides a control whose capability is absent and never branches on the shell name.",
+  "view_host": "interface ViewHost { request(type, payload): Promise<Reply>; subscribe(listener): Unsubscribe; capabilities: Capabilities }",
+  "both_shells": ["copyToClipboard", "openExternal", "scopeSelect"],
+  "editor_only": ["agentConfigHealth", "extensionReload", "gitReview", "handoffShare", "openSource", "planner", "revealInWorkspace", "suggestionsInbox", "workspaceFiles", "workspaceTrust"],
+  "admin_only": []
+}

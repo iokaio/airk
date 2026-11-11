@@ -1,0 +1,517 @@
+{
+  "schema": "airk.split-fixture.view-messages/1",
+  "contract": "docs/split/contracts.md section 6 (C9)",
+  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden.",
+  "counts": {
+    "ui": 25,
+    "editor": 34,
+    "admin": 42
+  },
+  "messages": [
+    {
+      "type": "ready",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "nav.go",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "help.openExternal",
+      "side": "ui",
+      "capability": "openExternal"
+    },
+    {
+      "type": "project.select",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "status.refresh",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "extension.reload",
+      "side": "editor",
+      "capability": "extensionReload"
+    },
+    {
+      "type": "notice.dismiss",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "workspace.manageTrust",
+      "side": "editor",
+      "capability": "workspaceTrust"
+    },
+    {
+      "type": "workbench.toggle",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "details.copy",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "search.page",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "search.form",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "search.run",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "evidence.expand",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "source.open",
+      "side": "editor",
+      "capability": "openSource"
+    },
+    {
+      "type": "code.symbols",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "code.facts",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "code.references",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "code.relationships",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "code.outline",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "list.more",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "help.engine",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "evidence.inspect",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "evidence.check",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "evidence.changes",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "evidence.changesMore",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "docs.facts",
+      "side": "ui",
+      "capability": null
+    },
+    {
+      "type": "manage.refresh",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.recommendations",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.recommendations.dismiss",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.recommendations.copy",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.recommendations.use",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.page",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.detail",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.preview",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.create",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.apply",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.reconcile",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.scope.read",
+      "side": "ui",
+      "capability": "scopeSelect"
+    },
+    {
+      "type": "indexing.scope.apply",
+      "side": "ui",
+      "capability": "scopeSelect"
+    },
+    {
+      "type": "indexing.set.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.set.save",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.context.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.context.preview",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.context.delete",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.grant.draft",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.grant.use",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.grant.revoke",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.setup.draft",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.setup.apply",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.setup.resume",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.source.draft",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.source.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.source.pending",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.split.open",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.split.sourceRead",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.split.draft",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.split.apply",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.split.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.split.recover",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.policy.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.policy.resume",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.retirement.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.retirement.stopTracking",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.source.resolve",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "indexing.export",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "manage.action",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "manage.command",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "manage.observe",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "strategy.run",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "strategy.run.export",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "strategy.export",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "studio.save",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "strategy.import",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "usage.read",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "usage.action",
+      "side": "admin",
+      "capability": null
+    },
+    {
+      "type": "clipboard.write",
+      "side": "ui",
+      "capability": "copyToClipboard"
+    },
+    {
+      "type": "instructions.open",
+      "side": "editor",
+      "capability": "openSource"
+    },
+    {
+      "type": "agents.configHealth",
+      "side": "editor",
+      "capability": "agentConfigHealth"
+    },
+    {
+      "type": "planner.openDraft",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "planner.import",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "source.choose",
+      "side": "editor",
+      "capability": "workspaceFiles"
+    },
+    {
+      "type": "help.choose",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "files.list",
+      "side": "editor",
+      "capability": "workspaceFiles"
+    },
+    {
+      "type": "files.load",
+      "side": "editor",
+      "capability": "workspaceFiles"
+    },
+    {
+      "type": "recipes.export",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "recipes.import",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "planner.exportJSON",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "planner.saveInWorkspace",
+      "side": "editor",
+      "capability": "workspaceFiles"
+    },
+    {
+      "type": "review.changes",
+      "side": "editor",
+      "capability": "gitReview"
+    },
+    {
+      "type": "review.impact",
+      "side": "editor",
+      "capability": "gitReview"
+    },
+    {
+      "type": "review.tests",
+      "side": "editor",
+      "capability": "gitReview"
+    },
+    {
+      "type": "recipes.list",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "suggestions.get",
+      "side": "editor",
+      "capability": "suggestionsInbox"
+    },
+    {
+      "type": "suggestions.resolve",
+      "side": "editor",
+      "capability": "suggestionsInbox"
+    },
+    {
+      "type": "suggestions.discardAll",
+      "side": "editor",
+      "capability": "suggestionsInbox"
+    },
+    {
+      "type": "suggestions.revisions",
+      "side": "editor",
+      "capability": "suggestionsInbox"
+    },
+    {
+      "type": "suggestions.applied",
+      "side": "editor",
+      "capability": "suggestionsInbox"
+    },
+    {
+      "type": "handoff.share",
+      "side": "editor",
+      "capability": "handoffShare"
+    },
+    {
+      "type": "recipes.save",
+      "side": "editor",
+      "capability": "planner"
+    },
+    {
+      "type": "recipes.delete",
+      "side": "editor",
+      "capability": "planner"
+    }
+  ]
+}
