@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { publicationRelationLabel } from '../publications';
 import { render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, toolFormArguments, toolFormFields, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
@@ -78,11 +79,11 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const selectionRow=()=><div class="selection-toolbar"><SelectAll count={rows.length} checked={allSelected} mixed={mixedSelection} onChange={selectMatching}/><button title={copySelectionTitle} aria-label={copySelectionLabel} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button></div>;
     const planText=useMemo(()=>canonical(plan),[turn.envelope]);
     const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn):'', [format,turn]);
-    const publication=object(state.status?.publication).token,old=typeof publication==='string'&&typeof envelope.publication==='string'&&publication!==envelope.publication;
+    const publicationNotice=publicationRelationLabel(state.publicationRelations?.[turn.id]??'unknown');
     const runPlan=(prepare:boolean)=>{try{const parsed=JSON.parse(draft);if(prepare){parsed.digest='';}send({type:'run',input:turn.input,prepare,plan:parsed});setIssue('');}catch{setIssue('Enter a valid JSON plan.');}};
     return <article class="turn">
         <div class="input">{turn.input}</div><time>{new Date(turn.at).toLocaleTimeString()}</time>
-        {old&&<p class="warning">From an older index</p>}
+        {publicationNotice&&<p class="warning">{publicationNotice}</p>}
         {turn.error&&<p class="error" role="alert">{turn.error}</p>}
         {turn.trimmed&&<p class="warning">Saved result trimmed. Re-run to collect current evidence.</p>}
 

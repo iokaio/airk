@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Pure host/webview contract. Evidence content is always inert text. */
+import type { PublicationRelation } from './publications';
 export type Value = Record<string, unknown>;
 export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
 export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string; trimmed?: boolean }
@@ -43,13 +44,13 @@ export interface WorkbenchState {
     recent: WorkbenchSessionSummary[];
     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
     continuations?:Record<string,Continuation[]>;
-    status?: Value; persistence: boolean; operations?: Value;
+    status?: Value; publicationRelations?:Record<string,PublicationRelation>; persistence: boolean; operations?: Value;
     sessionEpoch?:number;
 }
 /** Host-to-webview display updates. Full result ownership stays in the host. */
 export type WorkbenchUpdate =
     | {type:'state';state:WorkbenchState}
-    | {type:'status';sessionId:string|undefined;project:string|undefined;status:Value|undefined}
+    | {type:'status';sessionId:string|undefined;project:string|undefined;status:Value|undefined;publicationRelations?:Record<string,PublicationRelation>}
     | {type:'saved';sessionId:string;project:string;revision:number;recent:WorkbenchState['recent'];save:string}
     | {type:'formDraft';sessionId:string;project:string;epoch:number;formDraft:WorkbenchFormDraft;save:string};
 /** Shared actual webview consumer; delta fields cannot replace result bodies. */
@@ -65,7 +66,7 @@ export function applyWorkbenchUpdate(previous:WorkbenchState,message:WorkbenchUp
         return next;
     }
     if(message.sessionId!==previous.session?.id||message.project!==previous.session?.project)return previous;
-    if(message.type==='status')return {...previous,status:message.status};
+    if(message.type==='status')return {...previous,status:message.status,publicationRelations:message.publicationRelations};
     if(!previous.session)return previous;
     if(message.type==='formDraft'){
         const current=normalizeWorkbenchFormDraft(previous.session.formDraft),incoming=normalizeWorkbenchFormDraft(message.formDraft);

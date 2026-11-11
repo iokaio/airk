@@ -132,8 +132,12 @@ impl Admission {
         })
     }
 
-    pub(crate) async fn shutdown(&self) {
+    pub(crate) fn close(&self) {
         self.0.closing.store(true, Ordering::Release);
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.close();
         // Accepted work owns permits even if its transport future was cancelled.
         // No blocking request is detached from shutdown accounting.
         let _evidence = self

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import { comparePublication, type PublicationObservation, type PublicationRelation } from './publications';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ExplorerHost } from './explorerController';
 import type { LaunchSpec } from './model';
@@ -45,6 +46,22 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private notice?:string;
     private saving='';
     private status?:Value;
+    private statusAuthority?:string;
+    // Live object identity is intentional: loaded/forked saved turns have no authority proof.
+    private readonly turnAuthorities=new WeakMap<object,string>();
+    private publicationRelations():Record<string,PublicationRelation>{
+        const observed=this.permitted()&&this.status&&this.statusAuthority&&this.statusAuthority===JSON.stringify(this.selectedSpec())?this.publicationObservation(this.status,this.statusAuthority):undefined;
+        return Object.fromEntries((this.session?.turns??[]).map(turn=>{
+            const authority=this.turnAuthorities.get(turn);
+            return [turn.id,comparePublication(turn.envelope&&authority?this.publicationObservation(turn.envelope,authority):undefined,observed)];
+        }));
+    }
+    private publicationObservation(value:Value,authority:string):PublicationObservation|undefined{
+        const collection=typeof value.collection==='string'?value.collection:typeof object(value.plan).collection==='string'?String(object(value.plan).collection):undefined;
+        return collection?{authority,collection,publication:value.publication}:undefined;
+    }
+    private observeStatus(value:Value,authority:string):void{this.status=value;this.statusAuthority=authority;}
+
     private operations?:Value;
     private saveQueue=Promise.resolve();
     private readonly queuedFormSaves=new WeakSet<WorkbenchSession>();
@@ -87,10 +104,10 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private state():WorkbenchState{
         return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
-            ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
+            ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
-    private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status});}}
+    private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status,publicationRelations:this.publicationRelations()});}}
     private sendSaved(session:WorkbenchSession):void{if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'saved',sessionId:session.id,project:session.project,revision:session.revision,recent:this.recent,save:this.saving});}}
     private sendFormDraft(session:WorkbenchSession):void{
         if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'formDraft',sessionId:session.id,project:session.project,epoch:this.sessionEpoch,formDraft:session.formDraft??defaultWorkbenchFormDraft(),save:this.saving});}
@@ -118,7 +135,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             const client=this.evidence();
             // Readiness and local history have independent owners. A slow saved
             // session scan must not delay this transcript's first native status.
-            void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.sendStatus();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
+            void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.observeStatus(result.payload,identity);this.sendStatus();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
         }
         let recent:WorkbenchState['recent'];
         try{recent=this.persistence()?(await this.store.list(id)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})):[];}
@@ -222,7 +239,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             turn.request=structuredClone(request);
             const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:35000});
             if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
-            turn.envelope=result.payload;
+            turn.envelope=result.payload;this.turnAuthorities.set(turn,this.clientIdentity!);
             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);}}
         finally{if(generation===this.generation){this.busy=false;session.updatedAt=Date.now();this.save(session);this.send();}}
@@ -233,7 +250,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.authorized();
         switch(message.type){
             case 'project':await this.select(message.id);break;
-            case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.sendStatus();}}break;}
+            case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const client=this.evidence(),generation=this.generation,identity=this.clientIdentity;const result=await client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&session===this.session&&client===this.client&&identity===this.clientIdentity&&identity===JSON.stringify(this.selectedSpec())&&this.permitted()){this.observeStatus(result.payload,identity!);this.sendStatus();}}break;}
             case 'new':await this.newSession();break;
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;

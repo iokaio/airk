@@ -98,7 +98,7 @@ export function SearchScreen(props: ScreenProps) {
             {result && (
                 <section aria-label="Search results">
                     <p class="muted">Results for “{result.query}”</p>
-                    {result.publication && status?.publication && result.publication !== status.publication && <p class="callout">These retained results are from an earlier publication. Run Search again to use the current index.</p>}
+                    {result.publication && status?.publication && result.publication !== status.publication && <p class="callout">These retained results have a different publication from the observed index. Generation order and live-source freshness are not established. Run Search again to collect new results.</p>}
                     <p class="result-meta">
                         <strong>{countLine(result.returned, result.limit, result.truncated)}</strong>
                         {' · '}mode: {result.appliedMode === 'vector' ? 'semantic' : result.appliedMode}{result.semantic && <> · semantic coverage: {result.semantic}</>}{' · '}publication <span title={result.publication}>{shortToken(result.publication)}</span>

@@ -420,29 +420,52 @@ where
 {
     let admission = Arc::new(Admission::default());
     let close_admission = admission.clone();
-    let signal = Arc::new(InputClosed {
-        callback: Arc::new(move || {
+    let bridge = Bridge {
+        backend,
+        admission,
+        response_mode: crate::response::ResponseMode::from_environment(),
+    };
+    serve_bounded_io(
+        bridge,
+        input,
+        output,
+        Arc::new(move || {
             close_admission.close();
             closed();
         }),
+    )
+    .await
+}
+
+/// One framing and terminal-error boundary for both public stdio entrypoints.
+pub(crate) async fn serve_bounded_io<H, R, W>(
+    handler: H,
+    input: R,
+    output: W,
+    closed: Arc<dyn Fn() + Send + Sync>,
+) -> anyhow::Result<()>
+where
+    H: ServerHandler,
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let signal = Arc::new(InputClosed {
+        callback: closed,
         fired: std::sync::atomic::AtomicBool::new(false),
     });
     let observed = signal.clone();
+    let overflow = Arc::new(std::sync::atomic::AtomicBool::new(false));
     InputOwner {
         closed: signal,
         future: Box::pin(async move {
-            let bridge = Bridge {
-                backend,
-                admission,
-                response_mode: crate::response::ResponseMode::from_environment(),
-            };
-            rmcp::service::serve_directly(
-                crate::lifecycle::StdioLifecycle::new(bridge),
+            let result = rmcp::service::serve_directly(
+                crate::lifecycle::StdioLifecycle::new(handler),
                 (
                     ObservedRead {
                         inner: BoundedRead {
                             inner: input,
                             line_bytes: 0,
+                            overflow: overflow.clone(),
                         },
                         closed: observed,
                     },
@@ -451,7 +474,13 @@ where
                 None,
             )
             .waiting()
-            .await?;
+            .await;
+            // The SDK treats a reader failure as input closure. Preserve the
+            // terminal cause, but only return it after accepted work drains.
+            if overflow.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(FrameBoundExceeded.into());
+            }
+            result?;
             Ok(())
         }),
     }
@@ -518,10 +547,21 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ObservedRead<R> {
     }
 }
 
+/// Content-free terminal cause; never retain or format rejected request bytes.
+#[derive(Debug)]
+struct FrameBoundExceeded;
+impl std::fmt::Display for FrameBoundExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MCP request exceeds frame bound")
+    }
+}
+impl std::error::Error for FrameBoundExceeded {}
+
 /// Bound stdio lines before rmcp's read_until can allocate an oversized request.
 struct BoundedRead<R> {
     inner: R,
     line_bytes: usize,
+    overflow: Arc<std::sync::atomic::AtomicBool>,
 }
 impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
     fn poll_read(
@@ -529,6 +569,12 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
         cx: &mut std::task::Context<'_>,
         output: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        if self.overflow.load(std::sync::atomic::Ordering::Acquire) {
+            return std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                FrameBoundExceeded,
+            )));
+        }
         let mut bytes = [0; 8192];
         let count = output.remaining().min(bytes.len());
         let mut buffer = tokio::io::ReadBuf::new(&mut bytes[..count]);
@@ -537,9 +583,11 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
                 for &byte in buffer.filled() {
                     self.line_bytes += 1;
                     if self.line_bytes > airk_core::service::MAX_FRAME_BYTES {
+                        self.overflow
+                            .store(true, std::sync::atomic::Ordering::Release);
                         return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            "MCP request exceeds frame bound",
+                            FrameBoundExceeded,
                         )));
                     }
                     if byte == b'\n' {
@@ -957,6 +1005,7 @@ mod tests {
             inner: BoundedRead {
                 inner: &b""[..],
                 line_bytes: 0,
+                overflow: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             },
             closed: closed.clone(),
         };
@@ -982,6 +1031,7 @@ mod tests {
             inner: BoundedRead {
                 inner: &b"unread"[..],
                 line_bytes: 0,
+                overflow: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             },
             closed: Arc::new(InputClosed {
                 callback: Arc::new(move || {
@@ -996,10 +1046,20 @@ mod tests {
 
     #[tokio::test]
     async fn actual_sdk_eof_closes_before_blocked_handler_drain() -> anyhow::Result<()> {
+        sdk_close_drains_blocked_handler(false).await
+    }
+
+    #[tokio::test]
+    async fn actual_sdk_overflow_closes_before_blocked_handler_drain() -> anyhow::Result<()> {
+        sdk_close_drains_blocked_handler(true).await
+    }
+
+    async fn sdk_close_drains_blocked_handler(overflow: bool) -> anyhow::Result<()> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         struct Blocked {
             began: Arc<tokio::sync::Notify>,
             release: Arc<tokio::sync::Notify>,
+            completed: Arc<std::sync::atomic::AtomicBool>,
         }
         impl RemoteTools for Blocked {
             fn local_help(&self) -> bool {
@@ -1013,13 +1073,18 @@ mod tests {
                 Box::pin(async move {
                     self.began.notify_one();
                     self.release.notified().await;
+                    self.completed
+                        .store(true, std::sync::atomic::Ordering::Release);
                     Ok(serde_json::to_value(CallToolResult::success(vec![]))?)
                 })
             }
         }
         let began = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
+        let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let closed = Arc::new(tokio::sync::Notify::new());
+        let close_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = close_count.clone();
         let observed = closed.clone();
         let (client, server) = tokio::io::duplex(65536);
         let (input, output) = tokio::io::split(server);
@@ -1027,10 +1092,14 @@ mod tests {
             Arc::new(Blocked {
                 began: began.clone(),
                 release: release.clone(),
+                completed: completed.clone(),
             }),
             input,
             output,
-            Arc::new(move || observed.notify_one()),
+            Arc::new(move || {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                observed.notify_one();
+            }),
         ));
         let (input, mut output) = tokio::io::split(client);
         let mut lines = tokio::io::BufReader::new(input).lines();
@@ -1039,14 +1108,30 @@ mod tests {
         assert!(serde_json::from_str::<serde_json::Value>(&initialized)?["result"].is_object());
         output.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"airk_search\",\"arguments\":{}}}\n").await?;
         began.notified().await;
-        output.shutdown().await?;
+        if overflow {
+            output
+                .write_all(&vec![b'x'; airk_core::service::MAX_FRAME_BYTES + 1])
+                .await?;
+        } else {
+            output.shutdown().await?;
+        }
         tokio::time::timeout(std::time::Duration::from_secs(1), closed.notified()).await?;
         assert!(
             !task.is_finished(),
             "EOF must close admission before the SDK finishes draining"
         );
         release.notify_one();
-        task.await??;
+        let result = task.await?;
+        if overflow {
+            assert!(result.unwrap_err().is::<FrameBoundExceeded>());
+        } else {
+            result?;
+        }
+        assert!(
+            completed.load(std::sync::atomic::Ordering::Acquire),
+            "accepted handler must finish before terminal return"
+        );
+        assert_eq!(close_count.load(std::sync::atomic::Ordering::SeqCst), 1);
         Ok(())
     }
 
@@ -1326,12 +1411,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn overflow_chunk_is_atomic_and_terminal() -> anyhow::Result<()> {
+        let mut read = BoundedRead {
+            inner: &b"ab\nprivate next frame\n"[..],
+            line_bytes: airk_core::service::MAX_FRAME_BYTES - 2,
+            overflow: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let mut bytes = [0; 8192];
+        for _ in 0..2 {
+            let mut output = tokio::io::ReadBuf::new(&mut bytes);
+            let error = std::future::poll_fn(|cx| Pin::new(&mut read).poll_read(cx, &mut output))
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(error.get_ref().unwrap().is::<FrameBoundExceeded>());
+            assert!(
+                output.filled().is_empty(),
+                "the entire overflow chunk is rejected"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn legacy_handler_uses_shared_bounded_stdio_runner() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let kernel = airk_kernel::Kernel::open(root.path(), Some(data.path().into()))?;
+        let server = crate::AirkServer::new(kernel);
+        let admission = server.admission.clone();
+        let close = admission.clone();
+        let result = serve_bounded_io(
+            server,
+            std::io::Cursor::new(vec![b'x'; airk_core::service::MAX_FRAME_BYTES + 1]),
+            tokio::io::sink(),
+            Arc::new(move || close.close()),
+        )
+        .await;
+        assert!(result.unwrap_err().is::<FrameBoundExceeded>());
+        assert!(
+            admission.admit(false).await.is_err(),
+            "legacy admission closes at terminal input"
+        );
+        admission.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn request_line_bound_applies_across_reads_and_resets_only_at_newline()
     -> anyhow::Result<()> {
         let bytes = vec![b'x'; airk_core::service::MAX_FRAME_BYTES + 1];
         let mut read = BoundedRead {
             inner: bytes.as_slice(),
             line_bytes: 0,
+            overflow: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let mut captured = Vec::new();
         assert_eq!(
@@ -1345,6 +1478,7 @@ mod tests {
         let mut read = BoundedRead {
             inner: bytes.as_slice(),
             line_bytes: 0,
+            overflow: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let mut captured = Vec::new();
         read.read_to_end(&mut captured).await?;
