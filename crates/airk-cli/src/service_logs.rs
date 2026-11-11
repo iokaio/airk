@@ -46,7 +46,7 @@ const FILES: [&str; 21] = [
 const FILE_BYTES: u64 = 10_000_000;
 const HIGH_WATER_BYTES: u64 = 200_000_000;
 const LOW_WATER_BYTES: u64 = 100_000_000;
-const RECORD_BYTES: usize = 768;
+const RECORD_BYTES: usize = airk_core::service_logs::MAX_RECORD_BYTES;
 const READ_BYTES: usize = 64 << 10;
 
 mod raw;
@@ -540,71 +540,16 @@ fn read_retained(
         let mut bytes = Vec::new();
         file.take(count as u64).read_to_end(&mut bytes)?;
         remaining -= bytes.len();
-        let complete_tail = bytes.last() == Some(&b'\n');
-        page.tail_truncated |= start > 0 || !complete_tail;
-        let mut lines: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
-        if start > 0 && !lines.is_empty() {
-            lines.remove(0);
-        }
-        if !lines.is_empty() {
-            lines.pop();
-        } // empty terminator or unfinished last record
-        for line in lines.into_iter().rev() {
-            if line.len() > RECORD_BYTES {
-                page.malformed_records += 1;
-                continue;
-            }
-            match serde_json::from_slice::<LogRecord>(line) {
-                Ok(record) if record.validate().is_ok() => page.records.push(record),
-                _ => page.malformed_records += 1,
-            }
-            if page.records.len() == limit {
-                // The recent page cannot certify that older records were absent.
-                page.tail_truncated = true;
-                break;
-            }
-        }
-        if page.records.len() == limit || remaining == 0 {
+        let full = airk_core::service_logs::read_tail(&mut page, &bytes, start > 0, limit);
+        if full || remaining == 0 {
             break;
         }
     }
-    page.records.reverse();
-    ensure!(
-        serde_json::to_vec(&page)?.len() <= output_bytes,
-        "diagnostic log page exceeds bound"
-    );
-    Ok(page)
+    airk_core::service_logs::finish(page, output_bytes)
 }
 
-pub fn render(page: &LogPage) -> Result<String> {
-    let mut text = format!(
-        "Cached AIRK process log; not index freshness.\nStored bytes: {}; malformed records: {}; tail limited/incomplete: {}\n",
-        page.stored_bytes, page.malformed_records, page.tail_truncated
-    );
-    ensure!(
-        page.schema == 1 && page.records.len() <= 32,
-        "invalid diagnostic log page"
-    );
-    for record in &page.records {
-        record.validate()?;
-        text.push_str(&format!(
-            "{} {} {:?} count={}",
-            record.observed_unix_ms, record.instance, record.kind, record.count
-        ));
-        if let Some(project) = record.project {
-            text.push_str(&format!(" project={project}"));
-        }
-        if let Some(job) = record.job {
-            text.push_str(&format!(" job={job}"));
-        }
-        if let Some(code) = &record.code {
-            text.push_str(&format!(" code={code}"));
-        }
-        text.push('\n');
-    }
-    ensure!(text.len() <= 48 << 10, "diagnostic summary exceeds bound");
-    Ok(text)
-}
+/// Moved to `airk-core` (U86); re-exported for existing callers.
+pub use airk_core::service_logs::render;
 
 #[cfg(test)]
 mod tests;
