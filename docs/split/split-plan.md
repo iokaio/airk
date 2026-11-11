@@ -149,6 +149,7 @@ These came from the user's request and answers. They are not agent choices.
 | U82 | (11 November) The Inno Setup compiler identity check in `package-standalone-windows.py` may change in Phase 7: the genuine 6.7.1 `ISCC.exe` reports ProductVersion 0.0.0.0, so identity moves to a pinned signer and digest. |
 | U83 | (11 November) The user accepts the H1 and H2 fixes from the admin-plane security review (`contracts.md` §4.11): same-user peer admission with owner-only launch delivery, and no admin URL opened or forwarded from a remote extension host. |
 | U84 | (11 November) `airkctl`'s native needs move into existing crates by committed scripts, one implementation each: the Unix owner-private file check joins `airk-ipc` beside its Windows twin; the per-user folder lookup (Windows Known Folder, Unix passwd home) and the detached-spawn primitive move to `airk-process`; `airk-cli` calls them. No new crate. |
+| U85 | (11 November) `airkctl service stop`/`restart` are split-native now (step 3b.1e), not a port of the pre-split `runtime lifecycle`: the service records the request in its existing lifecycle ledger with the saved explicit Stop, answers with its instance and process id, drains and exits; `airkctl` waits for that process to exit, and Restart then runs `service start`, whose new instance completes the record. OS-manager ownership and forced stop join in Phase 7 with login startup; `runtime lifecycle` stays until it is retired. |
 
 ### 2.2 Formerly open decisions
 
