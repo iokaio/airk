@@ -15,7 +15,7 @@ is 1.8.23.
 | 1 | Two products: a standalone service installer and a UI-only extension that discovers the service. |
 | 2 | Adds `airkctl`, a service-only `airk`, browser admin pages on the HTTPS endpoint, an extension that reaches the service only through `airkctl`, a fixed-layout installer that removes pre-split installations, and code and installer maps. Records the user's decisions of 10 November 2026. |
 | 3 | Clarifies common-contract ownership, UI boundaries, recovery and deployment; maps CI selection, artifact reuse, signing and publication; adds force-local Windows installer/VSIX scripts, phase dependencies and acceptance evidence. Records the additional user decisions U18 onward. |
-| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U80 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
+| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U83 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
 
 **Reading order.** §2 lists what the user has decided and what still needs an
 answer. §4 defines the boundary between extension code and service code. §5–§9
@@ -145,6 +145,9 @@ These came from the user's request and answers. They are not agent choices.
 | U78 | (11 November) The macOS program folder is `~/Library/Application Support/AIRK/program/`, holding `AIRK.app` and its install record, so no installed file shares a folder with pre-split files. Retirement never removes the shared `AIRK` parent. |
 | U79 | (11 November) The ten commands that use `--output <FILE>` today (Explorer draft and suggest commands) take `--output-file <FILE>` in `airkctl`, so `--output json` means the same thing on every command. This is the one approved exception to keeping argument names (§6.2); goldens compare with that rename applied. |
 | U80 | (11 November) Amends U75: abandoning a stuck lifecycle record stays a service operation (at startup or over the pipe), because lifecycle records and the explicit-Stop flag live in the registry. `airkctl` gets no offline path for it. |
+| U81 | (11 November) Update rustix to the patched 1.1.6 (RUSTSEC-2026-0486) with a reviewed exact-version exemption, and fix pre-existing unused code: remove it when it is truly unused, otherwise scope it so it is not reported. |
+| U82 | (11 November) The Inno Setup compiler identity check in `package-standalone-windows.py` may change in Phase 7: the genuine 6.7.1 `ISCC.exe` reports ProductVersion 0.0.0.0, so identity moves to a pinned signer and digest. |
+| U83 | (11 November) The user accepts the H1 and H2 fixes from the admin-plane security review (`contracts.md` §4.11): same-user peer admission with owner-only launch delivery, and no admin URL opened or forwarded from a remote extension host. |
 
 ### 2.2 Formerly open decisions
 
