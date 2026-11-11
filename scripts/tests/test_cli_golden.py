@@ -108,5 +108,55 @@ class CliGolden(unittest.TestCase):
                 part.format(**{name: "x" for name in names})
 
 
+class Differential(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def cases(self, *cases, replace=()):
+        path = self.root / "differential.json"
+        path.write_text(json.dumps({"schema": GOLDEN.DIFFERENTIAL_SCHEMA, "service": False,
+                                    "replace": [{"old": o, "new": n} for o, n in replace],
+                                    "cases": list(cases)}), encoding="utf-8")
+        return path
+
+    def run_pair(self, cases):
+        return GOLDEN.differential(sys.executable, sys.executable, cases, fixture_base=self.root / "work")
+
+    def test_equal_outputs_compare_equal(self):
+        code = ["-c", "import os;print(os.getcwd())"]
+        problems, results = self.run_pair(self.cases({"id": "same", "old": code, "new": code}))
+        self.assertEqual(problems, [])
+        self.assertTrue(results[0]["equal"])
+
+    def test_differences_are_reported_per_stream(self):
+        problems, results = self.run_pair(self.cases(
+            {"id": "out", "old": ["-c", "print(1)"], "new": ["-c", "print(2)"]},
+            {"id": "exit", "old": ["-c", "raise SystemExit(0)"], "new": ["-c", "raise SystemExit(5)"]}))
+        self.assertIn("out stdout differs", problems)
+        self.assertIn("exit exit differs", problems)
+        self.assertFalse(results[0]["equal"])
+
+    def test_reviewed_renames_apply_to_the_old_side(self):
+        problems, _ = self.run_pair(self.cases(
+            {"id": "renamed", "old": ["-c", "print('run airk service start')"],
+             "new": ["-c", "print('run airkctl service start')"]},
+            replace=[("airk service", "airkctl service")]))
+        self.assertEqual(problems, [])
+
+    def test_case_files_need_the_schema_and_unique_ids(self):
+        path = self.root / "bad.json"
+        path.write_text(json.dumps({"schema": "other", "cases": [{"id": "a", "old": [], "new": []}]}))
+        with self.assertRaises(ValueError):
+            GOLDEN.differential(sys.executable, sys.executable, path)
+        twice = self.cases({"id": "a", "old": ["-c", "1"], "new": ["-c", "1"]},
+                           {"id": "a", "old": ["-c", "1"], "new": ["-c", "1"]})
+        with self.assertRaises(ValueError):
+            GOLDEN.differential(sys.executable, sys.executable, twice)
+
+
 if __name__ == "__main__":
     unittest.main()
