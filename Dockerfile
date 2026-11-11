@@ -98,6 +98,7 @@ COPY fixtures/split/i3/envelopes.json ./fixtures/split/i3/envelopes.json
 COPY fixtures/split/i3/headers.json ./fixtures/split/i3/headers.json
 COPY fixtures/split/i3/launch_exchange.json ./fixtures/split/i3/launch_exchange.json
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
+COPY fixtures/split/i1/control_methods.json ./fixtures/split/i1/control_methods.json
 COPY fixtures/split/i4/role_admission.json ./fixtures/split/i4/role_admission.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
@@ -106,7 +107,6 @@ COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decision
 COPY fixtures/wire/read_retry_envelopes.json ./fixtures/wire/read_retry_envelopes.json
 COPY fixtures/wire/session_frames.json ./fixtures/wire/session_frames.json
 COPY fixtures/wire/usage_page.json ./fixtures/wire/usage_page.json
-COPY fixtures/wire/control_tools_catalog.json ./fixtures/wire/control_tools_catalog.json
 COPY packages/contracts-gen/i3.schema.json ./packages/contracts-gen/i3.schema.json
 COPY packages/vscode/src/generated/i2.schema.json ./packages/vscode/src/generated/i2.schema.json
 COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts

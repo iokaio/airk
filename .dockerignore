@@ -27,6 +27,8 @@ fixtures/schema/**
 fixtures/schema/airk-state-1/**
 !fixtures/split/
 fixtures/split/**
+!fixtures/split/i1/
+fixtures/split/i1/**
 !fixtures/split/i2/
 fixtures/split/i2/**
 !fixtures/split/i3/
@@ -119,6 +121,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i3/headers.json
 !fixtures/split/i3/launch_exchange.json
 !fixtures/split/i4/i4_cases.json
+!fixtures/split/i1/control_methods.json
 !fixtures/split/i4/role_admission.json
 !fixtures/wire/airkctl_session_frames.json
 !fixtures/wire/catalog_receipt.json
@@ -127,7 +130,6 @@ packages/vscode/src/test/fixtures/**
 !fixtures/wire/read_retry_envelopes.json
 !fixtures/wire/session_frames.json
 !fixtures/wire/usage_page.json
-!fixtures/wire/control_tools_catalog.json
 !packages/contracts-gen/i3.schema.json
 !packages/vscode/src/generated/i2.schema.json
 !packages/vscode/src/test/diagnosticLogs.test.ts

@@ -1,0 +1,74 @@
+{
+  "schema": "airk.split-fixture.i1-control-methods/1",
+  "contract": "docs/split/contracts.md §2.1–§2.3 and §2.8; owner airk_core::service (ControlMethod, ControlResponse). One group per landed C2 variant: exact request and response bytes, the response frame budget and reviewed refusals. Written independently of the code under test.",
+  "variants": [
+    {
+      "variant": "tools_catalog",
+      "method": "M2",
+      "methods": [
+        {
+          "name": "list_with_schemas",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":true}}}}",
+          "response_frame_budget": 1048576
+        },
+        {
+          "name": "list_names_only",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}}}}",
+          "response_frame_budget": 1048576
+        },
+        {
+          "name": "help",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"help\":{\"tool\":\"airk_search\"}}}}",
+          "response_frame_budget": 1048576
+        },
+        {
+          "name": "other_methods_keep_the_default_budget",
+          "bytes": "\"health\"",
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_detail",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"call\":{\"tool\":\"x\"}}}}"
+        },
+        {
+          "name": "missing_detail",
+          "bytes": "{\"tools_catalog\":{}}"
+        },
+        {
+          "name": "extra_field",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":true}},\"project\":1}}"
+        },
+        {
+          "name": "list_without_schemas",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{}}}}"
+        },
+        {
+          "name": "list_extra_field",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":true,\"limit\":1}}}}"
+        },
+        {
+          "name": "help_tool_not_string",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"help\":{\"tool\":1}}}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "document_text_is_kept_exactly",
+          "bytes": "{\"status\":\"tools_catalog\",\"document\":\"{\\n  \\\"tools\\\": []\\n}\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "document_not_text",
+          "bytes": "{\"status\":\"tools_catalog\",\"document\":{\"tools\":[]}}"
+        },
+        {
+          "name": "extra_field",
+          "bytes": "{\"status\":\"tools_catalog\",\"document\":\"{}\",\"truncated\":false}"
+        }
+      ]
+    }
+  ]
+}
