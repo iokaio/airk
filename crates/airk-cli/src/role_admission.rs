@@ -38,6 +38,11 @@ pub enum RoleRequest {
         runtime_dir: PathBuf,
         nonce: Incarnation,
     },
+    /// U75: append one client error while the service is down (step 3b.2).
+    RecordError {
+        runtime_dir: PathBuf,
+        operation: String,
+    },
 }
 
 /// Classify the process arguments (including the program name). `None` means
@@ -89,6 +94,40 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
             Ok(RoleRequest::ServiceDetached {
                 runtime_dir,
                 nonce: nonce.context("role_admission_refused: --start-request is required")?,
+            })
+        }
+        "record-error" => {
+            let mut runtime_dir = None;
+            let mut operation = None;
+            let mut rest = arguments[1..].iter();
+            while let Some(flag) = rest.next() {
+                let value = rest
+                    .next()
+                    .context("role_admission_refused: missing role argument value")?;
+                match flag.to_str() {
+                    Some("--runtime-dir") if runtime_dir.is_none() => {
+                        runtime_dir = Some(PathBuf::from(value));
+                    }
+                    Some("--operation") if operation.is_none() => {
+                        operation = Some(
+                            value
+                                .to_str()
+                                .context("role_admission_refused: invalid operation")?
+                                .to_owned(),
+                        );
+                    }
+                    _ => bail!("role_admission_refused: unexpected role argument"),
+                }
+            }
+            let runtime_dir =
+                runtime_dir.context("role_admission_refused: --runtime-dir is required")?;
+            ensure!(
+                runtime_dir.is_absolute(),
+                "role_admission_refused: --runtime-dir must be absolute"
+            );
+            Ok(RoleRequest::RecordError {
+                runtime_dir,
+                operation: operation.context("role_admission_refused: --operation is required")?,
             })
         }
         name if ROLES.contains(&name) => bail!("role_not_available: {name}"),
@@ -151,6 +190,23 @@ pub async fn run(request: RoleRequest) -> Result<()> {
             // The saved Stop and any pending lifecycle record are settled once
             // the service holds its single-instance lease (step 3b.1e-2).
             crate::service_runtime::serve_admitted(&runtime_dir, mode).await
+        }
+        RoleRequest::RecordError {
+            runtime_dir,
+            operation,
+        } => {
+            // The control root must already be this user's owner-only root.
+            crate::local_ipc::require_existing_root(&runtime_dir)
+                .context("role_admission_refused: control root is not owner-only")?;
+            let mut input = Vec::new();
+            std::io::stdin()
+                .take(airk_core::service::MAX_CLIENT_ERROR_INPUT_BYTES as u64 + 1)
+                .read_to_end(&mut input)?;
+            ensure!(
+                input.len() <= airk_core::service::MAX_CLIENT_ERROR_INPUT_BYTES,
+                "client error input exceeds 16 KiB"
+            );
+            crate::service_logs::record_client_error(&runtime_dir, &operation, &input)
         }
     }
 }

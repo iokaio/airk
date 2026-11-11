@@ -4442,6 +4442,7 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
 fn airkctl(arguments: &[&str]) -> (u8, String, String) {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let mut io = airkctl::cli::Io {
+        stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: false,
@@ -4745,5 +4746,131 @@ fn airkctl_service_status_reports_running_and_stopped() -> Result<()> {
     ensure!(wait_exit(&mut children.0[0])?, "service exits cleanly");
     let stopped = status()?;
     ensure!(stopped["service"]["state"] == "not_running", "{stopped}");
+    Ok(())
+}
+
+/// One `airkctl` command line run in process with `input` on stdin.
+fn airkctl_with_input(arguments: &[&str], input: &[u8]) -> (u8, String, String) {
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut stdin = input;
+    let mut io = airkctl::cli::Io {
+        stdin: &mut stdin,
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+        full_responses: false,
+    };
+    let line = std::iter::once("airkctl")
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+    let code = airkctl::cli::run(line, &mut io);
+    (
+        code,
+        String::from_utf8(stdout).unwrap(),
+        String::from_utf8(stderr).unwrap(),
+    )
+}
+
+/// The raw job-error ring's records without their observation time.
+fn raw_records(dir: &str) -> Result<Vec<Value>> {
+    let output = command()
+        .args(["service", "logs", "--runtime-dir", dir, "--raw"])
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)?
+        .lines()
+        .map(|line| {
+            let mut record: Value = serde_json::from_str(line)?;
+            record
+                .as_object_mut()
+                .context("raw record")?
+                .remove("observed_unix_ms")
+                .context("observation time")?;
+            Ok(record)
+        })
+        .collect()
+}
+
+/// `airkctl service record-error` records what `airk service record-error`
+/// recorded, through M14 while the service runs and through the private
+/// `record-error` role while it is down (U75, split 3b.2).
+#[test]
+fn airkctl_record_error_matches_airk_running_and_stopped() -> Result<()> {
+    use std::io::Write as _;
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let input =
+        br#"{"code":"setup_failed","detail":{"chain":"download refused","truncated":false}}"#;
+    let old = || -> Result<Vec<u8>> {
+        let mut child = command()
+            .args([
+                "service",
+                "record-error",
+                "--runtime-dir",
+                &dir,
+                "--operation",
+                "service_setup",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        child.stdin.take().context("stdin")?.write_all(input)?;
+        let output = child.wait_with_output()?;
+        ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(output.stdout)
+    };
+    let recorded = old()?;
+    ensure!(
+        recorded == b"{\"recorded\":true}\n",
+        "{}",
+        String::from_utf8_lossy(&recorded)
+    );
+    let (code, stdout, stderr) = airkctl_with_input(
+        &[
+            "service",
+            "record-error",
+            "--runtime-dir",
+            &dir,
+            "--operation",
+            "service_setup",
+        ],
+        input,
+    );
+    ensure!(code == 0, "{stderr}");
+    ensure!(stdout.as_bytes() == recorded.as_slice(), "{stdout}");
+    let running = raw_records(&dir)?;
+    ensure!(
+        running.len() == 2 && running[0] == running[1],
+        "{running:?}"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "service exits cleanly");
+    ensure!(old()? == recorded);
+    ensure!(matches!(
+        airkctl::record::by_service(&root, "service_setup", input, env!("CARGO_PKG_VERSION")),
+        Ok(airkctl::record::Recorded::ServiceDown)
+    ));
+    airkctl::record::by_role(
+        Path::new(env!("CARGO_BIN_EXE_airk")),
+        &root,
+        "service_setup",
+        input,
+    )
+    .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+    let all = raw_records(&dir)?;
+    ensure!(all.len() == 4, "{all:?}");
+    ensure!(all.iter().all(|record| record == &running[0]), "{all:?}");
     Ok(())
 }

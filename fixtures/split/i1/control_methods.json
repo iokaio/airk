@@ -300,7 +300,7 @@
       "methods": [
         {
           "name": "record",
-          "bytes": "{\"record_client_error\":{\"operation\":\"service_setup\",\"input\":\"{\\\"code\\\":\\\"setup_failed\\\",\\\"detail\\\":{\\\"chain\\\":[\\\"download refused\\\"]}}\"}}",
+          "bytes": "{\"record_client_error\":{\"operation\":\"service_setup\",\"input\":\"{\\\"code\\\":\\\"setup_failed\\\",\\\"detail\\\":{\\\"chain\\\":\\\"download refused\\\",\\\"truncated\\\":false}}\"}}",
           "request_frame_budget": 131072,
           "response_frame_budget": 65536
         }
@@ -312,7 +312,7 @@
         },
         {
           "name": "missing_operation",
-          "bytes": "{\"record_client_error\":{\"input\":\"{\\\"code\\\":\\\"setup_failed\\\",\\\"detail\\\":{\\\"chain\\\":[\\\"download refused\\\"]}}\"}}"
+          "bytes": "{\"record_client_error\":{\"input\":\"{\\\"code\\\":\\\"setup_failed\\\",\\\"detail\\\":{\\\"chain\\\":\\\"download refused\\\",\\\"truncated\\\":false}}\"}}"
         }
       ],
       "responses": [

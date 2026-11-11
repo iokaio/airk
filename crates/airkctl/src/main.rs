@@ -6,7 +6,9 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
+    let stdin = std::io::stdin();
     let mut io = airkctl::cli::Io {
+        stdin: &mut stdin.lock(),
         stdout: &mut stdout.lock(),
         stderr: &mut stderr.lock(),
         full_responses: std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("full"),

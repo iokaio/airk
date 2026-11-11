@@ -3394,6 +3394,7 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
         let new = tokio::task::spawn_blocking(move || {
             let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
             let mut io = airkctl::cli::Io {
+                stdin: &mut std::io::empty(),
                 stdout: &mut stdout,
                 stderr: &mut stderr,
                 full_responses: true,

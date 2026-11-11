@@ -244,3 +244,57 @@ fn listed_roles_match_the_reviewed_table() {
         }
     }
 }
+
+#[test]
+fn record_error_requires_an_absolute_root_and_an_operation() {
+    let root = std::env::temp_dir().join("airk-role-fixture");
+    let root = root.to_str().unwrap();
+    for invalid in [
+        vec!["airk", SELECTOR, "record-error"],
+        vec!["airk", SELECTOR, "record-error", "--runtime-dir", root],
+        vec!["airk", SELECTOR, "record-error", "--operation", "setup"],
+        vec![
+            "airk",
+            SELECTOR,
+            "record-error",
+            "--runtime-dir",
+            "relative",
+            "--operation",
+            "x",
+        ],
+        vec![
+            "airk",
+            SELECTOR,
+            "record-error",
+            "--runtime-dir",
+            root,
+            "--operation",
+            "x",
+            "--extra",
+            "1",
+        ],
+    ] {
+        let message = refusal(parse(&args(&invalid)).unwrap());
+        assert!(
+            message.starts_with("role_admission_refused"),
+            "{invalid:?}: {message}"
+        );
+    }
+    assert_eq!(
+        parse(&args(&[
+            "airk",
+            SELECTOR,
+            "record-error",
+            "--runtime-dir",
+            root,
+            "--operation",
+            "service_setup"
+        ]))
+        .unwrap()
+        .unwrap(),
+        RoleRequest::RecordError {
+            runtime_dir: PathBuf::from(root),
+            operation: "service_setup".into(),
+        }
+    );
+}

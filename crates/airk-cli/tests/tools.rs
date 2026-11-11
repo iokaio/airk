@@ -654,6 +654,7 @@ fn airkctl_outcome(arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut io = airkctl::cli::Io {
+        stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: true,

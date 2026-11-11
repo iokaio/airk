@@ -31,6 +31,7 @@ const CAPABILITIES: &[&str] = &["tools/1"];
 
 /// The streams and environment one run uses.
 pub struct Io<'a> {
+    pub stdin: &'a mut dyn std::io::Read,
     pub stdout: &'a mut dyn Write,
     pub stderr: &'a mut dyn Write,
     /// `AIRK_MCP_RESPONSE_MODE=full`, as the pre-split CLI read it.
@@ -158,6 +159,14 @@ enum ServiceCommand {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
+    },
+    /// Record a bounded client error (JSON on stdin) without needing the service to run.
+    RecordError {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        operation: String,
     },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
@@ -930,8 +939,60 @@ fn status_service(cx: &mut Context, selection: Selection, runtime_dir: Option<Pa
     written(cx, result)
 }
 
+/// `service record-error` (M14; U75; step 3b.2), printing `{"recorded":true}`
+/// as `airk service record-error` did.
+fn record_error_service(
+    cx: &mut Context,
+    selection: Selection,
+    runtime_dir: Option<PathBuf>,
+    operation: String,
+) -> u8 {
+    let input = match crate::record::bounded(&mut cx.io.stdin) {
+        Ok(input) => input,
+        Err(line) => return fail(cx, &line),
+    };
+    let explicit = runtime_dir.or(selection.control);
+    let mut verified = None;
+    let control = match explicit {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(installation) => {
+                let state = PathBuf::from(&installation.record.locations.state);
+                verified = Some(installation);
+                state
+            }
+            Err(code) => return code,
+        },
+    };
+    match crate::record::by_service(&control, &operation, &input, VERSION) {
+        Ok(crate::record::Recorded::ByService) => {}
+        Ok(crate::record::Recorded::ServiceDown) => {
+            let verified = match verified {
+                Some(verified) => verified,
+                None => match installed(cx) {
+                    Ok(verified) => verified,
+                    Err(code) => return code,
+                },
+            };
+            if let Err(line) = crate::record::by_role(&verified.airk, &control, &operation, &input)
+            {
+                return fail(cx, &line);
+            }
+        }
+        Err(line) => return fail(cx, &line),
+    }
+    let result = writeln!(cx.io.stdout, "{}", serde_json::json!({"recorded": true}));
+    written(cx, result)
+}
+
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        ServiceCommand::RecordError {
+            runtime_dir,
+            operation,
+        } => {
+            return record_error_service(cx, selection, runtime_dir, operation);
+        }
         ServiceCommand::Status { runtime_dir } => {
             return status_service(cx, selection, runtime_dir);
         }
