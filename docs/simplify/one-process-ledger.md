@@ -78,6 +78,24 @@ matching Cargo and extension repository metadata. Authenticated GitHub account
 This read-only check followed an automatic approval rejection of the initial push
 for missing destination-trust evidence.
 
+Historical source preservation (no historical source copied over the integrated
+1.8.23 tree):
+
+| Retiring worktree | Signed-off source snapshot | Source paths |
+| --- | --- | --- |
+| `artifacts/v190/p10-worktree` | `2240086ce2e9e749bbd88b57aacfce7d03a04c14` | 59 |
+| `artifacts/v190/p6e-worktree` | `af79e434f25ca93e24ab1735a17c16b0dccb1688` | 13 |
+| `artifacts/v190/p6f-worktree` | `22c32f3e501338544c1ec45dd169302cd5885079` | 117 |
+| `artifacts/worktrees/one-process-workers` | `d2bf99ca3d99f1e7c23b5d842a8e20a0695611f8` | 28 |
+
+The preservation merge records all four snapshots as parents while retaining
+the current integrated source tree. Local raw-byte archives and digest manifests
+also retain CRLF-only/stat-only working-copy differences under ignored
+`artifacts/worktree-retention/2026-11-10/`. The three clean cold-status worktrees
+have no uncommitted work; existing diagnostic branch refs remain intact.
+Worktree removal and ignored-evidence relocation receipts are collected there
+after source preservation. No build or test is part of this housekeeping.
+
 ## Manual-test installer correction (10 November 2026)
 
 **Windows debug manual-test installer built; installed-editor acceptance pending.** The user
