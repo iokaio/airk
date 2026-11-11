@@ -18,7 +18,7 @@
       "new": [
         "tools",
         "list",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -33,7 +33,7 @@
         "tools",
         "list",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -48,7 +48,7 @@
         "tools",
         "help",
         "capabilities",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -65,7 +65,7 @@
         "help",
         "capabilities",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -80,7 +80,7 @@
         "tools",
         "help",
         "changes",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -97,7 +97,7 @@
         "help",
         "changes",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -112,7 +112,7 @@
         "tools",
         "help",
         "code_facts",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -129,7 +129,7 @@
         "help",
         "code_facts",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -144,7 +144,7 @@
         "tools",
         "help",
         "context",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -161,7 +161,7 @@
         "help",
         "context",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -176,7 +176,7 @@
         "tools",
         "help",
         "diagnostics",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -193,7 +193,7 @@
         "help",
         "diagnostics",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -208,7 +208,7 @@
         "tools",
         "help",
         "document_facts",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -225,7 +225,7 @@
         "help",
         "document_facts",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -240,7 +240,7 @@
         "tools",
         "help",
         "file_info",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -257,7 +257,7 @@
         "help",
         "file_info",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -272,7 +272,7 @@
         "tools",
         "help",
         "help",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -289,7 +289,7 @@
         "help",
         "help",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -304,7 +304,7 @@
         "tools",
         "help",
         "imports",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -321,7 +321,7 @@
         "help",
         "imports",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -336,7 +336,7 @@
         "tools",
         "help",
         "list_files",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -353,7 +353,7 @@
         "help",
         "list_files",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -368,7 +368,7 @@
         "tools",
         "help",
         "outline",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -385,7 +385,7 @@
         "help",
         "outline",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -400,7 +400,7 @@
         "tools",
         "help",
         "parse",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -417,7 +417,7 @@
         "help",
         "parse",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -432,7 +432,7 @@
         "tools",
         "help",
         "query_scope",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -449,7 +449,7 @@
         "help",
         "query_scope",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -464,7 +464,7 @@
         "tools",
         "help",
         "read_file",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -481,7 +481,7 @@
         "help",
         "read_file",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -496,7 +496,7 @@
         "tools",
         "help",
         "references",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -513,7 +513,7 @@
         "help",
         "references",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -528,7 +528,7 @@
         "tools",
         "help",
         "relationships",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -545,7 +545,7 @@
         "help",
         "relationships",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -560,7 +560,7 @@
         "tools",
         "help",
         "search",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -577,7 +577,7 @@
         "help",
         "search",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -592,7 +592,7 @@
         "tools",
         "help",
         "status",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -609,7 +609,7 @@
         "help",
         "status",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -624,7 +624,7 @@
         "tools",
         "help",
         "symbols",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -641,7 +641,7 @@
         "help",
         "symbols",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -656,7 +656,7 @@
         "tools",
         "help",
         "draft_search",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -673,7 +673,7 @@
         "help",
         "draft_search",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -688,7 +688,7 @@
         "tools",
         "help",
         "draft_strategy",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -705,7 +705,7 @@
         "help",
         "draft_strategy",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -720,7 +720,7 @@
         "tools",
         "help",
         "draft_plan",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -737,7 +737,7 @@
         "help",
         "draft_plan",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -752,7 +752,7 @@
         "tools",
         "help",
         "list_templates",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -769,7 +769,7 @@
         "help",
         "list_templates",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -784,7 +784,7 @@
         "tools",
         "help",
         "get_template",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -801,7 +801,7 @@
         "help",
         "get_template",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -816,7 +816,7 @@
         "tools",
         "help",
         "validate_draft",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -833,7 +833,7 @@
         "help",
         "validate_draft",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -848,7 +848,7 @@
         "tools",
         "help",
         "proposal_status",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -865,7 +865,7 @@
         "help",
         "proposal_status",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -880,7 +880,7 @@
         "tools",
         "help",
         "get_handoff",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -897,7 +897,7 @@
         "help",
         "get_handoff",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -912,7 +912,7 @@
         "tools",
         "help",
         "suggest_view",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -929,7 +929,7 @@
         "help",
         "suggest_view",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -944,7 +944,7 @@
         "tools",
         "help",
         "projects",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -961,7 +961,7 @@
         "help",
         "projects",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -976,7 +976,7 @@
         "tools",
         "help",
         "airk_search",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     },
@@ -993,7 +993,7 @@
         "help",
         "airk_status",
         "--json",
-        "--runtime-dir",
+        "--service-runtime-dir",
         "{control}"
       ]
     }

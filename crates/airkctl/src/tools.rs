@@ -3,44 +3,39 @@
 //! catalog documents exactly as the pre-split `airk tools list|help` printed
 //! it, with `airk tools` guidance renamed to `airkctl tools`. JSON output is the
 //! service's document text, unchanged.
+use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value, json};
-use std::path::PathBuf;
+use std::{io::Read, path::Path};
 
-/// Arguments of `tools list|help`: positionals, `--json` and the explicit
-/// `--runtime-dir` (the I4 pointer arrives with step 3b).
-pub struct Arguments<'a> {
-    pub positionals: Vec<&'a str>,
-    pub json: bool,
-    pub runtime_dir: Option<PathBuf>,
-}
+/// The largest tool argument object, as the pre-split CLI bounded it.
+pub const MAX_ARGUMENT_BYTES: usize = airk_core::service::MAX_TOOL_ARGUMENT_BYTES;
 
-pub fn arguments<'a>(arguments: &[&'a str]) -> Result<Arguments<'a>, &'static str> {
-    let mut parsed = Arguments {
-        positionals: Vec::new(),
-        json: false,
-        runtime_dir: None,
+/// A tool's JSON object arguments from `--args`, `--args-file` or neither
+/// (`{}`), read and bounded as the pre-split `airk tools call` read them.
+pub fn read_arguments(text: Option<&str>, file: Option<&Path>) -> Result<Map<String, Value>> {
+    let bytes = if let Some(file) = file {
+        ensure!(
+            std::fs::metadata(file)?.is_file(),
+            "Arguments must be a regular file"
+        );
+        let mut bytes = Vec::new();
+        std::fs::File::open(file)?
+            .take((MAX_ARGUMENT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        bytes
+    } else {
+        text.unwrap_or("{}").as_bytes().to_vec()
     };
-    let mut rest = arguments.iter();
-    while let Some(&argument) = rest.next() {
-        let runtime_dir = if argument == "--runtime-dir" {
-            Some(*rest.next().ok_or("--runtime-dir takes a directory")?)
-        } else {
-            argument.strip_prefix("--runtime-dir=")
-        };
-        if let Some(directory) = runtime_dir {
-            if parsed.runtime_dir.is_some() || directory.is_empty() {
-                return Err("--runtime-dir takes one directory");
-            }
-            parsed.runtime_dir = Some(PathBuf::from(directory));
-        } else if argument == "--json" {
-            parsed.json = true;
-        } else if argument.starts_with('-') {
-            return Err("unknown option for tools");
-        } else {
-            parsed.positionals.push(argument);
-        }
-    }
-    Ok(parsed)
+    ensure!(
+        bytes.len() <= MAX_ARGUMENT_BYTES,
+        "MCP arguments exceed 64 KiB"
+    );
+    let value: Value = serde_json::from_slice(&bytes)
+        .context("Expected a UTF-8 JSON object; use --args-file to avoid shell quoting")?;
+    value
+        .as_object()
+        .cloned()
+        .context("MCP arguments must be a JSON object")
 }
 
 /// `tools list` text from a list document (names-only or complete).

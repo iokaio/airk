@@ -63,6 +63,7 @@ dependencies = [
  "airk-process",
  "airk-retrieval",
  "airk-store",
+ "airkctl",
  "anyhow",
  "bytes",
  "cc",
@@ -294,10 +295,13 @@ version = "1.8.23"
 dependencies = [
  "airk-core",
  "airk-ipc",
+ "anyhow",
+ "clap",
  "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "tokio",
 ]
 

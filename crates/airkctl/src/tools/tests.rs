@@ -63,21 +63,52 @@ fn help_text_echoes_the_typed_name_and_adds_the_search_note_only_for_search() {
 }
 
 #[test]
-fn arguments_take_positionals_json_and_one_runtime_directory() {
-    let parsed = arguments(&["search", "--json", "--runtime-dir", "C:/x"]).unwrap();
-    assert_eq!(parsed.positionals, ["search"]);
-    assert!(parsed.json);
-    assert_eq!(parsed.runtime_dir, Some(PathBuf::from("C:/x")));
-    let parsed = arguments(&["--runtime-dir=/x"]).unwrap();
-    assert_eq!(parsed.runtime_dir, Some(PathBuf::from("/x")));
-    assert!(!parsed.json && parsed.positionals.is_empty());
-    for invalid in [
-        &["--runtime-dir"][..],
-        &["--runtime-dir="],
-        &["--runtime-dir", "a", "--runtime-dir", "b"],
-        &["--schemas"],
-        &["-j"],
+fn arguments_are_one_bounded_json_object() {
+    assert_eq!(read_arguments(None, None).unwrap(), Map::new());
+    assert_eq!(
+        Value::Object(read_arguments(Some(r#"{"query":"q"}"#), None).unwrap()),
+        json!({"query": "q"})
+    );
+    for (text, message) in [
+        ("[1]", "MCP arguments must be a JSON object"),
+        (
+            "{",
+            "Expected a UTF-8 JSON object; use --args-file to avoid shell quoting",
+        ),
     ] {
-        assert!(arguments(invalid).is_err(), "{invalid:?}");
+        assert_eq!(
+            read_arguments(Some(text), None).unwrap_err().to_string(),
+            message
+        );
     }
+    let largest = format!(r#"{{"q":"{}"}}"#, "x".repeat(MAX_ARGUMENT_BYTES - 8));
+    assert_eq!(largest.len(), MAX_ARGUMENT_BYTES);
+    assert!(read_arguments(Some(&largest), None).is_ok());
+    let over = format!(r#"{{"q":"{}"}}"#, "x".repeat(MAX_ARGUMENT_BYTES - 7));
+    assert_eq!(
+        read_arguments(Some(&over), None).unwrap_err().to_string(),
+        "MCP arguments exceed 64 KiB"
+    );
+}
+
+#[test]
+fn argument_files_must_be_regular_and_bounded() {
+    let folder = tempfile::tempdir().unwrap();
+    assert_eq!(
+        read_arguments(None, Some(folder.path()))
+            .unwrap_err()
+            .to_string(),
+        "Arguments must be a regular file"
+    );
+    let file = folder.path().join("query.json");
+    std::fs::write(&file, r#"{"query":"q"}"#).unwrap();
+    assert_eq!(
+        Value::Object(read_arguments(None, Some(&file)).unwrap()),
+        json!({"query": "q"})
+    );
+    std::fs::write(&file, "x".repeat(MAX_ARGUMENT_BYTES + 1)).unwrap();
+    assert_eq!(
+        read_arguments(None, Some(&file)).unwrap_err().to_string(),
+        "MCP arguments exceed 64 KiB"
+    );
 }

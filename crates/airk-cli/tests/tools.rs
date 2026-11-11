@@ -617,3 +617,165 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// What a command line produced: exit code, comparable stdout and the final
+/// error message without its program prefix.
+fn line_outcome(
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    prefix: &str,
+) -> (Option<i32>, Option<Value>, String) {
+    let stdout = (!stdout.is_empty()).then(|| comparable(serde_json::from_slice(stdout).unwrap()));
+    let stderr = String::from_utf8_lossy(stderr);
+    let message = stderr
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .strip_prefix(prefix)
+        .unwrap_or_default()
+        .to_owned();
+    (code, stdout, message)
+}
+
+fn airk_outcome(command: &mut Command) -> (Option<i32>, Option<Value>, String) {
+    let output = command.output().unwrap();
+    line_outcome(
+        output.status.code(),
+        &output.stdout,
+        &output.stderr,
+        "Error: ",
+    )
+}
+
+/// The `airkctl` command line run in process (`airkctl::cli::run`, the code its
+/// `main` runs) with `AIRK_MCP_RESPONSE_MODE=full`, as the fixture commands set.
+fn airkctl_outcome(arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut io = airkctl::cli::Io {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+        full_responses: true,
+    };
+    let line = std::iter::once("airkctl")
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+    let code = airkctl::cli::run(line, &mut io);
+    line_outcome(Some(i32::from(code)), &stdout, &stderr, "airkctl: ")
+}
+
+/// `airkctl` evidence reads and tool calls print what `airk` printed, for both
+/// selections, on the reviewed indexed fixture (split step 3a.2c).
+#[test]
+fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-reads");
+    fs::write(
+        root.path().join("recovery.md"),
+        "# Recovery\n\nA forgotten password is recovered from the account page.\n",
+    )?;
+    fs::write(
+        root.path().join("account.rs"),
+        "use std::fmt;\n\npub fn recover_password(user: &str) -> String {\n    format!(\"reset {user}\")\n}\n",
+    )?;
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    common::call(root.path(), state.path(), "ctl-reads", &["index"])?;
+    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
+    else {
+        panic!("the reviewed fixture selects one scoped index");
+    };
+    let arguments_file = state.path().join("ctl-args.json");
+    fs::write(&arguments_file, r#"{"query":"recover","limit":2}"#)?;
+    let arguments_file = arguments_file.to_str().unwrap().to_owned();
+    let reads: Vec<Vec<&str>> = vec![
+        vec!["status"],
+        vec!["parse", "where is the password recovered"],
+        vec!["search", "forgotten password", "--limit", "3"],
+        vec![
+            "search",
+            "recover",
+            "--mode",
+            "lexical",
+            "--language",
+            "rust",
+        ],
+        vec!["files"],
+        vec![
+            "read",
+            "recovery.md",
+            "--start-line",
+            "1",
+            "--end-line",
+            "2",
+        ],
+        vec!["info", "account.rs"],
+        vec!["outline", "account.rs"],
+        vec!["symbol", "recover_password"],
+        vec!["imports"],
+        vec!["facts"],
+        vec!["code-facts", "--name", "recover_password"],
+        vec!["relationships", "recover_password"],
+        vec!["refs", "recover_password"],
+        vec![
+            "context",
+            "account.rs",
+            "3",
+            "--before",
+            "1",
+            "--after",
+            "1",
+        ],
+        vec!["changes"],
+        vec!["read", "missing.md", "--start-line", "1", "--end-line", "2"],
+        vec!["tools", "call", "airk_status"],
+        vec![
+            "tools",
+            "call",
+            "airk_search",
+            "--args-file",
+            &arguments_file,
+        ],
+        vec![
+            "tools",
+            "call",
+            "help",
+            "--args",
+            r#"{"topic":"workbench"}"#,
+        ],
+    ];
+    let catalog = serde_json::to_string(&selection)?;
+    let binding = service.project.binding.to_string();
+    let control = service.control.to_str().unwrap().to_owned();
+    let mut compared = 0;
+    for read in &reads {
+        let old =
+            airk_outcome(common::scoped_command(root.path(), state.path(), "ctl-reads").args(read));
+        let mut line = vec![
+            "--service-runtime-dir",
+            &control,
+            "--catalog-session",
+            &catalog,
+        ];
+        line.extend(read.iter().copied());
+        assert_eq!(airkctl_outcome(&line), old, "catalog selection {read:?}");
+        let old = airk_outcome(common::command(root.path(), state.path(), "ctl-reads").args(read));
+        let mut line = vec![
+            "--service-runtime-dir",
+            &control,
+            "--service-project",
+            &binding,
+        ];
+        line.extend(read.iter().copied());
+        assert_eq!(airkctl_outcome(&line), old, "project selection {read:?}");
+        compared += 1;
+    }
+    assert_eq!(compared, reads.len());
+    Ok(())
+}

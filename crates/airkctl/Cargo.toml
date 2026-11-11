@@ -14,6 +14,9 @@ publish.workspace = true
 [dependencies]
 airk-core.workspace = true
 airk-ipc.workspace = true
+# Already in the dependency graph (airk-cli) at this version and feature set.
+anyhow.workspace = true
+clap.workspace = true
 # Already in the dependency graph through rmcp at this version and feature set
 # (split plan U47 pilot); no new third-party identity.
 schemars = "1.2.2"
@@ -22,6 +25,9 @@ serde_json.workspace = true
 sha2.workspace = true
 # The I1 client is async (airk-ipc); one current-thread runtime per command.
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [[bin]]
 name = "airkctl"
