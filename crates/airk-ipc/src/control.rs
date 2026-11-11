@@ -46,14 +46,18 @@ pub async fn request_once(
         Duration::from_secs(10)
     } else if matches!(method, ControlMethod::Connect { .. }) {
         Duration::from_secs(20)
+    } else if matches!(method, ControlMethod::ToolsCall { .. }) {
+        // The service runs the call under the CLI's 125 s tool context.
+        Duration::from_secs(135)
     } else {
         Duration::from_secs(5)
     };
     let response_budget = method.response_frame_budget();
+    let request_budget = method.request_frame_budget();
     let address = local_ipc::endpoint(root, "control")?;
     let mut stream =
         tokio::time::timeout(Duration::from_secs(5), local_ipc::connect(&address)).await??;
-    local_ipc::write_message(
+    local_ipc::write_message_limited(
         &mut stream,
         &ControlRequest {
             protocol: PROTOCOL_VERSION,
@@ -61,6 +65,7 @@ pub async fn request_once(
             method,
         },
         Duration::from_secs(5),
+        request_budget,
     )
     .await?;
     let response = local_ipc::read_message_limited(&mut stream, response_deadline, response_budget)

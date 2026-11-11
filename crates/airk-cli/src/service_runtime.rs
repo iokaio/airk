@@ -136,11 +136,21 @@ where
 }
 
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
-    let Some(request): Option<ControlRequest> =
-        local_ipc::read_message(&mut stream, Duration::from_secs(5)).await?
+    let Some((request, length)): Option<(ControlRequest, usize)> = local_ipc::read_message_sized(
+        &mut stream,
+        Duration::from_secs(5),
+        airk_core::service::MAX_CONTROL_REQUEST_BYTES,
+    )
+    .await?
     else {
         return Ok(());
     };
+    // Each method keeps its own request budget (contracts §2.8); a larger
+    // frame is dropped unanswered, as an oversize frame always was.
+    anyhow::ensure!(
+        length <= request.method.request_frame_budget(),
+        "invalid native frame length"
+    );
     let instance_matches = request
         .expected_instance
         .is_none_or(|expected| expected == state.instance);
@@ -450,6 +460,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 state.supervisor.configure_resources(configuration).await
             }
             ControlMethod::ToolsCatalog { detail } => crate::tool_catalog::response(&detail)?,
+            // M3 lands its handler in step 3a.2b; until then the typed refusal.
+            ControlMethod::ToolsCall { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             method => state.management.request(method).await,
         }
     };

@@ -341,6 +341,13 @@ fn control_method_groups_match_reviewed_fixture() {
                 "{variant} {}",
                 case["name"]
             );
+            assert_eq!(
+                method.request_frame_budget() as u64,
+                case["request_frame_budget"].as_u64().unwrap(),
+                "{variant} {}",
+                case["name"]
+            );
+            assert!(text.len() <= method.request_frame_budget());
         }
         for case in group["rejected_methods"].as_array().unwrap() {
             assert!(

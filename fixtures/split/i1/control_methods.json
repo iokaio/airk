@@ -9,22 +9,26 @@
         {
           "name": "list_with_schemas",
           "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":true}}}}",
-          "response_frame_budget": 1048576
+          "response_frame_budget": 1048576,
+          "request_frame_budget": 65536
         },
         {
           "name": "list_names_only",
           "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}}}}",
-          "response_frame_budget": 1048576
+          "response_frame_budget": 1048576,
+          "request_frame_budget": 65536
         },
         {
           "name": "help",
           "bytes": "{\"tools_catalog\":{\"detail\":{\"help\":{\"tool\":\"airk_search\"}}}}",
-          "response_frame_budget": 1048576
+          "response_frame_budget": 1048576,
+          "request_frame_budget": 65536
         },
         {
           "name": "other_methods_keep_the_default_budget",
           "bytes": "\"health\"",
-          "response_frame_budget": 65536
+          "response_frame_budget": 65536,
+          "request_frame_budget": 65536
         }
       ],
       "rejected_methods": [
@@ -67,6 +71,92 @@
         {
           "name": "extra_field",
           "bytes": "{\"status\":\"tools_catalog\",\"document\":\"{}\",\"truncated\":false}"
+        }
+      ]
+    },
+    {
+      "variant": "tools_call",
+      "method": "M3",
+      "methods": [
+        {
+          "name": "project_selection",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
+        },
+        {
+          "name": "catalog_selection_terse_empty_arguments",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_status\",\"arguments\":{},\"selection\":{\"catalog\":{\"request\":{\"schema\":1,\"context_key\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"namespace\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_catalog_revision\":3,\"grant_id\":\"grt_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_grant_revision\":2,\"index_id\":\"idx_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"project_ids\":[\"prj_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"]}}},\"response_mode\":\"terse\",\"usage_client\":\"cli\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
+        },
+        {
+          "name": "non_ascii_arguments_stay_raw",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"résumé ✓\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "missing_usage_client",
+          "bytes": "{\"tools_call\":{\"tool\":\"x\",\"arguments\":{},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\"}}"
+        },
+        {
+          "name": "arguments_not_object",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":[1],\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "unknown_selection",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"combined\":{\"project_ids\":[]}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "uppercase_binding",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "selection_extra_field",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/x\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "catalog_request_extra_field",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"catalog\":{\"request\":{\"schema\":1,\"context_key\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"namespace\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_catalog_revision\":3,\"grant_id\":\"grt_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_grant_revision\":2,\"index_id\":\"idx_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"project_ids\":[\"prj_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"],\"extra\":1}}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "unknown_response_mode",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"verbose\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "unknown_client",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"robot\"}}"
+        },
+        {
+          "name": "extra_field",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_budget\":1}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "envelope_is_kept",
+          "bytes": "{\"status\":\"tool_result\",\"result\":{\"content\":[{\"text\":\"{}\",\"type\":\"text\"}],\"isError\":false}}"
+        },
+        {
+          "name": "call_failed_keeps_message",
+          "bytes": "{\"status\":\"tool_call_failed\",\"message\":\"project is not registered with this service\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "result_missing",
+          "bytes": "{\"status\":\"tool_result\"}"
+        },
+        {
+          "name": "failed_without_message",
+          "bytes": "{\"status\":\"tool_call_failed\"}"
+        },
+        {
+          "name": "failed_extra_field",
+          "bytes": "{\"status\":\"tool_call_failed\",\"message\":\"x\",\"code\":\"operation_failed\"}"
         }
       ]
     }

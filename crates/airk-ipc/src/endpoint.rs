@@ -266,6 +266,18 @@ pub async fn read_message_limited<S: AsyncRead + Unpin, T: DeserializeOwned>(
     deadline: Duration,
     limit: usize,
 ) -> Result<Option<T>> {
+    Ok(read_message_sized(stream, deadline, limit)
+        .await?
+        .map(|(value, _)| value))
+}
+
+/// As [`read_message_limited`], also returning the frame's payload length so
+/// a reader can hold a decoded message to its own, smaller budget.
+pub async fn read_message_sized<S: AsyncRead + Unpin, T: DeserializeOwned>(
+    stream: &mut S,
+    deadline: Duration,
+    limit: usize,
+) -> Result<Option<(T, usize)>> {
     ensure!(
         (1..=4 * 1024 * 1024).contains(&limit),
         "invalid native frame budget"
@@ -281,7 +293,7 @@ pub async fn read_message_limited<S: AsyncRead + Unpin, T: DeserializeOwned>(
         ensure!(bytes > 0 && bytes <= limit, "invalid native frame length");
         let mut payload = vec![0; bytes];
         stream.read_exact(&mut payload).await?;
-        Ok(Some(serde_json::from_slice(&payload)?))
+        Ok(Some((serde_json::from_slice(&payload)?, bytes)))
     })
     .await
     .context("native frame read deadline exceeded")?
@@ -377,6 +389,22 @@ mod tests {
                 .await
                 .is_err()
         );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn a_sized_read_reports_the_payload_length_and_honors_its_limit() -> Result<()> {
+        let (mut sender, mut receiver) = tokio::io::duplex(1024);
+        write_message(&mut sender, &"abc", Duration::from_secs(5)).await?;
+        let read: Option<(String, usize)> =
+            read_message_sized(&mut receiver, Duration::from_secs(5), 64).await?;
+        assert_eq!(read, Some(("abc".to_owned(), 5)));
+        write_message(&mut sender, &"abcd", Duration::from_secs(5)).await?;
+        assert!(
+            read_message_sized::<_, String>(&mut receiver, Duration::from_secs(5), 5)
+                .await
+                .is_err()
+        );
+        drop(sender);
         Ok(())
     }
 }

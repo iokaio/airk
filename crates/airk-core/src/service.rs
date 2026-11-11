@@ -429,6 +429,39 @@ pub enum ControlMethod {
     ToolsCatalog {
         detail: ToolsCatalogDetail,
     },
+    /// M3: run one unified tool for a selected project and return its complete
+    /// envelope. The service runs the pre-split CLI call path unchanged.
+    /// Request budget [`MAX_TOOLS_CALL_REQUEST_BYTES`], response budget
+    /// [`MAX_TOOLS_CALL_RESPONSE_BYTES`].
+    ToolsCall {
+        tool: String,
+        /// The caller's JSON object; the client bounds its encoding to
+        /// [`MAX_TOOL_ARGUMENT_BYTES`] as the pre-split CLI did.
+        arguments: serde_json::Map<String, serde_json::Value>,
+        selection: ToolSelection,
+        /// Inserted as `response_mode` for tools that take one, unless the
+        /// arguments already name it (the CLI's `AIRK_MCP_RESPONSE_MODE`).
+        response_mode: ToolResponseMode,
+        usage_client: crate::usage::ClientFamily,
+    },
+}
+
+/// The project an M3 call reads, as the pre-split CLI selected it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolSelection {
+    /// `--service-project <binding>`: a registered project.
+    Project { binding: ProjectBinding },
+    /// `--catalog-session <request>`: an exact reviewed catalog grant.
+    Catalog { request: ScopedConnectRequest },
+}
+
+/// The response mode an M3 call applies (`terse` unless `full`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolResponseMode {
+    Terse,
+    Full,
 }
 
 /// Which M2 catalog document to return.
@@ -445,6 +478,17 @@ pub enum ToolsCatalogDetail {
 
 /// The largest M2 response frame (contracts §2.8): the catalog with schemas.
 pub const MAX_TOOLS_CATALOG_RESPONSE_BYTES: usize = 1024 * 1024;
+/// The largest tool argument object, as the pre-split CLI bounded it.
+pub const MAX_TOOL_ARGUMENT_BYTES: usize = 64 * 1024;
+/// The largest M3 request frame (contracts §2.8): arguments, selection and
+/// envelope with room for re-encoding.
+pub const MAX_TOOLS_CALL_REQUEST_BYTES: usize = 128 * 1024;
+/// The largest M3 response frame (contracts §2.8): the largest canonical tool
+/// response the service's HTTPS route can be configured to return.
+pub const MAX_TOOLS_CALL_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// The largest request frame the control endpoint reads before dispatch; each
+/// method is then held to its own [`ControlMethod::request_frame_budget`].
+pub const MAX_CONTROL_REQUEST_BYTES: usize = MAX_TOOLS_CALL_REQUEST_BYTES;
 
 impl ControlMethod {
     /// The response frame budget for this method (contracts §2.8). Both the
@@ -452,6 +496,16 @@ impl ControlMethod {
     pub fn response_frame_budget(&self) -> usize {
         match self {
             Self::ToolsCatalog { .. } => MAX_TOOLS_CATALOG_RESPONSE_BYTES,
+            Self::ToolsCall { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
+            _ => MAX_FRAME_BYTES,
+        }
+    }
+
+    /// The request frame budget for this method (contracts §2.8); the service
+    /// drops a larger request unanswered, as it drops any oversize frame.
+    pub fn request_frame_budget(&self) -> usize {
+        match self {
+            Self::ToolsCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -844,6 +898,16 @@ pub enum ControlResponse {
     /// documents are key-sorted values, a help document keeps the tool's field order.
     ToolsCatalog {
         document: String,
+    },
+    /// M3: the complete unified tool envelope (`content`, `isError`, …).
+    ToolResult {
+        result: serde_json::Value,
+    },
+    /// M3: the call failed before an envelope existed. `message` is the full
+    /// error chain bounded to 4,096 characters, as the pre-split CLI's
+    /// `operation_failed` error line carried it.
+    ToolCallFailed {
+        message: String,
     },
 }
 
