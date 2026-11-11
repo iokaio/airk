@@ -232,6 +232,32 @@ Planning findings (read-only exploration, not test results):
 
 **Resume point (update after every step).** Phases 0–2 complete (see 'Phase 2 exit'). Next: Phase 3, `airkctl` with the old `airk` CLI frozen. Decompose into the ledger first: 3.0 additive role dispatcher and private role admission in `airk` (C6 §5.7); 3a `tools list/help/call/shell` then evidence reads (C2 variant groups M2/M3/N1 land just before their handlers; `airkctl` gains `airk-ipc` and `airk-process` edges); 3b service start/stop/restart/status/logs/health/requests with detached start, install-pointer reading and the `airkctl → airk` self-spawn roster entry; 3c resolve/prepare/journal handlers (C3a recovery fixtures); C11a then 3d Explorer; 3e agents; 3f session (C4 frames, C3b window plane); 3g admin open/url, version, credential helper. Each package: service handler wraps the existing canonical function; parity by differential capture (old `airk` vs `airkctl` against the same seeded service, P0.3b); goldens; Windows Clippy both configs; Neo for Unix-touched code; full Python suite at handback; checks run with exit status checked directly. Follow-ups: Linux `linux_raw` compile (CI or Docker); macOS local installer receipt (C7). Receipts: `artifacts/split/receipts/`. Build env: `--target-dir artifacts/v190/p10-target --static-environment artifacts/local/one-airk-1.8.14/static-environment-supplement.json`.
 
+#### Phase 3 decomposition (11 November 2026)
+
+Rules for every step: the old `airk` CLI stays frozen and working; a service
+handler wraps the existing canonical function (no reimplementation) and lands
+in the commit just before its `airkctl` caller, together with its C2 variant
+group (`not_yet_served` arm replaced, `fixtures/split/i1/control_methods.json`
+row); parity is shown by differential capture (old `airk` and `airkctl` against
+the same seeded service, P0.3b) plus the committed goldens; a behavior step
+stays within about 25 files and 1,500 lines. Windows Clippy both configurations,
+Neo for Unix-touched code, full Python suite at handback.
+
+| Step | Content | Depends on | Done when |
+|---|---|---|---|
+| 3.0a | Private role selector `__airk_role <name>` in `airk` beside today's argv roles; bare selector without authority → `role_admission_refused` (C6 §5.7); existing hidden commands keep working | C6 | Role table fixture (`fixtures/split/i4/role_admission.json`) pinned; refusal tests |
+| 3.0b | `service-detached` role: owner-private start request (`<control root>/start/<nonce>.json` until I4 exists; ≤ 30 s, consumed atomically; `explicit` clears a saved Stop, `automatic` honors it) wrapping today's detached start | 3.0a | Start/refusal/expiry/replay tests with an injected clock |
+| 3.1 | `airkctl` gains `airk-ipc` and `airk-process` edges; differential-capture harness (`cli_golden.py --service`) seeding a fixture service | G6 | Harness tests; one smoke command compared |
+| 3a.1 | M2 `ToolsCatalog` handler + `airkctl tools list/help` | 3.1 | Goldens and differential capture equal |
+| 3a.2 | M3 `ToolsCall` / N1 handlers + `airkctl tools call` and the evidence reads (`search`, `files`, `read`, `info`, `outline`, `symbol`, `imports`, `facts`, `refs`, `context`, `changes`, `code-facts`, `relationships`, `status`, `parse`) | 3a.1 | Read parity on actual transports (CLI, MCP, `airkctl`) |
+| 3b.1 | `airkctl service start/status/health/logs/stop/restart` (stop/restart via M19, restart = observe exit then start) + `check-self-spawn.py` entry `airkctl → airk` | 3.0b | Lifecycle tests; topology roster |
+| 3b.2 | `service requests …`, M13 logs export, M14 record-error, U75 offline operations | 3b.1, C3a | Recovery fixtures pass on real transports |
+| 3c.1–3c.4 | M1 resolve, M4 plan/prepare, M5–M8 journal + recovery, then `index/job/project/configure/settings/usage` | 3b | `request_recovery.json` cases on real transports; goldens |
+| 3d | C11a catalog ownership, then M11/M12 Explorer commands (`--output-file`, U79) | 3c | Explorer goldens (recorded content-version change) |
+| 3e.1–3e.2 | Agents: classifier + shared Rust cases, then writers/`connect`/`repair`/`remove`/`launch`/`verify` (V1); U49 repo MCP config | 3b | Shared cases consumed by the extension recognizer test |
+| 3f.1–3f.3 | Service events + Assistance queue + window plane (W1–W8), then `airkctl session` framing/limits, then delivery and scope select | 3a, C3b, C4 | Session sequences and §6.5 fixture set on real transports |
+| 3g | `admin open/url` (A1, H1/H2 rules on the `airkctl` side), `version` with the install record, credential helper | 3f, C5, C6 | I2 compatibility matrix fixture consumed |
+
 | Step | State | Evidence |
 | --- | --- | --- |
 | S0.1 Record U70/U71 | done | split-plan §2.1 |
