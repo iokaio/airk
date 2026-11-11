@@ -157,6 +157,21 @@ class Differential(unittest.TestCase):
         with self.assertRaises(ValueError):
             GOLDEN.differential(sys.executable, sys.executable, twice)
 
+    def test_committed_differential_case_files_are_valid(self):
+        names = set(GOLDEN.placeholders(Path("base")))
+        files = sorted((ROOT / "fixtures" / "cli-golden" / "differential").glob("*.json"))
+        self.assertTrue(files)
+        for path in files:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(document["schema"], GOLDEN.DIFFERENTIAL_SCHEMA, path.name)
+            ids = [case["id"] for case in document["cases"]]
+            self.assertEqual(len(ids), len(set(ids)), path.name)
+            for case in document["cases"]:
+                for part in case["old"] + case["new"]:
+                    part.format(**{name: "x" for name in names})
+            for pair in document.get("replace", []):
+                self.assertTrue(pair["old"] and pair["new"], path.name)
+
 
 if __name__ == "__main__":
     unittest.main()

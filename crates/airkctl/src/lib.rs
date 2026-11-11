@@ -6,3 +6,5 @@
 //! service only over I1 plus the documented exceptions, and never links the
 //! kernel, store, retrieval, ingest or MCP crates (U27).
 pub mod contract;
+pub mod service;
+pub mod tools;

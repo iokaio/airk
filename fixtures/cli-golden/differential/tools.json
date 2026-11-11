@@ -1,0 +1,1001 @@
+{
+  "schema": "airk-differential-cases/1",
+  "note": "Split step 3a.1: pre-split `airk tools list|help` (offline) against `airkctl tools list|help` served by M2 from the live fixture service. Error cases are excluded: I2 error lines differ by design and are covered by airkctl tests.",
+  "service": true,
+  "replace": [
+    {
+      "old": "airk tools ",
+      "new": "airkctl tools "
+    }
+  ],
+  "cases": [
+    {
+      "id": "list-text",
+      "old": [
+        "tools",
+        "list"
+      ],
+      "new": [
+        "tools",
+        "list",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "list-json",
+      "old": [
+        "tools",
+        "list",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "list",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-capabilities",
+      "old": [
+        "tools",
+        "help",
+        "capabilities"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "capabilities",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-capabilities-json",
+      "old": [
+        "tools",
+        "help",
+        "capabilities",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "capabilities",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-changes",
+      "old": [
+        "tools",
+        "help",
+        "changes"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "changes",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-changes-json",
+      "old": [
+        "tools",
+        "help",
+        "changes",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "changes",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-code_facts",
+      "old": [
+        "tools",
+        "help",
+        "code_facts"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "code_facts",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-code_facts-json",
+      "old": [
+        "tools",
+        "help",
+        "code_facts",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "code_facts",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-context",
+      "old": [
+        "tools",
+        "help",
+        "context"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "context",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-context-json",
+      "old": [
+        "tools",
+        "help",
+        "context",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "context",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-diagnostics",
+      "old": [
+        "tools",
+        "help",
+        "diagnostics"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "diagnostics",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-diagnostics-json",
+      "old": [
+        "tools",
+        "help",
+        "diagnostics",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "diagnostics",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-document_facts",
+      "old": [
+        "tools",
+        "help",
+        "document_facts"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "document_facts",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-document_facts-json",
+      "old": [
+        "tools",
+        "help",
+        "document_facts",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "document_facts",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-file_info",
+      "old": [
+        "tools",
+        "help",
+        "file_info"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "file_info",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-file_info-json",
+      "old": [
+        "tools",
+        "help",
+        "file_info",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "file_info",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-help",
+      "old": [
+        "tools",
+        "help",
+        "help"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "help",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-help-json",
+      "old": [
+        "tools",
+        "help",
+        "help",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "help",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-imports",
+      "old": [
+        "tools",
+        "help",
+        "imports"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "imports",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-imports-json",
+      "old": [
+        "tools",
+        "help",
+        "imports",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "imports",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-list_files",
+      "old": [
+        "tools",
+        "help",
+        "list_files"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "list_files",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-list_files-json",
+      "old": [
+        "tools",
+        "help",
+        "list_files",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "list_files",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-outline",
+      "old": [
+        "tools",
+        "help",
+        "outline"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "outline",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-outline-json",
+      "old": [
+        "tools",
+        "help",
+        "outline",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "outline",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-parse",
+      "old": [
+        "tools",
+        "help",
+        "parse"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "parse",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-parse-json",
+      "old": [
+        "tools",
+        "help",
+        "parse",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "parse",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-query_scope",
+      "old": [
+        "tools",
+        "help",
+        "query_scope"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "query_scope",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-query_scope-json",
+      "old": [
+        "tools",
+        "help",
+        "query_scope",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "query_scope",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-read_file",
+      "old": [
+        "tools",
+        "help",
+        "read_file"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "read_file",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-read_file-json",
+      "old": [
+        "tools",
+        "help",
+        "read_file",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "read_file",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-references",
+      "old": [
+        "tools",
+        "help",
+        "references"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "references",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-references-json",
+      "old": [
+        "tools",
+        "help",
+        "references",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "references",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-relationships",
+      "old": [
+        "tools",
+        "help",
+        "relationships"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "relationships",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-relationships-json",
+      "old": [
+        "tools",
+        "help",
+        "relationships",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "relationships",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-search",
+      "old": [
+        "tools",
+        "help",
+        "search"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "search",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-search-json",
+      "old": [
+        "tools",
+        "help",
+        "search",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "search",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-status",
+      "old": [
+        "tools",
+        "help",
+        "status"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "status",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-status-json",
+      "old": [
+        "tools",
+        "help",
+        "status",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "status",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-symbols",
+      "old": [
+        "tools",
+        "help",
+        "symbols"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "symbols",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-symbols-json",
+      "old": [
+        "tools",
+        "help",
+        "symbols",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "symbols",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-draft_search",
+      "old": [
+        "tools",
+        "help",
+        "draft_search"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "draft_search",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-draft_search-json",
+      "old": [
+        "tools",
+        "help",
+        "draft_search",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "draft_search",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-draft_strategy",
+      "old": [
+        "tools",
+        "help",
+        "draft_strategy"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "draft_strategy",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-draft_strategy-json",
+      "old": [
+        "tools",
+        "help",
+        "draft_strategy",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "draft_strategy",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-draft_plan",
+      "old": [
+        "tools",
+        "help",
+        "draft_plan"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "draft_plan",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-draft_plan-json",
+      "old": [
+        "tools",
+        "help",
+        "draft_plan",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "draft_plan",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-list_templates",
+      "old": [
+        "tools",
+        "help",
+        "list_templates"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "list_templates",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-list_templates-json",
+      "old": [
+        "tools",
+        "help",
+        "list_templates",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "list_templates",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-get_template",
+      "old": [
+        "tools",
+        "help",
+        "get_template"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "get_template",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-get_template-json",
+      "old": [
+        "tools",
+        "help",
+        "get_template",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "get_template",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-validate_draft",
+      "old": [
+        "tools",
+        "help",
+        "validate_draft"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "validate_draft",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-validate_draft-json",
+      "old": [
+        "tools",
+        "help",
+        "validate_draft",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "validate_draft",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-proposal_status",
+      "old": [
+        "tools",
+        "help",
+        "proposal_status"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "proposal_status",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-proposal_status-json",
+      "old": [
+        "tools",
+        "help",
+        "proposal_status",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "proposal_status",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-get_handoff",
+      "old": [
+        "tools",
+        "help",
+        "get_handoff"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "get_handoff",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-get_handoff-json",
+      "old": [
+        "tools",
+        "help",
+        "get_handoff",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "get_handoff",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-suggest_view",
+      "old": [
+        "tools",
+        "help",
+        "suggest_view"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "suggest_view",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-suggest_view-json",
+      "old": [
+        "tools",
+        "help",
+        "suggest_view",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "suggest_view",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-projects",
+      "old": [
+        "tools",
+        "help",
+        "projects"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "projects",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-projects-json",
+      "old": [
+        "tools",
+        "help",
+        "projects",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "projects",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-airk_search-prefixed",
+      "old": [
+        "tools",
+        "help",
+        "airk_search"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "airk_search",
+        "--runtime-dir",
+        "{control}"
+      ]
+    },
+    {
+      "id": "help-airk_status-prefixed-json",
+      "old": [
+        "tools",
+        "help",
+        "airk_status",
+        "--json"
+      ],
+      "new": [
+        "tools",
+        "help",
+        "airk_status",
+        "--json",
+        "--runtime-dir",
+        "{control}"
+      ]
+    }
+  ]
+}

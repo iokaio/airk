@@ -449,10 +449,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::ConfigureResources { configuration } => {
                 state.supervisor.configure_resources(configuration).await
             }
-            // M2 lands its handler in step 3a.1; until then the typed refusal.
-            ControlMethod::ToolsCatalog { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::ToolsCatalog { detail } => crate::tool_catalog::response(&detail)?,
             method => state.management.request(method).await,
         }
     };

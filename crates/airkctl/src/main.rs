@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `airkctl`: the AIRK command-line client (split plan §6).
 //!
-//! This build serves only `--version` and `version`; every other command answers
-//! the typed `not_yet_served` refusal (exit 5) until its handler lands.
+//! This build serves `--version`, `version` and `tools list|help`; every other
+//! command answers the typed `not_yet_served` refusal (exit 5) until its handler
+//! lands.
+use airk_core::service::{ControlMethod, ControlResponse, ToolsCatalogDetail};
 use airkctl::contract::{
     ErrorLine, ExitClass, I2_CONTRACT, I2_CONTRACTS_SUPPORTED, Installation, InstallationState,
     PRODUCT, VERSION_SCHEMA, VersionDocument,
@@ -67,6 +69,95 @@ fn usage(output: Output, message: &str) -> ExitCode {
     )
 }
 
+fn tools(output: Output, arguments: &[&str]) -> ExitCode {
+    let Some((&command, rest)) = arguments.split_first() else {
+        return usage(output, "tools takes list or help <tool>");
+    };
+    if !matches!(command, "list" | "help") {
+        return fail(
+            output,
+            &ErrorLine::new(
+                ExitClass::UnsupportedCapability,
+                "not_yet_served",
+                false,
+                "This command is not served by this AIRK Service version.",
+            ),
+        );
+    }
+    let parsed = match airkctl::tools::arguments(rest) {
+        Ok(parsed) => parsed,
+        Err(message) => return usage(output, message),
+    };
+    let detail = match (command, parsed.positionals.as_slice()) {
+        ("list", []) => ToolsCatalogDetail::List {
+            schemas: parsed.json || output == Output::Json,
+        },
+        ("help", [tool]) => ToolsCatalogDetail::Help {
+            tool: (*tool).to_owned(),
+        },
+        ("help", _) => return usage(output, "tools help takes one tool name"),
+        _ => return usage(output, "tools list takes no arguments"),
+    };
+    let Some(runtime_dir) = parsed.runtime_dir else {
+        return fail(
+            output,
+            &ErrorLine::new(
+                ExitClass::ServiceMissing,
+                "installation_not_found",
+                false,
+                "No AIRK installation was found; pass --runtime-dir <service control directory>.",
+            ),
+        );
+    };
+    let help = match &detail {
+        ToolsCatalogDetail::Help { tool } => Some(tool.clone()),
+        ToolsCatalogDetail::List { .. } => None,
+    };
+    let response = match airkctl::service::request(
+        &runtime_dir,
+        ControlMethod::ToolsCatalog { detail },
+        VERSION,
+    ) {
+        Ok(response) => response,
+        Err(line) => return fail(output, &line),
+    };
+    let document = match response {
+        ControlResponse::ToolsCatalog { document } => document,
+        ControlResponse::Failure { code } if code == "unknown_tool" => {
+            let name = help.unwrap_or_default();
+            let mut line = airkctl::service::refusal(&ControlResponse::Failure { code });
+            line.message = format!("Unknown MCP tool '{name}'. Use 'airkctl tools list'.");
+            return fail(output, &line);
+        }
+        other => return fail(output, &airkctl::service::refusal(&other)),
+    };
+    if parsed.json || output == Output::Json {
+        println!("{document}");
+        return ExitCode::SUCCESS;
+    }
+    let text = serde_json::from_str::<serde_json::Value>(&document)
+        .ok()
+        .and_then(|value| match &help {
+            Some(name) => airkctl::tools::help_text(&value, name),
+            None => airkctl::tools::list_text(&value),
+        });
+    match text {
+        Some(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        None => fail(
+            output,
+            &ErrorLine::new(
+                ExitClass::Internal,
+                "malformed_response",
+                false,
+                "The AIRK service returned a malformed tool catalog.",
+            ),
+        ),
+    }
+}
+
 fn run(arguments: Vec<String>) -> ExitCode {
     let mut output = Output::Text;
     let mut rest = Vec::new();
@@ -126,6 +217,7 @@ fn run(arguments: Vec<String>) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        ["tools", rest @ ..] => tools(output, rest),
         [] => usage(output, "a command is required; run `airkctl version`"),
         _ => fail(
             output,

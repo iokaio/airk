@@ -257,9 +257,7 @@ fn inspect_catalog(
         } => {
             let tool = catalog
                 .into_iter()
-                .find(|tool| {
-                    tool.name == *name || name.strip_prefix("airk_") == Some(tool.name.as_ref())
-                })
+                .find(|tool| airk_cli::tool_catalog::selects(tool, name))
                 .with_context(|| format!("Unknown MCP tool '{name}'. Use 'airk tools list'."))?;
             if *raw {
                 print_json(io, &tool)?;

@@ -55,6 +55,8 @@ mod service_management;
 pub mod service_registration;
 pub mod service_runtime;
 pub mod standalone_setup;
+/// M2 tool catalog documents (split step 3a.1).
+pub mod tool_catalog;
 mod worker_host;
 mod worker_scope;
 mod worker_transport;
