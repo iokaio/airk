@@ -58,6 +58,19 @@ pub fn local_help(arguments: Map<String, Value>) -> Result<Value> {
     )))?)
 }
 
+/// A combined session's narrowing defaults added to one call's arguments; an
+/// argument naming the same selection is refused, never overridden.
+pub fn with_defaults(
+    mut arguments: Map<String, Value>,
+    defaults: &Map<String, Value>,
+) -> Result<Map<String, Value>> {
+    for (key, value) in defaults {
+        ensure!(!arguments.contains_key(key), "conflicting {key} selections");
+        arguments.insert(key.clone(), value.clone());
+    }
+    Ok(arguments)
+}
+
 /// A unified envelope is an object with a `content` array.
 pub fn require_envelope(result: &Value) -> Result<()> {
     ensure!(

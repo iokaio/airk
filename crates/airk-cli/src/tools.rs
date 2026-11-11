@@ -441,11 +441,8 @@ pub async fn run_backend(
         fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
             self.remote.catalog()
         }
-        async fn call(&self, tool: String, mut arguments: Map<String, Value>) -> Result<Value> {
-            for (key, value) in &self.defaults {
-                ensure!(!arguments.contains_key(key), "conflicting {key} selections");
-                arguments.insert(key.clone(), value.clone());
-            }
+        async fn call(&self, tool: String, arguments: Map<String, Value>) -> Result<Value> {
+            let arguments = airk_cli::tool_call::with_defaults(arguments, &self.defaults)?;
             self.remote.call(tool, arguments).await
         }
     }

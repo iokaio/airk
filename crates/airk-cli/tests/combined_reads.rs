@@ -3257,3 +3257,176 @@ async fn exposed_code_facts_preserve_retained_producer_kind_and_language_labels(
     assert_eq!(fs::read_to_string(root.join("producer.rs"))?, source);
     Ok(())
 }
+
+/// One command line's observable result: exit code, stdout (an envelope or
+/// document normalized like the other parity tests, or literal text) and the
+/// final error message without its program prefix.
+fn ctl_outcome(code: Option<i32>, stdout: &[u8], stderr: &[u8], prefix: &str) -> Result<Value> {
+    let text = String::from_utf8_lossy(stdout).into_owned();
+    let stdout = match serde_json::from_str::<Value>(&text) {
+        Ok(mut value) => {
+            // Combined replies are compared through the same authenticated
+            // logical reconstruction as the other parity tests in this file.
+            if let Some(content) = value.get_mut("content").and_then(Value::as_array_mut) {
+                for item in content {
+                    if let Some(parsed) = item["text"]
+                        .as_str()
+                        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    {
+                        item["text"] = logical_comparison_copy(&parsed)?;
+                    }
+                }
+            }
+            if let Some(structured) = value.get("structuredContent").cloned() {
+                value["structuredContent"] = logical_comparison_copy(&structured)?;
+            }
+            stable(value)?
+        }
+        Err(_) => json!(text),
+    };
+    let stderr = String::from_utf8_lossy(stderr);
+    let message = stderr
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .strip_prefix(prefix)
+        .unwrap_or_default();
+    Ok(json!({"exit": code, "stdout": stdout, "message": message}))
+}
+
+/// `airkctl` combined-session reads print what `airk` printed (split step
+/// 3a.2d): the same command lines, the old binary as a process and the
+/// `airkctl` command line in process, against one owned combined fixture.
+#[tokio::test]
+async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let session = serde_json::to_string(&f.session)?;
+    let control = f.control.to_str().context("control path")?.to_owned();
+    let project = serde_json::to_value(f.projects[0])?
+        .as_str()
+        .context("project id")?
+        .to_owned();
+    let index = serde_json::to_value(f.indexes[0])?
+        .as_str()
+        .context("index id")?
+        .to_owned();
+    let lexical = json!({"query":"boundaryneedle","mode":"lexical","limit":4,"max_bytes":4096,"verification":"off"}).to_string();
+    let conflicting = json!({"query":"boundaryneedle","project_ids":[project]}).to_string();
+    let search = [
+        "search",
+        "boundaryneedle",
+        "--mode",
+        "lexical",
+        "--limit",
+        "12",
+        "--max-bytes",
+        "8192",
+        "--verification",
+        "off",
+    ];
+    let lines: Vec<Vec<&str>> = vec![
+        vec!["tools", "list"],
+        vec!["tools", "list", "--json"],
+        vec!["tools", "help", "airk_search"],
+        vec!["tools", "call", "airk_search", "--args", &lexical],
+        vec![
+            "tools",
+            "call",
+            "help",
+            "--args",
+            r#"{"topic":"workbench"}"#,
+        ],
+        search.to_vec(),
+        vec!["files"],
+        vec!["status"],
+        vec!["info", "api/policy.md"],
+        [&["--project-ids", &project][..], &search].concat(),
+        [
+            &[
+                "--project-ids",
+                &project,
+                "--index-ids",
+                &index,
+                "--member-availability",
+                "require",
+            ][..],
+            &search,
+        ]
+        .concat(),
+        vec![
+            "--project-ids",
+            &project,
+            "tools",
+            "call",
+            "airk_search",
+            "--args",
+            &conflicting,
+        ],
+    ];
+    let mut failures = Vec::new();
+    for line in &lines {
+        let full: Vec<&str> = [
+            "--combined-session",
+            &session,
+            "--service-runtime-dir",
+            &control,
+        ]
+        .into_iter()
+        .chain(line.iter().copied())
+        .collect();
+        let mut command = Command::new(&f.candidate);
+        command.args(&full).env("AIRK_MCP_RESPONSE_MODE", "full");
+        let old = tokio::task::spawn_blocking(move || command.output()).await??;
+        // The reviewed rename of the differential harness: guidance names the
+        // new program.
+        let renamed = String::from_utf8_lossy(&old.stdout).replace("airk tools ", "airkctl tools ");
+        let old = ctl_outcome(
+            old.status.code(),
+            renamed.as_bytes(),
+            &old.stderr,
+            "Error: ",
+        )?;
+        let arguments: Vec<std::ffi::OsString> = std::iter::once("airkctl")
+            .chain(full.iter().copied())
+            .map(Into::into)
+            .collect();
+        let new = tokio::task::spawn_blocking(move || {
+            let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+            let mut io = airkctl::cli::Io {
+                stdout: &mut stdout,
+                stderr: &mut stderr,
+                full_responses: true,
+            };
+            let code = airkctl::cli::run(arguments, &mut io);
+            (code, stdout, stderr)
+        })
+        .await?;
+        let new = ctl_outcome(Some(i32::from(new.0)), &new.1, &new.2, "airkctl: ")?;
+        assert!(
+            new == old,
+            "combined {line:?}: first difference {:?}",
+            first_difference(&new, &old, "")
+        );
+        if old["exit"] != json!(0) {
+            failures.push(format!("{} {}", line.join(" "), old["message"]));
+        }
+    }
+    // Refused identically on both sides: a listing across the combined session
+    // and an ambiguous origin (tool errors), and an argument that conflicts
+    // with a narrowing default.
+    assert_eq!(failures.len(), 3, "{failures:#?}");
+    assert!(
+        failures[0].starts_with("files \"MCP tool failed"),
+        "{failures:#?}"
+    );
+    assert!(
+        failures[1].starts_with("info api/policy.md \"MCP tool failed"),
+        "{failures:#?}"
+    );
+    assert!(
+        failures[2].ends_with("\"conflicting project_ids selections\""),
+        "{failures:#?}"
+    );
+    f.assert_sources_unchanged()
+}

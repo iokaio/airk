@@ -63,3 +63,22 @@ fn an_envelope_needs_an_object_with_a_content_array() {
         );
     }
 }
+
+#[test]
+fn defaults_are_added_and_a_conflicting_argument_is_refused() {
+    let defaults = object(json!({"project_ids": ["prj_a"], "member_availability": "require"}));
+    assert_eq!(
+        Value::Object(with_defaults(object(json!({"query": "q"})), &defaults).unwrap()),
+        json!({"query": "q", "project_ids": ["prj_a"], "member_availability": "require"})
+    );
+    assert_eq!(
+        with_defaults(object(json!({"project_ids": []})), &defaults)
+            .unwrap_err()
+            .to_string(),
+        "conflicting project_ids selections"
+    );
+    assert_eq!(
+        with_defaults(object(json!({"q": 1})), &Map::new()).unwrap(),
+        object(json!({"q": 1}))
+    );
+}

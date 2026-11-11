@@ -464,12 +464,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: None,
             } => crate::tool_catalog::response(&detail)?,
-            // Combined catalogs land with their handler in step 3a.2d.
             ControlMethod::ToolsCatalog {
-                combined: Some(_), ..
-            } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+                detail,
+                combined: Some(request),
+            } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
             ControlMethod::ToolsCall {
                 tool,
                 arguments,

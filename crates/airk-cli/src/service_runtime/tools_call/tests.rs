@@ -77,3 +77,26 @@ async fn without_a_project_only_the_in_process_help_answers() {
         _ => panic!("expected a typed call failure"),
     }
 }
+
+#[test]
+fn combined_defaults_keep_the_cli_shape_and_need_projects_to_narrow() {
+    use airk_core::combined_reads::MemberAvailability;
+    let project: airk_core::index_catalog::QueryProjectId =
+        serde_json::from_value(json!(format!("prj_{}", "1a".repeat(16)))).unwrap();
+    let index: airk_core::index_catalog::IndexId =
+        serde_json::from_value(json!(format!("idx_{}", "1a".repeat(16)))).unwrap();
+    assert_eq!(combined_defaults(None, None, None).unwrap(), Map::new());
+    assert_eq!(
+        Value::Object(
+            combined_defaults(
+                Some(vec![project]),
+                Some(vec![index]),
+                Some(MemberAvailability::Require)
+            )
+            .unwrap()
+        ),
+        json!({"project_ids": [project], "index_ids": [index], "member_availability": "require"})
+    );
+    assert!(combined_defaults(None, Some(vec![index]), None).is_err());
+    assert!(combined_defaults(None, None, Some(MemberAvailability::Report)).is_err());
+}

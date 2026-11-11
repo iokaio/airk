@@ -12,9 +12,11 @@ use crate::contract::{
     PRODUCT, VERSION_SCHEMA, VersionDocument,
 };
 use crate::evidence::EvidenceCommand;
+use airk_core::combined_reads::MemberAvailability;
+use airk_core::index_catalog::{IndexId, QueryProjectId};
 use airk_core::service::{
-    ControlMethod, ControlResponse, ProjectBinding, ScopedConnectRequest, ToolResponseMode,
-    ToolSelection, ToolsCatalogDetail,
+    CombinedConnectRequest, ControlMethod, ControlResponse, ProjectBinding, ScopedConnectRequest,
+    ToolResponseMode, ToolSelection, ToolsCatalogDetail,
 };
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
@@ -68,6 +70,25 @@ struct Cli {
     #[arg(long, global = true, value_parser = parse_catalog_session,
         conflicts_with = "service_project")]
     catalog_session: Option<ScopedConnectRequest>,
+    /// Frozen reviewed multi-Project session JSON; indexes are executed once each.
+    #[arg(long, global = true, value_parser = parse_combined_session,
+        conflicts_with_all = ["catalog_session", "service_project"])]
+    combined_session: Option<CombinedConnectRequest>,
+    /// Narrow a combined read to explicit Projects from its reviewed session.
+    #[arg(
+        long,
+        global = true,
+        value_delimiter = ',',
+        num_args = 1,
+        requires = "combined_session"
+    )]
+    project_ids: Option<Vec<QueryProjectId>>,
+    /// Narrow a combined read to member indexes; requires explicit Project scope.
+    #[arg(long, global = true, value_delimiter = ',', num_args = 1, requires_all = ["combined_session", "project_ids"])]
+    index_ids: Option<Vec<IndexId>>,
+    /// Report member failures or require every selected member to answer.
+    #[arg(long, global = true, value_parser = ["report", "require"], requires_all = ["combined_session", "project_ids"])]
+    member_availability: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -120,6 +141,18 @@ fn parse_catalog_session(value: &str) -> Result<ScopedConnectRequest, String> {
     selection
         .validate()
         .map_err(|_| "invalid reviewed catalog session".to_owned())?;
+    Ok(selection)
+}
+
+fn parse_combined_session(value: &str) -> Result<CombinedConnectRequest, String> {
+    if value.len() > 8192 {
+        return Err("combined session exceeds its byte allowance".into());
+    }
+    let selection: CombinedConnectRequest =
+        serde_json::from_str(value).map_err(|_| "invalid combined session JSON".to_owned())?;
+    selection
+        .validate()
+        .map_err(|_| "invalid reviewed combined session".to_owned())?;
     Ok(selection)
 }
 
@@ -205,6 +238,40 @@ struct Selection {
     control: Option<PathBuf>,
     project: Option<ProjectBinding>,
     catalog: Option<ScopedConnectRequest>,
+    combined: Option<CombinedConnectRequest>,
+    project_ids: Option<Vec<QueryProjectId>>,
+    index_ids: Option<Vec<IndexId>>,
+    member_availability: Option<MemberAvailability>,
+}
+
+impl Selection {
+    /// The M3 selection, in the CLI's precedence: a combined or catalog
+    /// session, then a project binding.
+    fn tool_selection(&self) -> ToolSelection {
+        if let Some(request) = &self.combined {
+            return ToolSelection::Combined {
+                request: request.clone(),
+                project_ids: self.project_ids.clone(),
+                index_ids: self.index_ids.clone(),
+                member_availability: self.member_availability,
+            };
+        }
+        match (&self.catalog, self.project) {
+            (Some(request), _) => ToolSelection::Catalog {
+                request: request.clone(),
+            },
+            (None, Some(binding)) => ToolSelection::Project { binding },
+            (None, None) => ToolSelection::Unselected,
+        }
+    }
+}
+
+/// A call or catalog that failed before a result existed: the CLI's
+/// `operation_failed` line with the complete native response.
+fn operation_failed(cx: &mut Context, message: String) -> u8 {
+    let mut line = ErrorLine::new(ExitClass::Refused, "operation_failed", false, &message);
+    line.native = serde_json::to_value(ControlResponse::ToolCallFailed { message }).ok();
+    fail(cx, &line)
 }
 
 /// The service's control directory: explicit until the install pointer (3b).
@@ -267,7 +334,7 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
         &control,
         ControlMethod::ToolsCatalog {
             detail,
-            combined: None,
+            combined: selection.combined.clone().map(Box::new),
         },
         VERSION,
     ) {
@@ -282,6 +349,7 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
             line.message = format!("Unknown MCP tool '{name}'. Use 'airkctl tools list'.");
             return fail(cx, &line);
         }
+        ControlResponse::ToolCallFailed { message } => return operation_failed(cx, message),
         other => return fail(cx, &crate::service::refusal(&other)),
     };
     if json || cx.output == Output::Json {
@@ -323,15 +391,11 @@ fn call(
         Ok(control) => control,
         Err(code) => return code,
     };
-    let selection = match (&selection.catalog, selection.project) {
-        (Some(request), _) => ToolSelection::Catalog {
-            request: request.clone(),
-        },
-        (None, Some(binding)) => ToolSelection::Project { binding },
-        (None, None) => ToolSelection::Unselected,
-    };
-    let local_help = !matches!(selection, ToolSelection::Catalog { .. })
-        && matches!(tool.as_str(), "airk_help" | "help");
+    let selection = selection.tool_selection();
+    let local_help = matches!(
+        selection,
+        ToolSelection::Unselected | ToolSelection::Project { .. }
+    ) && matches!(tool.as_str(), "airk_help" | "help");
     let response_mode = if cx.io.full_responses {
         ToolResponseMode::Full
     } else {
@@ -367,11 +431,7 @@ fn call(
             }
             printed
         }
-        ControlResponse::ToolCallFailed { message } => {
-            let mut line = ErrorLine::new(ExitClass::Refused, "operation_failed", false, &message);
-            line.native = serde_json::to_value(ControlResponse::ToolCallFailed { message }).ok();
-            fail(cx, &line)
-        }
+        ControlResponse::ToolCallFailed { message } => operation_failed(cx, message),
         other => fail(cx, &crate::service::refusal(&other)),
     }
 }
@@ -382,17 +442,23 @@ fn evidence(cx: &mut Context, mut selection: Selection, command: EvidenceCommand
         ..
     } = &command
     {
-        if selection
-            .project
-            .is_some_and(|selected| selected != *project)
-        {
-            return usage(cx, "conflicting project selections");
-        }
         if selection.catalog.is_some() {
             return usage(
                 cx,
                 "catalog sessions are read-only; administrative commands require an explicit administrative invocation",
             );
+        }
+        if selection.combined.is_some() {
+            return usage(
+                cx,
+                "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation",
+            );
+        }
+        if selection
+            .project
+            .is_some_and(|selected| selected != *project)
+        {
+            return usage(cx, "conflicting project selections");
         }
         selection.project = Some(*project);
     }
@@ -487,6 +553,16 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
         control: cli.service_runtime_dir,
         project: cli.service_project,
         catalog: cli.catalog_session,
+        combined: cli.combined_session,
+        project_ids: cli.project_ids,
+        index_ids: cli.index_ids,
+        member_availability: cli.member_availability.map(|policy| {
+            if policy == "require" {
+                MemberAvailability::Require
+            } else {
+                MemberAvailability::Report
+            }
+        }),
     };
     dispatch(&mut cx, cli.command, selection)
 }

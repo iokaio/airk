@@ -18,7 +18,11 @@ pub fn response(detail: &ToolsCatalogDetail) -> Result<ControlResponse> {
     response_from(detail, airk_mcp::unified::tools())
 }
 
-fn response_from(detail: &ToolsCatalogDetail, catalog: Vec<Tool>) -> Result<ControlResponse> {
+/// Answer M2 from an explicit catalog (a combined session's, step 3a.2d).
+pub(crate) fn response_from(
+    detail: &ToolsCatalogDetail,
+    catalog: Vec<Tool>,
+) -> Result<ControlResponse> {
     let document = match detail {
         ToolsCatalogDetail::List { schemas: true } => {
             serde_json::to_string_pretty(&json!({ "tools": catalog }))?
