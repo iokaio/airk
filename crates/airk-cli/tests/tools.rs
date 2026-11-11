@@ -893,3 +893,146 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// M5-M8 on a live service follow the journal rules of contracts §2.4
+/// (split step 3c.3b): duplicate, conflict, expiry, key mismatch and capacity
+/// for M5; listing; key-idempotent submission; forgetting.
+#[test]
+fn the_request_journal_follows_its_contract_rules() -> anyhow::Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::{ControlMethod as Method, ControlResponse as Response, JobKind, RequestKey},
+    };
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-journal");
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    let project = service.project.binding;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let request = |method| {
+        runtime
+            .block_on(airk_cli::service_runtime::request(&service.control, method))
+            .unwrap()
+    };
+    let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch) else {
+        panic!("no request epoch");
+    };
+    let id = |byte: u8| Incarnation::from_bytes([byte; 16]);
+    let key = |nonce: Incarnation, epoch: u64| RequestKey {
+        namespace,
+        epoch,
+        nonce,
+    };
+    let prepare =
+        |caller: Incarnation, key: RequestKey, kind: JobKind| Method::ClientRequestPrepare {
+            caller,
+            key: key.clone(),
+            request: Box::new(Method::Enqueue {
+                project,
+                caller,
+                key,
+                kind,
+            }),
+        };
+    let code = |response: Response| match response {
+        Response::Failure { code } => code,
+        other => panic!(
+            "expected a refusal: {}",
+            serde_json::to_string(&other).unwrap()
+        ),
+    };
+    let (caller, nonce) = (id(0x0c), id(0x0b));
+    let first = request(prepare(caller, key(nonce, epoch), JobKind::Index));
+    assert!(matches!(
+        first,
+        Response::ClientRequestPrepared {
+            duplicate: false,
+            ..
+        }
+    ));
+    let again = request(prepare(caller, key(nonce, epoch), JobKind::Index));
+    assert!(
+        matches!(again, Response::ClientRequestPrepared { duplicate: true, nonce: n, .. } if n == nonce)
+    );
+    assert_eq!(
+        code(request(prepare(
+            caller,
+            key(nonce, epoch),
+            JobKind::Inspect
+        ))),
+        "client_request_key_conflict"
+    );
+    assert_eq!(
+        code(request(prepare(
+            caller,
+            key(id(0x1b), epoch + 1000),
+            JobKind::Index
+        ))),
+        "client_request_key_expired"
+    );
+    let mismatched = Method::ClientRequestPrepare {
+        caller: id(0x0d),
+        key: key(id(0x2b), epoch),
+        request: Box::new(Method::Enqueue {
+            project,
+            caller,
+            key: key(id(0x2b), epoch),
+            kind: JobKind::Index,
+        }),
+    };
+    assert_eq!(code(request(mismatched)), "client_request_key_mismatch");
+    let Response::ClientRequests { pending, capacity } = request(Method::ClientRequestList {})
+    else {
+        panic!("no journal list");
+    };
+    assert_eq!(capacity, 64);
+    assert_eq!(pending.len(), 1);
+    assert_eq!((pending[0].nonce, pending[0].kind), (nonce, JobKind::Index));
+    let Response::Job { job } = request(Method::ClientRequestSubmit { nonce }) else {
+        panic!("submission refused");
+    };
+    let Response::Job { job: replayed } = request(Method::ClientRequestSubmit { nonce }) else {
+        panic!("resubmission refused");
+    };
+    assert_eq!((job.id, job.kind), (replayed.id, JobKind::Index));
+    for filler in 1..64u8 {
+        let filled = request(prepare(
+            caller,
+            key(id(0x40 + filler), epoch),
+            JobKind::Inspect,
+        ));
+        assert!(
+            matches!(
+                filled,
+                Response::ClientRequestPrepared {
+                    duplicate: false,
+                    ..
+                }
+            ),
+            "{filler}"
+        );
+    }
+    assert_eq!(
+        code(request(prepare(
+            caller,
+            key(id(0x3f), epoch),
+            JobKind::Inspect
+        ))),
+        "client_request_journal_full"
+    );
+    assert!(matches!(
+        request(Method::ClientRequestForget { nonce }),
+        Response::ClientRequestForgotten { existed: true, .. }
+    ));
+    assert!(matches!(
+        request(Method::ClientRequestForget { nonce }),
+        Response::ClientRequestForgotten { existed: false, .. }
+    ));
+    Ok(())
+}

@@ -218,7 +218,12 @@ fn persist(control: &Path, request: ControlMethod) -> Result<Incarnation> {
         namespace: namespace(control)?,
         request,
     };
-    let (nonce, project, _) = fields(&saved)?;
+    persist_locked(control, &saved)
+}
+/// The journal write under the held lock: the project's registry authority,
+/// the capacity bound, then a no-clobber durable write.
+fn persist_locked(control: &Path, saved: &Saved) -> Result<Incarnation> {
+    let (nonce, project, _) = fields(saved)?;
     let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
     if let ControlMethod::ConfigureProject { request, .. } = &saved.request
         && request.configuration.is_derived_cleanup()
@@ -243,7 +248,7 @@ fn persist(control: &Path, request: ControlMethod) -> Result<Incarnation> {
         fs::create_dir(&directory)?;
         sync(control)?;
     }
-    let bytes = serde_json::to_vec(&saved)?;
+    let bytes = serde_json::to_vec(saved)?;
     ensure!(
         bytes.len() as u64 <= BYTES,
         "CLI request exceeds byte bound"
@@ -298,6 +303,71 @@ pub async fn prepare_configuration(
         },
     )
 }
+/// M5 (contracts §2.4): journal a keyed request, in the contract's order —
+/// `caller` and `key` must equal the inner request's; the identical saved
+/// request under the nonce is a duplicate and other bytes conflict; then a
+/// namespace or epoch that is not current is expired; then a full journal.
+/// The journal file, lock and limits are unchanged.
+pub(crate) fn prepare_keyed(
+    control: &Path,
+    caller: Incarnation,
+    key: &RequestKey,
+    request: ControlMethod,
+) -> Result<ControlResponse> {
+    let refused = |code: &str| Ok(ControlResponse::Failure { code: code.into() });
+    let (inner_caller, inner_key) = match &request {
+        ControlMethod::Enqueue { caller, key, .. }
+        | ControlMethod::ConfigureProject { caller, key, .. } => (*caller, key.clone()),
+        _ => return refused("client_request_unsupported"),
+    };
+    if inner_caller != caller || inner_key != *key {
+        return refused("client_request_key_mismatch");
+    }
+    let control = control.canonicalize()?;
+    let control = control.as_path();
+    let _lock = lock(control)?;
+    let saved = Saved {
+        schema: 1,
+        control: control.into(),
+        namespace: namespace(control)?,
+        request,
+    };
+    if directory(control)
+        .join(format!("{}.json", key.nonce))
+        .try_exists()?
+    {
+        let existing = read(control, key.nonce)?;
+        if serde_json::to_vec(&existing)? != serde_json::to_vec(&saved)? {
+            return refused("client_request_key_conflict");
+        }
+        let (nonce, project, kind) = fields(&existing)?;
+        return Ok(ControlResponse::ClientRequestPrepared {
+            nonce,
+            project,
+            kind,
+            duplicate: true,
+        });
+    }
+    let (namespace, epoch) = airk_store::service::registry::ServiceRegistry::open_saved(control)?
+        .saved_request_epoch()?;
+    if key.namespace != namespace || key.epoch != epoch {
+        return refused("client_request_key_expired");
+    }
+    if entries(control)?.len() >= LIMIT {
+        return refused("client_request_journal_full");
+    }
+    let (_, project, kind) = fields(&saved)?;
+    let nonce = persist_locked(control, &saved)?;
+    Ok(ControlResponse::ClientRequestPrepared {
+        nonce,
+        project,
+        kind,
+        duplicate: false,
+    })
+}
+/// The journal's capacity (M6).
+pub(crate) const CAPACITY: usize = LIMIT;
+
 pub fn list(control: &Path) -> Result<Vec<Pending>> {
     let control = control.canonicalize()?;
     let control = control.as_path();
@@ -325,7 +395,9 @@ pub fn refusal_guidance(code: &str) -> Option<&'static str> {
     )
 }
 
-pub async fn submit(control: &Path, nonce: Incarnation) -> Result<ControlResponse> {
+/// M7: submit the saved request by nonce with its exact key and return the
+/// service's answer (`Job` or `Failure`); a crossed receipt is refused.
+pub(crate) async fn submit_response(control: &Path, nonce: Incarnation) -> Result<ControlResponse> {
     let control = control.canonicalize()?;
     let control = control.as_path();
     let saved = {
@@ -335,11 +407,19 @@ pub async fn submit(control: &Path, nonce: Incarnation) -> Result<ControlRespons
     };
     let (_, project, kind) = fields(&saved)?;
     let response = crate::console_client::request(control, saved.request).await?;
-    match &response {
-        ControlResponse::Job { job } => ensure!(
+    if let ControlResponse::Job { job } = &response {
+        ensure!(
             job.project == project && job.kind == kind,
             "crossed native CLI job receipt"
-        ),
+        );
+    }
+    Ok(response)
+}
+
+pub async fn submit(control: &Path, nonce: Incarnation) -> Result<ControlResponse> {
+    let response = submit_response(control, nonce).await?;
+    match &response {
+        ControlResponse::Job { .. } => {}
         ControlResponse::Failure { code } => {
             if let Some(guidance) = refusal_guidance(code) {
                 anyhow::bail!("native request refused: {code}; {guidance}; saved key is preserved")
@@ -352,17 +432,22 @@ pub async fn submit(control: &Path, nonce: Incarnation) -> Result<ControlRespons
 }
 /// Explicit forgetting never cancels native work or asserts an uncertain outcome.
 pub fn forget(control: &Path, nonce: Incarnation) -> Result<()> {
+    forget_existed(control, nonce).map(|_| ())
+}
+/// M8: forget the saved request, reporting whether it existed.
+pub(crate) fn forget_existed(control: &Path, nonce: Incarnation) -> Result<bool> {
     let control = control.canonicalize()?;
     let control = control.as_path();
     let _lock = lock(control)?;
     entries(control)?;
     let path = directory(control).join(format!("{nonce}.json"));
     if !path.try_exists()? {
-        return Ok(());
+        return Ok(false);
     }
     read(control, nonce)?;
     fs::remove_file(path)?;
-    sync(&directory(control))
+    sync(&directory(control))?;
+    Ok(true)
 }
 
 #[cfg(test)]
