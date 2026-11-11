@@ -6,6 +6,8 @@ use std::{
 };
 
 /// Contain this exact newly spawned child before Init, or terminate and reap it.
+/// Production containment uses it only on Windows; tests use it everywhere.
+#[cfg(any(windows, test))]
 pub(crate) fn attach_owned(
     child: &mut Child,
     attach: impl FnOnce(&mut Child) -> anyhow::Result<crate::child_job::ChildJob>,
