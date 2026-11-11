@@ -1,5 +1,86 @@
 # One resident process: task ledger
 
+## Service/extension split planning (10 November 2026)
+
+- Request: create `feat/split` from the current `feat/simplify` HEAD and write
+  `docs/split/split-plan.md`; preserve the source branch's features.
+- Acceptance: branch starts at `59dd3c721ca4c8301664827abaa9ea2ac6fd8dc8`;
+  the plan assigns signed standalone service installation to downloads from
+  airk.ioka.io/GitHub Releases and limits the extension to Explorer/Workbench,
+  verified discovery and missing-service guidance. Cover feature preservation,
+  predecessor handling, packaging, compatibility, signing and validation.
+- Boundary: planning documentation and this ledger only; no implementation,
+  installer repair, build, version bump, commit, push or publication.
+- Review checkpoint: at most 15 minutes. AIRK MCP is absent from available
+  tools; `.codex/config.toml` disables it. Use live local source inspection.
+- Source-review findings: standalone installer source already exists; extension
+  source still bundles and installs native payloads. Current version is 1.8.23;
+  the stopped HTTP-cleanup correction has no rebuilt/qualified installer.
+- Required blocker for eventual delivery: installed transition and cleanup
+  proof. This planning task does not resume that stopped repair. A universal
+  VSIX and independent product versioning remain proposals to assess.
+- User clarification: Linux signing is optional. The plan retains Windows/macOS
+  signing requirements and verified, explicitly unsigned Linux delivery.
+- Intended validation: review plan against live installation/extension source
+  and contracts; check local Markdown links; run `pwsh -NoProfile -File
+  scripts/check-repo.ps1`, `git diff --check`, verify branch and source identity.
+  No reproduction, compiler/test campaign or installed qualification is claimed.
+- Results: `feat/split` and `feat/simplify` both resolve to the acceptance SHA.
+  Plan completed and reviewed by the primary agent and a read-only service
+  reviewer; no review blockers. Repository checks passed for 2,230 public files,
+  including local Markdown links and the production self-spawn roster. The
+  tracked diff passed whitespace checks; the new untracked plan needed a trailing
+  blank line removed before its final whitespace check.
+- Environment: sandbox process is `TYAI\codexsandboxoffline`; checkout, `.git`,
+  new branch reference, plan and ledger ownership are `TYAI\tdotn`. Git commands
+  use command/process-scoped `safe.directory`, without persistent configuration
+  or ownership changes. Unrelated Git ignore/cache read-permission warnings
+  remain environmental limits; repository checks completed successfully.
+- Status: documentation-only task complete; final whitespace verification passed,
+  including the Linux-signing clarification.
+  No builds, Rust formatting/Clippy/workspace tests or installed qualification
+  were run; no executable inputs changed.
+
+### Split plan revision 2 (10 November 2026)
+
+- Request: review, improve and expand `docs/split/split-plan.md`. Add a clear
+  extension/service boundary, HTTPS admin pages on the MCP endpoint, a separate
+  signed `airkctl` CLI over the local pipe with a service-only `airk`, code and
+  installer maps, an extension that leaves old installs alone and handles MCP
+  entries, and a service installer that removes old AIRK.
+- Boundary: the plan and this ledger only. No implementation, build, test
+  campaign, version bump, commit or publication.
+- AIRK MCP: configured in `.mcp.json` but the server closed its connection
+  (`CONNECTION_CLOSED`). Local tools were used.
+- Source-review findings (not reproductions): three read-only investigations
+  mapped native process/IPC/HTTPS, the extension, and installers/release. The
+  primary agent spot-checked the gateway `Origin` refusal, the
+  `service_already_running` refusal, client/service version equality, pipe
+  naming, the single-executable rule, `REPLACEMENT_THROUGH`, the window
+  session spawn, the HTTPS evidence client and the process-topology roster.
+- **User decisions** (answers given in this session; plan §2.1 U3–U17):
+  management is admin-only; `airkctl` owns agent configuration writes; one
+  `airkctl session` per window; Explorer Assistance routed through that
+  session; fixed-layout installer with a CI-signed setup step; receipts-only
+  removal that continues and reports; admin search and evidence in the first
+  release with its own index selection; one service per user.
+- **Agent proposals awaiting the user** (plan §2.2 O1–O12): two new crates,
+  the D8 contract changes, the HTTPS boundary change, state-contract scope,
+  later-install index policy, MCP entries without a matching index, version,
+  whether the stopped repair is superseded, uninstall index policy, the home
+  of the setup step, the crate rename and the universal VSIX.
+- Validation: local Markdown links and repository checks through
+  `scripts/check-repo.ps1`; whitespace check of the tracked diff and of the
+  untracked plan.
+- Results: `pwsh -NoProfile -File scripts/check-repo.ps1` passed for 2,230
+  public files, including the self-spawn roster. `git diff --check` passed. The
+  untracked plan was checked separately: every local Markdown link and every
+  source path it names resolves, with no trailing whitespace, tabs or carriage
+  returns. No build, compiler, test or installed run was made, and no
+  executable input changed.
+- Status: documentation-only task complete. Implementation waits for the
+  user's review of the plan and the open decisions.
+
 ## Reported HTTP cleanup refusal (10 November 2026)
 
 Acceptance: correct the reported `HTTP cleanup requires the exact prebaseline
