@@ -2,7 +2,7 @@
 // Pure route manifest shared by the extension host, the Explorer webview and the
 // Explorer Assistance server. Nothing outside this list is a route.
 
-export type WorkspaceId = 'overview' | 'search' | 'code' | 'docs' | 'evidence' | 'review' | 'strategies' | 'manage' | 'help';
+export type WorkspaceId = 'overview' | 'search' | 'code' | 'docs' | 'evidence' | 'review' | 'strategies' | 'indexing' | 'manage' | 'help';
 
 export interface TabDefinition { readonly id: string; readonly title: string }
 export interface WorkspaceDefinition {
@@ -26,8 +26,9 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
     { id: 'evidence', title: 'Evidence', placement: 'main', tabs: [{ id: 'inspector', title: 'Inspector' }, { id: 'checker', title: 'Checker' }, { id: 'changes', title: 'Changes' }] },
     { id: 'review', title: 'Review', placement: 'main', tabs: [{ id: 'changes', title: 'Changes' }, { id: 'impact', title: 'Impact' }, { id: 'tests', title: 'Tests' }] },
     { id: 'strategies', title: 'Strategies', placement: 'main', tabs: [{ id: 'library', title: 'Library' }, { id: 'studio', title: 'Studio' }, { id: 'planner', title: 'Planner' }] },
+    { id: 'indexing', title: 'Indexing', placement: 'main', tabs: [{ id: 'window', title: 'This window' }, { id: 'library', title: 'Index library' }, { id: 'projects', title: 'Projects' }] },
     { id: 'manage', title: 'Management', placement: 'pinned', tabs: [
-        { id: 'overview', title: 'Indexing' }, { id: 'activity', title: 'Activity' },
+        { id: 'overview', title: 'Overview' }, { id: 'activity', title: 'Activity' },
         { id: 'storage', title: 'Storage' }, { id: 'repair', title: 'Recovery' },
         { id: 'service', title: 'Service' }, { id: 'agents', title: 'Agents' },
         { id: 'usage', title: 'Usage' }, { id: 'logs', title: 'Logs' },

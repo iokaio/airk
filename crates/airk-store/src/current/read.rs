@@ -55,9 +55,62 @@ fn read_error(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
+/// Isolate imported-origin tests from graph publication while retaining the
+/// actual authenticated map, resource reader, collection gate and projection.
+#[cfg(test)]
+pub(super) fn scoped_import_test_reader(
+    store: &FileStore,
+    scope: CurrentScope,
+    artifact_root: airk_core::identity::Sha256Digest,
+    connection: Connection,
+) -> Result<CurrentRead> {
+    use airk_core::{
+        graph_storage::GraphHead,
+        identity::{Incarnation, Sha256Digest},
+    };
+    let head = CurrentHead {
+        version: 2,
+        scope: scope.clone(),
+        sequence: 1,
+        artifact_root,
+        lexical_sequence: 1,
+        lexical_commit: Sha256Digest::from_bytes([9; 32]),
+        graph_head: GraphHead::empty(GraphScope {
+            root: scope.root,
+            collection: scope.collection,
+            incarnation: scope.incarnation,
+            graph_instance: Incarnation::from_bytes([2; 16]),
+            specification: Sha256Digest::from_bytes([3; 32]),
+            record_bytes: 16,
+        })?,
+    };
+    Ok(CurrentRead {
+        read_scope: Default::default(),
+        read_scope_fence: Default::default(),
+        read_scope_restricts_paths: Default::default(),
+        scope_endpoints: Default::default(),
+        scope_origin_budget: Default::default(),
+        connection: Mutex::new(connection),
+        head,
+        query_projection_version: Some(2),
+        private_query: Default::default(),
+        lexical_path: store.directory().join("unused-import-test.sqlite3"),
+        lexical_verified: Default::default(),
+        deadline: None,
+        writer_active: None,
+        _gate: Gate::shared(store)?,
+    })
+}
+
 /// The connection/read transaction drops before the gate. Providers may clone
 /// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
+    pub(super) read_scope: std::sync::OnceLock<Arc<airk_core::scoped_reads::CompiledReadScope>>,
+    pub(super) read_scope_fence: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>>,
+    pub(super) read_scope_restricts_paths: std::sync::OnceLock<bool>,
+    pub(super) scope_endpoints:
+        std::sync::OnceLock<Mutex<std::collections::BTreeMap<String, bool>>>,
+    pub(super) scope_origin_budget: std::sync::OnceLock<Mutex<super::read_scope::OriginBudget>>,
     connection: Mutex<Connection>,
     head: CurrentHead,
     query_projection_version: Option<u32>,
@@ -131,6 +184,7 @@ impl CurrentRead {
         store: &FileStore,
         pointer: &OccurrencePointer,
     ) -> Result<airk_core::Hit> {
+        self.require_path(&pointer.path)?;
         pointer.validate()?;
         let pointers = self
             .vector_occurrence_pointers(pointer.embedding_key)?
@@ -243,6 +297,9 @@ impl CurrentRead {
                 .map_get(map::MapDomain::Occurrence, occurrence_id.as_bytes())?
                 .context("current vector occurrence pointer missing")?;
             let pointer = OccurrencePointer::decode(&bytes, occurrence_id)?;
+            if !self.accepts_path(&pointer.path) {
+                continue;
+            }
             ensure!(
                 pointer.embedding_key == embedding_key,
                 "current occurrence vector key mismatch"
@@ -280,6 +337,15 @@ impl CurrentRead {
     /// Returns authenticated current-map bytes. Referenced retained objects must
     /// still be loaded through FileStore's verified object readers.
     pub fn map_get(&self, domain: map::MapDomain, identity: &[u8]) -> Result<Option<Vec<u8>>> {
+        if matches!(
+            domain,
+            map::MapDomain::Artifact
+                | map::MapDomain::FileMetadata
+                | map::MapDomain::PathOccurrences
+                | map::MapDomain::SourceMeasurement
+        ) {
+            self.require_path(std::str::from_utf8(identity)?)?;
+        }
         let key = map::key(&self.head.scope, domain, identity)?;
         self.with_connection(|connection| {
             map::get(connection, &self.head.scope, self.head.artifact_root, key)
@@ -292,6 +358,10 @@ impl CurrentRead {
         &self,
         limits: map::MapVisitLimits,
     ) -> Result<Vec<(airk_core::identity::Sha256Digest, Vec<u8>)>> {
+        ensure!(
+            self.read_scope.get().is_none(),
+            airk_core::scoped_reads::ScopeReadRefused
+        );
         self.with_connection(|connection| {
             let mut entries = Vec::new();
             map::visit_all(
@@ -350,6 +420,7 @@ impl CurrentRead {
         Ok(result)
     }
     fn live(&self) -> Result<()> {
+        self.require_read_scope_live()?;
         ensure!(
             self.writer_active
                 .as_ref()
@@ -459,6 +530,11 @@ impl FileStore {
         );
         let head = decode_head(&bytes, scope)?;
         Ok(Arc::new(CurrentRead {
+            read_scope: std::sync::OnceLock::new(),
+            read_scope_fence: std::sync::OnceLock::new(),
+            read_scope_restricts_paths: std::sync::OnceLock::new(),
+            scope_endpoints: std::sync::OnceLock::new(),
+            scope_origin_budget: std::sync::OnceLock::new(),
             connection: Mutex::new(connection),
             head,
             query_projection_version,
@@ -499,5 +575,237 @@ mod retry_tests {
         let io =
             read_error(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "busy").into());
         assert!(io.downcast_ref::<CurrentReadContention>().is_none());
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use airk_core::{
+        Artifact, Chunk, DocumentLocation, SearchQuery,
+        graph_storage::{GraphHead, GraphScope},
+        identity::{Incarnation, Sha256Digest},
+        index_catalog::PathScope,
+        scoped_reads::{CompiledPathAtom, CompiledReadScope, ScopeReadRefused},
+    };
+
+    fn fixture() -> Result<(tempfile::TempDir, CurrentRead)> {
+        let directory = tempfile::tempdir()?;
+        let store = FileStore::new(directory.path().join("collections-1.2/scoped"));
+        drop(store.lock()?);
+        let scope = CurrentScope {
+            root: "fixture-root".into(),
+            collection: "scoped".into(),
+            incarnation: Incarnation::from_bytes([1; 16]),
+        };
+        let connection = Connection::open_in_memory()?;
+        // The current reader's mandatory authenticated map backs collection
+        // metadata even when selected-page projections are unavailable. Use
+        // the production schema owner, not a lexical-only synthetic database.
+        map::create(&connection)?;
+        super::super::lexical::create(&connection)?;
+        for path in [
+            "private/a.rs",
+            "public/a.rs",
+            "publicity/a.rs",
+            "@docs/a.md",
+            "@notes.md",
+            "@types/a.ts",
+        ] {
+            let artifact = Artifact {
+                path: path.into(),
+                content_hash: Sha256Digest::from_bytes([3; 32]).to_string(),
+                bytes: 6,
+                chunks: vec![Chunk {
+                    start_line: 1,
+                    end_line: 1,
+                    text: "needle".into(),
+                    location: DocumentLocation::Lines { start: 1, end: 1 },
+                }],
+                language: "rust".into(),
+                extraction_method: "fixture".into(),
+                parse_status: "ok".into(),
+                facts: vec![],
+                retained: None,
+            };
+            super::super::lexical::replace(&connection, path, Some(&artifact))?;
+        }
+        super::super::lexical::flush(&connection)?;
+        let head = CurrentHead {
+            version: 2,
+            scope: scope.clone(),
+            sequence: 1,
+            artifact_root: map::empty_root(&scope)?,
+            lexical_sequence: 1,
+            lexical_commit: Sha256Digest::from_bytes([4; 32]),
+            graph_head: GraphHead::empty(GraphScope {
+                root: scope.root.clone(),
+                collection: scope.collection.clone(),
+                incarnation: scope.incarnation,
+                graph_instance: scope.incarnation,
+                specification: Sha256Digest::from_bytes([5; 32]),
+                record_bytes: 16,
+            })?,
+        };
+        let read = CurrentRead {
+            connection: Mutex::new(connection),
+            head,
+            query_projection_version: None,
+            read_scope: Default::default(),
+            read_scope_fence: Default::default(),
+            read_scope_restricts_paths: Default::default(),
+            scope_endpoints: Default::default(),
+            scope_origin_budget: Default::default(),
+            private_query: Default::default(),
+            lexical_path: store.directory().join("fixture.sqlite3"),
+            lexical_verified: Default::default(),
+            deadline: None,
+            writer_active: None,
+            _gate: Gate::shared(&store)?,
+        };
+        // This fixture targets actual candidate SQL, not physical manifest audit.
+        read.lexical_verified.set(()).expect("new fixture");
+        assert!(
+            read.collection_state()?.is_none(),
+            "production empty-map absence proof must remain available without optional projections"
+        );
+        Ok((directory, read))
+    }
+
+    fn scope(kind: PathScope, path: &str) -> Arc<CompiledReadScope> {
+        Arc::new(CompiledReadScope {
+            fingerprint: Sha256Digest::from_bytes([8; 32]),
+            atoms: vec![CompiledPathAtom {
+                kind,
+                path: path.into(),
+            }],
+            source_atoms: vec![],
+            external_aliases: vec!["docs".into()],
+        })
+    }
+    fn query(limit: usize) -> SearchQuery {
+        SearchQuery {
+            text: "needle".into(),
+            path_prefix: None,
+            limit,
+            max_bytes: 4096,
+        }
+    }
+
+    #[test]
+    fn scoped_lexical_and_reference_limits_select_authorized_candidates() -> Result<()> {
+        let (_directory, read) = fixture()?;
+        read.attach_read_scope(scope(PathScope::Exact, "public/a.rs"))?;
+        let result = read.lexical_search(&query(1))?;
+        assert_eq!(result.values.len(), 1);
+        assert_eq!(result.values[0].citation.path, "public/a.rs");
+        assert!(!result.incomplete);
+        let selected = std::collections::BTreeSet::from(["private/a.rs".to_owned()]);
+        assert!(
+            read.lexical_search_paths(&query(1), Some(&selected))?
+                .values
+                .is_empty()
+        );
+        for path_order in [false, true] {
+            let result = read.lexical_reference_page(&query(1), None, false, path_order, None)?;
+            assert_eq!(result.values.len(), 1);
+            assert_eq!(result.values[0].citation.path, "public/a.rs");
+            assert!(!result.incomplete);
+        }
+        let error = read.artifact("private/a.rs").unwrap_err();
+        assert!(error.downcast_ref::<ScopeReadRefused>().is_some());
+        assert!(
+            read.attach_read_scope(scope(PathScope::Subtree, "public"))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn permission_only_lexical_scope_precedes_candidate_limit() -> Result<()> {
+        let (_directory, read) = fixture()?;
+        let baseline = read.lexical_search(&query(100))?;
+        let denied = &baseline
+            .values
+            .first()
+            .expect("fixture candidates")
+            .citation
+            .path;
+        let allowed = baseline
+            .values
+            .iter()
+            .find(|candidate| &candidate.citation.path != denied)
+            .expect("fixture contains multiple paths")
+            .citation
+            .path
+            .clone();
+        read.attach_read_scope(scope(PathScope::Exact, &allowed))?;
+        let result = read.lexical_search(&query(1))?;
+        assert_eq!(result.values.len(), 1);
+        assert_eq!(result.values[0].citation.path, allowed);
+        Ok(())
+    }
+
+    #[test]
+    fn subtree_and_empty_authorities_do_not_broaden_candidates() -> Result<()> {
+        let (_directory, read) = fixture()?;
+        read.attach_read_scope(scope(PathScope::Subtree, "public"))?;
+        let result = read.lexical_search(&query(100))?;
+        assert_eq!(result.values.len(), 1);
+        assert_eq!(result.values[0].citation.path, "public/a.rs");
+        let (_empty_directory, empty) = fixture()?;
+        let mut denied = scope(PathScope::Subtree, "public").as_ref().clone();
+        denied.atoms.clear();
+        empty.attach_read_scope(Arc::new(denied))?;
+        let result = empty.lexical_search(&query(1))?;
+        assert!(result.values.is_empty());
+        assert!(!result.incomplete);
+        Ok(())
+    }
+
+    #[test]
+    fn primary_scope_preserves_at_files_and_excludes_only_published_aliases() -> Result<()> {
+        let (_directory, read) = fixture()?;
+        read.attach_read_scope(scope(PathScope::Subtree, ""))?;
+        let result = read.lexical_search(&query(100))?;
+        let paths = result
+            .values
+            .iter()
+            .map(|hit| hit.citation.path.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(paths.contains("@notes.md"));
+        assert!(paths.contains("@types/a.ts"));
+        assert!(!paths.contains("@docs/a.md"));
+        Ok(())
+    }
+
+    #[test]
+    fn revocation_fences_existing_reader_and_cursor_identity() -> Result<()> {
+        let (_directory, read) = fixture()?;
+        assert_eq!(
+            read.scope_bound_cursor_identity("publication"),
+            "publication"
+        );
+        let revoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        read.attach_read_scope_fence(scope(PathScope::Subtree, "public"), revoked.clone())?;
+        assert_ne!(
+            read.scope_bound_cursor_identity("publication"),
+            "publication"
+        );
+        revoked.store(true, std::sync::atomic::Ordering::Release);
+        assert!(!read.accepts_path("public/a.rs"));
+        assert!(
+            read.token()
+                .unwrap_err()
+                .downcast_ref::<ScopeReadRefused>()
+                .is_some()
+        );
+        assert!(
+            read.lexical_search(&query(1))
+                .unwrap_err()
+                .downcast_ref::<ScopeReadRefused>()
+                .is_some()
+        );
+        Ok(())
     }
 }

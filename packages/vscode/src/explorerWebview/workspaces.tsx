@@ -13,6 +13,7 @@ import { RecipesScreen, SearchScreen } from './search';
 import { PlannerScreen } from './planner';
 import { ReviewChangesScreen, ReviewImpactScreen, ReviewTestsScreen } from './review';
 import { LibraryScreen, StudioScreen } from './strategies';
+import { IndexingScreen } from './indexing';
 
 export interface ScreenProps {
     manageEmbedded?: boolean;
@@ -32,6 +33,9 @@ export interface ScreenProps {
 
 /** Screens backed by real AIRK operations, keyed by route. Everything else is labeled, never simulated. */
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
+    'indexing/window': IndexingScreen,
+    'indexing/library': IndexingScreen,
+    'indexing/projects': IndexingScreen,
     'manage/overview': ProjectsScreen,
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,

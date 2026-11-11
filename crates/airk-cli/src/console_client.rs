@@ -41,7 +41,14 @@ async fn handle(
         ControlMethod::Connect { .. } => return failure("console_brokerage_forbidden"),
         // Exhaustive review: a new service method must be considered here before
         // a trusted console can expose it. No default credential-bearing path.
-        ControlMethod::Logs { .. }
+        ControlMethod::CatalogPage { .. }
+        | ControlMethod::CatalogDetail { .. }
+        | ControlMethod::CatalogContext { .. }
+        | ControlMethod::CatalogHostContext { .. }
+        | ControlMethod::CatalogPreview { .. }
+        | ControlMethod::CatalogApply { .. }
+        | ControlMethod::CatalogReceipt { .. }
+        | ControlMethod::Logs { .. }
         | ControlMethod::Health
         | ControlMethod::Shutdown
         | ControlMethod::Register { .. }
@@ -170,6 +177,7 @@ mod tests {
         let response = metadata_only(ControlResponse::Connection {
             role: "original-private-fixture".into(),
             grant: ConnectionGrant {
+                scope: None,
                 client: airk_core::usage::ClientFamily::Unknown,
                 protocol: 1,
                 identity: WorkerIdentity {

@@ -9,7 +9,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 // Pure contract modules shared by the host, the webview and the Assistance server.
-const CONTRACTS = ['src/explorerContracts.ts', 'src/explorerRoutes.ts', 'src/explorerFeatures.ts', 'src/explorerErrors.ts', 'src/explorerStatus.ts', 'src/explorerStrategies.ts', 'src/explorerDrafts.ts'];
+const CONTRACTS = ['src/explorerContracts.ts', 'src/explorerRoutes.ts', 'src/explorerFeatures.ts', 'src/explorerErrors.ts', 'src/explorerStatus.ts', 'src/explorerStrategies.ts', 'src/explorerDrafts.ts', 'src/indexingCatalog.ts'];
 
 function preactBanner() {
     const manifest = JSON.parse(read('package.json'));
@@ -156,6 +156,9 @@ async function build() {
     });
     checkInputs('Uninstall', uninstall.metafile, ['src/uninstallHook.ts', 'src/extensionUninstall.ts', 'src/serviceBootstrap.ts',
         'src/native.ts', 'src/nativeGate.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
+        // ServiceClient shares these inert validators. This exact contract has no imports or startup work;
+        // neither the Indexing controller nor any browser/UI module belongs in the standalone worker.
+        'src/indexingCatalog.ts',
         'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
         'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
         /^node_modules\/jsonc-parser\//]);

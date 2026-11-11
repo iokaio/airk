@@ -215,6 +215,54 @@ pub(super) fn validate(
             disjoint(data, Path::new(source))?;
         }
     }
+    // New catalog reservations protect all their sources even before a native
+    // watcher has observed them. Watch reconfiguration cannot erase this fence.
+    // The legacy schema keeps its original path and performs no catalog walk.
+    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 12 {
+        let mut statement = connection.prepare("SELECT substr(CAST(data_root AS BLOB),1,4097) FROM index_definitions ORDER BY id LIMIT 1025")?;
+        let mut rows = statement.query([])?;
+        let mut count = 0;
+        while let Some(row) = rows.next()? {
+            count += 1;
+            ensure!(
+                count <= super::MAX_PROJECTS,
+                "catalog storage isolation capacity exceeded"
+            );
+            let path: Vec<u8> = row.get(0)?;
+            ensure!(
+                !path.is_empty() && path.len() <= 4096,
+                "catalog storage isolation path exceeds bound"
+            );
+            let path = String::from_utf8(path)?;
+            for source in &sources {
+                disjoint(source, Path::new(&path))?;
+            }
+        }
+        let mut statement = connection.prepare(
+            "SELECT substr(CAST(s.canonical_path AS BLOB),1,32769) FROM index_sources s JOIN index_definitions i ON i.id=s.index_id ORDER BY s.index_id,s.id LIMIT 17409",
+        )?;
+        let mut rows = statement.query([])?;
+        let mut count = 0;
+        let mut bytes = 0usize;
+        while let Some(row) = rows.next()? {
+            count += 1;
+            ensure!(
+                count <= super::MAX_PROJECTS * 17,
+                "catalog source isolation capacity exceeded"
+            );
+            let path: Vec<u8> = row.get(0)?;
+            bytes = bytes
+                .checked_add(path.len())
+                .ok_or_else(|| anyhow::anyhow!("catalog source isolation size overflow"))?;
+            ensure!(
+                !path.is_empty() && path.len() <= 32768 && bytes <= 8 * 1024 * 1024,
+                "catalog source isolation byte budget exceeded"
+            );
+            let path = String::from_utf8(path)?;
+            disjoint(data, Path::new(&path))?;
+        }
+    }
     Ok(())
 }
 

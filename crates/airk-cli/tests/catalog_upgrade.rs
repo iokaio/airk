@@ -186,6 +186,8 @@ fn activated_format_serves_actual_control_and_post_start_writes_refuse_restore()
         // cannot replay user work. This is the canonical setup-epoch boundary.
         std::thread::sleep(Duration::from_millis(25));
     }
+    exercise_native_catalog_transports(&control, &runtime)?;
+    let deadline = Instant::now() + Duration::from_secs(20);
     let response = runtime.block_on(airk_cli::service_runtime::request(
         &control,
         ControlMethod::Shutdown,
@@ -602,5 +604,267 @@ fn actual_predecessors_refuse_reads_and_writes_at_admission_and_the_schema_floor
             "restored predecessor read failed: {output:?}"
         );
     }
+    Ok(())
+}
+
+// Actual owned service, stdin CLI and trusted console all retain full canonical
+// administrative results. This fixture does not qualify production activation.
+fn exercise_native_catalog_transports(
+    control: &Path,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<()> {
+    use airk_core::{catalog_management::*, index_catalog::*, service::RequestKey};
+    use std::io::Write;
+    let direct = |method| runtime.block_on(airk_cli::service_runtime::request(control, method));
+    let cli = |method: &ControlMethod| -> Result<ControlResponse> {
+        let mut child = Command::new(candidate())
+            .args(["service", "rpc", "--runtime-dir"])
+            .arg(control)
+            .arg("--stdin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        child
+            .stdin
+            .take()
+            .context("missing RPC stdin")?
+            .write_all(&serde_json::to_vec(method)?)?;
+        let output = child.wait_with_output()?;
+        ensure!(
+            output.status.success(),
+            "catalog RPC failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    let console = |method: ControlMethod| -> Result<ControlResponse> {
+        let mut child = Command::new(candidate())
+            .args(["service", "console", "--runtime-dir"])
+            .arg(control)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let id = Incarnation::from_bytes([90; 16]);
+        let mut input = child.stdin.take().context("missing console stdin")?;
+        airk_cli::service_ipc::write_frame(
+            &mut input,
+            &airk_cli::console_client::Request { id, method },
+        )?;
+        drop(input);
+        let output = child.wait_with_output()?;
+        ensure!(
+            output.status.success(),
+            "catalog console failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response: airk_cli::console_client::Response =
+            airk_cli::service_ipc::read_frame(&mut output.stdout.as_slice())?
+                .context("missing console response")?;
+        ensure!(response.id == id, "console identity changed");
+        Ok(response.response)
+    };
+    let equal = |a: ControlResponse, b: ControlResponse| -> Result<()> {
+        ensure!(
+            serde_json::to_value(a)? == serde_json::to_value(b)?,
+            "canonical catalog results differ"
+        );
+        Ok(())
+    };
+    let page = ControlMethod::CatalogPage {
+        request: CatalogPageRequest {
+            kind: CatalogKind::Projects,
+            index_id: None,
+            project_id: None,
+            after: None,
+            expected_catalog_revision: None,
+            limit: 1,
+            max_bytes: MAX_PAGE_BYTES,
+        },
+    };
+    equal(direct(page.clone())?, cli(&page)?)?;
+    equal(direct(page.clone())?, console(page.clone())?)?;
+    let ControlResponse::CatalogPage { page } = direct(page)? else {
+        anyhow::bail!("catalog page unavailable")
+    };
+    let ControlResponse::RequestEpoch { namespace, epoch } = direct(ControlMethod::RequestEpoch)?
+    else {
+        anyhow::bail!("catalog epoch unavailable")
+    };
+    let id = QueryProjectId::from_identity(Incarnation::from_bytes([91; 16]));
+    let request = CatalogRequest {
+        caller: Incarnation::from_bytes([92; 16]),
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([93; 16]),
+        },
+        expected_catalog_revision: page.revision,
+        operation: CatalogOperation::CreateProject {
+            id,
+            name: "Native catalog fixture".into(),
+        },
+    };
+    let preview_method = ControlMethod::CatalogPreview {
+        request: request.clone(),
+    };
+    let preview = cli(&preview_method)?;
+    equal(direct(preview_method.clone())?, console(preview_method)?)?;
+    let ControlResponse::CatalogPreview {
+        preview,
+        preview_digest,
+    } = preview
+    else {
+        anyhow::bail!("catalog preview unavailable")
+    };
+    ensure!(
+        !preview.authority_fence_required,
+        "create unexpectedly requires authority"
+    );
+    ensure!(
+        preview_digest == preview.identity()?,
+        "native preview digest differs"
+    );
+    let apply = ControlMethod::CatalogApply {
+        request: request.clone(),
+        preview_digest,
+    };
+    let invalid = cli(&ControlMethod::CatalogApply {
+        request: request.clone(),
+        preview_digest: Sha256Digest::from_bytes([0; 32]),
+    })?;
+    ensure!(
+        matches!(invalid, ControlResponse::Failure { .. }),
+        "changed preview was accepted"
+    );
+    ensure!(
+        matches!(
+            direct(ControlMethod::CatalogReceipt {
+                caller: request.caller,
+                key: request.key.clone()
+            })?,
+            ControlResponse::CatalogReceipt { receipt: None }
+        ),
+        "failed review committed a receipt"
+    );
+    let applied = console(apply.clone())?;
+    let ControlResponse::CatalogApplied { ref receipt } = applied else {
+        anyhow::bail!("catalog apply unavailable")
+    };
+    ensure!(
+        receipt.request_digest == request.identity()?,
+        "receipt lost request identity"
+    );
+    let revision = receipt.catalog_revision;
+    // Reconciliation and explicit keyed replay preserve the original receipt.
+    equal(applied, cli(&apply)?)?;
+    let receipt = ControlMethod::CatalogReceipt {
+        caller: request.caller,
+        key: request.key.clone(),
+    };
+    equal(direct(receipt.clone())?, cli(&receipt)?)?;
+    equal(direct(receipt.clone())?, console(receipt)?)?;
+    let detail = ControlMethod::CatalogDetail {
+        entity: CatalogEntity::Project { id },
+        expected_catalog_revision: Some(revision),
+    };
+    equal(direct(detail.clone())?, cli(&detail)?)?;
+    equal(direct(detail.clone())?, console(detail)?)?;
+    let host_context = ControlMethod::CatalogHostContext {
+        key: Sha256Digest::from_bytes([95; 32]),
+        expected_catalog_revision: Some(revision),
+    };
+    equal(direct(host_context.clone())?, cli(&host_context)?)?;
+    equal(
+        direct(host_context.clone())?,
+        console(host_context.clone())?,
+    )?;
+    let ControlResponse::CatalogHostContext { descriptor } = direct(host_context.clone())? else {
+        anyhow::bail!("native host context unavailable")
+    };
+    descriptor.validate()?;
+    ensure!(
+        descriptor.namespace == namespace
+            && descriptor.catalog_revision == revision
+            && descriptor.context.is_none(),
+        "host context inferred an association or changed its snapshot"
+    );
+    let mut claimed_host = serde_json::to_value(&host_context)?;
+    claimed_host["catalog_host_context"]["host"] = serde_json::to_value(descriptor.host)?;
+    ensure!(
+        serde_json::from_value::<ControlMethod>(claimed_host).is_err(),
+        "native host context accepted a claimed wire host"
+    );
+    ensure!(
+        matches!(
+            direct(ControlMethod::CatalogHostContext {
+                key: descriptor.key,
+                expected_catalog_revision: Some(page.revision),
+            })?,
+            ControlResponse::Failure { .. }
+        ),
+        "host context ignored its expected catalog revision"
+    );
+    equal(direct(host_context.clone())?, console(host_context)?)?;
+    let context = ControlMethod::CatalogContext {
+        host: Sha256Digest::from_bytes([94; 32]),
+        key: Sha256Digest::from_bytes([95; 32]),
+        expected_catalog_revision: Some(revision),
+    };
+    equal(direct(context.clone())?, cli(&context)?)?;
+    equal(direct(context.clone())?, console(context)?)?;
+    let mut revoke = request.clone();
+    revoke.key.nonce = Incarnation::from_bytes([96; 16]);
+    revoke.expected_catalog_revision = revision;
+    revoke.operation = CatalogOperation::DeleteProject {
+        id,
+        expected_definition_revision: CatalogRevision::INITIAL,
+        expected_scope_revision: CatalogRevision::INITIAL,
+        expected_defaults_revision: CatalogRevision::INITIAL,
+    };
+    let ControlResponse::CatalogPreview {
+        preview,
+        preview_digest,
+    } = direct(ControlMethod::CatalogPreview {
+        request: revoke.clone(),
+    })?
+    else {
+        anyhow::bail!("delete preview unavailable")
+    };
+    ensure!(
+        preview.authority_fence_required,
+        "delete omitted authority fence"
+    );
+    let refusal = cli(&ControlMethod::CatalogApply {
+        request: revoke.clone(),
+        preview_digest,
+    })?;
+    ensure!(
+        matches!(refusal, ControlResponse::Failure { code } if code == "catalog_authority_fence_unavailable"),
+        "unfenced deletion was accepted"
+    );
+    ensure!(
+        matches!(
+            direct(ControlMethod::CatalogReceipt {
+                caller: revoke.caller,
+                key: revoke.key
+            })?,
+            ControlResponse::CatalogReceipt { receipt: None }
+        ),
+        "refused deletion committed a receipt"
+    );
+    ensure!(
+        matches!(
+            direct(ControlMethod::CatalogDetail {
+                entity: CatalogEntity::Project { id },
+                expected_catalog_revision: Some(revision)
+            })?,
+            ControlResponse::CatalogDetail {
+                detail: CatalogDetail { item: Some(_), .. }
+            }
+        ),
+        "refused deletion changed catalog"
+    );
     Ok(())
 }

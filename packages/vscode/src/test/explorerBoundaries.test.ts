@@ -9,7 +9,7 @@ import * as ts from 'typescript';
 // test reads the TypeScript sources directly (out/test → ../../src).
 const source = path.resolve(__dirname, '..', '..', 'src');
 const compiled = path.resolve(__dirname, '..');
-const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts']);
+const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
 const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class IntentJournal', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
@@ -40,6 +40,28 @@ test('Explorer contract modules depend only on other contract modules', () => {
             assert.ok(contract(file, specifier), `${name} imports ${specifier}; contracts must stay free of Node, vscode and host modules`);
         }
     }
+});
+
+test('the shared Indexing contract adds no host/browser dependencies to the uninstall worker',()=>{
+    const file=path.join(source,'indexingCatalog.ts');
+    assert.deepEqual(imports(file),[],'inert validators must not acquire Node, editor, controller or browser imports');
+    const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
+    for(const statement of tree.statements){
+        assert.ok(ts.isInterfaceDeclaration(statement)||ts.isTypeAliasDeclaration(statement)||ts.isFunctionDeclaration(statement)||ts.isVariableStatement(statement),
+            'shared contract contains only declarations, constants and inert function bodies');
+        if(ts.isVariableStatement(statement))for(const declaration of statement.declarationList.declarations){
+            const initializer=declaration.initializer;
+            assert.ok(!initializer||ts.isNumericLiteral(initializer)||ts.isStringLiteral(initializer)||ts.isBinaryExpression(initializer)||ts.isAsExpression(initializer),
+                'contract constants cannot perform startup work');
+        }
+    }
+});
+
+test('the standalone uninstall bundle retains no Indexing controller, Preact or browser implementation', {skip:!fs.existsSync(path.join(compiled,'uninstallHook.js'))},()=>{
+    const text=fs.readFileSync(path.join(compiled,'uninstallHook.js'),'utf8');
+    assert.doesNotMatch(text,/\bclass\s+IndexingCatalogController\b|src\/explorerWebview\//);
+    assert.doesNotMatch(text,/\brequire\s*\(\s*["'](?:preact(?:\/[^"']*)?|vscode)["']/);
+    assert.doesNotMatch(text,/\b(?:window|document)\.(?:addEventListener|createElement|querySelector|body)\b/);
 });
 
 test('Explorer webview sources import only Preact, their own files and contracts', () => {

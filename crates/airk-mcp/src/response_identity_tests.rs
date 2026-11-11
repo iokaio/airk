@@ -3,6 +3,28 @@
 use super::{ResponseMode, Session};
 use serde_json::{Value, json};
 
+#[test]
+fn status_receipts_do_not_cross_frozen_authority() {
+    use airk_core::identity::Sha256Digest;
+    let first = Session::for_scope(Some(Sha256Digest::from_bytes([1; 32])));
+    let second = Session::for_scope(Some(Sha256Digest::from_bytes([2; 32])));
+    let mut observed = evidence("same", "same", "same");
+    first.display(&mut observed, ResponseMode::Terse, false);
+    second.restore(first.receipt());
+    let mut fresh = evidence("same", "same", "same");
+    second.display(&mut fresh, ResponseMode::Terse, false);
+    assert!(fresh.get("semantic_readiness").is_some());
+    second.restore(second.receipt());
+    let mut repeated = evidence("same", "same", "same");
+    second.display(&mut repeated, ResponseMode::Terse, false);
+    assert!(repeated.get("semantic_readiness").is_none());
+    let legacy = Session::default();
+    legacy.restore(second.receipt());
+    let mut fresh = evidence("same", "same", "same");
+    legacy.display(&mut fresh, ResponseMode::Terse, false);
+    assert!(fresh.get("semantic_readiness").is_some());
+}
+
 fn evidence(token: &str, collection: &str, incarnation: &str) -> Value {
     json!({"collection":collection,
         "publication":{"token":token,"incarnation":incarnation,"generation":7},

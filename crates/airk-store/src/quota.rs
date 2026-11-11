@@ -344,6 +344,7 @@ fn json_read<T: serde::de::DeserializeOwned>(path: &Path, maximum: u64) -> Resul
 fn checked_add(a: u64, b: u64) -> Result<u64> {
     a.checked_add(b).context("quota byte count overflow")
 }
+
 fn within_deadline(deadline: Option<Instant>) -> Result<()> {
     ensure!(
         deadline.is_none_or(|deadline| Instant::now() < deadline),

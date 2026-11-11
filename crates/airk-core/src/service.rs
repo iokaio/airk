@@ -11,6 +11,35 @@ pub const MAX_GRANT_TTL_MS: u64 = 30_000;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
+    /// Administrative metadata only; no evidence admission or implicit activation.
+    CatalogPage {
+        request: crate::catalog_management::CatalogPageRequest,
+    },
+    CatalogDetail {
+        entity: crate::catalog_management::CatalogEntity,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    CatalogContext {
+        host: Sha256Digest,
+        key: Sha256Digest,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    /// Native administrative identity; never accepts a claimed wire host/caller.
+    CatalogHostContext {
+        key: Sha256Digest,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    CatalogPreview {
+        request: crate::catalog_management::CatalogRequest,
+    },
+    CatalogApply {
+        request: crate::catalog_management::CatalogRequest,
+        preview_digest: Sha256Digest,
+    },
+    CatalogReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+    },
     Logs {
         limit: usize,
     },
@@ -215,6 +244,25 @@ pub struct RuntimeProcess {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    CatalogPage {
+        page: crate::catalog_management::CatalogPage,
+    },
+    CatalogDetail {
+        detail: crate::catalog_management::CatalogDetail,
+    },
+    CatalogHostContext {
+        descriptor: crate::catalog_host::NativeHostContextDescriptor,
+    },
+    CatalogPreview {
+        preview: crate::catalog_management::CatalogPreview,
+        preview_digest: Sha256Digest,
+    },
+    CatalogApplied {
+        receipt: crate::catalog_management::CatalogReceipt,
+    },
+    CatalogReceipt {
+        receipt: Option<crate::catalog_management::CatalogReceipt>,
+    },
     Configuration {
         job: JobRecord,
         result: Option<serde_json::Value>,
@@ -531,6 +579,28 @@ pub struct WorkerIdentity {
     pub fencing_generation: u64,
 }
 
+/// Frozen native scope identity. This metadata is never a bearer credential.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedReadRef {
+    pub schema: u32,
+    /// Native-reserved, worker-monotonic installation lease; never a bearer.
+    pub lease_generation: u64,
+    pub index_id: crate::index_catalog::IndexId,
+    pub grant_id: crate::index_catalog::GrantId,
+    pub grant_revision: crate::index_catalog::CatalogRevision,
+    pub fingerprint: Sha256Digest,
+}
+impl ScopedReadRef {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == 1 && self.lease_generation > 0,
+            "unsupported scoped read contract"
+        );
+        Ok(())
+    }
+}
+
 /// Bearer credential: serializable only for protected IPC, intentionally redacted in Debug.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -543,6 +613,9 @@ pub struct ConnectionGrant {
     /// Informational accounting label, never authority or an authentication claim.
     #[serde(default = "unknown_client")]
     pub client: crate::usage::ClientFamily,
+    /// Required by an authority-contract-1 worker; omission never widens access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ScopedReadRef>,
 }
 fn unknown_client() -> crate::usage::ClientFamily {
     crate::usage::ClientFamily::Unknown

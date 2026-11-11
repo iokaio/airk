@@ -33,6 +33,7 @@ mod resources;
 pub mod retrieval_retry;
 pub mod roots;
 pub mod scheduler;
+pub mod scoped_reads;
 pub mod service_broker;
 pub mod service_catalog_upgrade;
 pub mod service_configuration;
@@ -74,6 +75,7 @@ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
 
 #[derive(Clone)]
 pub struct Kernel {
+    read_scope: Option<Arc<scoped_reads::SessionScope>>,
     verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     progress: Option<ProgressObserver>,
     root: PathBuf,
@@ -318,6 +320,7 @@ impl Kernel {
             FileStore::new(directory.join("collections-1.2").join(collection))
         };
         let kernel = Self {
+            read_scope: None,
             verification_cancellation: None,
             progress: None,
             root,
@@ -373,6 +376,8 @@ impl Kernel {
     }
 
     pub fn require_service_sources(&self) -> Result<()> {
+        #[cfg(test)]
+        self.note_service_source_check();
         if self.service_collection.is_some() {
             service_projects::require_source(&self.root)?;
             let roots =
@@ -384,6 +389,12 @@ impl Kernel {
         Ok(())
     }
     fn service_source_observation(&self) -> Option<service_projects::SourceObservation> {
+        // A published-scope grant does not authorize mutable pending roots.
+        // Retain unknown availability until a separately scoped live check is
+        // available; never expand a status read through RootConfig.
+        if self.read_scope.is_some() {
+            return None;
+        }
         self.service_collection.as_ref()?;
         use service_projects::SourceState;
         let (state, reason) = match self.require_service_sources() {
@@ -424,6 +435,7 @@ impl Kernel {
         &self.collection
     }
     pub fn collections(&self) -> Result<Vec<CollectionUsage>> {
+        self.require_unrestricted_read()?;
         airk_store::list_collections(&self.data_root)
     }
     pub fn remove_collection(&self, id: &str) -> Result<CollectionUsage> {
@@ -443,10 +455,11 @@ impl Kernel {
     }
 
     fn load_optional(&self) -> Result<Option<Snapshot>> {
+        self.require_unrestricted_read()?;
         let Some(scope) = self.current_scope()? else {
             return Ok(None);
         };
-        let read = self.store.current_read(&scope)?;
+        let read = self.attach_private_read(self.store.current_read(&scope)?)?;
         self.current_scan_projection(&read).map(Some)
     }
 
@@ -857,6 +870,15 @@ impl Kernel {
         limit: usize,
         max_bytes: usize,
     ) -> Result<ReferencesResponse> {
+        if self.read_scope.is_some() {
+            return self.references_page(
+                name,
+                path_prefix,
+                limit,
+                max_bytes,
+                &airk_core::references::ReferenceOptions::default(),
+            );
+        }
         validate_budget(limit, max_bytes)?;
         ensure!(
             !name.is_empty()
@@ -973,6 +995,9 @@ impl Kernel {
         &self,
         read: Arc<airk_store::current::CurrentRead>,
     ) -> Result<Arc<airk_store::current::CurrentRead>> {
+        if let Some(scope) = &self.read_scope {
+            scope.attach(&read)?;
+        }
         let slot = self
             .native_owner
             .lock()

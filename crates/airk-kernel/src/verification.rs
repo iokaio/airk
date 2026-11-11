@@ -339,6 +339,9 @@ impl Kernel {
                 id
             };
             let path = reference.path.as_deref();
+            if self.read_scope.is_some() {
+                read.require_path(path.ok_or(airk_core::scoped_reads::ScopeReadRefused)?)?;
+            }
             let current_reference =
                 reference.publication == Some(original) && !reference.historical;
             // Only bounded returned identities are looked up, from the same head;

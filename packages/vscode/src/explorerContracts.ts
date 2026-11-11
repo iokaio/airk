@@ -17,6 +17,7 @@ import type { Availability } from './explorerFeatures';
 import type { DraftKind, ProposalOutcome, ProposalReceipt } from './explorerDrafts';
 import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
 import { ROUTE_KEYS } from './explorerRoutes';
+import type { CatalogView } from './indexingCatalog';
 
 export const MESSAGE_VERSION = 1;
 /** Fixed public destinations for user-clicked About links; never agent-supplied URLs. */
@@ -121,6 +122,7 @@ export interface ExplorerViewState {
     readonly moreProjects?: boolean;
     /** Present while a Management tab is open; built from the shared console state. */
     readonly management?: ManagementView;
+    readonly indexing?: CatalogView;
     /** Agent drafts waiting in this window's Suggestions Inbox (summaries only; bodies are fetched on review). */
     readonly suggestions?: SuggestionsView;
 }
@@ -597,6 +599,18 @@ export const WEBVIEW_MESSAGES = {
         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
     },
     'manage.refresh': {},
+    'indexing.page': { kind: { kind: 'enum', values: ['projects', 'indexes', 'memberships', 'sources'] }, next: { kind: 'bool' },
+        index: { kind: 'string', min: 36, max: 36, pattern: /^idx_[0-9a-f]{32}$/, optional: true },
+        project: { kind: 'string', min: 36, max: 36, pattern: /^prj_[0-9a-f]{32}$/, optional: true } },
+    'indexing.detail': { kind: { kind: 'enum', values: ['project', 'index'] }, id: { kind: 'string', min: 36, max: 36, pattern: /^(?:idx_|prj_)[0-9a-f]{32}$/ } },
+    'indexing.preview': { operation: { kind: 'json', max: 49152 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'indexing.create': { name: { kind: 'string', min: 1, max: 256 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'indexing.apply': { generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'indexing.reconcile': {},
+    'indexing.context.read': {},
+    'indexing.context.preview': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.context.delete': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.export': { format: { kind: 'enum', values: ['copy', 'json'] } },
     'manage.action': {
         action: { kind: 'enum', values: MANAGE_ACTIONS },
         project: { ...PROJECT, optional: true },
@@ -699,6 +713,7 @@ export function parseWebviewMessage(input: unknown): WebviewMessage | undefined 
 // ---- Host → webview messages.
 export type HostMessage =
     | { v: 1; type: 'state'; state: ExplorerViewState }
+    | { v: 1; type: 'indexing.session'; session: CatalogView }
     | { v: 1; type: 'search.session'; session: SearchSessionView }
     | { v: 1; type: 'navigate'; route: string }
     /** A query entered outside the panel (sidebar quick search or a command); the webview runs it. */

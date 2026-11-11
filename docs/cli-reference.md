@@ -151,7 +151,7 @@ Commands:
   init           Register --root as a project of the installed runtime and prepare its index storage
   status         Print the project's publication, freshness, coverage and job status
   search         Search indexed evidence; results carry file, line and revision citations
-  files          List indexed files under --prefix, with continuation cursors
+  files          List indexed files under an optional path prefix, with continuation cursors
   read           Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation
   mcp            Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch)
   info           Show what the index knows about one file: language, size, extraction method and parse status
@@ -987,7 +987,7 @@ Options:
 ## airk files
 
 ```text
-List indexed files under --prefix, with continuation cursors
+List indexed files under an optional path prefix, with continuation cursors
 
 Usage: airk files [OPTIONS] [PREFIX]
 

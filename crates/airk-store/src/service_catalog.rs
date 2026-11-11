@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Schema identity and bounded metadata for the inactive schema-12 catalog.
+//! Exact versioned schema identity and bounded schema-12 catalog metadata.
 //! Ordinary registry opens never install this schema or migrate user data.
 use super::ServiceRegistry;
 use airk_core::{
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 pub(super) const SCHEMA: &str = include_str!("service_catalog_schema.sql");
+const AUTHORITY_V1_SCHEMA: &str = include_str!("service_catalog_authority_v1.sql");
 const LEGACY_SCHEMA: &str = include_str!("service_registry_schema11.sql");
 const MAX_SCHEMA_OBJECTS: usize = 512;
 const MAX_SCHEMA_BYTES: usize = 512 * 1024;
@@ -41,6 +42,15 @@ pub fn capabilities() -> airk_core::index_catalog::CatalogCapabilities {
 
 #[path = "service_catalog_upgrade.rs"]
 pub mod upgrade;
+
+#[path = "service_catalog_genesis.rs"]
+pub mod genesis;
+
+#[path = "service_catalog_setup.rs"]
+pub mod setup;
+
+#[path = "service_catalog_operations.rs"]
+pub mod operations;
 
 #[path = "service_catalog_wal.rs"]
 pub(crate) mod wal;
@@ -187,6 +197,92 @@ fn expected(version: u32) -> Result<&'static Vec<SchemaObject>> {
     .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}"))
 }
 
+/// Registry version and authority format jointly identify the complete physical
+/// catalog layout. Authority 0 remains the exact P5 schema, not a loose subset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogLayout {
+    Schema11,
+    Schema12Authority0,
+    Schema12Authority1,
+}
+
+fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> {
+    static AUTHORITY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
+    match layout {
+        CatalogLayout::Schema11 => expected(11),
+        CatalogLayout::Schema12Authority0 => expected(12),
+        CatalogLayout::Schema12Authority1 => AUTHORITY_V1
+            .get_or_init(|| {
+                (|| -> Result<_> {
+                    let connection = Connection::open_in_memory()?;
+                    connection.execute_batch(LEGACY_SCHEMA)?;
+                    connection.execute_batch(SCHEMA)?;
+                    capacity_triggers(&connection)?;
+                    write_barriers(&connection)?;
+                    // Exactly the DDL used by owned promotion; no alternative
+                    // permissive schema or hand-maintained object roster.
+                    connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
+                    schema_objects(&connection)
+                })()
+                .map_err(|error| format!("{error:#}"))
+            })
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}")),
+    }
+}
+
+fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
+    if objects == expected_layout(CatalogLayout::Schema12Authority0)?.as_slice() {
+        // Preserve the existing authority-0 path: do not build or inspect the
+        // authority-1 expected shape until it is actually needed.
+        Ok(CatalogLayout::Schema12Authority0)
+    } else if objects == expected_layout(CatalogLayout::Schema12Authority1)?.as_slice() {
+        Ok(CatalogLayout::Schema12Authority1)
+    } else {
+        anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
+    }
+}
+
+/// Match an entire compiled physical layout before trusting its authority
+/// marker. A metadata edit cannot turn a foreign/partial schema into a format.
+pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<CatalogLayout> {
+    let layout = physical_catalog_layout(&schema_objects(connection)?)?;
+    let authority: i64 = connection.query_row(
+        "SELECT authority_contract FROM index_catalog_meta WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        matches!(
+            (layout, authority),
+            (CatalogLayout::Schema12Authority0, 0) | (CatalogLayout::Schema12Authority1, 1)
+        ),
+        "index authority marker does not match the compiled registry layout"
+    );
+    Ok(layout)
+}
+
+/// Pure DDL stage for an already owned/backed-up promotion transaction. This
+/// performs no admission, snapshot sealing, metadata-marker update or activation.
+/// The caller must seal and set authority 1 atomically before committing.
+pub(super) fn apply_authority_v1_layout(connection: &Connection) -> Result<()> {
+    ensure!(
+        !connection.is_autocommit(),
+        "index authority layout promotion requires an explicit transaction"
+    );
+    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    ensure!(
+        version == 12 && validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority0,
+        "index authority layout promotion requires exact schema-12 authority 0"
+    );
+    connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
+    ensure!(
+        schema_objects(connection)? == *expected_layout(CatalogLayout::Schema12Authority1)?,
+        "unsupported registry table, index, foreign-key or trigger shape"
+    );
+    Ok(())
+}
+
 pub(super) fn validate_shape(connection: &Connection, version: u32) -> Result<()> {
     ensure!(
         schema_objects(connection)? == *expected(version)?,
@@ -268,7 +364,7 @@ pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
         size == 4096 && pages > 0 && pages <= (super::MAX_DATABASE_BYTES / 4096) as i64,
         "index catalog exceeds registry bound"
     );
-    validate_shape(connection, 12)?;
+    validate_catalog_layout(connection)?;
     state(connection)?;
     Ok(())
 }
@@ -290,3 +386,7 @@ impl ServiceRegistry {
 #[cfg(test)]
 #[path = "service_catalog_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_catalog_layout_tests.rs"]
+mod layout_tests;

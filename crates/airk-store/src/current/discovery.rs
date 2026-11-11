@@ -247,7 +247,8 @@ impl CurrentRead {
         let mut filters = query.clone();
         filters.limit = 0;
         filters.max_bytes = 0;
-        let revision_identity = serde_json::to_string(&revision)?;
+        let revision_identity =
+            self.scope_bound_cursor_identity(&serde_json::to_string(&revision)?);
         let binding = if *fact_options == FactDiscoveryOptions::default() {
             // Retain existing wire/cursor identities for omitted controls.
             discovery::binding(

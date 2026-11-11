@@ -3,6 +3,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { requireNativeExecution } from './nativeGate';
+import { CatalogApplyIntent, CatalogRequest, catalogBound, catalogHex, catalogObject, catalogRevision, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateNativeHostContext } from './indexingCatalog';
 
 export type RecordValue = Record<string, unknown>;
 export function record(value: unknown): RecordValue {
@@ -195,7 +196,7 @@ export class ServiceClient {
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance'].includes(String(name));
+        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_host_context'].includes(String(name));
         let response = await this.transport.request(method);
         for(let attempt=0;readOnly&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
             await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
@@ -235,6 +236,31 @@ export class ServiceClient {
     async key(): Promise<RequestKey> {
         const response = await this.rpc('request_epoch','request_epoch');
         return { namespace: identifier(response.namespace,16), epoch: count(response.epoch), nonce: randomUUID().replaceAll('-','') };
+    }
+    async prepareCatalog(operation: RecordValue, revision: number): Promise<CatalogRequest> {
+        return { caller: this.caller, key: await this.key(), expected_catalog_revision: revision, operation: structuredClone(operation) };
+    }
+    async catalogHostContext(key: string, expectedCatalogRevision: number | null = null): Promise<RecordValue> {
+        catalogHex(key,64);if(expectedCatalogRevision!==null)catalogRevision(expectedCatalogRevision);
+        const response=await this.rpc({catalog_host_context:{key,expected_catalog_revision:expectedCatalogRevision}},'catalog_host_context');
+        const descriptor=validateNativeHostContext(response.descriptor);
+        if(descriptor.key!==key||expectedCatalogRevision!==null&&descriptor.catalog_revision!==expectedCatalogRevision)throw new ServiceError('crossed_native_host_context');
+        return response;
+    }
+    async submitCatalog(intent: CatalogApplyIntent): Promise<RecordValue> {
+        validateCatalogApply(intent);
+        const response = await this.rpc({catalog_apply:intent.catalog_apply}, 'catalog_applied');
+        this.validateCatalogReceipt(response, intent.catalog_apply.request, intent.request_digest);
+        return response;
+    }
+    validateCatalogReceipt(response: RecordValue, request: CatalogRequest, requestDigest: string): void {
+        catalogBound(response, CATALOG_RECEIPT_BYTES);
+        const receipt = catalogObject(response.receipt), key = catalogObject(receipt.key);
+        catalogHex(receipt.operation_id); catalogHex(receipt.request_digest, 64);catalogHex(requestDigest,64);
+        if (receipt.caller !== request.caller || key.namespace !== request.key.namespace || key.epoch !== request.key.epoch || key.nonce !== request.key.nonce
+            || receipt.schema !== 1 || !Number.isSafeInteger(receipt.catalog_revision) || receipt.catalog_revision !== request.expected_catalog_revision+1 || receipt.request_digest!==requestDigest) {
+            throw new ServiceError('crossed_catalog_receipt', true);
+        }
     }
     async prepareJob(project: string, kind: JobKind): Promise<JobIntent> {
         return { project: identifier(project,32), caller: this.caller, key: await this.key(), kind };

@@ -346,7 +346,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// List indexed files under --prefix, with continuation cursors.
+    /// List indexed files under an optional path prefix, with continuation cursors.
     Files {
         #[command(flatten)]
         verification: VerificationOptions,

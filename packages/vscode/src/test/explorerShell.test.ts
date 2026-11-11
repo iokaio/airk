@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import type { ExplorerViewState } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
 import { HandoffStore } from '../explorerHandoffs';
+import { IndexingCatalogController } from '../indexingCatalogController';
 
 // Minimal vscode stub: panels record HTML/messages and expose their message handler.
 const disposable = { dispose() {} };
@@ -96,6 +97,28 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
     return { explorer: new TestController(host as any), statusBar, runs, suggestions, host };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('same-panel ready resends the complete retained catalog while scalar updates do not',async()=>{
+    const f=controller(),nativePage={status:'catalog_page',page:{namespace:'aa'.repeat(16),revision:1,items:[],continuation:null,native_metadata:{retained:'complete'}}};
+    let reads=0;
+    const indexing=new IndexingCatalogController({authorized:()=>true,identity:()=> 'one-owner',changed:()=> (f.explorer as any).publish(),control:{
+        catalogRead:async()=>{reads++;return nativePage;},catalogPrepare:async()=>{throw new Error('unexpected preview');},catalogApply:async()=>{throw new Error('unexpected apply');},catalogReconcile:async()=>[],catalogPending:()=>[],
+    }});
+    (f.explorer as any).indexing=indexing;
+    try{
+        f.explorer.open('#indexing/projects');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+        await indexing.page('projects');await flush();
+        const initial=panel.posted.filter((message:any)=>message.type==='indexing.session').length;
+        assert.deepEqual(panel.posted.filter((message:any)=>message.type==='indexing.session').at(-1).session.page,nativePage);
+        (f.explorer as any).publish();await flush();
+        assert.equal(panel.posted.filter((message:any)=>message.type==='indexing.session').length,initial);
+        assert.ok(panel.posted.filter((message:any)=>message.type==='state').every((message:any)=>message.state.indexing===undefined));
+        panel.send({v:1,type:'ready',requestId:'ready-again'});await flush();
+        assert.equal(panel.posted.filter((message:any)=>message.type==='indexing.session').length,initial+1);
+        assert.deepEqual(panel.posted.filter((message:any)=>message.type==='indexing.session').at(-1).session.page,nativePage);
+        assert.equal(reads,1,'ready and scalar updates do not replay a catalog read');
+    }finally{f.explorer.dispose();}
+});
 
 test('refresh confirms unchanged observations and reports disconnection instead of silent success',async()=>{
     const f=controller();

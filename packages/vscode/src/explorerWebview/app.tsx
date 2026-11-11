@@ -41,11 +41,12 @@ export function App() {
                 owner.current = nextOwner;
                 selectDraftProject(message.state.selectedProject, message.state.selectionEpoch);
                 selectSearchProject(message.state.selectedProject, message.state.selectionEpoch);
-                setState(message.state);
+                setState(prior=>({...message.state,...(message.state.trusted&&prior?.selectionEpoch===message.state.selectionEpoch?{indexing:prior?.indexing}:{})}));
                 const token = message.state.status?.publication;
                 if (token) { setPublications(prior => prior.some(entry => entry.token === token) ? prior : [{ token, observedAt: Date.now() }, ...prior].slice(0, 20)); }
             }
             else if (message.type === 'search.session') { acceptSearchSession(message.session); }
+            else if (message.type === 'indexing.session') { setState(prior=>prior?{...prior,indexing:message.session}:prior); }
             else if (message.type === 'navigate') { const next = parseRoute(message.route); if (next) { setRoute(next); } }
             else if (message.type === 'inbox') { setInbox(true); }
             else if (message.type === 'search') { setRoute({ workspace: 'search', tab: 'query' }); setIncoming(prior => ({ query: message.query, serial: (prior?.serial ?? 0) + 1 })); }

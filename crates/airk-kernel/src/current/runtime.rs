@@ -63,6 +63,7 @@ impl Kernel {
     /// payloads, model files, source files, or the vector graph itself.
     pub fn status_summary(&self) -> Result<serde_json::Value> {
         let read = self.current_reader()?;
+        self.require_index_metadata(&read)?;
         let state = read
             .collection_state()?
             .context("current collection configuration missing")?;
@@ -128,6 +129,7 @@ impl Kernel {
 
     /// A bounded compact scan projection, never a persisted snapshot or a live-source read.
     pub(crate) fn current_scan_projection(&self, read: &CurrentRead) -> Result<Snapshot> {
+        self.require_unrestricted_read()?;
         let mut snapshot = Snapshot::empty(self.root_id());
         snapshot.collection = self.collection.clone();
         snapshot.generation = read.head().sequence;
@@ -173,6 +175,7 @@ impl Kernel {
 
     pub(crate) fn current_status(&self) -> Result<Status> {
         let read = self.current_reader()?;
+        self.require_index_metadata(&read)?;
         let state = read
             .collection_state()?
             .context("current collection configuration missing")?;
@@ -290,6 +293,7 @@ impl Kernel {
         filters: &airk_core::SearchFilters,
         read: Arc<CurrentRead>,
     ) -> Result<SearchResponse> {
+        let disclose_readiness = !read.restricts_paths();
         if matches!(
             mode,
             super::CurrentSearchMode::Vector | super::CurrentSearchMode::Hybrid
@@ -325,8 +329,8 @@ impl Kernel {
                 self.collection.clone(),
                 revision(evidence.token),
             )),
-            semantic_readiness: Some(evidence.semantic_readiness),
-            discovery_readiness: Some(evidence.discovery_readiness),
+            semantic_readiness: disclose_readiness.then_some(evidence.semantic_readiness),
+            discovery_readiness: disclose_readiness.then_some(evidence.discovery_readiness),
             generation: evidence.token.sequence,
             collection: evidence.collection,
             hits: evidence.hits,

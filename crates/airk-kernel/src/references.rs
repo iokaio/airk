@@ -456,7 +456,7 @@ impl Kernel {
         let read = self.current_reader()?;
         let publication = current::runtime::envelope(&read)?;
         let binding = airk_core::discovery::binding(
-            &serde_json::to_string(&read.token()?)?,
+            &self.scope_bound_cursor_identity(&serde_json::to_string(&read.token()?)?)?,
             "references/1",
             (
                 name,
@@ -472,8 +472,16 @@ impl Kernel {
         let mut evidence = SearchResponse {
             execution: None,
             publication: Some(publication),
-            semantic_readiness: Some(current::enrichment::readiness(&read, &self.store)?),
-            discovery_readiness: Some(current::progress::readiness(&read, &self.store)?),
+            semantic_readiness: if !read.restricts_paths() {
+                Some(current::enrichment::readiness(&read, &self.store)?)
+            } else {
+                None
+            },
+            discovery_readiness: if !read.restricts_paths() {
+                Some(current::progress::readiness(&read, &self.store)?)
+            } else {
+                None
+            },
             generation: read.head().sequence,
             collection: self.collection.clone(),
             hits: Vec::new(),

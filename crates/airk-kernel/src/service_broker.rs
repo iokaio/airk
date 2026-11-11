@@ -324,6 +324,7 @@ impl Broker {
             return Err(Error::Busy);
         }
         let grant = ConnectionGrant {
+            scope: None,
             protocol: PROTOCOL_VERSION,
             identity,
             caller,

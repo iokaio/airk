@@ -27,6 +27,13 @@ pub struct LocatedSource {
 
 impl Kernel {
     pub fn configured_roots(&self) -> Result<BTreeMap<String, String>> {
+        if self.read_scope.is_some() {
+            let read = self.current_reader()?;
+            let config = RootConfig::load(self.store.directory(), &self.root_id())?;
+            self.require_configured_index_metadata(&read, &config.roots)?;
+            self.scoped_read_fingerprint()?;
+            return Ok(config.roots);
+        }
         let config = RootConfig::load(self.store.directory(), &self.root_id())?;
         // Empty legacy collections do not need to create storage for read-only inspection.
         if !config.roots.is_empty() {
@@ -36,6 +43,23 @@ impl Kernel {
     }
 
     pub fn roots(&self) -> Result<RootsReport> {
+        if self.read_scope.is_some() {
+            let read = self.current_reader()?;
+            let config = RootConfig::load(self.store.directory(), &self.root_id())?;
+            self.require_configured_index_metadata(&read, &config.roots)?;
+            let state = read
+                .collection_state()?
+                .ok_or_else(|| anyhow::anyhow!("current configuration missing"))?;
+            self.scoped_read_fingerprint()?;
+            return Ok(RootsReport {
+                collection: self.collection.clone(),
+                primary_root: read.head().scope.root.clone(),
+                configured: config.roots,
+                indexed: state.configuration.roots,
+                generation: Some(read.head().sequence),
+                pending_index: false,
+            });
+        }
         let config = RootConfig::load(self.store.directory(), &self.root_id())?;
         let snapshot = self.load_optional()?;
         let indexed = snapshot
@@ -83,15 +107,20 @@ impl Kernel {
     }
 
     pub fn source_location(&self, path: &str) -> Result<LocatedSource> {
-        let snapshot = self.load()?;
-        anyhow::ensure!(
-            snapshot.artifacts.contains_key(path),
-            "source is not indexed"
-        );
-        let source = airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?;
+        let read = self.current_reader()?;
+        read.require_path(path)?;
+        anyhow::ensure!(read.artifact(path)?.is_some(), "source is not indexed");
+        let state = read
+            .collection_state()?
+            .ok_or_else(|| anyhow::anyhow!("current configuration missing"))?;
+        let source = airk_store::roots::source_location(
+            &read.head().scope.root,
+            &state.configuration.roots,
+            path,
+        )?;
         Ok(LocatedSource {
-            collection: snapshot.collection,
-            generation: snapshot.generation,
+            collection: self.collection.clone(),
+            generation: read.head().sequence,
             alias: source.alias,
             root: source.root,
             relative_path: source.relative_path,

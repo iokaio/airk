@@ -33,6 +33,26 @@ impl std::fmt::Display for ReadFailure {
 impl std::error::Error for ReadFailure {}
 
 fn retain_search_failure(error: anyhow::Error) -> anyhow::Error {
+    if let Some(budget) = error.downcast_ref::<airk_core::scoped_reads::ScopeReplyBudget>() {
+        let mut receipt = budget.receipt();
+        if let Some(scope) = error.downcast_ref::<airk_core::scoped_reads::ScopeErrorObservation>()
+        {
+            receipt["scope_observation"] = serde_json::json!(scope.observation);
+        }
+        return error.context(ReadFailure(
+            json!({"isError":true,"content":[{"type":"text","text":receipt.to_string()}]}),
+        ));
+    }
+    if let Some(refusal) = error.downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>() {
+        let mut receipt = json!({"error":refusal.receipt()});
+        if let Some(scope) = error.downcast_ref::<airk_core::scoped_reads::ScopeErrorObservation>()
+        {
+            receipt["scope_observation"] = serde_json::json!(scope.observation);
+        }
+        return error.context(ReadFailure(
+            json!({"isError":true,"content":[{"type":"text","text":receipt.to_string()}]}),
+        ));
+    }
     match airk_core::search_execution::helper_unavailable_receipt(&error) {
         Some(receipt) => error.context(ReadFailure(json!({
             "isError": true,
@@ -1768,6 +1788,13 @@ pub fn bounded_result(mut result: ResultEnvelope) -> Result<ResultEnvelope> {
                 )
                 .saturating_add(4);
         } else {
+            if result.scope_observation.is_some() {
+                return Err(airk_core::scoped_reads::ScopeReplyBudget {
+                    required_bytes: bytes,
+                    maximum_bytes: result.plan.output.max_bytes,
+                }
+                .into());
+            }
             bail!("output budget cannot fit plan and reports");
         }
     }
@@ -1815,6 +1842,20 @@ impl Kernel {
     /// Run the bounded composition with an adapter's canonical read implementation.
     /// The callback cannot add plan operators or bypass scope/revision/budget validation.
     pub fn evidence_plan_with_reader(
+        &self,
+        request: Request,
+        observations: &Value,
+        reader: Option<&PlanReader<'_>>,
+    ) -> Result<ResultEnvelope> {
+        self.scoped_read_fingerprint()
+            .map_err(|error| self.observe_scoped_error(error))?;
+        let result = self.evidence_plan_with_reader_inner(request, observations, reader);
+        self.scoped_read_fingerprint()
+            .map_err(|error| self.observe_scoped_error(error))?;
+        result.map_err(|error| self.observe_scoped_error(error))
+    }
+
+    fn evidence_plan_with_reader_inner(
         &self,
         request: Request,
         observations: &Value,
@@ -2085,8 +2126,13 @@ impl Kernel {
         let mut stale = false;
         if !unfenced_literal_symbols && plan.steps.iter().any(|s| is_evidence(&s.tool)) {
             calls += 1;
-            let current =
-                publication(&self.status_summary()?).context("index publication unavailable")?;
+            let current = if self.scope_observation().is_some() {
+                crate::current::runtime::envelope(self.current_reader()?.as_ref())?
+                    .token
+                    .to_string()
+            } else {
+                publication(&self.status_summary()?).context("index publication unavailable")?
+            };
             if let Some(old) = &plan.publication {
                 stale = old != &current;
             }
@@ -2273,7 +2319,7 @@ impl Kernel {
             }
         }
         plan.digest = digest(&plan)?;
-        let mut result = ResultEnvelope {source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
+        let mut result = ResultEnvelope {scope_observation:self.scope_observation().cloned(),source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
         if unfenced_literal_symbols {
             result.status = "needs_input".into();
@@ -2321,8 +2367,16 @@ impl Kernel {
                 error: None,
             })
             .collect();
+        let framing_bytes = serde_json::to_vec(&framing)?.len();
+        if framing.scope_observation.is_some() && framing_bytes > plan.output.max_bytes {
+            return Err(airk_core::scoped_reads::ScopeReplyBudget {
+                required_bytes: framing_bytes,
+                maximum_bytes: plan.output.max_bytes,
+            }
+            .into());
+        }
         ensure!(
-            serde_json::to_vec(&framing)?.len() <= plan.output.max_bytes,
+            framing_bytes <= plan.output.max_bytes,
             "output budget cannot fit plan and reports"
         );
         let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
@@ -2434,7 +2488,8 @@ impl Kernel {
                     None => {
                         self.plan_read(&step.tool, &args, plan.publication.as_deref(), observations)
                     }
-                };
+                }
+                .map_err(|error| retain_search_failure(self.observe_scoped_error(error)));
                 let mut report = StepReport {
                     id: step.id.clone(),
                     tool: step.tool.clone(),
@@ -2852,6 +2907,7 @@ impl Kernel {
             )?,
             _ => bail!("unknown evidence operation"),
         };
+        self.annotate_scoped_read(&mut value)?;
         airk_core::reply::ReplyDetail::annotate(&mut value, reply);
         airk_core::guidance::annotate(&mut value);
         if !verification_fields(tool).is_empty()
@@ -2868,6 +2924,7 @@ impl Kernel {
                 return Err(ReadFailure(json!({"isError":true,"content":[{"type":"text","text":serde_json::to_string(&value)?}]})).into());
             }
         }
+        self.scoped_read_fingerprint()?;
         Ok(value)
     }
 }

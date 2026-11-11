@@ -265,8 +265,76 @@ impl CurrentQueryProjection<'_> {
     }
     pub fn page(&self, page: usize) -> Result<Vec<ProjectionRow>> {
         self.read.token()?;
-        self.store
-            .read_projection_page(&self.leaf_reference(page)?, page)
+        let rows = self
+            .store
+            .read_projection_page(&self.leaf_reference(page)?, page)?;
+        if !self.read.restricts_paths() {
+            return Ok(rows);
+        }
+        let mut selected = Vec::new();
+        for row in rows {
+            let allowed = match &row {
+                ProjectionRow::Fact { hit, .. } => {
+                    let allowed = self.read.accepts_path(&hit.citation.path);
+                    if allowed {
+                        self.read.require_imported_fact(self.store, hit)?;
+                    }
+                    allowed
+                }
+                ProjectionRow::Edge { hit, .. } => {
+                    self.read.accepts_path(&hit.citation.path)
+                        && self.read.accepts_endpoint(self.store, &hit.source)?
+                        && self.read.accepts_endpoint(self.store, &hit.target)?
+                }
+            };
+            if allowed {
+                selected.push(row);
+            }
+        }
+        self.read.token()?;
+        Ok(selected)
+    }
+    /// Definition-origin proof uses authenticated raw Fact rows. Calling page()
+    /// here would recurse through graph/fact admission and could self-authorize
+    /// a reference carrying another source's definition ID.
+    pub(crate) fn definition_origin(&self, endpoint: &str) -> Result<bool> {
+        use super::postings::Lookup;
+        use airk_core::scoped_reads::ScopeReadRefused;
+        let selected = self.lookup_paths(Lookup::FactName(endpoint), "", None, 129)?;
+        ensure!(selected.len() <= 128, ScopeReadRefused);
+        self.read.charge_scope_origin(selected.len(), 0, 0, 0)?;
+        let mut pages = BTreeMap::<usize, BTreeMap<String, Sha256Digest>>::new();
+        for path in selected {
+            for page in path.pages {
+                pages
+                    .entry(page)
+                    .or_default()
+                    .insert(path.path.clone(), path.source);
+            }
+        }
+        for (page, paths) in pages {
+            let reference = self.leaf_reference(page)?;
+            let rows = self
+                .read
+                .origin_projection_page(self.store, &reference, page)?;
+            self.read.charge_scope_origin(0, 0, 0, rows.len())?;
+            for row in rows.iter() {
+                if let ProjectionRow::Fact { hit, .. } = row
+                    && hit.kind == "definition"
+                    && self.read.accepts_path(&hit.citation.path)
+                    && paths
+                        .get(&hit.citation.path)
+                        .is_some_and(|hash| hit.citation.content_hash == hash.to_string())
+                    && hit
+                        .code
+                        .as_ref()
+                        .is_some_and(|code| code.symbol_id == endpoint)
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
     pub(crate) fn query_page(&self, page: usize) -> Result<std::sync::Arc<Vec<ProjectionRow>>> {
         self.read.token()?;
@@ -1250,7 +1318,7 @@ impl FileStore {
         self.read_projection_page(&reference, page)
     }
 
-    fn read_projection_page(
+    pub(super) fn read_projection_page(
         &self,
         reference: &ResourceReference,
         page: usize,

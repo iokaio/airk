@@ -437,7 +437,10 @@ impl CurrentRead {
             };
             let posting = Posting::decode(&encoded, selector, shard)?;
             for path in posting.paths {
-                if path.starts_with(prefix) && after.is_none_or(|after| path.as_str() > after) {
+                if self.accepts_path(&path)
+                    && path.starts_with(prefix)
+                    && after.is_none_or(|after| path.as_str() > after)
+                {
                     bytes = bytes
                         .checked_add(path.len())
                         .context("current path page byte overflow")?;

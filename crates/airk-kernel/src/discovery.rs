@@ -24,11 +24,13 @@ impl Kernel {
         let read = self.current_reader()?;
         let publication = Some(current::runtime::envelope(&read)?);
         let binding = discovery::binding(
-            &publication
-                .as_ref()
-                .context("indexed publication missing; rebuild with airk index --full")?
-                .token
-                .to_string(),
+            &self.scope_bound_cursor_identity(
+                &publication
+                    .as_ref()
+                    .context("indexed publication missing; rebuild with airk index --full")?
+                    .token
+                    .to_string(),
+            )?,
             "list_files",
             (&self.collection, prefix),
         )?;

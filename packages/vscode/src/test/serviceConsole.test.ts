@@ -166,6 +166,134 @@ test('observation polling refreshes repair rows through queued running and finis
         assert.equal(f.sent.some(value=>typeof value==='object'&&value!==null&&('enqueue' in value||'plan_execute' in value)),false);
     }finally{f.controller.dispose();}
 });
+test('native host context adapter retains complete replies on the persistent control client and fences host/namespace/revision',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),key='33'.repeat(32);let host='22'.repeat(32),observedNamespace=namespace,revision=3,connections=0;
+    const calls:unknown[]=[];
+    f.host.runtime.client=()=>{connections++;return new ServiceClient({dispose(){},async request(method){
+        if(typeof method==='object'&&method!==null&&'catalog_host_context' in method){calls.push(method);return {status:'catalog_host_context',descriptor:{schema:1,namespace:observedNamespace,host,key,catalog_revision:revision,context:null,future_native_field:{preserved:true}},extra_response_field:'complete'};}
+        return base.transport.request(method);
+    }});};
+    try{
+        await f.controller.refresh();const before=connections;
+        const full=await f.controller.catalogHostContext(key,3);
+        assert.equal((full.descriptor as RecordValue).future_native_field!==undefined,true);assert.equal(full.extra_response_field,'complete');assert.equal(connections,before);
+        assert.deepEqual(calls,[{catalog_host_context:{key,expected_catalog_revision:3}}]);
+        host='44'.repeat(32);await assert.rejects(f.controller.catalogHostContext(key,3),/stale_native_host_context/);host='22'.repeat(32);
+        revision=4;await assert.rejects(f.controller.catalogHostContext(key,3),/crossed_native_host_context/);revision=3;
+        observedNamespace='99'.repeat(16);await assert.rejects(f.controller.catalogHostContext(key,3),/namespace_changed/);observedNamespace=namespace;
+        await assert.rejects(f.controller.catalogRead({catalog_host_context:{key,host:'claimed-wire-host'}}),/invalid_catalog_host_context_request/);
+    }finally{f.controller.dispose();}
+});
+
+test('native host context replies cannot survive trust revocation or service identity replacement',async()=>{
+    for(const cancel of ['trust','replacement'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),key='33'.repeat(32);let currentInstance=instance,release!:(value:RecordValue)=>void;
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(method==='health')return {status:'health',observation:{instance:currentInstance,version:'1.4.0'}};
+            if(typeof method==='object'&&method!==null&&'catalog_host_context' in method)return new Promise<RecordValue>(resolve=>{release=resolve;});
+            return base.transport.request(method);
+        }});
+        try{
+            await f.controller.refresh();const pending=f.controller.catalogHostContext(key,3);
+            if(cancel==='trust')f.setTrusted(false);else{currentInstance='88'.repeat(16);await f.controller.refresh();}
+            release({status:'catalog_host_context',descriptor:{schema:1,namespace,host:'22'.repeat(32),key,catalog_revision:3,context:null}});
+            await assert.rejects(pending,cancel==='trust'?/no_longer_authorized/:/stale_catalog_client/);
+        }finally{f.controller.dispose();}
+    }
+});
+
+test('catalog context lookup accepts its canonical catalog_detail response without another connection',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),host='22'.repeat(32),key='33'.repeat(32),calls:unknown[]=[];
+    const response={status:'catalog_detail',detail:{namespace,revision:1,item:null,native_field:{preserved:true}}};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(typeof method==='object'&&method!==null&&'catalog_context' in method){calls.push(method);return response;}
+        return base.transport.request(method);
+    }});
+    try{await f.controller.refresh();assert.deepEqual(await f.controller.catalogRead({catalog_context:{host,key,expected_catalog_revision:null}}),response);assert.deepEqual(calls,[{catalog_context:{host,key,expected_catalog_revision:null}}]);}
+    finally{f.controller.dispose();}
+});
+
+test('catalog UI uses the established native client and persists exact reviewed apply before dispatch',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),calls:string[]=[];
+    const operation={operation:'rename_project',id,expected_definition_revision:1,name:'Renamed'};
+    let applyCount=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];calls.push(name);
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false,extra_native_field:'retained'}};
+        if(name==='catalog_apply'){
+            applyCount++;const saved=[...f.values.values()].find(value=>value&&typeof value==='object'&&'intent' in value) as {intent:unknown};
+            assert.deepEqual(saved.intent,{...(method as RecordValue),request_digest:digest},'exact request and native digests are durable before transport dispatch');
+            const request=(method as {catalog_apply:{request:{caller:string;key:unknown}}}).catalog_apply.request;
+            return {status:'catalog_applied',receipt:{schema:1,operation_id:instance,caller:request.caller,key:request.key,request_digest:digest,catalog_revision:2,authority_fence_required:false,additional_native_field:'kept'}};
+        }
+        return base.transport.request(method);
+    }});
+    try{
+        await assert.rejects(f.controller.catalogPrepare(operation,1),/connection_unavailable/);
+        await f.controller.refresh();const connectionCalls=calls.filter(name=>name==='health').length;
+        const preview=await f.controller.catalogPrepare(operation,1);
+        assert.equal((preview.response.preview as RecordValue).extra_native_field,'retained');
+        const result=await f.controller.catalogApply(preview,()=>true);
+        assert.equal((result.receipt as RecordValue).additional_native_field,'kept');assert.equal(applyCount,1);
+        assert.equal(calls.filter(name=>name==='health').length,connectionCalls,'catalog actions reuse the control connection without extra status probes');
+        assert.deepEqual(f.controller.catalogPending(),[]);
+    }finally{f.controller.dispose();}
+});
+
+test('catalog uncertain outcomes reconcile only their native caller/key without apply replay',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),operation={operation:'rename_project',id,expected_definition_revision:1,name:'Renamed'};
+    let applies=0,lookup:unknown,appliedRequest:{caller:string;key:unknown}|undefined;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,operation}};
+        if(name==='catalog_apply'){applies++;appliedRequest=(method as {catalog_apply:{request:{caller:string;key:unknown}}}).catalog_apply.request;throw new ServiceError('console_transport_closed',true);}
+        if(name==='catalog_receipt'){lookup=method;return {status:'catalog_receipt',receipt:null};}
+        return base.transport.request(method);
+    }});
+    try{
+        await f.controller.refresh();const preview=await f.controller.catalogPrepare(operation,1);
+        await assert.rejects(f.controller.catalogApply(preview,()=>true),/transport_closed/);assert.equal(f.controller.catalogPending().length,1);
+        await assert.rejects(f.controller.catalogApply(preview,()=>true),/requires_receipt_reconciliation/);
+        const outcomes=await f.controller.catalogReconcile();assert.deepEqual(outcomes,[{status:'catalog_receipt',receipt:null}]);
+        assert.deepEqual(lookup,{catalog_receipt:{caller:appliedRequest!.caller,key:appliedRequest!.key}});
+        assert.equal(applies,1);assert.equal(f.controller.catalogPending().length,1);
+        f.setTrusted(false);await assert.rejects(f.controller.catalogRead({catalog_detail:{}}),/no_longer_authorized/);
+    }finally{f.controller.dispose();}
+});
+
+test('catalog restart reconciliation validates the durably reviewed native request digest',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),operation={operation:'rename_project',id,expected_definition_revision:1,name:'Renamed'};
+    let requestValue:RecordValue|undefined,matchDigest=false,applies=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,operation}};
+        if(name==='catalog_apply'){applies++;requestValue=(method as {catalog_apply:{request:RecordValue}}).catalog_apply.request;throw new ServiceError('console_transport_closed',true);}
+        if(name==='catalog_receipt')return {status:'catalog_receipt',receipt:{schema:1,operation_id:instance,caller:requestValue!.caller,key:requestValue!.key,request_digest:matchDigest?digest:'99'.repeat(32),catalog_revision:2,authority_fence_required:false,extra_native_field:'preserved'}};
+        return base.transport.request(method);
+    }});
+    let restarted:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const preview=await f.controller.catalogPrepare(operation,1);
+        await assert.rejects(f.controller.catalogApply(preview,()=>true),/transport_closed/);
+        f.controller.dispose();restarted=new ServiceConsoleController(f.host);await restarted.refresh();
+        await assert.rejects(restarted.catalogReconcile(),/crossed_catalog_receipt/);assert.equal(restarted.catalogPending().length,1);
+        matchDigest=true;const receipts=await restarted.catalogReconcile();assert.equal((receipts[0].receipt as RecordValue).extra_native_field,'preserved');
+        assert.deepEqual(restarted.catalogPending(),[]);assert.equal(applies,1,'restarting and checking receipts never replays apply');
+    }finally{f.controller.dispose();restarted?.dispose();}
+});
+
+test('catalog known authority-fence refusal remains truthful and does not strand a no-write intent',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),operation={operation:'delete_project',id,expected_definition_revision:1,expected_scope_revision:1,expected_defaults_revision:1};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,operation,authority_fence_required:true}};
+        if(name==='catalog_apply')return {status:'failure',code:'catalog_authority_fence_unavailable'};
+        return base.transport.request(method);
+    }});
+    try{await f.controller.refresh();const preview=await f.controller.catalogPrepare(operation,1);await assert.rejects(f.controller.catalogApply(preview,()=>true),/catalog_authority_fence_unavailable/);assert.deepEqual(f.controller.catalogPending(),[]);}
+    finally{f.controller.dispose();}
+});
+
 function fixture(){
     let trusted=true,fail=false,lastKind='inspect';const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
     const row={project:{registration:{binding:project,root:'/sensitive/<source>',data_root:'/private/data',collection:'<script>name</script>'},paused:false,fencing_generation:1},progress:null,inspection:null};

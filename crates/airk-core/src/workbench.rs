@@ -138,6 +138,8 @@ pub struct RequiredInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResultEnvelope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_observation: Option<crate::scoped_reads::ScopeObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_verification: Option<crate::verification::VerificationReceipt>,
     pub schema: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

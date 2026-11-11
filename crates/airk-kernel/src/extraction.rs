@@ -72,6 +72,7 @@ impl Kernel {
             .collect()
     }
     pub fn extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
+        self.require_unrestricted_read()?;
         self.rebuild_extraction_policy()
     }
     fn extraction_policy_status(

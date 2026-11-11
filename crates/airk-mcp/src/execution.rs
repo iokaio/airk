@@ -264,7 +264,7 @@ impl AirkServer {
     {
         let verification = match verification.resolve() {
             Ok(budget) => budget,
-            Err(error) => return crate::response::error_result(&error),
+            Err(error) => return crate::response::scoped_error_result(&self.kernel, &error),
         };
         if self.plan_read {
             // This runs on the outer parse's blocking worker, under its permit.
@@ -295,7 +295,7 @@ impl AirkServer {
         );
         let permit = match self.admission.admit(control).await {
             Ok(permit) => permit,
-            Err(result) => return result,
+            Err(result) => return crate::response::with_scope(&self.kernel, result),
         };
         let kernel = self.kernel.clone();
         let client = self.client;
@@ -315,7 +315,7 @@ impl AirkServer {
                     // Contention is a safe-to-repeat read refusal, including for
                     // diagnostics with runtime context; it is not readiness evidence.
                     if airk_kernel::retrieval_retry::read_retry_hint(&failure).is_some() {
-                        return crate::response::error_result(&failure);
+                        return crate::response::scoped_error_result(&kernel,&failure);
                     }
                     if let Some((runtime, work)) = diagnostics && (runtime.is_some() || work.is_some()) {
                         let status = crate::unavailable_status(&kernel, runtime, work, "AIRK collection selection is busy or unavailable; retry against the current revision");
@@ -323,7 +323,7 @@ impl AirkServer {
                         return crate::render(&kernel, (span, true), Ok(status), &responses, (mode,options.reply_detail,verification), true, operation);
                     }
                     // Other selection failures retain the path-free generic reply.
-                    return error("AIRK collection selection is busy or unavailable; retry against the current revision");
+                    return crate::response::with_scope(&kernel,error("AIRK collection selection is busy or unavailable; retry against the current revision"));
                 },
             };
             if let Some(cancelled)=cancelled {kernel=kernel.with_verification_cancellation(cancelled);}
@@ -335,7 +335,7 @@ impl AirkServer {
             crate::render(&kernel, (span, true), result, &responses, (mode,options.reply_detail,verification), options.include_status || control, operation)
         })
         .await
-        .unwrap_or_else(|_| error("retrieval worker failed"))
+        .unwrap_or_else(|_| crate::response::with_scope(&self.kernel,error("retrieval worker failed")))
     }
 }
 

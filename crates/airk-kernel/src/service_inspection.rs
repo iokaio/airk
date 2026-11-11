@@ -22,6 +22,7 @@ impl std::error::Error for InspectionChanged {}
 
 impl Kernel {
     pub fn service_storage_summary(&self) -> Result<airk_core::service_inspection::StorageSummary> {
+        self.require_unrestricted_read()?;
         let quota = self.collection_quota()?;
         let status = quota.status()?;
         let collection = status.collections.get(&self.collection);
@@ -57,6 +58,7 @@ impl Kernel {
     }
 
     pub fn inspect_service(&self, project: ProjectBinding) -> Result<InspectionSnapshot> {
+        self.require_unrestricted_read()?;
         crate::service_execution::checkpoint()?;
         ensure!(
             self.service_collection.is_some(),

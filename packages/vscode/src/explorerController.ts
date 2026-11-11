@@ -25,10 +25,14 @@ import { openAgentInstructions } from './explorerWorkspaceIO';
 import { validateStudio } from './explorerStrategies';
 import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
+import { IndexingCatalogController } from './indexingCatalogController';
+import { catalogExport, WindowContextDescriptor } from './indexingCatalog';
 import type { AssistanceWindowStatus } from './explorerContracts';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
+    /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
+    windowContext?(): WindowContextDescriptor | undefined;
     usage?(spec: LaunchSpec, valid: () => boolean): Promise<EmbeddedUsage>;
     readonly extensionUri: vscode.Uri;
     readonly version: string;
@@ -71,6 +75,8 @@ export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
  */
 export class ExplorerController implements vscode.Disposable {
     private readonly control: ExplorerControl;
+    private readonly indexing: IndexingCatalogController;
+    private indexingDelivery?: { panel: number; tag: string };
     private readonly panel: ExplorerPanel;
     private readonly listeners: vscode.Disposable[] = [];
     private readonly snapshotListeners = new Set<ExplorerSnapshotListener>();
@@ -100,6 +106,8 @@ export class ExplorerController implements vscode.Disposable {
 
     constructor(private readonly host: ExplorerHost) {
         this.control = new ExplorerControl(host.control, host.version);
+        this.indexing = new IndexingCatalogController({ control: this.control.catalog, identity: () => `${this.control.observationIdentity}:${this.selectionEpoch}`,
+            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), windowContext:()=>this.host.windowContext?.(),changed: () => this.publish() });
         this.panel = new ExplorerPanel(host.extensionUri, {
             message: message => { void this.handle(message); },
             visible: visible => this.visibility(visible),
@@ -175,6 +183,7 @@ export class ExplorerController implements vscode.Disposable {
             selectionEpoch: this.selectionEpoch,
             ...(this.host.trusted() && this.status && this.statusFor === this.selected && this.statusIdentity === this.control.observationIdentity ? { status: this.status } : {}),
             features: FEATURES,
+            indexing: this.indexing.snapshot(),
             ...(this.notice ? { notice: this.notice } : {}),
             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
             ...(this.control.morePages() ? { moreProjects: true } : {}),
@@ -187,7 +196,16 @@ export class ExplorerController implements vscode.Disposable {
         if (this.disposed) { return; }
         this.revision++;
         const state = this.snapshot();
-        this.panel.post({ v: MESSAGE_VERSION, type: 'state', state });
+        // Routine scalar console updates do not resend retained catalog pages or previews.
+        const {indexing,...scalarState}=state;
+        this.panel.post({ v: MESSAGE_VERSION, type: 'state', state: scalarState });
+        if(indexing){
+            const tag=JSON.stringify([indexing.generation,indexing.busy,indexing.error,indexing.pending,indexing.review?.previewDigest]);
+            if(this.indexingDelivery?.panel!==this.panel.generation||this.indexingDelivery.tag!==tag){
+                this.indexingDelivery={panel:this.panel.generation,tag};
+                this.panel.post({v:MESSAGE_VERSION,type:'indexing.session',session:indexing});
+            }
+        }
         for (const listener of this.snapshotListeners) { listener(state); }
         const { word } = headline(state.connection, state.status, state.projects.length);
         const project = state.projects.find(entry => entry.project === state.selectedProject);
@@ -377,6 +395,22 @@ export class ExplorerController implements vscode.Disposable {
 
     protected async dispatch(message: WebviewMessage): Promise<unknown> {
         switch (message.type) {
+            case 'indexing.page': return this.indexing.page(message.kind,message.next,message.index,message.project);
+            case 'indexing.detail': return this.indexing.detail(message.kind,message.id);
+            case 'indexing.preview': return this.indexing.preview(message.operation,message.generation);
+            case 'indexing.create': return this.indexing.create(message.name,message.generation);
+            case 'indexing.apply': return this.indexing.apply(message.generation);
+            case 'indexing.reconcile': return this.indexing.reconcile();
+            case 'indexing.context.read': return this.indexing.readContext();
+            case 'indexing.context.preview': return this.indexing.previewContext(message.selection,message.generation);
+            case 'indexing.context.delete': return this.indexing.previewContext({project_ids:[],index_ids:[]},message.generation,true);
+            case 'indexing.export': {
+                if(!this.host.trusted())throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED'));
+                const text=catalogExport(this.indexing.snapshot());
+                if(message.format==='copy'){await vscode.env.clipboard.writeText(text);return {copied:true};}
+                const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file('airk-indexing.json'),filters:{JSON:['json']}});
+                if(uri){await vscode.workspace.fs.writeFile(uri,new TextEncoder().encode(text));return {saved:true};}return {saved:false};
+            }
             case 'instructions.open': {
                 if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
                 if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
@@ -440,6 +474,7 @@ export class ExplorerController implements vscode.Disposable {
                 return { opened: await vscode.env.openExternal(vscode.Uri.parse(ABOUT_LINKS[key].url)) };
             }
             case 'ready':
+                this.indexingDelivery=undefined;
                 this.publish(); this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route });
                 if (this.searchState) { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState }); }
                 return;

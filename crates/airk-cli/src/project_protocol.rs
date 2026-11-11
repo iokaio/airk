@@ -20,6 +20,29 @@ pub struct Init {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Private host-only installation after live catalog validation.
+    InstallScope {
+        identity: WorkerIdentity,
+        authority: Box<airk_kernel::scoped_reads::ScopedReadAuthority>,
+        lease_generation: u64,
+        expires_unix_ms: u64,
+    },
+    RenewScopeLease {
+        identity: WorkerIdentity,
+        authority: Box<airk_kernel::scoped_reads::ScopedReadAuthority>,
+        previous: airk_core::service::ScopedReadRef,
+        lease_generation: u64,
+        expires_unix_ms: u64,
+    },
+    RevokeScope {
+        identity: WorkerIdentity,
+        scope: airk_core::service::ScopedReadRef,
+    },
+    GrantScoped {
+        identity: WorkerIdentity,
+        caller: Incarnation,
+        scope: airk_core::service::ScopedReadRef,
+    },
     ConfigureQueries {
         identity: WorkerIdentity,
         concurrency: usize,
@@ -59,6 +82,14 @@ pub enum Command {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    ScopeInstalled {
+        identity: WorkerIdentity,
+        scope: airk_core::service::ScopedReadRef,
+    },
+    ScopeRevoked {
+        identity: WorkerIdentity,
+        scope: airk_core::service::ScopedReadRef,
+    },
     QueriesConfigured,
     Renewed,
     Activated,
@@ -113,6 +144,17 @@ pub fn role(worker: Incarnation) -> String {
 #[cfg(test)]
 mod helper_admission_tests {
     use super::*;
+
+    #[test]
+    fn scoped_private_commands_require_explicit_contract_and_worker_identity() {
+        for missing in [
+            serde_json::json!({"install_scope":{"expires_unix_ms":1}}),
+            serde_json::json!({"grant_scoped":{"caller":"missing-scope"}}),
+            serde_json::json!({"revoke_scope":{}}),
+        ] {
+            assert!(serde_json::from_value::<Command>(missing).is_err());
+        }
+    }
 
     #[test]
     fn legacy_activation_and_pool_updates_never_invent_pending_authority() -> anyhow::Result<()> {

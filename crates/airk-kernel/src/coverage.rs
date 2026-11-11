@@ -78,6 +78,7 @@ impl Kernel {
         refresh: bool,
         limits: InventoryLimits,
     ) -> Result<CoverageReport> {
+        self.require_unrestricted_read()?;
         let snapshot = self.load_optional()?;
         let configured_roots = self.configured_roots()?;
         let scan_limits = self.scan_limits()?;

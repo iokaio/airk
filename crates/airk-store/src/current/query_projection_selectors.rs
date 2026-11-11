@@ -258,6 +258,7 @@ impl Selectors {
                         None,
                         100_000,
                         Some(expected.len()),
+                        None,
                         remaining,
                     )?;
                     ensure!(
@@ -436,10 +437,13 @@ fn value_paths(
     after: Option<&str>,
     limit: usize,
     expected: Option<usize>,
+    scope: Option<&airk_core::scoped_reads::CompiledReadScope>,
     remaining: &mut MetadataBudget,
 ) -> Result<Vec<SelectedPath>> {
     let selected = |path: &SelectedPath| {
-        path.path.starts_with(prefix) && after.is_none_or(|after| path.path.as_str() > after)
+        scope.is_none_or(|scope| scope.allows_path(&path.path))
+            && path.path.starts_with(prefix)
+            && after.is_none_or(|after| path.path.as_str() > after)
     };
     match value {
         Value::Inline { paths } => {
@@ -540,7 +544,7 @@ fn value_paths(
                 expected.is_none_or(|count| count == visited_paths),
                 "selector path membership incomplete"
             );
-            if prefix.is_empty() && after.is_none() && limit >= expected_paths {
+            if scope.is_none() && prefix.is_empty() && after.is_none() && limit >= expected_paths {
                 ensure!(
                     result.len() == expected_paths,
                     "selector path count mismatch"
@@ -589,7 +593,19 @@ impl CurrentQueryProjection<'_> {
         limit: usize,
     ) -> Result<Vec<SelectedPath>> {
         self.read.token()?;
-        select_paths(self.store, &self.header, selector, prefix, after, limit)
+        let selected = select_paths_scoped(
+            self.store,
+            &self.header,
+            selector,
+            prefix,
+            after,
+            limit,
+            self.read.read_scope.get().map(AsRef::as_ref),
+        )?;
+        if self.read.read_scope_fingerprint().is_some() {
+            self.read.token()?;
+        }
+        Ok(selected)
     }
 }
 pub(crate) fn select_paths(
@@ -599,6 +615,18 @@ pub(crate) fn select_paths(
     prefix: &str,
     after: Option<&str>,
     limit: usize,
+) -> Result<Vec<SelectedPath>> {
+    select_paths_scoped(store, header, selector, prefix, after, limit, None)
+}
+#[allow(clippy::too_many_arguments)]
+fn select_paths_scoped(
+    store: &FileStore,
+    header: &ProjectionHeader,
+    selector: Lookup<'_>,
+    prefix: &str,
+    after: Option<&str>,
+    limit: usize,
+    scope: Option<&airk_core::scoped_reads::CompiledReadScope>,
 ) -> Result<Vec<SelectedPath>> {
     ensure!(
         (1..=100_000).contains(&limit),
@@ -624,6 +652,7 @@ pub(crate) fn select_paths(
         after,
         limit,
         None,
+        scope,
         &mut MetadataBudget::new(MAX_BYTES),
     )
 }

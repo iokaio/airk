@@ -40,7 +40,12 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
     // and all mutations remain outside this whitelist, even when receipt-keyed.
     let read_only = matches!(
         method,
-        ControlMethod::Job { .. }
+        ControlMethod::CatalogPage { .. }
+            | ControlMethod::CatalogDetail { .. }
+            | ControlMethod::CatalogContext { .. }
+            | ControlMethod::CatalogHostContext { .. }
+            | ControlMethod::CatalogReceipt { .. }
+            | ControlMethod::Job { .. }
             | ControlMethod::RequestReceipt { .. }
             | ControlMethod::ConfigurationResult { .. }
             | ControlMethod::Plan { .. }
@@ -88,6 +93,70 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         .as_millis()
         .try_into()?;
     Ok(match method {
+        ControlMethod::CatalogPage { request } => ControlResponse::CatalogPage {
+            page: registry.catalog_page(&request)?,
+        },
+        ControlMethod::CatalogDetail {
+            entity,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogDetail {
+            detail: registry.catalog_detail(&entity, expected_catalog_revision)?,
+        },
+        ControlMethod::CatalogContext {
+            host,
+            key,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogDetail {
+            detail: registry.catalog_detail(
+                &airk_core::catalog_management::CatalogEntity::ContextKey { host, key },
+                expected_catalog_revision,
+            )?,
+        },
+        ControlMethod::CatalogHostContext {
+            key,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogHostContext {
+            descriptor: crate::catalog_host_context::NativeHostContext::load(
+                registry,
+                key,
+                expected_catalog_revision,
+            )?
+            .descriptor()
+            .clone(),
+        },
+        ControlMethod::CatalogPreview { request } => {
+            let preview = registry.catalog_preview(&request)?;
+            let preview_digest = preview.identity()?;
+            ControlResponse::CatalogPreview {
+                preview,
+                preview_digest,
+            }
+        }
+        ControlMethod::CatalogReceipt { caller, key } => ControlResponse::CatalogReceipt {
+            receipt: registry.catalog_receipt(caller, &key)?,
+        },
+        ControlMethod::CatalogApply {
+            request,
+            preview_digest,
+        } => {
+            // A durable replay is checked before stale revision/epoch guards.
+            // Until native admission AND delivery fences are wired, metadata
+            // commits requiring those fences must never be reported as complete.
+            let saved = registry.catalog_receipt(request.caller, &request.key)?;
+            let requires_fence = match saved {
+                Some(ref receipt) => receipt.authority_fence_required,
+                None => registry.catalog_preview(&request)?.authority_fence_required,
+            };
+            if requires_fence {
+                ControlResponse::Failure {
+                    code: "catalog_authority_fence_unavailable".into(),
+                }
+            } else {
+                ControlResponse::CatalogApplied {
+                    receipt: registry.catalog_apply(&request, preview_digest)?,
+                }
+            }
+        }
         ControlMethod::PlanCreate {
             caller,
             key,
@@ -622,6 +691,30 @@ mod tests {
         service::ProjectRegistration,
         service_console::{MAX_PAGE_BYTES, ObservationKind},
     };
+    #[test]
+    fn catalog_reads_do_not_activate_legacy_registry() -> Result<()> {
+        use airk_core::catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES};
+        let root = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([18; 16]))?;
+        let response = execute_request(
+            &mut registry,
+            ControlMethod::CatalogPage {
+                request: CatalogPageRequest {
+                    kind: CatalogKind::Projects,
+                    index_id: None,
+                    project_id: None,
+                    after: None,
+                    expected_catalog_revision: None,
+                    limit: 1,
+                    max_bytes: MAX_PAGE_BYTES,
+                },
+            },
+        );
+        assert!(matches!(response, ControlResponse::Failure { .. }));
+        assert!(registry.catalog_state()?.is_none());
+        Ok(())
+    }
+
     #[test]
     fn registry_read_contention_preserves_receipts_and_other_failures() -> Result<()> {
         use airk_core::service::{JobKind, RequestKey};

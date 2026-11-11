@@ -66,10 +66,38 @@ Reserve schema 12 against accepted P2b's schema 11. Preserve registry applicatio
 ID, 32-MiB file bound, 1,024 legacy registration bound, namespace ownership and
 all existing jobs/leases/settings/removal outcomes. New catalogs use checked
 counters and expected revisions, not wall-clock ordering. Bound each catalog to
-1,024 definitions/contexts/grants and each Project to 32 memberships; at most 128
+1,024 definitions/contexts and each Project to 32 memberships; at most 128
 scope atoms per membership and 17 configured source roots per index. Reject
 capacity excess explicitly; never evict a reviewed grant or policy silently.
 P5 must test actual serialized size at these limits against the registry ceiling.
+
+The **3 November 2026 P6f authority-1 amendment** retains exact schema-12/
+authority-0 DDL and its zero-grant U3–U5 proof. Authority 1 selects a separately
+compiled complete DDL shape, never an unversioned trigger relaxation. Under the
+existing service/helper/watcher/worker leases and qualified backup, a private
+post-readiness transaction seals the original one-index compatibility snapshots
+and changes the authority marker; it leaves activation to the native cutover.
+Incomplete or changed original configuration requires explicit recovery before
+promotion, with no primary-only inference or silently omitted binding.
+
+Normalized grants carry explicit provenance: `user_reviewed_project_grant` or
+`imported_legacy_snapshot` with original upgrade/plan/binding/configuration
+identities. Full administrative reads return `{grant, provenance}` without
+flattening; `CreateGrant` still accepts only the reviewed snapshot, and rejects
+the reserved imported-ID range. Native compatibility IDs set the high identity
+bit; reviewed IDs clear it. The two grant classes each have a 1,024-record cap,
+including revoked tombstones, under the same 32 MiB total database bound. All
+dimension maxima are not promised to fit simultaneously; insufficient capacity
+refuses the whole promotion. Imports consume no per-index shared operation receipt.
+
+Before commit, interruption preserves authority 0. After commit, recovery checks
+the existing complete sealed rowset and lineage; missing, revoked or conflicting
+rows are never repaired by resealing. Imported snapshots use the same install,
+lease, mutation-fence and delivery checks as reviewed grants. Their compact scope
+observation identifies imported mode, while `query_scope` remains explicitly
+legacy/configuration-required. No read, new registration or UI preference can
+mint a compatibility snapshot. These are P6f design/implementation requirements,
+not production or cross-platform acceptance evidence.
 
 | Normalized metadata | Ownership and foreign-key rule |
 | --- | --- |

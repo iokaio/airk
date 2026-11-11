@@ -1371,6 +1371,7 @@ mod source_brokerage_ipc_tests {
         let role = protocol::role(identity.worker);
         let mut worker = local_ipc::Listener::bind(&local_ipc::endpoint(root, &role)?)?;
         let grant = ConnectionGrant {
+            scope: None,
             protocol: PROTOCOL_VERSION,
             identity,
             caller: local_ipc::caller_identity()?,

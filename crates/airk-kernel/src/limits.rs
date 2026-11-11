@@ -66,6 +66,7 @@ impl Kernel {
     }
 
     pub fn describe_scan_limits(&self) -> Result<LimitsDescription> {
+        self.require_unrestricted_read()?;
         let memory = machine::memory_bytes();
         let automatic = automatic_scan_limits(memory);
         let explicit = self

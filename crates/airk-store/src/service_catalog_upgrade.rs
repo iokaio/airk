@@ -41,6 +41,9 @@ mod imports;
 mod settlement;
 pub use settlement::{ReadinessEvidence, RuntimeRefusal};
 
+#[path = "service_catalog_compatibility.rs"]
+pub mod compatibility;
+
 #[path = "service_catalog_exclusion.rs"]
 mod exclusion;
 pub use exclusion::PendingCatalogExclusion;
@@ -471,6 +474,29 @@ fn registry_read(root: &Path) -> Result<Connection> {
 /// SQLite validates/replays its journal; this adapter never copies pages or
 /// deletes sidecars. Unknown or unfenced input stays on the read-only path.
 fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> {
+    recover_owned_registry(
+        root,
+        receipt.plan.id,
+        receipt.plan.namespace,
+        receipt.legacy_data_digest,
+        &receipt.backups,
+        matches!(
+            receipt.stage,
+            UpgradeStage::Migration | UpgradeStage::Restoring
+        ),
+    )
+}
+
+/// Shared only by owned offline adapters after exact intent/fence and every
+/// service/helper/watcher/worker lease have been checked. This is not admission.
+pub(super) fn recover_owned_registry(
+    root: &Path,
+    operation: Incarnation,
+    expected_namespace: Incarnation,
+    expected_rows: Option<Sha256Digest>,
+    backups: &[BackupAttempt],
+    migration_admitted: bool,
+) -> Result<()> {
     let journal = root.join(format!("{DATABASE}-journal"));
     let metadata = match fs::symlink_metadata(&journal) {
         Ok(metadata) if metadata.len() > 0 => metadata,
@@ -479,10 +505,7 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         Err(error) => return Err(error.into()),
     };
     ensure!(
-        matches!(
-            receipt.stage,
-            UpgradeStage::Migration | UpgradeStage::Restoring
-        ),
+        migration_admitted,
         "rollback journal requires owned migration recovery"
     );
     crate::managed_collection::reject_file_aliases(&journal, &metadata)?;
@@ -491,12 +514,11 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         !root.join(format!("{DATABASE}-wal")).try_exists()?,
         "conflicting migration journal and WAL"
     );
-    let attempt = receipt
-        .backups
+    let attempt = backups
         .iter()
         .find(|attempt| attempt.complete)
         .context("migration recovery requires a qualified snapshot")?;
-    let snapshot = super::backup::validate(root, receipt.plan.id, attempt)?;
+    let snapshot = super::backup::validate(root, operation, attempt)?;
     let backup = Connection::open_with_flags(snapshot, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let namespace: String = backup.query_row(
         "SELECT incarnation FROM service_meta WHERE id=1",
@@ -504,8 +526,8 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         |row| row.get(0),
     )?;
     ensure!(
-        namespace == receipt.plan.namespace.to_string()
-            && Some(super::backup::legacy_data_digest(&backup)?) == receipt.legacy_data_digest,
+        namespace == expected_namespace.to_string()
+            && Some(super::backup::legacy_data_digest(&backup)?) == expected_rows,
         "migration recovery snapshot identity changed"
     );
     let mut header = [0; 100];
@@ -529,10 +551,16 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
     validate_shape(&connection, version)?;
     super::backup::integrity(&connection)?;
     ensure!(
-        Some(super::backup::legacy_data_digest(&connection)?) == receipt.legacy_data_digest,
+        Some(super::backup::legacy_data_digest(&connection)?) == expected_rows,
         "migration recovery changed legacy rows; snapshot retained for explicit repair"
     );
     Ok(())
+}
+
+/// Fresh genesis has no registered projects, but still fences orphan worker
+/// lock entries through the same bounded native ownership census as upgrades.
+pub(super) fn genesis_worker_leases(root: &Path) -> Result<Vec<ProjectLease>> {
+    exclusion::worker_leases(root, std::iter::empty())
 }
 
 fn registrations(connection: &Connection) -> Result<Vec<ProjectRegistration>> {

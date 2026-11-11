@@ -5,6 +5,9 @@ use airk_core::changes::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 impl Kernel {
     pub fn changes_freshness(&self) -> FreshnessObservation {
+        if self.read_scope.is_some() {
+            return crate::service_freshness::unavailable("scoped_freshness_unavailable");
+        }
         let mut observation = FreshnessObservation {
             source_job: None,
             observed_unix_ms: SystemTime::now()
@@ -87,7 +90,11 @@ impl Kernel {
         &self,
         expected: airk_core::identity::RevisionToken,
     ) -> anyhow::Result<Option<airk_core::readiness::DiscoveryReadiness>> {
+        if self.cached_restricted_metadata(expected)? {
+            return Ok(None);
+        }
         let read = self.current_reader()?;
+        self.require_index_metadata(&read)?;
         if crate::current::runtime::revision(read.token()?) != expected {
             return Ok(None);
         }
@@ -106,7 +113,11 @@ impl Kernel {
             airk_core::readiness::SemanticReadiness,
         )>,
     > {
+        if self.cached_restricted_metadata(expected)? {
+            return Ok(None);
+        }
         let read = self.current_reader()?;
+        self.require_index_metadata(&read)?;
         if crate::current::runtime::revision(read.token()?) != expected {
             return Ok(None);
         }

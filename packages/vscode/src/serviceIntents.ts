@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { identifier, MutationIntent, record, RequestKey, ServiceClient, ServiceError, validateMutationIntent, count } from './serviceClient';
+import { CatalogApplyIntent, validateCatalogApply } from './indexingCatalog';
 
 export interface IntentStorage {
     keys(): readonly string[];
@@ -9,10 +10,11 @@ export interface IntentStorage {
     update(key: string, value: unknown): Thenable<void>;
 }
 export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
-export type ConsoleIntent=MutationIntent|LifecycleIntent;
+export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent;
 export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent }
 function validate(input:unknown):ConsoleIntent {
     const object=record(input);
+    if('catalog_apply' in object)return validateCatalogApply(input);
     if(!('lifecycle' in object))return validateMutationIntent(input);
     if(Object.keys(object).join(',')!=='lifecycle')throw new ServiceError('invalid_lifecycle_intent');
     const value=record(object.lifecycle),key=record(value.key);
@@ -23,11 +25,12 @@ function validate(input:unknown):ConsoleIntent {
     return input as LifecycleIntent;
 }
 function request(intent:ConsoleIntent){
-    return 'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
+    return 'catalog_apply' in intent?intent.catalog_apply.request:'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
 }
 const PREFIX = 'airk.service.intent.1.';
 const LIMIT = 64;
-const MAX_BYTES = 32768;
+const MAX_BYTES = 65536;
+const MAX_TOTAL_BYTES = 64 * 32768;
 /** Each immutable request has its own storage key: windows never rewrite a shared list. */
 export class IntentJournal {
     readonly scope: string;
@@ -74,13 +77,16 @@ export class IntentJournal {
                 if(saved.schema!==1||saved.scope!==this.scope||!isDeepStrictEqual(saved.intent,copied))throw new ServiceError('local_intent_key_conflict');
                 return id;
             }
-            if(this.storage.keys().filter(key=>key.startsWith(PREFIX)).length>=LIMIT)throw new ServiceError('local_intent_capacity_exceeded');
+            const savedKeys=this.storage.keys().filter(key=>key.startsWith(PREFIX));
+            if(savedKeys.length>=LIMIT)throw new ServiceError('local_intent_capacity_exceeded');
+            const totalBytes=savedKeys.reduce((sum,key)=>{const saved=this.storage.get(key);return sum+(saved===undefined?0:Buffer.byteLength(JSON.stringify(saved)));},0);
+            if(totalBytes+Buffer.byteLength(JSON.stringify(value))>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');
             await this.storage.update(this.key(id),value);
             return id;
         });
     }
     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
-        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent));
+        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent));
         const after=this.reconcileAfter??'';
         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
         for(const saved of batch){
@@ -88,6 +94,13 @@ export class IntentJournal {
             try{
                 const intent=saved.value.intent;
                 if('lifecycle' in intent||'plan_create' in intent)continue;
+                if('catalog_apply' in intent){
+                    const request=intent.catalog_apply.request;
+                    const result=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
+                    if(result.receipt===null)continue;
+                    client.validateCatalogReceipt(result,request,intent.request_digest);
+                    await onReceipt(result);await this.forget(saved.id);continue;
+                }
                 const request='enqueue' in intent?intent.enqueue:'configure_project' in intent?intent.configure_project:intent.retry;
                 const project='project' in request?request.project:undefined;
                 const result=await client.rpc({request_receipt:{caller:request.caller,key:request.key,...(project?{project}:{})}},'request_receipt');
@@ -108,6 +121,8 @@ export class IntentJournal {
         if(!saved)throw new ServiceError('local_intent_not_found');
         // Errors, including a lost acknowledgement, preserve the immutable record.
         const intent=saved.value.intent;
+        // Catalog applies are never replayed from a saved journal entry. Only receipt reads may settle them.
+        if('catalog_apply' in intent)throw new ServiceError('catalog_apply_requires_receipt_reconciliation');
         if('lifecycle' in intent&&!lifecycle)throw new ServiceError('native_lifecycle_transport_required');
         if(!('lifecycle' in intent)&&!client)throw new ServiceError('console_not_connected');
         const response='lifecycle' in intent?await lifecycle!(intent):await client!.submitMutation(intent);

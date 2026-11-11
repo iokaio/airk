@@ -149,6 +149,7 @@ impl OwnedIpc {
                             ControlResponse::Connection {
                                 role: protocol::role(identity.worker),
                                 grant: ConnectionGrant {
+                                    scope: None,
                                     protocol: PROTOCOL_VERSION,
                                     identity,
                                     caller: local_ipc::caller_identity()?,

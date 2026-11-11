@@ -194,7 +194,11 @@ impl CurrentRead {
             relationships: Vec::new(),
             suggested_targets: Vec::new(),
             truncated: false,
-            coverage: "Native syntax candidates and source-bound producer assertions. Written targets and imported resolutions are not compiler-certified. Type navigation uses only unambiguous same-file retained Rust declarations; aliases, unsupported generic headers and external impls may be absent. Impact is incomplete.",
+            coverage: if self.restricts_paths() {
+                "Scope-filtered native syntax candidates and source-bound producer assertions; both endpoint locations must be proven within scope. Unresolved and out-of-scope endpoints are omitted. Written targets and imported resolutions are not compiler-certified. Type navigation uses only unambiguous same-file retained Rust declarations; aliases, unsupported generic headers and external impls may be absent. Impact is incomplete."
+            } else {
+                "Native syntax candidates and source-bound producer assertions. Written targets and imported resolutions are not compiler-certified. Type navigation uses only unambiguous same-file retained Rust declarations; aliases, unsupported generic headers and external impls may be absent. Impact is incomplete."
+            },
         };
         let incoming = query.direction == "incoming";
         let mut pending = BTreeSet::from([query.symbol.clone()]);
@@ -410,6 +414,12 @@ impl CurrentRead {
                         candidates.extend(navigation.contains.iter().cloned());
                     }
                     for edge in candidates {
+                        if !self.accepts_path(&edge.citation.path)
+                            || !self.accepts_endpoint(store, &edge.source)?
+                            || !self.accepts_endpoint(store, &edge.target)?
+                        {
+                            continue;
+                        }
                         if (if incoming { &edge.target } else { &edge.source }) != &symbol
                             || query.kind.as_ref().is_some_and(|kind| kind != &edge.kind)
                         {
@@ -445,6 +455,12 @@ impl CurrentRead {
             }
         }
         for suggestion in navigation.suggestions {
+            if !self.accepts_path(&suggestion.citation.path)
+                || !self.accepts_endpoint(store, &query.symbol)?
+                || !self.accepts_endpoint(store, &suggestion.symbol_id)?
+            {
+                continue;
+            }
             let bytes = serde_json::to_vec(&suggestion)?.len();
             if response.relationships.len() + response.suggested_targets.len() == query.limit
                 || bytes > remaining

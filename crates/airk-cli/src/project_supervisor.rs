@@ -28,11 +28,17 @@ use tokio::sync::oneshot;
 #[path = "helper_recovery.rs"]
 mod helper_recovery;
 use helper_recovery::PoolRecovery;
+#[path = "catalog_control.rs"]
+mod catalog;
 #[cfg(test)]
 #[path = "project_supervisor_pool_tests.rs"]
 mod pool_tests;
+pub(crate) use catalog::CatalogControlHandle;
 
 struct ChildWorker {
+    catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
+    catalog_pending: Option<catalog::Pending>,
+    catalog_quarantined: bool,
     derived: bool,
     _containment: crate::child_job::ChildJob,
     child: Child,
@@ -111,6 +117,9 @@ impl Drop for ChildWorker {
         if let Some(stderr) = self.stderr.take() {
             stderr.finish(&mut self.child);
         }
+        if let (Some(gate), Some(identity)) = (&self.catalog_gate, self.identity) {
+            let _ = gate.observe_worker_reaped(identity);
+        }
     }
 }
 
@@ -172,6 +181,9 @@ impl ChildWorker {
         let mut output = child.stdout.take().context("project output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
+            catalog_gate: None,
+            catalog_pending: None,
+            catalog_quarantined: false,
             derived,
             child,
             _containment: containment,
@@ -238,6 +250,7 @@ impl ChildWorker {
     }
 
     fn grant(&mut self) -> Result<ControlResponse> {
+        self.require_catalog_ready()?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::Grant {
@@ -270,6 +283,7 @@ impl ChildWorker {
         pool: Option<crate::embedding_pool_protocol::Access>,
         helper_pending: bool,
     ) -> Result<()> {
+        self.require_catalog_ready()?;
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
         let pool_pending = helper_pending && !self.derived && pool_binding.is_none();
         service_ipc::write_frame(
@@ -298,6 +312,7 @@ impl ChildWorker {
         pool: Option<crate::embedding_pool_protocol::Access>,
         pool_pending: bool,
     ) -> Result<()> {
+        self.require_catalog_ready()?;
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -360,6 +375,7 @@ impl ChildWorker {
         Ok(result)
     }
     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -383,6 +399,7 @@ impl ChildWorker {
         keep_for_maintenance: bool,
         freshness: Option<airk_core::changes::FreshnessObservation>,
     ) -> Result<protocol::WorkObservation> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -409,6 +426,7 @@ impl ChildWorker {
     }
 
     fn renew(&mut self) -> Result<()> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -425,6 +443,7 @@ impl ChildWorker {
         Ok(())
     }
     fn configure_queries(&mut self, concurrency: usize) -> Result<()> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -500,6 +519,11 @@ impl ResourceCache {
     }
 }
 enum Envelope {
+    Catalog {
+        gate: crate::catalog_admission::NativeCatalogAdmission,
+        operation: catalog::Operation,
+        reply: SyncSender<Result<catalog::Response>>,
+    },
     ConfigureResources {
         configuration: airk_core::service_resources::ResourceConfiguration,
         reply: oneshot::Sender<ControlResponse>,
@@ -527,7 +551,7 @@ enum Envelope {
 }
 pub struct Supervisor {
     resources: Arc<Mutex<ResourceCache>>,
-    sender: Option<SyncSender<Envelope>>,
+    sender: Option<Arc<SyncSender<Envelope>>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Drop for Supervisor {
@@ -810,6 +834,7 @@ impl Supervisor {
             .name("airk-project-supervisor".into())
             .spawn(move || {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
+                let mut catalog_gate = None;
                 let mut pool: Option<Pool> = None;
                 let mut pool_recovery = PoolRecovery::new(Instant::now());
                 let mut registry: Option<ServiceRegistry> = None;
@@ -1153,6 +1178,11 @@ impl Supervisor {
                     let mut clean_renewals = std::collections::BTreeSet::new();
                     let mut pool_control_failure = None;
                     for (project, worker) in &mut workers {
+                        match worker.catalog_poll_ready() {
+                            Ok(true) => {},
+                            Ok(false) => continue,
+                            Err(_) => { failed_renewals.push(*project); continue; },
+                        }
                         if pool_control_failure.is_some() {
                             continue;
                         }
@@ -1251,6 +1281,12 @@ impl Supervisor {
                         }
                     }
                     match receiver.recv_timeout(Duration::from_millis(250)) {
+                        Ok(Envelope::Catalog { gate, operation, reply }) => {
+                            let result = catalog::execute(&mut catalog_gate, gate, operation, &mut workers,
+                                &mut registry, &root, instance, may_allocate, &mut backoff,
+                                WorkerAdmission { log: &log, policy: &policy, pool: &mut pool, resources: &mut resources, recovery: &mut pool_recovery });
+                            let _ = reply.send(result);
+                        },
                         Ok(Envelope::ConfigureResources {
                             configuration,
                             reply,
@@ -1609,6 +1645,10 @@ impl Supervisor {
                     // Read only bounded metadata candidates. Direct query payloads never enter this loop.
                     if let Some(registry) = registry.as_ref() {
                         for project in workers.keys().copied() {
+                            if workers.get(&project).is_some_and(|worker| worker.catalog_pending.is_some() || worker.catalog_quarantined) {
+                                resources.forget_pending(project);
+                                continue;
+                            }
                             if restarting.contains_key(&project) {
                                 resources.forget_pending(project);
                                 continue;
@@ -1677,6 +1717,11 @@ impl Supervisor {
                     let mut failed = Vec::new();
                     let mut clean_exits = std::collections::BTreeSet::new();
                     for (project, worker) in &mut workers {
+                        match worker.catalog_poll_ready() {
+                            Ok(true) => {},
+                            Ok(false) => continue,
+                            Err(_) => { failed.push(*project); continue; },
+                        }
                         if worker.last_status.elapsed() < Duration::from_secs(1) {
                             continue;
                         }
@@ -1832,7 +1877,7 @@ impl Supervisor {
             })?;
         Ok(Self {
             resources,
-            sender: Some(sender),
+            sender: Some(Arc::new(sender)),
             thread: Some(thread),
         })
     }

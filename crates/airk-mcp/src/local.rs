@@ -138,6 +138,31 @@ impl LocalTools {
         Self::with_admission(self.kernel.clone(), client, self.admission.clone(), false).await
     }
 
+    /// Separate native session with frozen read authority; shares only admission.
+    pub async fn scoped_session(
+        &self,
+        authority: airk_kernel::scoped_reads::ScopedReadAuthority,
+    ) -> anyhow::Result<Self> {
+        self.scoped_session_with_client(authority, self.family)
+            .await
+    }
+    pub async fn scoped_session_with_client(
+        &self,
+        authority: airk_kernel::scoped_reads::ScopedReadAuthority,
+        client: ClientFamily,
+    ) -> anyhow::Result<Self> {
+        let kernel = self.kernel.with_scoped_reads(authority)?;
+        Self::with_admission(kernel, client, self.admission.clone(), false).await
+    }
+    pub fn revoke_scoped_reads(&self) {
+        self.kernel.revoke_scoped_reads();
+    }
+
+    /// In-process fence handle for the owning native worker; no transport authority.
+    pub fn scoped_read_revocation_handle(&self) -> Kernel {
+        self.kernel.clone()
+    }
+
     pub fn set_runtime(&self, value: serde_json::Value) {
         if let Ok(mut runtime) = self.runtime.write() {
             *runtime = Some(value);
@@ -165,6 +190,9 @@ impl LocalTools {
         request: NativeRead,
         project: airk_core::service::ProjectBinding,
     ) -> anyhow::Result<serde_json::Value> {
+        self.kernel
+            .require_unrestricted_read()
+            .map_err(|error| self.kernel.observe_scoped_error(error))?;
         let permit = self
             .admission
             .admit(true)

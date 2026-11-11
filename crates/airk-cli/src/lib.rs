@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native adapter primitives shared by service/client executable modes.
+pub(crate) mod catalog_admission;
+pub(crate) mod catalog_authority;
+pub(crate) mod catalog_coordinator;
+pub(crate) mod catalog_grant_draft;
+mod catalog_host_context;
 pub mod embedding_client;
 pub mod embedding_pool_client;
 mod embedding_pool_process;

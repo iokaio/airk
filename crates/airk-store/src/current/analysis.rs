@@ -75,13 +75,41 @@ impl CurrentRead {
             "current analysis byte bound exceeded"
         );
         let bytes = store.read_current_resource(&reference)?;
-        let evidence: AnalysisEvidence = serde_json::from_slice(&bytes)?;
+        let mut evidence: AnalysisEvidence = serde_json::from_slice(&bytes)?;
         ensure!(
             evidence.canonical_bytes()? == bytes
                 && evidence.manifest.root == self.head().scope.root
                 && evidence.manifest.collection == self.head().scope.collection,
             "current analysis ownership mismatch"
         );
+        if self.restricts_paths() {
+            // Only definitions establish ownership. A reference may carry the
+            // target definition's opaque ID while citing a different source.
+            let symbols = self.install_analysis_definition_origins(&evidence.facts, bytes.len())?;
+            evidence
+                .facts
+                .retain(|hit| self.accepts_path(&hit.citation.path));
+            for hit in &evidence.facts {
+                self.require_imported_fact(store, hit)?;
+            }
+            let mut relationships = Vec::new();
+            for edge in evidence.relationships {
+                if self.accepts_path(&edge.citation.path)
+                    && (symbols.contains(edge.source.as_str())
+                        || self.accepts_endpoint(store, &edge.source)?)
+                    && (symbols.contains(edge.target.as_str())
+                        || self.accepts_endpoint(store, &edge.target)?)
+                {
+                    relationships.push(edge);
+                }
+            }
+            evidence.relationships = relationships;
+            evidence
+                .manifest
+                .source_hashes
+                .retain(|path, _| self.accepts_path(path));
+        }
+        self.token()?;
         Ok(Some(evidence))
     }
 

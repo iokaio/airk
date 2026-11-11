@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
 import { ConsoleIntent, IntentJournal, IntentStorage, LifecycleIntent } from './serviceIntents';
+import { CatalogObject, CatalogReview, catalogBound, catalogHex, catalogObject, catalogRevision, validateCatalogApply, validateCatalogOperation } from './indexingCatalog';
 import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleState } from './serviceConsoleView';
 
 export interface ConsoleHost {
@@ -51,6 +53,9 @@ export class ServiceConsoleController {
     private bootstrap?:BootstrapObservation;
     private client?:ServiceClient;
     private journal?:IntentJournal;
+    private registryNamespace?:string;
+    private catalogApplyInFlight=false;
+    private catalogHostIdentity?:{observation:string;host:string};
     private eventCursor:unknown=null;
     private pageStart:{after:string|null;revision:number|null}={after:null,revision:null};
     private disposed=false;
@@ -86,6 +91,79 @@ export class ServiceConsoleController {
         this.pollActive();
         this.authorized();if(!this.client)throw new ServiceError('console_not_connected');
         const value=await this.observation(()=>this.client!.rpc(method,expected),typeof method==='string'?method:Object.keys(record(method))[0]);this.authorized();return value;
+    }
+    /** Reuses the existing authenticated control client. Reads never discover, install or activate a catalog. */
+    async catalogRead(method: CatalogObject): Promise<RecordValue> {
+        const name=Object.keys(method);
+        if(name.length!==1||!['catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context'].includes(name[0]))throw new ServiceError('invalid_catalog_read');
+        this.authorized();const client=this.client,identity=this.observationIdentity;
+        if(!client||!this.registryNamespace||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
+        catalogBound(method);
+        let response:RecordValue;
+        if(name[0]==='catalog_host_context'){
+            const args=catalogObject(method.catalog_host_context),revision=args.expected_catalog_revision??null;
+            if(Object.keys(args).some(key=>!['key','expected_catalog_revision'].includes(key))||typeof args.key!=='string'||revision!==null&&typeof revision!=='number')throw new ServiceError('invalid_catalog_host_context_request');
+            response=await client.catalogHostContext(args.key,revision);
+        }else response=await client.rpc(method,name[0]==='catalog_context'?'catalog_detail':name[0]);
+        this.authorized();if(client!==this.client||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+        catalogBound(response,65536);
+        const body=response.page??response.detail??response.descriptor;
+        if(body&&catalogObject(body).namespace!==this.registryNamespace)throw new ServiceError('catalog_namespace_changed_refresh');
+        if(name[0]==='catalog_host_context'){
+            const host=String(catalogObject(response.descriptor).host);
+            if(this.catalogHostIdentity?.observation===identity&&this.catalogHostIdentity.host!==host)throw new ServiceError('stale_native_host_context');
+            this.catalogHostIdentity={observation:identity,host};
+        }
+        return response;
+    }
+    async catalogHostContext(key:string,expectedCatalogRevision:number|null=null):Promise<RecordValue>{
+        return this.catalogRead({catalog_host_context:{key,expected_catalog_revision:expectedCatalogRevision}});
+    }
+    async catalogPrepare(operation: CatalogObject, revision: number): Promise<CatalogReview> {
+        this.authorized();const client=this.client,identity=this.observationIdentity;
+        if(!client||!this.journal||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
+        validateCatalogOperation(operation);catalogRevision(revision);
+        const request=await client.prepareCatalog(operation,revision);
+        const current=()=>{this.authorized();if(client!==this.client||identity!==this.observationIdentity||request.key.namespace!==this.registryNamespace)throw new ServiceError('stale_catalog_client');};
+        current();const response=await client.rpc({catalog_preview:{request}},'catalog_preview');current();catalogBound(response,65536);catalogBound(response.preview);
+        const preview=catalogObject(response.preview);
+        if(preview.catalog_revision!==revision||!isDeepStrictEqual(preview.operation,operation))throw new ServiceError('crossed_catalog_preview');
+        const previewDigest=catalogHex(response.preview_digest,64);
+        const requestDigest=catalogHex(preview.request_digest,64);
+        return {request,response,previewDigest,requestDigest};
+    }
+    async catalogApply(review: CatalogReview, valid:()=>boolean): Promise<RecordValue> {
+        this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity;
+        if(!client||!journal||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
+        const check=()=>{this.authorized();if(!valid()||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||review.request.key.namespace!==this.registryNamespace)throw new ServiceError('stale_catalog_review');};
+        check();const intent=validateCatalogApply({catalog_apply:{request:review.request,preview_digest:review.previewDigest},request_digest:review.requestDigest});
+        if(this.catalogApplyInFlight||journal.list().some(entry=>entry.id===review.request.key.nonce))throw new ServiceError('catalog_apply_requires_receipt_reconciliation');
+        this.catalogApplyInFlight=true;
+        // The exact reviewed request and digest are durable before the first and only dispatch.
+        try{
+            const id=await journal.prepare(`Indexing: ${String(review.request.operation.operation)}`,intent);check();this.pending();this.publish();
+            try{const response=await client.submitCatalog(intent);check();await journal.forget(id);this.pending();return response;}
+            catch(error){
+                // A complete typed native refusal is a known no-write outcome. Transport uncertainty retains the intent.
+                if(error instanceof ServiceError&&!error.outcomeUnknown){await journal.forget(id);this.pending();}
+                this.logReceipt(id,error);throw error;
+            }
+        }finally{this.catalogApplyInFlight=false;}
+    }
+    catalogPending(): readonly string[] { return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent).map(entry=>entry.id)??[]; }
+    async catalogReconcile(): Promise<RecordValue[]> {
+        this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity;
+        if(!client||!journal||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
+        const results:RecordValue[]=[];
+        for(const saved of journal.list().filter(entry=>'catalog_apply' in entry.value.intent).slice(0,8)){
+            const intent=saved.value.intent;if(!('catalog_apply' in intent))continue;
+            const request=intent.catalog_apply.request;
+            const response=await this.catalogRead({catalog_receipt:{caller:request.caller,key:request.key}});
+            this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+            results.push(response);
+            if(response.receipt!==null){client.validateCatalogReceipt(response,request,intent.request_digest);await journal.forget(saved.id);}
+        }
+        this.pending();return results;
     }
     private pollActive():void{
         if(this.pollDeadline!==undefined&&Date.now()>=this.pollDeadline)throw new ServiceError('status_poll_timed_out');
@@ -258,6 +336,7 @@ export class ServiceConsoleController {
         this.pageStart={after:null,revision:null};
     }
     private restoreJournal(namespace:string):void{
+        this.registryNamespace=identifier(namespace,16);
         const journal=new IntentJournal(this.host.storage,this.binding!.controlDir,identifier(namespace,16));
         if(this.journal?.scope!==journal.scope){
             this.observationToken=randomUUID();this.clearRegistryObservation();

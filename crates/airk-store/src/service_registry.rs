@@ -245,6 +245,149 @@ pub fn retained_namespace(root: &Path) -> Result<Incarnation> {
     Ok(receipt.incarnation)
 }
 
+// Shared registration transaction: legacy entry points and reviewed catalog
+// reservation retain the same collision, removal, isolation and setup rules.
+enum RegistrationAdmission<'a> {
+    Legacy,
+    Reserved(&'a catalog::setup::IndexSetupReceipt),
+}
+
+fn register_project_in(
+    connection: &Connection,
+    runtime: &Path,
+    registration: &ProjectRegistration,
+    setup_watch: Option<bool>,
+    only_if_missing: bool,
+    admission: RegistrationAdmission<'_>,
+) -> Result<()> {
+    let payload = serde_json::to_vec(registration)?;
+    catalog::setup::require_registration_admission(connection, registration, admission)?;
+    source_isolation::validate(connection, runtime, registration, &[])?;
+    let removed: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 OR root_identity=?2)",
+        params![registration.binding.to_string(), project_removal::removed_root_identity(&registration.root).to_string()],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        !only_if_missing || !removed,
+        "project_was_removed_refresh_registration"
+    );
+    if !only_if_missing {
+        connection.execute(
+            "DELETE FROM service_removed_projects WHERE binding=?1 OR root_identity=?2",
+            params![
+                registration.binding.to_string(),
+                project_removal::removed_root_identity(&registration.root).to_string()
+            ],
+        )?;
+    }
+    if only_if_missing {
+        let concurrent_owner:bool=connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding<>?1 AND json_extract(payload,'$.root')=?2)",
+            params![registration.binding.to_string(),registration.root],|row|row.get(0))?;
+        ensure!(
+            !concurrent_owner,
+            "source_registration_changed_refresh_registration"
+        );
+    }
+    let existing: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT substr(payload,1,20481) FROM projects WHERE binding=?1",
+            [registration.binding.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let mut newly_active = existing.is_none();
+    if let Some(existing) = existing {
+        ensure!(
+            existing == payload,
+            "service registration binding collision"
+        );
+        if only_if_missing {
+            let registered: bool = connection.query_row(
+                "SELECT registered FROM projects WHERE binding=?1",
+                [registration.binding.to_string()],
+                |row| row.get(0),
+            )?;
+            ensure!(registered, "project_was_removed_refresh_registration");
+        }
+        let cleanup: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+            [registration.binding.to_string()], |row| row.get(0))?;
+        ensure!(
+            !cleanup,
+            "derived cleanup is still pending; inspect its native receipt before registering"
+        );
+        let barrier: bool = connection.query_row(
+            "SELECT cleanup_guard IS NOT NULL FROM projects WHERE binding=?1",
+            [registration.binding.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !barrier,
+            "finish the captured derived cleanup before registering this project"
+        );
+        if connection.execute(
+            "UPDATE projects SET registered=1,paused=0 WHERE binding=?1 AND registered=0",
+            [registration.binding.to_string()],
+        )? == 1
+        {
+            newly_active = true;
+            background::audit::automatic::resume(connection, registration.binding)?;
+            bump(connection)?;
+        }
+    } else {
+        let collision: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE json_extract(payload,'$.data_root')=?1 AND json_extract(payload,'$.collection')=?2)",
+            params![registration.data_root,registration.collection], |row| row.get(0),
+        )?;
+        ensure!(
+            !collision,
+            "collection storage is already registered to another source root"
+        );
+        let count: i64 =
+            connection.query_row("SELECT count(*) FROM projects", [], |row| row.get(0))?;
+        ensure!(
+            count >= 0 && count < MAX_PROJECTS as i64,
+            "service project registration capacity exhausted"
+        );
+        connection.execute(
+            "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,(SELECT request_epoch FROM service_meta WHERE id=1),0,1)",
+            params![registration.binding.to_string(), payload],
+        )?;
+        bump(connection)?;
+    }
+    if removed && !newly_active {
+        bump(connection)?;
+    }
+    if newly_active && let Some(enabled) = setup_watch {
+        schedule_project_setup(connection, registration.binding, enabled)?;
+    }
+    Ok(())
+}
+
+fn schedule_project_setup(
+    connection: &Connection,
+    binding: ProjectBinding,
+    enabled: bool,
+) -> Result<()> {
+    watch::ensure_row(connection, binding)?;
+    connection.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,requested=requested+CASE WHEN ?1 THEN 1 ELSE 0 END,attempts=0,next_ms=0,blocked_revision=NULL,backend=CASE WHEN ?1 THEN 'periodic_fallback' ELSE 'disabled' END,native_roots=0 WHERE project=?2",params![enabled,binding.to_string()])?;
+    background::set(
+        connection,
+        binding,
+        airk_core::service::JobKind::ModelSetup,
+        true,
+    )?;
+    // Source evidence remains scheduled even if model preparation fails.
+    background::set(
+        connection,
+        binding,
+        airk_core::service::JobKind::Index,
+        true,
+    )?;
+    Ok(())
+}
+
 fn bump(connection: &Connection) -> Result<()> {
     let revision: i64 =
         connection.query_row("SELECT revision FROM service_meta WHERE id=1", [], |row| {
@@ -726,124 +869,17 @@ impl ServiceRegistry {
             &self.root,
             self.incarnation()?,
         )?;
-        let payload = serde_json::to_vec(registration)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        source_isolation::validate(&transaction, &self.root, registration, &[])?;
-        let removed: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 OR root_identity=?2)",
-            params![registration.binding.to_string(), project_removal::removed_root_identity(&registration.root).to_string()],
-            |row| row.get(0),
+        register_project_in(
+            &transaction,
+            &self.root,
+            registration,
+            setup_watch,
+            only_if_missing,
+            RegistrationAdmission::Legacy,
         )?;
-        ensure!(
-            !only_if_missing || !removed,
-            "project_was_removed_refresh_registration"
-        );
-        if !only_if_missing {
-            transaction.execute(
-                "DELETE FROM service_removed_projects WHERE binding=?1 OR root_identity=?2",
-                params![
-                    registration.binding.to_string(),
-                    project_removal::removed_root_identity(&registration.root).to_string()
-                ],
-            )?;
-        }
-        if only_if_missing {
-            let concurrent_owner:bool=transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM projects WHERE binding<>?1 AND json_extract(payload,'$.root')=?2)",
-                params![registration.binding.to_string(),registration.root],|row|row.get(0))?;
-            ensure!(
-                !concurrent_owner,
-                "source_registration_changed_refresh_registration"
-            );
-        }
-        let existing: Option<Vec<u8>> = transaction
-            .query_row(
-                "SELECT substr(payload,1,20481) FROM projects WHERE binding=?1",
-                [registration.binding.to_string()],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let mut newly_active = existing.is_none();
-        if let Some(existing) = existing {
-            ensure!(
-                existing == payload,
-                "service registration binding collision"
-            );
-            if only_if_missing {
-                let registered: bool = transaction.query_row(
-                    "SELECT registered FROM projects WHERE binding=?1",
-                    [registration.binding.to_string()],
-                    |row| row.get(0),
-                )?;
-                ensure!(registered, "project_was_removed_refresh_registration");
-            }
-            let cleanup: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
-                [registration.binding.to_string()], |row| row.get(0))?;
-            ensure!(
-                !cleanup,
-                "derived cleanup is still pending; inspect its native receipt before registering"
-            );
-            let barrier: bool = transaction.query_row(
-                "SELECT cleanup_guard IS NOT NULL FROM projects WHERE binding=?1",
-                [registration.binding.to_string()],
-                |row| row.get(0),
-            )?;
-            ensure!(
-                !barrier,
-                "finish the captured derived cleanup before registering this project"
-            );
-            if transaction.execute(
-                "UPDATE projects SET registered=1,paused=0 WHERE binding=?1 AND registered=0",
-                [registration.binding.to_string()],
-            )? == 1
-            {
-                newly_active = true;
-                background::audit::automatic::resume(&transaction, registration.binding)?;
-                bump(&transaction)?;
-            }
-        } else {
-            let collision: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM projects WHERE json_extract(payload,'$.data_root')=?1 AND json_extract(payload,'$.collection')=?2)",
-                params![registration.data_root,registration.collection], |row| row.get(0),
-            )?;
-            ensure!(
-                !collision,
-                "collection storage is already registered to another source root"
-            );
-            let count: i64 =
-                transaction.query_row("SELECT count(*) FROM projects", [], |row| row.get(0))?;
-            ensure!(
-                count >= 0 && count < MAX_PROJECTS as i64,
-                "service project registration capacity exhausted"
-            );
-            transaction.execute(
-                "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,(SELECT request_epoch FROM service_meta WHERE id=1),0,1)",
-                params![registration.binding.to_string(), payload],
-            )?;
-            bump(&transaction)?;
-        }
-        if removed && !newly_active {
-            bump(&transaction)?;
-        }
-        if newly_active && let Some(enabled) = setup_watch {
-            watch::ensure_row(&transaction, registration.binding)?;
-            transaction.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,requested=requested+CASE WHEN ?1 THEN 1 ELSE 0 END,attempts=0,next_ms=0,blocked_revision=NULL,backend=CASE WHEN ?1 THEN 'periodic_fallback' ELSE 'disabled' END,native_roots=0 WHERE project=?2",params![enabled,registration.binding.to_string()])?;
-            background::set(
-                &transaction,
-                registration.binding,
-                airk_core::service::JobKind::ModelSetup,
-                true,
-            )?;
-            // Source evidence remains scheduled even if model preparation fails.
-            background::set(
-                &transaction,
-                registration.binding,
-                airk_core::service::JobKind::Index,
-                true,
-            )?;
-        }
         transaction.commit()?;
         Ok(())
     }

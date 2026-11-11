@@ -23,6 +23,7 @@ impl Kernel {
             path.len() <= 8192 && !path.contains('\0'),
             "invalid indexed path"
         );
+        read.require_path(path)?;
         let token = revision(read.token()?);
         ensure!(
             options.revision.is_none_or(|expected| expected == token),
@@ -37,6 +38,7 @@ impl Kernel {
                 if options.follow_moves
                     && let Some(candidate) = owned
                 {
+                    read.require_path(&candidate)?;
                     let file = read
                         .file_metadata(&self.store, &candidate)?
                         .context("current artifact metadata missing")?;

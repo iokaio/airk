@@ -280,6 +280,87 @@ fn resource_pages_preserve_ordinals_strict_bytes_and_retention_through_replay() 
     );
     Ok(())
 }
+
+#[test]
+fn scoped_native_written_code_preserves_artifact_projection_and_fact_payloads() -> Result<()> {
+    use airk_core::{
+        CodeSpan, EvidenceBasis,
+        extraction::{LocalCodeEvidence, LocalSyntaxId},
+        index_catalog::PathScope,
+        scoped_reads::{CompiledPathAtom, CompiledReadScope, CompiledSourceAtom},
+    };
+    let fixture = Fixture::new()?;
+    let mut local = fact("call", 0);
+    local.kind = "call".into();
+    local.syntax_kind = "call".into();
+    local.code = Some(LocalCodeEvidence {
+        fingerprints: None,
+        syntax_id: LocalSyntaxId(1),
+        owner_id: None,
+        qualified_name: "call".into(),
+        scope: vec![],
+        signature: None,
+        span: Some(CodeSpan {
+            start_byte: 0,
+            end_byte: 4,
+        }),
+        signature_span: None,
+        parameters: None,
+        return_type: None,
+        modifiers: vec![],
+        documentation: None,
+        target: Some("call".into()),
+        basis: EvidenceBasis::Syntax,
+        producer: "original-native-fixture".into(),
+        producer_version: "1".into(),
+        coverage: "Written native syntax fixture".into(),
+        details_truncated: false,
+    });
+    let input = retained_input_with_facts(&fixture, "one.txt", "call", vec![local])?;
+    publish(&fixture, "one.txt", Some(&input), false)?;
+    let native = fixture.store.load_projection_artifact(&input.artifact)?;
+    let expected = super::super::discovery::fact_hit(&native, &native.facts[0]);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    read.attach_read_scope(std::sync::Arc::new(CompiledReadScope {
+        fingerprint: Sha256Digest::from_bytes([7; 32]),
+        atoms: vec![CompiledPathAtom {
+            kind: PathScope::Exact,
+            path: "one.txt".into(),
+        }],
+        source_atoms: vec![CompiledSourceAtom {
+            original_root: fixture.scope.root.clone(),
+            kind: PathScope::Exact,
+            path: "one.txt".into(),
+        }],
+        external_aliases: vec![],
+    }))?;
+    assert!(read.restricts_paths());
+    let projection = read
+        .native_fact_projection(&fixture.store, "one.txt")?
+        .context("native projection missing")?;
+    let page = projection.page(0)?;
+    assert_eq!(
+        serde_json::to_value(&page.rows[0].fact.code)?,
+        serde_json::to_value(&native.facts[0].code)?
+    );
+    let query = airk_core::FactQuery {
+        path_prefix: "one.txt".into(),
+        name: None,
+        kind: None,
+        language: None,
+        exact_name: false,
+        limit: 10,
+        max_bytes: 65536,
+        path_exact: true,
+        document_only: false,
+    };
+    let result = read.native_facts_page(&fixture.store, &query, false, &Default::default())?;
+    assert_eq!(
+        serde_json::to_value(&result.facts)?,
+        serde_json::to_value(vec![expected])?
+    );
+    Ok(())
+}
 #[test]
 fn producer_max_has_bounded_byte_pages_and_exact_logical_storage_counts() -> Result<()> {
     let fixture = Fixture::new()?;

@@ -12,7 +12,101 @@ use std::sync::Mutex;
 
 pub(crate) const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; concepts: airk_search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
-pub(crate) fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+pub fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+    let result = bare_error_result(error);
+    if let Some(scope) = error.downcast_ref::<airk_core::scoped_reads::ScopeErrorObservation>() {
+        return with_scope_observation(&scope.observation, result);
+    }
+    result
+}
+pub fn scoped_error_result(
+    kernel: &airk_kernel::Kernel,
+    error: &anyhow::Error,
+) -> rmcp::model::CallToolResult {
+    with_scope(kernel, error_result(error))
+}
+pub(crate) fn with_scope(
+    kernel: &airk_kernel::Kernel,
+    result: rmcp::model::CallToolResult,
+) -> rmcp::model::CallToolResult {
+    match kernel.scope_observation() {
+        Some(observation) => with_scope_observation(observation, result),
+        None => result,
+    }
+}
+fn with_scope_observation(
+    observation: &airk_core::scoped_reads::ScopeObservation,
+    result: rmcp::model::CallToolResult,
+) -> rmcp::model::CallToolResult {
+    use rmcp::model::{CallToolResult, ContentBlock};
+    let wanted = serde_json::json!(observation);
+    let failure = |required_bytes| {
+        let mut body = airk_core::scoped_reads::ScopeReplyBudget {
+            required_bytes,
+            maximum_bytes: airk_core::MAX_RESPONSE_BYTES,
+        }
+        .receipt();
+        body["scope_observation"] = wanted.clone();
+        CallToolResult::error(vec![ContentBlock::text(body.to_string())])
+    };
+    let Ok(mut wire) = serde_json::to_value(&result) else {
+        return failure(airk_core::MAX_RESPONSE_BYTES + 1);
+    };
+    let mut foreign = false;
+    if let Some(content) = wire.get_mut("content").and_then(Value::as_array_mut) {
+        for block in content {
+            if let Some(text) = block.get("text").and_then(Value::as_str) {
+                let mut body = serde_json::from_str::<Value>(text)
+                    .ok()
+                    .filter(Value::is_object)
+                    .unwrap_or_else(|| serde_json::json!({"message":text}));
+                if body
+                    .get("scope_observation")
+                    .is_some_and(|existing| existing != &wanted)
+                {
+                    foreign = true;
+                    body = serde_json::json!({"error":airk_core::scoped_reads::ScopeReadRefused.receipt()});
+                }
+                body["scope_observation"] = wanted.clone();
+                block["text"] = body.to_string().into();
+            }
+        }
+    }
+    if let Some(structured) = wire
+        .get_mut("structuredContent")
+        .filter(|value| value.is_object())
+    {
+        if structured
+            .get("scope_observation")
+            .is_some_and(|existing| existing != &wanted)
+        {
+            foreign = true;
+            *structured =
+                serde_json::json!({"error":airk_core::scoped_reads::ScopeReadRefused.receipt()});
+        }
+        structured["scope_observation"] = wanted.clone();
+    }
+    if foreign {
+        wire["isError"] = true.into();
+    }
+    let required_bytes =
+        serde_json::to_vec(&wire).map_or(usize::MAX, |bytes| bytes.len().saturating_add(2048));
+    if required_bytes > airk_core::MAX_RESPONSE_BYTES {
+        return failure(required_bytes);
+    }
+    serde_json::from_value(wire).unwrap_or_else(|_| failure(required_bytes))
+}
+fn bare_error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+    if let Some(budget) = error.downcast_ref::<airk_core::scoped_reads::ScopeReplyBudget>() {
+        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            budget.receipt().to_string(),
+        )]);
+    }
+    if let Some(refusal) = error.downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>() {
+        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            serde_json::json!({"error":refusal.receipt()}).to_string(),
+        )]);
+    }
     if let Some(receipt) = airk_core::search_execution::helper_unavailable_receipt(error) {
         return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
             receipt.to_string(),
@@ -185,6 +279,7 @@ fn verification_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sche
 
 #[derive(Default)]
 pub(crate) struct Session {
+    scope: Option<airk_core::identity::Sha256Digest>,
     // Fixed field names and digests bound memory independently of response size.
     observed: Mutex<StatusReceipt>,
 }
@@ -195,6 +290,8 @@ pub(crate) struct Session {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatusReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    read_scope: Option<airk_core::identity::Sha256Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     freshness: Option<airk_core::identity::Sha256Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,12 +316,28 @@ impl StatusReceipt {
     }
 }
 impl Session {
+    pub(crate) fn for_scope(scope: Option<airk_core::identity::Sha256Digest>) -> Self {
+        Self {
+            scope,
+            observed: Mutex::new(StatusReceipt {
+                read_scope: scope,
+                ..Default::default()
+            }),
+        }
+    }
     pub(crate) fn receipt(&self) -> StatusReceipt {
         self.observed.lock().map(|state| *state).unwrap_or_default()
     }
     pub(crate) fn restore(&self, receipt: StatusReceipt) {
         if let Ok(mut observed) = self.observed.lock() {
-            *observed = receipt;
+            *observed = if receipt.read_scope == self.scope {
+                receipt
+            } else {
+                StatusReceipt {
+                    read_scope: self.scope,
+                    ..Default::default()
+                }
+            };
         }
     }
     pub(crate) fn display(&self, value: &mut Value, mode: ResponseMode, include_status: bool) {
@@ -310,7 +423,13 @@ impl Session {
             let Ok(bytes) = serde_json::to_vec(&substantive) else {
                 continue;
             };
-            let digest = framed_digest(b"mcp-client-status-v1", &[&binding, &bytes]);
+            let digest = match self.scope {
+                None => framed_digest(b"mcp-client-status-v1", &[&binding, &bytes]),
+                Some(scope) => framed_digest(
+                    b"mcp-client-scoped-status-v1",
+                    &[&binding, &bytes, scope.as_bytes()],
+                ),
+            };
             let saved = observed.field(field);
             if !explicit && *saved == Some(digest) {
                 object.remove(field);

@@ -4,6 +4,7 @@ import type { ConnectionState, ProjectSummary, SemanticState } from './explorerC
 import type { RecordValue } from './serviceClient';
 import type { ServiceConsoleState } from './serviceConsoleView';
 import { displayPath } from './explorerSource';
+import type { CatalogControl } from './indexingCatalogController';
 
 /**
  * The Explorer's control plane is the existing Service Console controller: one native
@@ -11,7 +12,7 @@ import { displayPath } from './explorerSource';
  * retries, confirmations and page-scoped validation behave exactly as they do today.
  */
 export interface ControlSource {
-    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string };
+    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl>;
     run(action: string, fields?: Record<string, unknown>): Promise<void>;
     retain(): { dispose(): void };
     onDidChangeState(listener: (state: ServiceConsoleState) => void): { dispose(): void };
@@ -73,6 +74,11 @@ export class ExplorerControl {
     constructor(private readonly source: ControlSource, private readonly extensionVersion: string) {}
     get state(): ServiceConsoleState { return this.source.controller.state; }
     get observationIdentity(): string | undefined { return this.source.controller.observationIdentity; }
+    get catalog(): CatalogControl | undefined {
+        const controller=this.source.controller;
+        if(!controller.catalogRead||!controller.catalogPrepare||!controller.catalogApply||!controller.catalogReconcile||!controller.catalogPending)return undefined;
+        return {catalogRead:controller.catalogRead.bind(controller),catalogPrepare:controller.catalogPrepare.bind(controller),catalogApply:controller.catalogApply.bind(controller),catalogReconcile:controller.catalogReconcile.bind(controller),catalogPending:controller.catalogPending.bind(controller)};
+    }
     projects(): ProjectSummary[] { return projectSummaries(this.state); }
     connection(): ConnectionState { return connectionOf(this.state, this.extensionVersion); }
     observedAt(): number | undefined { return (this.state.inactiveProjects ? this.state.activePage : this.state.page)?.observed_unix_ms; }

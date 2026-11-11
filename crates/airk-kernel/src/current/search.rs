@@ -266,7 +266,13 @@ pub(crate) fn search_current_read_with_filters(
     } else {
         None
     };
-    let scoped_paths = filtered_paths(&read, query, filters)?;
+    // Permission-only lexical reads are already scoped inside candidate SQL,
+    // before LIMIT. Vector branches require the scoped subset roster.
+    let scoped_paths = if matches!(mode, CurrentSearchMode::Lexical) && filters.is_empty() {
+        None
+    } else {
+        filtered_paths(&read, query, filters)?
+    };
     let mut branches = Vec::new();
     if matches!(mode, CurrentSearchMode::Lexical | CurrentSearchMode::Hybrid) {
         let lexical = open_selected_lexical(store, &read)?;
@@ -317,8 +323,9 @@ pub(crate) fn search_current_read_with_filters(
                     return Err(error.context(SearchUnavailable {
                         requested_mode,
                         publication: Some(super::runtime::envelope(&read)?),
-                        semantic_readiness: Some(semantic_readiness),
-                        discovery_readiness: Some(discovery_readiness),
+                        semantic_readiness: (!read.restricts_paths()).then_some(semantic_readiness),
+                        discovery_readiness: (!read.restricts_paths())
+                            .then_some(discovery_readiness),
                     }));
                 }
             }
@@ -409,7 +416,7 @@ fn filtered_paths(
     query: &SearchQuery,
     filters: &SearchFilters,
 ) -> Result<Option<ScopedPaths>> {
-    if filters.is_empty() {
+    if filters.is_empty() && !read.restricts_paths() {
         return Ok(None);
     }
     let lookup = filters
