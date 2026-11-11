@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native user identity selects defaults; XDG locations remain explicit user environment policy.
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use serde::Serialize;
 #[cfg(any(target_os = "linux", test))]
 use std::ffi::OsString;
@@ -73,34 +73,9 @@ pub(crate) fn home() -> Result<PathBuf> {
     airk_process::user_folders::home()
 }
 
+/// Moved to `airk-process` (U86); forwarded for existing callers.
 pub(crate) fn canonical_location(path: &Path) -> Result<PathBuf> {
-    checked(path.to_path_buf())?;
-    ensure!(
-        !path
-            .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir)),
-        "parent traversal is not a native location"
-    );
-    let mut parent = path.to_path_buf();
-    let mut suffix = Vec::new();
-    while !parent.try_exists()? {
-        suffix.push(
-            parent
-                .file_name()
-                .context("missing native location ancestor")?
-                .to_owned(),
-        );
-        ensure!(parent.pop(), "missing native location ancestor");
-    }
-    ensure!(
-        parent.is_dir(),
-        "native location ancestor must be a directory"
-    );
-    let mut resolved = parent.canonicalize()?;
-    for part in suffix.into_iter().rev() {
-        resolved.push(part);
-    }
-    checked(resolved)
+    airk_process::user_folders::canonical_location(path)
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -346,6 +321,7 @@ impl UserPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::ensure;
     fn fixture_paths(base: &Path, channel: Channel) -> UserPaths {
         let leaf = channel.legacy_leaf();
         UserPaths {

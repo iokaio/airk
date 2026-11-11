@@ -157,3 +157,50 @@ pub fn render(page: &LogPage) -> Result<String> {
     ensure!(text.len() <= 48 << 10, "diagnostic summary exceeds bound");
     Ok(text)
 }
+
+/// The summary ring's folder and its ownership record, beside the control
+/// root (U86/U89; moved from `airk-cli`).
+pub const LOG_DIRECTORY: &str = "logs-1.4";
+pub const LOG_OWNER: &str = "logs-1.4.owner.json";
+/// The raw job-error ring's folder and its ownership record.
+pub const RAW_LOG_DIRECTORY: &str = "job-errors-1";
+pub const RAW_LOG_OWNER: &str = "job-errors-1.owner.json";
+/// Ring files, newest first.
+pub const LOG_FILES: [&str; 21] = [
+    "current.jsonl",
+    "previous-1.jsonl",
+    "previous-2.jsonl",
+    "previous-3.jsonl",
+    "previous-4.jsonl",
+    "previous-5.jsonl",
+    "previous-6.jsonl",
+    "previous-7.jsonl",
+    "previous-8.jsonl",
+    "previous-9.jsonl",
+    "previous-10.jsonl",
+    "previous-11.jsonl",
+    "previous-12.jsonl",
+    "previous-13.jsonl",
+    "previous-14.jsonl",
+    "previous-15.jsonl",
+    "previous-16.jsonl",
+    "previous-17.jsonl",
+    "previous-18.jsonl",
+    "previous-19.jsonl",
+    "previous-20.jsonl",
+];
+/// The largest ring file.
+pub const MAX_LOG_FILE_BYTES: u64 = 10_000_000;
+/// The retention high-water mark of a ring.
+pub const MAX_RETAINED_LOG_BYTES: u64 = 200_000_000;
+/// How much of the newest files a recent page reads.
+pub const RECENT_READ_BYTES: usize = 64 << 10;
+
+/// The ownership digest a ring's owner record holds: the control root's
+/// canonical location (U86; moved from `airk-cli`).
+pub fn owner_digest(canonical_root: &std::path::Path) -> Sha256Digest {
+    crate::identity::framed_digest(
+        b"airk-diagnostic-log-owner/1.4",
+        &[canonical_root.as_os_str().as_encoded_bytes()],
+    )
+}

@@ -4,7 +4,10 @@
 //! overrides. Moved from `airk-cli` `user_paths.rs` by
 //! `scripts/dev/split_u84b_user_folders.py`; shared by the service and `airkctl`.
 use anyhow::{Context, Result, ensure};
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 /// The Known Folders AIRK resolves on Windows.
 #[cfg(windows)]
@@ -149,4 +152,36 @@ pub fn home() -> Result<PathBuf> {
 #[cfg(not(any(windows, unix)))]
 pub fn home() -> Result<PathBuf> {
     anyhow::bail!("native user directories are unsupported on this platform")
+}
+
+/// An absolute location whose existing ancestor is canonicalized and whose
+/// missing suffix is kept; parent traversal is refused (U86).
+pub fn canonical_location(path: &Path) -> Result<PathBuf> {
+    checked(path.to_path_buf())?;
+    ensure!(
+        !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir)),
+        "parent traversal is not a native location"
+    );
+    let mut parent = path.to_path_buf();
+    let mut suffix = Vec::new();
+    while !parent.try_exists()? {
+        suffix.push(
+            parent
+                .file_name()
+                .context("missing native location ancestor")?
+                .to_owned(),
+        );
+        ensure!(parent.pop(), "missing native location ancestor");
+    }
+    ensure!(
+        parent.is_dir(),
+        "native location ancestor must be a directory"
+    );
+    let mut resolved = parent.canonicalize()?;
+    for part in suffix.into_iter().rev() {
+        resolved.push(part);
+    }
+    checked(resolved)
 }

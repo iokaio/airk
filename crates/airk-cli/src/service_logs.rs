@@ -18,36 +18,15 @@ use std::{
     thread::JoinHandle,
 };
 
-const DIRECTORY: &str = "logs-1.4";
-const OWNER: &str = "logs-1.4.owner.json";
-const FILES: [&str; 21] = [
-    "current.jsonl",
-    "previous-1.jsonl",
-    "previous-2.jsonl",
-    "previous-3.jsonl",
-    "previous-4.jsonl",
-    "previous-5.jsonl",
-    "previous-6.jsonl",
-    "previous-7.jsonl",
-    "previous-8.jsonl",
-    "previous-9.jsonl",
-    "previous-10.jsonl",
-    "previous-11.jsonl",
-    "previous-12.jsonl",
-    "previous-13.jsonl",
-    "previous-14.jsonl",
-    "previous-15.jsonl",
-    "previous-16.jsonl",
-    "previous-17.jsonl",
-    "previous-18.jsonl",
-    "previous-19.jsonl",
-    "previous-20.jsonl",
-];
-const FILE_BYTES: u64 = 10_000_000;
-const HIGH_WATER_BYTES: u64 = 200_000_000;
+// The log layout is shared with `airkctl` (U86): `airk_core::service_logs`.
+const DIRECTORY: &str = airk_core::service_logs::LOG_DIRECTORY;
+const OWNER: &str = airk_core::service_logs::LOG_OWNER;
+const FILES: [&str; 21] = airk_core::service_logs::LOG_FILES;
+const FILE_BYTES: u64 = airk_core::service_logs::MAX_LOG_FILE_BYTES;
+const HIGH_WATER_BYTES: u64 = airk_core::service_logs::MAX_RETAINED_LOG_BYTES;
 const LOW_WATER_BYTES: u64 = 100_000_000;
 const RECORD_BYTES: usize = airk_core::service_logs::MAX_RECORD_BYTES;
-const READ_BYTES: usize = 64 << 10;
+const READ_BYTES: usize = airk_core::service_logs::RECENT_READ_BYTES;
 
 mod raw;
 pub(crate) const OWNER_RECORDS: [&str; 2] = [OWNER, raw::OWNER];
@@ -65,14 +44,9 @@ struct Owner {
 fn expected_owner(root: &Path) -> Result<Owner> {
     Ok(Owner {
         schema: 1,
-        root: airk_core::identity::framed_digest(
-            b"airk-diagnostic-log-owner/1.4",
-            &[
-                crate::user_paths::canonical_location(&std::path::absolute(root)?)?
-                    .as_os_str()
-                    .as_encoded_bytes(),
-            ],
-        ),
+        root: airk_core::service_logs::owner_digest(&crate::user_paths::canonical_location(
+            &std::path::absolute(root)?,
+        )?),
     })
 }
 

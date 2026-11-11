@@ -4616,3 +4616,88 @@ fn airkctl_lifecycle_stops_restarts_and_settles_the_ledger() -> Result<()> {
     ensure!(!saved.service_explicitly_stopped()?);
     Ok(())
 }
+
+/// `airkctl service logs` prints what `airk service logs` printed, from the
+/// running service (recent pages over IPC) and from the files after it stopped;
+/// `--output-file` is the U79 name of `--output` (split U86/U88/U89, 3b.1f-2).
+#[test]
+fn airkctl_service_logs_print_what_airk_printed() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let compare = |phase: &str| -> Result<()> {
+        for case in [
+            &[][..],
+            &["--format", "text"],
+            &["--limit", "3"],
+            &["--all"],
+            &["--raw"],
+        ] {
+            let old = command()
+                .args(["service", "logs", "--runtime-dir", &dir])
+                .args(case)
+                .output()?;
+            ensure!(
+                old.status.success(),
+                "airk {case:?}: {}",
+                String::from_utf8_lossy(&old.stderr)
+            );
+            let line: Vec<&str> = ["service", "logs", "--runtime-dir", &dir]
+                .into_iter()
+                .chain(case.iter().copied())
+                .collect();
+            let (code, stdout, stderr) = airkctl(&line);
+            ensure!(code == 0, "airkctl {case:?}: {stderr}");
+            ensure!(
+                stdout.as_bytes() == old.stdout.as_slice(),
+                "{phase} {case:?} differs:\n{}\n---\n{stdout}",
+                String::from_utf8_lossy(&old.stdout)
+            );
+        }
+        let old_file = owner.path().join(format!("{phase}-airk.json"));
+        let new_file = owner.path().join(format!("{phase}-airkctl.json"));
+        let old = command()
+            .args([
+                "service",
+                "logs",
+                "--runtime-dir",
+                &dir,
+                "--all",
+                "--output",
+            ])
+            .arg(&old_file)
+            .output()?;
+        ensure!(
+            old.status.success(),
+            "{}",
+            String::from_utf8_lossy(&old.stderr)
+        );
+        let new_path = new_file.to_str().context("capture path")?;
+        let (code, stdout, stderr) = airkctl(&[
+            "service",
+            "logs",
+            "--runtime-dir",
+            &dir,
+            "--all",
+            "--output-file",
+            new_path,
+        ]);
+        ensure!(code == 0, "{stderr}");
+        ensure!(
+            stdout.as_bytes() == old.stdout.as_slice(),
+            "{phase} capture line"
+        );
+        ensure!(
+            fs::read(&old_file)? == fs::read(&new_file)?,
+            "{phase} capture bytes"
+        );
+        Ok(())
+    };
+    compare("running")?;
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "service exits cleanly");
+    compare("stopped")?;
+    Ok(())
+}

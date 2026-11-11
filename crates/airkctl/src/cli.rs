@@ -23,7 +23,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Capabilities of the served operations of this build (contracts §3.5).
@@ -131,6 +131,26 @@ enum ServiceCommand {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
+    },
+    /// Read the service's diagnostic logs (recent from the running service; all, raw or
+    /// stopped-service reads from the local files).
+    Logs {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long, default_value_t = 32)]
+        limit: usize,
+        /// Export retained logs locally (200 MB high-water, FIFO purge to 100 MB).
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
+        /// Open the separate local raw job-error ring (may contain paths/error values).
+        #[arg(long, conflicts_with_all = ["all", "limit", "format"])]
+        raw: bool,
+        /// Capture raw retained diagnostics into a new local file without buffering stdout (U79).
+        #[arg(long)]
+        output_file: Option<PathBuf>,
+        #[arg(long, default_value = "json", value_parser = ["json", "text"])]
+        format: String,
     },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
@@ -676,8 +696,139 @@ fn lifecycle_service(
     }
 }
 
+/// `service logs` (U86/U88/U89; step 3b.1f-2), printing what `airk service
+/// logs` printed: recent pages from the running service (`Logs`), otherwise and
+/// for `--all`/`--raw` the local files through the shared parser.
+fn logs_service(cx: &mut Context, selection: Selection, options: LogOptions) -> u8 {
+    let control = match options.runtime_dir.clone().or(selection.control) {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    match read_logs(cx, &control, options) {
+        Ok(code) => code,
+        Err(error) => fail(
+            cx,
+            &ErrorLine::new(
+                ExitClass::Refused,
+                "diagnostic_logs_unavailable",
+                false,
+                &format!("{error:#}"),
+            ),
+        ),
+    }
+}
+
+/// `service logs` arguments.
+struct LogOptions {
+    runtime_dir: Option<PathBuf>,
+    limit: usize,
+    all: bool,
+    raw: bool,
+    output_file: Option<PathBuf>,
+    format: String,
+}
+
+/// A new file written through a temporary sibling and never replacing one.
+fn capture(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> anyhow::Result<()>,
+) -> anyhow::Result<u64> {
+    use anyhow::Context as _;
+    let mut file = tempfile::NamedTempFile::new_in(
+        path.parent().context("diagnostic output parent missing")?,
+    )?;
+    write(file.as_file_mut())?;
+    file.as_file().sync_all()?;
+    let written = file.as_file().metadata()?.len();
+    file.persist_noclobber(path)?;
+    Ok(written)
+}
+
+fn read_logs(cx: &mut Context, control: &Path, options: LogOptions) -> anyhow::Result<u8> {
+    if options.raw {
+        if let Some(path) = &options.output_file {
+            let mut captured = 0;
+            capture(path, |file| {
+                captured = crate::logs::export_raw_to(control, file)?;
+                Ok(())
+            })?;
+            let line = serde_json::json!({"written_bytes": captured}).to_string();
+            let result = writeln!(cx.io.stdout, "{line}");
+            return Ok(written(cx, result));
+        }
+        let mut bytes = Vec::new();
+        crate::logs::export_raw_to(control, &mut bytes)?;
+        let result = cx.io.stdout.write_all(&bytes);
+        return Ok(written(cx, result));
+    }
+    if options.all && options.format != "json" {
+        return Ok(usage(cx, "full log export requires JSON format"));
+    }
+    if options.output_file.is_some() && !(options.all && options.format == "json") {
+        return Ok(usage(
+            cx,
+            "file capture requires --raw or --all --format json",
+        ));
+    }
+    let page = if options.all {
+        crate::logs::export(control)?
+    } else {
+        match crate::service::request(
+            control,
+            ControlMethod::Logs {
+                limit: options.limit,
+            },
+            VERSION,
+        ) {
+            Ok(ControlResponse::Logs { page }) => page,
+            Err(line) if line.class == ExitClass::ServiceMissing => {
+                crate::logs::recent(control, options.limit)?
+            }
+            Ok(other) => return Ok(fail(cx, &crate::service::refusal(&other))),
+            Err(line) => return Ok(fail(cx, &line)),
+        }
+    };
+    if let Some(path) = &options.output_file {
+        let captured = capture(path, |file| Ok(serde_json::to_writer(file, &page)?))?;
+        let line = serde_json::json!({"written_bytes": captured}).to_string();
+        let result = writeln!(cx.io.stdout, "{line}");
+        return Ok(written(cx, result));
+    }
+    let text = if options.format == "text" {
+        airk_core::service_logs::render(&page)?
+    } else {
+        serde_json::to_string(&page)?
+    };
+    let result = writeln!(cx.io.stdout, "{text}");
+    Ok(written(cx, result))
+}
+
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        ServiceCommand::Logs {
+            runtime_dir,
+            limit,
+            all,
+            raw,
+            output_file,
+            format,
+        } => {
+            return logs_service(
+                cx,
+                selection,
+                LogOptions {
+                    runtime_dir,
+                    limit,
+                    all,
+                    raw,
+                    output_file,
+                    format,
+                },
+            );
+        }
         ServiceCommand::Start { runtime_dir } => {
             return start_service(cx, selection, runtime_dir);
         }

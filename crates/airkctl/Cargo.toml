@@ -21,6 +21,8 @@ anyhow.workspace = true
 clap.workspace = true
 # Start-request nonces; already in the graph (airk-kernel) at this version.
 getrandom.workspace = true
+# No-clobber file capture for `service logs --output-file`; already in the graph.
+tempfile.workspace = true
 # Already in the dependency graph through rmcp at this version and feature set
 # (split plan U47 pilot); no new third-party identity.
 schemars = "1.2.2"
@@ -29,9 +31,6 @@ serde_json.workspace = true
 sha2.workspace = true
 # The I1 client is async (airk-ipc); one current-thread runtime per command.
 tokio.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [[bin]]
 name = "airkctl"

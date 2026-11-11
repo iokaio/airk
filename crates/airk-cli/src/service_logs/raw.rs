@@ -3,8 +3,8 @@
 use super::*;
 use std::fmt::Write as _;
 
-const DIRECTORY: &str = "job-errors-1";
-pub(super) const OWNER: &str = "job-errors-1.owner.json";
+const DIRECTORY: &str = airk_core::service_logs::RAW_LOG_DIRECTORY;
+pub(super) const OWNER: &str = airk_core::service_logs::RAW_LOG_OWNER;
 // Keep worst-case JSON escaping plus progress inside the 64 KiB worker frame.
 const DETAIL_BYTES: usize = 8 << 10;
 // JSON escaping can use six bytes for one byte of diagnostic text.

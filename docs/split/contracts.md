@@ -119,7 +119,7 @@ current classes, `session_commands.rs:102` [V]).
 | M10 | `ModelCatalog { cpu: Option<String> }` | `ModelCatalog { document: Value }` | `airk_retrieval::model_catalog::inspect_catalog` :260; `bundled_assets::manifest` :72 | R | Read |
 | M11 | `ExplorerOffline { operation: DraftSearch \| DraftStrategy \| DraftPlan \| SuggestView \| ValidateDraft \| ListTemplates \| GetTemplate \| ProposalStatus, arguments: Value, document: Option<String> }` | `ExplorerOffline { result: Value }` | `airk_mcp::explorer_offline::{draft :187, validate_draft :234, list_templates :256, get_template :298, proposal_status :329}` | R | Pure; `airkctl` reads input files and writes `--output` files as the invoking user |
 | M12 | `ExplorerHandoff { handoff_id }` | `ExplorerHandoff { handoff: Value }` | Today `unified_mcp::call_explorer` :1049 (window pipe); after C3 reads the W8 store (P0 decision: handoffs flow through the window session) | R | Read |
-| M13 | `LogsExport { scope: All \| Raw, format: Json \| Text, cursor?, limit }` | `LogsPage { chunk: Value, next: Option<cursor> }` | `service_logs::recent` :496, `export` :505, `render` :579; `raw::export` :162 (`Logs{limit}` keeps "recent") | R | Read |
+| M13 [amended U88: not added] | — (recent pages use the existing `Logs { limit }`) | `Logs { page }` | `service_logs::recent` :496 for recent; `--all`/`--raw` stay local reads in `airkctl` through `airk_core::service_logs` (U86), never over IPC | R | Read |
 | M14 | `RecordClientError { client: ClientFamily, nonce, code, message }` (message ≤ 4 KiB) | `ClientErrorRecorded { duplicate: bool }` | `service_logs::record_client_error` `raw.rs:122` | M | Dedup by `nonce` within the ring [P] |
 | M15 | `HttpConnectionInfo { connection_id }` | `HttpConnectionInfo { info: Value }` (no token) | `http_commands::existing_connection` :156 | R | Read |
 | M16 | `HttpConnectionOwnership { connection_id?, purpose }` | `HttpConnectionOwnership { result: Value }` | `http_commands::lookup_connection` :224 without staged-selection checks | R | Read |
@@ -312,7 +312,7 @@ exchange body.
 | N1 | 64 KiB | 16 MiB proposed; settled with its handler in 3c | Usage reads |
 | M2 | 64 KiB | 1 MiB | Catalog with schemas |
 | M11 | 1 MiB + 64 KiB | 1 MiB | `proposal-status` reads ≤ 1 MiB today [V commands.md E] |
-| M13 | 64 KiB | 1 MiB per page | Paged export |
+| M13 | — | — | Not added (U88): recent pages use `Logs`, full and raw exports stay local |
 | W6 | 320 KiB | 64 KiB | Draft ≤ 256 KiB |
 
 ## 3. I2 — `airkctl` command contract
