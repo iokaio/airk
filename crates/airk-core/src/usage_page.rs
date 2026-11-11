@@ -33,9 +33,9 @@ pub struct Page {
     pub record_bytes: usize,
     pub total_items: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope_observation: Option<airk_core::scoped_reads::ScopeObservation>,
+    pub scope_observation: Option<crate::scoped_reads::ScopeObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope_publication: Option<airk_core::evidence::RevisionEnvelope>,
+    pub scope_publication: Option<crate::evidence::RevisionEnvelope>,
 }
 
 fn split(value: Value, path: &mut Vec<Part>, records: &mut Vec<Record>) -> Result<()> {
@@ -102,8 +102,8 @@ pub fn scoped_page(
     value: Value,
     cursor: Option<&str>,
     max_bytes: usize,
-    observation: airk_core::scoped_reads::ScopeObservation,
-    publication: airk_core::evidence::RevisionEnvelope,
+    observation: crate::scoped_reads::ScopeObservation,
+    publication: crate::evidence::RevisionEnvelope,
 ) -> Result<Page> {
     observation.validate()?;
     ensure!(
@@ -130,8 +130,8 @@ fn page_inner(
     value: Value,
     cursor: Option<&str>,
     max_bytes: usize,
-    scope_observation: Option<airk_core::scoped_reads::ScopeObservation>,
-    scope_publication: Option<airk_core::evidence::RevisionEnvelope>,
+    scope_observation: Option<crate::scoped_reads::ScopeObservation>,
+    scope_publication: Option<crate::evidence::RevisionEnvelope>,
 ) -> Result<Page> {
     ensure!(
         (20 << 10..=48 << 10).contains(&max_bytes),
@@ -195,7 +195,7 @@ fn page_inner(
         result.items.push(record);
     }
     if result.items.is_empty() && result.scope_observation.is_some() {
-        return Err(airk_core::scoped_reads::ScopeReplyBudget {
+        return Err(crate::scoped_reads::ScopeReplyBudget {
             required_bytes: first_required.unwrap_or(1024 + scope_bytes),
             maximum_bytes: max_bytes,
         }

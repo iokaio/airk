@@ -452,6 +452,7 @@ pub mod storage_format;
 
 pub mod inference_provider;
 pub mod rebuild;
+pub mod usage_page;
 
 #[cfg(test)]
 mod wire_fixture_tests;

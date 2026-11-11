@@ -62,7 +62,8 @@ mod tokenization;
 #[cfg(not(feature = "local-inference"))]
 use remote_tokenization as tokenization;
 pub mod usage;
-pub mod usage_page;
+/// Moved to `airk-core` (split plan C1); re-exported so existing paths resolve.
+pub use airk_core::usage_page;
 pub mod vectors;
 pub mod verification;
 pub mod watcher;
