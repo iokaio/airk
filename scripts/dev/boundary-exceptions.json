@@ -223,20 +223,6 @@
   "module_honesty": [
     {
       "kind": "path",
-      "file": "crates/airk-cli/src/local_ipc_windows.rs",
-      "value": "local_ipc_windows_job.rs",
-      "reason_class": "platform-switch-child",
-      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
-    },
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/src/local_ipc_windows.rs",
-      "value": "local_ipc_windows_path_tests.rs",
-      "reason_class": "platform-switch-child",
-      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
-    },
-    {
-      "kind": "path",
       "file": "crates/airk-cli/tests/catalog_upgrade.rs",
       "value": "common/read_retry.rs",
       "reason_class": "multi-declaration",

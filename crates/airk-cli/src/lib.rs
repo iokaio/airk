@@ -28,7 +28,9 @@ mod http_gateway;
 pub(crate) mod inference_completion_ledger;
 #[cfg(feature = "local-inference")]
 pub(crate) mod inference_engine;
-pub mod local_ipc;
+pub mod ipc;
+/// Compatibility path (split G1): the transport moved to `ipc::endpoint`.
+pub use ipc::endpoint as local_ipc;
 mod native_admin_connections;
 pub(crate) mod read_attempt;
 mod reference_refresh_control;
@@ -43,7 +45,8 @@ mod runtime_metadata;
 pub mod runtime_pair;
 pub mod service_configuration;
 pub mod service_frontend;
-pub mod service_ipc;
+/// Compatibility path (split G1): the frame codec moved to `ipc::frame`.
+pub use ipc::frame as service_ipc;
 pub mod service_logs;
 mod service_management;
 pub mod service_registration;

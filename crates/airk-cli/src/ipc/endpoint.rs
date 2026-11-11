@@ -7,11 +7,13 @@ use std::{path::Path, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[cfg(windows)]
-#[path = "local_ipc_windows.rs"]
-mod platform;
+mod windows;
+#[cfg(windows)]
+use self::windows as platform;
 #[cfg(unix)]
-#[path = "local_ipc_unix.rs"]
-mod platform;
+mod unix;
+#[cfg(unix)]
+use self::unix as platform;
 pub(crate) use platform::require_existing_root;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
 #[cfg(windows)]

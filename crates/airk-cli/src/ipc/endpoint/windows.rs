@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit user-only pipe/file ACLs and native token checks on both connection ends.
-#[path = "local_ipc_windows_job.rs"]
 mod job;
 use anyhow::{Context, Result, ensure};
 pub(crate) use job::require_job_user;
@@ -477,5 +476,4 @@ impl AsyncWrite for Stream {
 }
 
 #[cfg(test)]
-#[path = "local_ipc_windows_path_tests.rs"]
 mod path_tests;
