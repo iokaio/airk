@@ -100,6 +100,15 @@ pub(super) fn admit_start(root: &Path, mode: StartMode) -> Result<()> {
     })
 }
 
+/// The saved explicit Stop and the pending lifecycle record (U87).
+pub(super) fn status(root: &Path) -> Result<(bool, Option<LifecycleRecord>)> {
+    let saved = ServiceRegistry::open_saved(root)?;
+    Ok((
+        saved.service_explicitly_stopped()?,
+        saved.pending_lifecycle()?,
+    ))
+}
+
 /// The typed failure code for a refused lifecycle request: the ledger's own
 /// snake-case refusal when it gave one, otherwise `lifecycle_unavailable`.
 pub(super) fn failure_code(error: &anyhow::Error) -> String {

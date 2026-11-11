@@ -152,6 +152,13 @@ enum ServiceCommand {
         #[arg(long, default_value = "json", value_parser = ["json", "text"])]
         format: String,
     },
+    /// Report the installation and whether the service is running, with its saved Stop and
+    /// any unfinished stop or restart.
+    Status {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
         /// The service's control directory (default: --service-runtime-dir).
@@ -226,13 +233,17 @@ fn own_digest() -> Option<String> {
 /// its channel. The pair is exact when the record names this version and this
 /// executable's digest.
 fn installation() -> (Installation, Option<String>) {
+    installation_of(&crate::install::discover())
+}
+
+fn installation_of(discovery: &crate::install::Discovery) -> (Installation, Option<String>) {
     let absent = |state| Installation {
         state,
         airk_version: None,
         pair: None,
         install_id: None,
     };
-    match crate::install::discover() {
+    match discovery {
         crate::install::Discovery::NotFound => (absent(InstallationState::NotFound), None),
         crate::install::Discovery::Unverified { .. } => {
             (absent(InstallationState::Unverified), None)
@@ -806,8 +817,124 @@ fn read_logs(cx: &mut Context, control: &Path, options: LogOptions) -> anyhow::R
     Ok(written(cx, result))
 }
 
+/// The service part of the status document for `control`.
+fn service_state(control: Option<&Path>) -> Result<crate::contract::ServiceState, ErrorLine> {
+    use crate::contract::ServiceState;
+    let Some(control) = control else {
+        return Ok(ServiceState::Unknown);
+    };
+    let instance = match crate::service::request(control, ControlMethod::Health, VERSION) {
+        Ok(ControlResponse::Health { observation }) => {
+            let instance = observation.instance;
+            (
+                instance,
+                serde_json::to_value(&observation).unwrap_or_default(),
+            )
+        }
+        Ok(other) => {
+            return Ok(ServiceState::Incompatible {
+                code: crate::service::refusal(&other).code,
+            });
+        }
+        Err(line) if line.class == ExitClass::ServiceMissing => {
+            return Ok(ServiceState::NotRunning);
+        }
+        Err(line) if line.class == ExitClass::IncompatiblePair => {
+            return Ok(ServiceState::Incompatible { code: line.code });
+        }
+        Err(line) => return Err(line),
+    };
+    let (instance, health) = instance;
+    match crate::service::request_fenced(
+        control,
+        ControlMethod::LifecycleStatus,
+        VERSION,
+        Some(instance),
+    )? {
+        ControlResponse::LifecycleStatus {
+            explicitly_stopped,
+            pending,
+        } => Ok(ServiceState::Running {
+            health,
+            explicitly_stopped,
+            pending_lifecycle: pending.and_then(|record| serde_json::to_value(record).ok()),
+        }),
+        other => Err(crate::service::refusal(&other)),
+    }
+}
+
+/// `service status` (U87; step 3b.1f-3): one report, exit 0 unless the
+/// service could not be asked.
+fn status_service(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>) -> u8 {
+    use crate::contract::{STATUS_SCHEMA, ServiceState, ServiceStatus};
+    let discovery = crate::install::discover();
+    let (installation, _) = installation_of(&discovery);
+    let control = runtime_dir.or(selection.control).or(match &discovery {
+        crate::install::Discovery::Verified(verified) => {
+            Some(PathBuf::from(&verified.record.locations.state))
+        }
+        _ => None,
+    });
+    let service = match service_state(control.as_deref()) {
+        Ok(service) => service,
+        Err(line) => return fail(cx, &line),
+    };
+    let status = ServiceStatus {
+        schema: STATUS_SCHEMA.into(),
+        installation,
+        service,
+    };
+    let result = match cx.output {
+        Output::Json => match serde_json::to_string(&status) {
+            Ok(text) => writeln!(cx.io.stdout, "{text}"),
+            Err(_) => return ExitClass::Internal.code(),
+        },
+        Output::Text => {
+            let installation = match status.installation.state {
+                InstallationState::Complete => "complete",
+                InstallationState::Incomplete => "incomplete",
+                InstallationState::NotFound => "not found",
+                InstallationState::Unverified => "unverified",
+            };
+            let service = match &status.service {
+                ServiceState::Unknown => {
+                    "unknown (no control directory; pass --runtime-dir)".to_owned()
+                }
+                ServiceState::NotRunning => "not running".to_owned(),
+                ServiceState::Incompatible { code } => format!("incompatible ({code})"),
+                ServiceState::Running {
+                    health,
+                    explicitly_stopped,
+                    pending_lifecycle,
+                } => format!(
+                    "running (instance {}, version {})\nsaved stop: {}\npending lifecycle: {}",
+                    health["instance"].as_str().unwrap_or_default(),
+                    health["version"].as_str().unwrap_or_default(),
+                    if *explicitly_stopped { "yes" } else { "no" },
+                    match pending_lifecycle {
+                        Some(record) => format!(
+                            "{} {}",
+                            record["request"]["action"].as_str().unwrap_or_default(),
+                            record["phase"].as_str().unwrap_or_default()
+                        ),
+                        None => "none".to_owned(),
+                    }
+                ),
+            };
+            writeln!(
+                cx.io.stdout,
+                "installation: {installation}\nservice: {service}"
+            )
+        }
+    };
+    written(cx, result)
+}
+
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        ServiceCommand::Status { runtime_dir } => {
+            return status_service(cx, selection, runtime_dir);
+        }
         ServiceCommand::Logs {
             runtime_dir,
             limit,

@@ -4701,3 +4701,49 @@ fn airkctl_service_logs_print_what_airk_printed() -> Result<()> {
     compare("stopped")?;
     Ok(())
 }
+
+/// `airkctl service status` reports a running service with its health, saved
+/// Stop and pending lifecycle record, and a stopped one as not running (U87,
+/// split 3b.1f-3).
+#[test]
+fn airkctl_service_status_reports_running_and_stopped() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let mut children = Children(vec![start(&root)?]);
+    let health = wait_ready(&root)?;
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let status = || -> Result<Value> {
+        let (code, stdout, stderr) = airkctl(&[
+            "--output",
+            "json",
+            "service",
+            "status",
+            "--runtime-dir",
+            &dir,
+        ]);
+        ensure!(code == 0, "status failed: {stderr}");
+        Ok(serde_json::from_str(&stdout)?)
+    };
+    let running = status()?;
+    ensure!(running["schema"] == "airkctl-service-status/1", "{running}");
+    let service = &running["service"];
+    ensure!(service["state"] == "running", "{running}");
+    ensure!(
+        service["health"]["instance"] == health["observation"]["instance"],
+        "{running}"
+    );
+    ensure!(service["explicitly_stopped"] == false, "{running}");
+    ensure!(service["pending_lifecycle"].is_null(), "{running}");
+    let (code, text, stderr) = airkctl(&["service", "status", "--runtime-dir", &dir]);
+    ensure!(code == 0, "{stderr}");
+    ensure!(
+        text.contains("\nservice: running (instance ")
+            && text.contains("\nsaved stop: no\npending lifecycle: none\n"),
+        "{text}"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "service exits cleanly");
+    let stopped = status()?;
+    ensure!(stopped["service"]["state"] == "not_running", "{stopped}");
+    Ok(())
+}
