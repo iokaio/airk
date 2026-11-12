@@ -9,6 +9,7 @@ use airk_core::{
     service::{
         ControlMethod, ControlResponse, JobKind, PendingClientRequest, ProjectBinding, RequestKey,
     },
+    service_configuration::{ConfigurationDraft, ConfigurationRequest},
 };
 use std::{path::Path, time::Duration};
 
@@ -65,6 +66,64 @@ pub fn prepare(
     project: ProjectBinding,
     kind: JobKind,
 ) -> Result<Incarnation, ErrorLine> {
+    journal(control, version, |caller, key| ControlMethod::Enqueue {
+        project,
+        caller,
+        key,
+        kind,
+    })
+}
+
+/// M9: the guarded configuration request for a draft.
+pub fn configuration(
+    control: &Path,
+    version: &str,
+    project: ProjectBinding,
+    draft: ConfigurationDraft,
+) -> Result<ConfigurationRequest, ErrorLine> {
+    match crate::service::request(
+        control,
+        ControlMethod::PrepareConfiguration { project, draft },
+        version,
+    )? {
+        ControlResponse::ConfigurationPrepared { request } => Ok(*request),
+        response @ ControlResponse::ConfigurationRefused { .. } => {
+            let ControlResponse::ConfigurationRefused { message } = &response else {
+                unreachable!()
+            };
+            let mut line = ErrorLine::new(ExitClass::Refused, "operation_failed", false, message);
+            line.native = serde_json::to_value(&response).ok();
+            Err(line)
+        }
+        other => Err(crate::service::refusal(&other)),
+    }
+}
+
+/// M9 then M5, in `airk`'s order: prepare the draft, then journal the keyed
+/// `ConfigureProject`; returns the nonce.
+pub fn prepare_configuration(
+    control: &Path,
+    version: &str,
+    project: ProjectBinding,
+    draft: ConfigurationDraft,
+) -> Result<Incarnation, ErrorLine> {
+    let request = Box::new(configuration(control, version, project, draft)?);
+    journal(control, version, |caller, key| {
+        ControlMethod::ConfigureProject {
+            project,
+            caller,
+            key,
+            request,
+        }
+    })
+}
+
+/// M5 for one keyed request: the epoch, a caller and nonce minted once.
+fn journal(
+    control: &Path,
+    version: &str,
+    request: impl FnOnce(Incarnation, RequestKey) -> ControlMethod,
+) -> Result<Incarnation, ErrorLine> {
     let (namespace, epoch) = epoch(control, version)?;
     let caller = mint()?;
     let key = RequestKey {
@@ -75,12 +134,7 @@ pub fn prepare(
     let method = ControlMethod::ClientRequestPrepare {
         caller,
         key: key.clone(),
-        request: Box::new(ControlMethod::Enqueue {
-            project,
-            caller,
-            key,
-            kind,
-        }),
+        request: Box::new(request(caller, key)),
     };
     match crate::service::request(control, method, version) {
         Ok(ControlResponse::ClientRequestPrepared { nonce, .. }) => Ok(nonce),

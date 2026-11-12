@@ -116,6 +116,18 @@ enum Command {
     /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant.
     /// Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airkctl service register --runtime-dir <control>` instead.
     Init,
+    /// Apply a guarded project configuration draft from --file or --stdin (JSON with an "operation").
+    Configure {
+        #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Local usage reporting for the selected project: report, policy, configure (mode), clear, feedback, import, calibrate.
+    Usage {
+        #[command(subcommand)]
+        action: UsageCommand,
+    },
     /// Queue indexing for the project (full rebuilds need a reviewed maintenance preview).
     Index {
         #[arg(long)]
@@ -151,7 +163,67 @@ enum Command {
 
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
+enum UsageCommand {
+    /// Summarize recorded usage for the last --days (json, csv or markdown; optional price scenario file).
+    Report {
+        #[arg(long, default_value_t = 7)]
+        days: u16,
+        #[arg(long, default_value = "json", value_parser = ["json", "csv", "markdown"])]
+        format: String,
+        #[arg(long)]
+        price_scenario: Option<PathBuf>,
+    },
+    /// Show the project's usage recording mode and retention.
+    Policy,
+    /// Delete recorded usage for the project.
+    Clear,
+    /// Set the recording mode: disabled, aggregates_only or diagnostic_events.
+    #[command(name = "configure", alias = "set")]
+    Set {
+        #[arg(long, value_parser = ["disabled", "aggregates_only", "diagnostic_events"])]
+        mode: String,
+    },
+    /// Record whether one returned request was useful, partly useful or not useful.
+    Feedback {
+        request_id: String,
+        #[arg(long, value_parser = ["useful", "partly_useful", "not_useful", "partly-useful", "not-useful"])]
+        usefulness: String,
+    },
+    /// Import a usage export; --preview shows what would change and --if-sha256 pins the file.
+    Import {
+        file: PathBuf,
+        #[arg(long)]
+        preview: bool,
+        #[arg(long)]
+        if_sha256: Option<airk_core::identity::Sha256Digest>,
+    },
+    /// Calibrate token estimates against a tokenizer and baseline/returned samples (advanced).
+    Calibrate {
+        #[arg(long)]
+        tokenizer: PathBuf,
+        #[arg(long)]
+        baseline: PathBuf,
+        #[arg(long)]
+        returned: PathBuf,
+        #[arg(long)]
+        generation: u64,
+        #[arg(long)]
+        content_kind: String,
+        #[arg(long)]
+        record: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
 enum RequestsCommand {
+    /// Save a configuration request for a project from a draft --file, without submitting it.
+    PrepareConfiguration {
+        #[arg(long)]
+        project: ProjectBinding,
+        #[arg(long)]
+        file: PathBuf,
+    },
     /// Save a job request (--kind index, inspect, reconcile, vectors, model_setup, verify, recover or maintain).
     Prepare {
         #[arg(long)]
@@ -234,6 +306,13 @@ enum ServiceCommand {
     },
     /// Print the canonical registration for --root/--data-dir/--collection, including its binding. Read-only.
     PrepareRegistration,
+    /// Prepare a guarded configuration request for a project; submit it with `requests retry`.
+    PrepareConfiguration {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: ProjectBinding,
+    },
     /// Create the reserved index storage for an already reserved project (owner-only on Unix).
     PrepareStorage {
         #[arg(long)]
@@ -875,6 +954,19 @@ fn registration_command(cx: &mut Context, selection: Selection, action: ServiceC
                 Err(line) => fail(cx, &line),
             }
         }
+        ServiceCommand::PrepareConfiguration {
+            runtime_dir,
+            project,
+        } => {
+            let draft = match read_draft(cx, None) {
+                Ok(draft) => draft,
+                Err(line) => return fail(cx, &line),
+            };
+            match crate::journal::configuration(&runtime_dir, VERSION, project, draft) {
+                Ok(request) => json_line(cx, &request),
+                Err(line) => fail(cx, &line),
+            }
+        }
         ServiceCommand::PrepareStorage {
             runtime_dir,
             project,
@@ -995,6 +1087,204 @@ fn job(cx: &mut Context, selection: Selection, kind: airk_core::service::JobKind
     printed
 }
 
+/// At most `limit` bytes of `input`, as `airk`'s `bounded` read them.
+fn bounded(input: &mut dyn std::io::Read, limit: u64) -> Result<Vec<u8>, ErrorLine> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    Read::take(input, limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| crate::registration::failed(&error.to_string()))?;
+    if bytes.len() as u64 > limit {
+        return Err(crate::registration::failed(
+            "native input exceeds byte budget",
+        ));
+    }
+    Ok(bytes)
+}
+
+/// A configuration draft from a file or standard input (16 KiB), parsed as
+/// `airk` parsed it.
+fn read_draft(
+    cx: &mut Context,
+    file: Option<&Path>,
+) -> Result<airk_core::service_configuration::ConfigurationDraft, ErrorLine> {
+    let limit = airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64;
+    let bytes = match file {
+        Some(file) => {
+            let mut file = std::fs::File::open(file)
+                .map_err(|error| crate::registration::failed(&error.to_string()))?;
+            bounded(&mut file, limit)?
+        }
+        None => bounded(cx.io.stdin, limit)?,
+    };
+    serde_json::from_slice(&bytes).map_err(|error| crate::registration::failed(&error.to_string()))
+}
+
+/// `configure` and the `usage` mutations (step 3c.5b), as `airk configure`
+/// ran them: a journaled inspection that must succeed within 90 s, then M9 and
+/// the journaled `ConfigureProject`, submitted, printed and forgotten.
+fn configure(
+    cx: &mut Context,
+    control: &Path,
+    project: ProjectBinding,
+    draft: airk_core::service_configuration::ConfigurationDraft,
+) -> u8 {
+    use airk_core::service::{JobKind, JobOutcome};
+    let failed = |cx: &mut Context, message: &str| fail(cx, &crate::registration::failed(message));
+    let nonce = match crate::journal::prepare(control, VERSION, project, JobKind::Inspect) {
+        Ok(nonce) => nonce,
+        Err(line) => return fail(cx, &line),
+    };
+    let job = match crate::journal::submit(control, VERSION, nonce) {
+        Ok(ControlResponse::Job { job }) => job,
+        Ok(_) => return failed(cx, "configuration inspection not acknowledged"),
+        Err(line) => return fail(cx, &line),
+    };
+    if let Err(line) = crate::journal::forget(control, VERSION, nonce) {
+        return fail(cx, &line);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    loop {
+        let job = match crate::service::request(control, ControlMethod::Job { id: job.id }, VERSION)
+        {
+            Ok(ControlResponse::Job { job }) => job,
+            Ok(_) => return failed(cx, "configuration inspection receipt unavailable"),
+            Err(line) => return fail(cx, &line),
+        };
+        if let Some(outcome) = job.outcome {
+            if !matches!(outcome, JobOutcome::Succeeded { .. }) {
+                return failed(cx, &format!("configuration inspection failed: {outcome:?}"));
+            }
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return failed(
+                cx,
+                &format!("configuration inspection is still pending: {}", job.id),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let nonce = match crate::journal::prepare_configuration(control, VERSION, project, draft) {
+        Ok(nonce) => nonce,
+        Err(line) => return fail(cx, &line),
+    };
+    let _ = writeln!(
+        cx.io.stderr,
+        "Saved CLI configuration request {nonce}; retry only with its saved key after uncertain outcomes."
+    );
+    let response = match crate::journal::submit(control, VERSION, nonce) {
+        Ok(response) => response,
+        Err(line) => return fail(cx, &line),
+    };
+    let printed = print_compact(cx, &response);
+    if let Err(line) = crate::journal::forget(control, VERSION, nonce) {
+        return fail(cx, &line);
+    }
+    printed
+}
+
+/// `configure --file|--stdin` (step 3c.5b).
+fn configure_command(cx: &mut Context, selection: Selection, file: Option<PathBuf>) -> u8 {
+    if let Err(code) = administrative(cx, &selection) {
+        return code;
+    }
+    let (control, registration) = match project_for(cx, &selection) {
+        Ok(found) => found,
+        Err(code) => return code,
+    };
+    match read_draft(cx, file.as_deref()) {
+        Ok(draft) => configure(cx, &control, registration.binding, draft),
+        Err(line) => fail(cx, &line),
+    }
+}
+
+/// `usage …` (step 3c.5b: the mutations and `import --preview`; `report`
+/// and `policy` are step 3c.5c).
+fn usage_command(cx: &mut Context, selection: Selection, action: UsageCommand) -> u8 {
+    use airk_core::service_configuration::ConfigurationDraft as Draft;
+    if matches!(action, UsageCommand::Report { .. } | UsageCommand::Policy) {
+        return not_yet_served(cx);
+    }
+    if let Err(code) = administrative(cx, &selection) {
+        return code;
+    }
+    let (control, registration) = match project_for(cx, &selection) {
+        Ok(found) => found,
+        Err(code) => return code,
+    };
+    fn parse<T: serde::de::DeserializeOwned>(value: &str) -> Result<T, serde_json::Error> {
+        serde_json::from_value(serde_json::json!(value))
+    }
+    let draft = match action {
+        UsageCommand::Import {
+            file,
+            preview: true,
+            ..
+        } => return import_preview(cx, &file, &registration.collection),
+        UsageCommand::Clear => Ok(Draft::ClearUsage),
+        UsageCommand::Set { mode } => parse(&mode).map(|mode| Draft::Usage { mode }),
+        UsageCommand::Feedback {
+            request_id,
+            usefulness,
+        } => parse(&usefulness.replace('-', "_")).map(|usefulness| Draft::UsageFeedback {
+            request_id,
+            usefulness,
+        }),
+        UsageCommand::Import {
+            file, if_sha256, ..
+        } => Ok(Draft::ImportUsage {
+            path: file,
+            expected_sha256: if_sha256,
+        }),
+        UsageCommand::Calibrate {
+            tokenizer,
+            baseline,
+            returned,
+            generation,
+            content_kind,
+            record,
+        } => parse(&content_kind).map(|content_kind| Draft::Calibrate {
+            tokenizer,
+            baseline,
+            returned,
+            generation,
+            content_kind,
+            record,
+        }),
+        UsageCommand::Report { .. } | UsageCommand::Policy => unreachable!("reads return above"),
+    };
+    match draft {
+        Ok(draft) => configure(cx, &control, registration.binding, draft),
+        Err(error) => fail(cx, &crate::registration::failed(&error.to_string())),
+    }
+}
+
+/// `usage import --preview`: the local, read-only measurement check `airk`
+/// ran (64 KiB, Core validation, no service call beyond resolution).
+fn import_preview(cx: &mut Context, file: &Path, collection: &str) -> u8 {
+    let checked = (|| -> Result<Value, String> {
+        let mut input = std::fs::File::open(file).map_err(|error| error.to_string())?;
+        let bytes = bounded(&mut input, 65_536).map_err(|line| line.message)?;
+        let input_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let measurement: airk_core::usage::SupplementalMeasurement =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        measurement
+            .validate()
+            .map_err(|error| format!("{error:#}"))?;
+        if measurement.provenance == airk_core::usage::MeasurementProvenance::LocalTokenizer {
+            return Err("local-tokenizer provenance requires usage calibrate".into());
+        }
+        Ok(
+            serde_json::json!({"preview":measurement,"input_sha256":input_sha256,"collection":collection,"recorded":false,"link_validation":"Native execution verifies retained request links and collection scope."}),
+        )
+    })();
+    match checked {
+        Ok(value) => json_line(cx, &value),
+        Err(message) => fail(cx, &crate::registration::failed(&message)),
+    }
+}
+
 /// `service requests …` (step 3c.3c), printing what `airk service requests`
 /// printed.
 fn requests(
@@ -1015,6 +1305,19 @@ fn requests(
         written(cx, result)
     };
     match action {
+        RequestsCommand::PrepareConfiguration { project, file } => {
+            let draft = match read_draft(cx, Some(&file)) {
+                Ok(draft) => draft,
+                Err(line) => return fail(cx, &line),
+            };
+            match crate::journal::prepare_configuration(&control, VERSION, project, draft) {
+                Ok(nonce) => line(
+                    cx,
+                    serde_json::json!({"prepared": nonce, "submitted": false}),
+                ),
+                Err(error) => fail(cx, &error),
+            }
+        }
         // Each entry prints in its field order (nonce, project, kind), as `airk`
         // printed its records; a JSON value would sort the keys.
         RequestsCommand::List => match crate::journal::list(&control, VERSION) {
@@ -1591,6 +1894,7 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
     let (runtime_dir, shutdown) = match action {
         action @ (ServiceCommand::Register { .. }
         | ServiceCommand::PrepareRegistration
+        | ServiceCommand::PrepareConfiguration { .. }
         | ServiceCommand::PrepareStorage { .. }) => {
             return registration_command(cx, selection, action);
         }
@@ -1708,6 +2012,8 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
         Command::Init => init(cx, selection),
+        Command::Configure { file, stdin: _ } => configure_command(cx, selection, file),
+        Command::Usage { action } => usage_command(cx, selection, action),
         Command::Index { full: true } => usage(
             cx,
             "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC",

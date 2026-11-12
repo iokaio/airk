@@ -1546,3 +1546,178 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// `configure`, the `usage` mutations, `usage import --preview` and both
+/// `prepare-configuration` commands (split step 3c.5b): `airkctl` prints what
+/// `airk` printed through M9 and the journal (jobs compared by project and
+/// kind; nonces normalized).
+#[test]
+fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-config");
+    let control = service.control.to_str().unwrap().to_owned();
+    let binding = service.project.binding.to_string();
+    let ctl = |arguments: &[&str], stdin: &str| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut input = stdin.as_bytes();
+        let mut io = airkctl::cli::Io {
+            stdin: &mut input,
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: true,
+        };
+        let line = std::iter::once("airkctl")
+            .chain([
+                "--service-runtime-dir",
+                &control,
+                "--service-project",
+                &binding,
+            ])
+            .chain(arguments.iter().copied())
+            .map(std::ffi::OsString::from)
+            .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let old = |arguments: &[&str], stdin: &str| -> anyhow::Result<(bool, String, String)> {
+        let mut child = common::command(root.path(), state.path(), "ctl-config")
+            .args(arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        child.stdin.take().unwrap().write_all(stdin.as_bytes())?;
+        let output = child.wait_with_output()?;
+        Ok((
+            output.status.success(),
+            String::from_utf8(output.stdout)?,
+            String::from_utf8(output.stderr)?,
+        ))
+    };
+    let message = |stderr: &str, prefix: &str| {
+        let line = stderr.lines().last().unwrap_or_default();
+        line.strip_prefix(prefix).unwrap_or(line).to_owned()
+    };
+
+    // A prepared request is a read: the same request for the same state.
+    let draft = r#"{"operation":"vectors","enabled":false}"#;
+    let prepare = [
+        "service",
+        "prepare-configuration",
+        "--runtime-dir",
+        &control,
+        "--project",
+        &binding,
+    ];
+    let (succeeded, before, stderr) = old(&prepare, draft)?;
+    assert!(succeeded, "{stderr}");
+    let (code, after, stderr) = ctl(&prepare, draft);
+    assert_eq!((code, after.as_str()), (0, before.as_str()), "{stderr}");
+
+    // Refusals print the same message: a malformed draft, an unknown mode
+    // value, a measurement that does not parse.
+    let measurement = state.path().join("measurement.json");
+    fs::write(&measurement, "{}")?;
+    let measurement = measurement.to_str().unwrap().to_owned();
+    for (arguments, stdin) in [
+        (vec!["configure", "--stdin"], "{\"operation\":\"bogus\"}"),
+        (vec!["usage", "import", &measurement, "--preview"], ""),
+    ] {
+        let (succeeded, stdout, old_stderr) = old(&arguments, stdin)?;
+        let (code, new_stdout, new_stderr) = ctl(&arguments, stdin);
+        assert!(!succeeded && code != 0, "{arguments:?}");
+        assert_eq!(new_stdout, stdout, "{arguments:?}");
+        assert_eq!(
+            message(&new_stderr, "airkctl: "),
+            message(&old_stderr, "Error: "),
+            "{arguments:?}"
+        );
+    }
+
+    // Mutations: the same job, and the same saved-request line.
+    let draft_file = state.path().join("draft.json");
+    fs::write(&draft_file, draft)?;
+    let draft_file = draft_file.to_str().unwrap().to_owned();
+    for arguments in [
+        vec!["configure", "--file", &draft_file],
+        vec!["usage", "clear"],
+        vec!["usage", "set", "--mode", "aggregates_only"],
+    ] {
+        let (succeeded, stdout, old_stderr) = old(&arguments, "")?;
+        let (code, new_stdout, new_stderr) = ctl(&arguments, "");
+        assert!(succeeded, "{arguments:?}: {old_stderr}");
+        assert_eq!(code, 0, "{arguments:?}: {new_stderr}");
+        let (before, after): (Value, Value) = (
+            serde_json::from_str(&stdout)?,
+            serde_json::from_str(&new_stdout)?,
+        );
+        assert_eq!(after["status"], "job", "{arguments:?}");
+        assert_eq!(
+            (&after["job"]["project"], &after["job"]["kind"]),
+            (&before["job"]["project"], &before["job"]["kind"]),
+            "{arguments:?}"
+        );
+        assert_eq!(
+            regex_free_configuration_nonce(&new_stderr),
+            regex_free_configuration_nonce(&old_stderr),
+            "{arguments:?}"
+        );
+    }
+
+    // A saved configuration request: prepared, listed, forgotten.
+    let saved = [
+        "service",
+        "requests",
+        "--runtime-dir",
+        &control,
+        "prepare-configuration",
+        "--project",
+        &binding,
+        "--file",
+        &draft_file,
+    ];
+    let (code, prepared, stderr) = ctl(&saved, "");
+    assert_eq!(code, 0, "{stderr}");
+    let prepared: Value = serde_json::from_str(&prepared)?;
+    assert_eq!(prepared["submitted"], false);
+    let nonce = prepared["prepared"].as_str().unwrap().to_owned();
+    let (_, listed, _) = ctl(
+        &["service", "requests", "--runtime-dir", &control, "list"],
+        "",
+    );
+    assert!(
+        listed.contains(&nonce) && listed.contains("\"kind\":\"configure\""),
+        "{listed}"
+    );
+    let (code, _, _) = ctl(
+        &[
+            "service",
+            "requests",
+            "--runtime-dir",
+            &control,
+            "forget",
+            &nonce,
+        ],
+        "",
+    );
+    assert_eq!(code, 0);
+    Ok(())
+}
+
+/// The saved-configuration-request lines with their nonces replaced.
+fn regex_free_configuration_nonce(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("Saved CLI configuration request "))
+        .map(|line| {
+            let rest = &line["Saved CLI configuration request ".len()..];
+            let end = rest.find(';').unwrap_or(rest.len());
+            format!("Saved CLI configuration request <nonce>{}", &rest[end..])
+        })
+        .collect()
+}
