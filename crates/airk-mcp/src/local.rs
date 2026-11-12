@@ -118,6 +118,17 @@ impl LocalTools {
         let kernel = self.kernel.with_scoped_reads(authority)?;
         Self::with_admission(kernel, client, self.admission.clone(), false).await
     }
+    /// The same restricted session under an in-memory W4/A2 selection grant's
+    /// authority: the same compiled scope and handlers; only the observation
+    /// names the selection instead of a reviewed grant.
+    pub async fn selection_session_with_client(
+        &self,
+        authority: airk_kernel::scoped_reads::SelectionReadAuthority,
+        client: ClientFamily,
+    ) -> anyhow::Result<Self> {
+        let kernel = self.kernel.with_selection_reads(authority)?;
+        Self::with_admission(kernel, client, self.admission.clone(), false).await
+    }
     pub fn revoke_scoped_reads(&self) {
         self.kernel.revoke_scoped_reads();
     }

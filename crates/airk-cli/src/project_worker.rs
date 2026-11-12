@@ -273,10 +273,16 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     );
     let (session, purpose, authority) = admin::redeem(&state, &grant)?;
     let session_tools = match authority {
-        Some(authority) => {
+        Some(scopes::WorkerAuthority::Catalog(authority)) => {
             state
                 .tools
                 .scoped_session_with_client(authority, grant.client)
+                .await
+        }
+        Some(scopes::WorkerAuthority::Selection(authority)) => {
+            state
+                .tools
+                .selection_session_with_client(authority, grant.client)
                 .await
         }
         None => state.tools.session_with_client(grant.client).await,
@@ -437,7 +443,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             });
             let read_admission = wire_attempt.zip(read_context.as_ref()).filter(|(_, context)| retry_budget_complete && context.selection_admission_refused())
                 .map(|(budget, _)| protocol::SelectionReadAdmission {
-                    request_id: budget.request_id, identity: state.identity, scope: grant.scope,
+                    request_id: budget.request_id, identity: state.identity, scope: protocol::reply_scope(grant.scope),
                 });
             let reply = protocol::QueryResult { read_admission, result: value, status_receipt: tools.status_receipt(), rebind: false };
             let result = deliver(&mut stream, &reply, &state, grant.scope, purpose).await;
@@ -1856,10 +1862,24 @@ pub(crate) async fn serve(
                         let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
                         replies.send(reply)?;
                     },
+                    Some(Command::InstallSelectionScope { identity: expected, authority, previous, lease_generation, expires_unix_ms }) => {
+                        let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+                            .install_selection(expected, *authority, previous, lease_generation, expires_unix_ms);
+                        // N3: the reply names the lease, never the selection ref.
+                        let reply = match installed.ok().as_ref().and_then(protocol::SelectionLease::of) {
+                            Some(lease) => Reply::SelectionScopeInstalled { identity, lease },
+                            None => Reply::Failed,
+                        };
+                        replies.send(reply)?;
+                    },
                     Some(Command::RevokeScope { identity: expected, scope }) => {
                         let revoked = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.revoke(expected, scope);
                         state.admission.completed();
-                        let reply = if revoked.is_ok() { Reply::ScopeRevoked { identity, scope } } else { Reply::Failed };
+                        let reply = match (revoked, protocol::SelectionLease::of(&scope)) {
+                            (Ok(()), Some(lease)) => Reply::SelectionScopeRevoked { identity, lease },
+                            (Ok(()), None) => Reply::ScopeRevoked { identity, scope },
+                            (Err(_), _) => Reply::Failed,
+                        };
                         replies.send(reply)?;
                     },
                     Some(Command::GrantScoped { identity: expected, caller, scope }) => {

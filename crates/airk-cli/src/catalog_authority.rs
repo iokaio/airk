@@ -12,10 +12,10 @@ use airk_core::{
         MAX_SOURCE_ROOTS, Membership, QueryProject, QueryProjectId, SourceImportState,
         unique_bounded,
     },
-    scoped_reads::{ScopeReadRefused, SourceDescriptor},
-    service::ProjectBinding,
+    scoped_reads::{ScopeReadRefused, SelectionScopeRef, SourceDescriptor},
+    service::{ProjectBinding, WindowScopeSelection},
 };
-use airk_kernel::scoped_reads::ScopedReadAuthority;
+use airk_kernel::scoped_reads::{ScopedReadAuthority, SelectionReadAuthority};
 use airk_store::service::registry::{ServiceRegistry, catalog};
 use anyhow::{Result, ensure};
 use std::collections::BTreeSet;
@@ -184,6 +184,199 @@ fn build_catalog_read_authority_kind(
         &memberships,
         sources,
     )
+}
+
+/// One index of an in-memory W4/A2 selection grant, as the owning plane
+/// resolved it (selection authority spec §3.2 step 4). Carried only on the
+/// in-process admission call; never on a `ControlMethod`. The read projects
+/// are computed by the builder, never supplied.
+#[derive(Clone, Debug)]
+pub(crate) struct SelectionConnectRequest {
+    pub selection_ref: SelectionScopeRef,
+    pub window_selection: WindowScopeSelection,
+    pub index_id: IndexId,
+}
+impl SelectionConnectRequest {
+    /// The index is one of the selection's; the selection names at least one
+    /// project (§3.5) and was granted at exactly the ref's revision.
+    fn validate(&self) -> Result<()> {
+        let selection = &self.window_selection;
+        unique_bounded(&selection.index_ids, MAX_SELECTION)?;
+        unique_bounded(&selection.project_ids, MAX_SELECTION)?;
+        ensure!(
+            selection.index_ids.contains(&self.index_id)
+                && !selection.project_ids.is_empty()
+                && selection.expected_catalog_revision == self.selection_ref.catalog_revision,
+            ScopeReadRefused
+        );
+        Ok(())
+    }
+}
+
+/// Build the read authority of one index of a selection grant at exactly the
+/// grant's catalog revision. Read-only (`catalog_state`/`catalog_detail`);
+/// it writes nothing and creates no `GrantId` (§3.8). The caller holds the
+/// gate's issue ticket at that same revision and rechecks it at delivery.
+pub(crate) fn build_selection_read_authority(
+    registry: &mut ServiceRegistry,
+    request: &SelectionConnectRequest,
+) -> Result<SelectionReadAuthority> {
+    request.validate()?;
+    let namespace = request.window_selection.namespace;
+    let revision = request.selection_ref.catalog_revision;
+    let state = registry.catalog_state()?.ok_or(ScopeReadRefused)?;
+    let capabilities = catalog::capabilities();
+    ensure!(
+        state.activated
+            && state.namespace == namespace
+            && state.revision == revision
+            && state.authority_contract == 1
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
+            && capabilities.supports(state.schema, 1, state.policy_contract),
+        ScopeReadRefused
+    );
+    let detail = |registry: &mut ServiceRegistry, entity| -> Result<Option<CatalogItem>> {
+        let result = registry.catalog_detail(&entity, Some(revision))?;
+        ensure!(
+            result.namespace == namespace && result.revision == revision,
+            ScopeReadRefused
+        );
+        Ok(result.item)
+    };
+    let Some(CatalogItem::Index(index)) = detail(
+        registry,
+        CatalogEntity::Index {
+            id: request.index_id,
+        },
+    )?
+    else {
+        return Err(ScopeReadRefused.into());
+    };
+    require_policy_ready(registry, &index)?;
+    let mut projects = Vec::new();
+    let mut memberships = Vec::new();
+    let mut source_ids = BTreeSet::new();
+    for id in &request.window_selection.project_ids {
+        let Some(CatalogItem::Project(project)) =
+            detail(registry, CatalogEntity::Project { id: *id })?
+        else {
+            return Err(ScopeReadRefused.into());
+        };
+        projects.push(project);
+        // A selected project without a membership of this index is not a
+        // read project of it (§3.2 step 3); the subset is checked below.
+        if let Some(CatalogItem::Membership(member)) = detail(
+            registry,
+            CatalogEntity::Membership {
+                project_id: *id,
+                index_id: request.index_id,
+            },
+        )? {
+            source_ids.extend(member.scope.iter().map(|atom| atom.source_root_id));
+            ensure!(source_ids.len() <= MAX_SOURCE_ROOTS, ScopeReadRefused);
+            memberships.push(member);
+        }
+    }
+    let mut sources = Vec::new();
+    for id in source_ids {
+        let Some(CatalogItem::Source(source)) = detail(registry, CatalogEntity::Source { id })?
+        else {
+            return Err(ScopeReadRefused.into());
+        };
+        sources.push(source);
+    }
+    validate_selection_snapshot(request, index, &projects, &memberships, sources)
+}
+
+/// Pure checks of `build_selection_read_authority` over the observed catalog
+/// items: those of `validate_snapshot` minus the grant, plus: every read
+/// project has a current membership of the index with a non-empty scope (an
+/// empty scope grants nothing, F7/N6), the read-project subset is non-empty,
+/// the import is complete and every source is enabled and owned by the index.
+fn validate_selection_snapshot(
+    request: &SelectionConnectRequest,
+    index: IndexDefinition,
+    projects: &[QueryProject],
+    memberships: &[Membership],
+    sources: Vec<CatalogSource>,
+) -> Result<SelectionReadAuthority> {
+    request.validate()?;
+    index.validate()?;
+    let selected = &request.window_selection.project_ids;
+    ensure!(
+        index.id == request.index_id
+            && !index.tombstone
+            && index.source_import == SourceImportState::Complete
+            && projects.len() == selected.len(),
+        ScopeReadRefused
+    );
+    for id in selected {
+        projects
+            .iter()
+            .find(|project| project.id == *id)
+            .ok_or(ScopeReadRefused)?
+            .validate()?;
+    }
+    let mut project_ids = Vec::new();
+    let mut atoms = Vec::new();
+    let mut membership_revisions = Vec::new();
+    for id in selected {
+        let Some(member) = memberships
+            .iter()
+            .find(|m| m.project_id == *id && m.index_id == request.index_id)
+        else {
+            continue;
+        };
+        member.validate()?;
+        if member.scope.is_empty() {
+            continue;
+        }
+        project_ids.push(*id);
+        atoms.extend(member.scope.iter().map(|atom| (*id, atom.clone())));
+        membership_revisions.push((*id, member.revision));
+    }
+    ensure!(
+        !project_ids.is_empty()
+            && memberships.iter().all(|member| {
+                member.index_id == request.index_id && selected.contains(&member.project_id)
+            }),
+        ScopeReadRefused
+    );
+    let used: BTreeSet<_> = atoms.iter().map(|(_, atom)| atom.source_root_id).collect();
+    ensure!(sources.len() <= MAX_SOURCE_ROOTS, ScopeReadRefused);
+    let mut descriptors = Vec::new();
+    for source in sources {
+        ensure!(
+            source.index_id == request.index_id && source.enabled,
+            ScopeReadRefused
+        );
+        // Sources of dropped (empty-scope) memberships are not loaded twice;
+        // only the used set is described, and it must be complete below.
+        if used.contains(&source.id) {
+            descriptors.push(SourceDescriptor {
+                source_root_id: source.id,
+                original_root: source.canonical_path,
+            });
+        }
+    }
+    let authority = SelectionReadAuthority {
+        schema: 1,
+        backing: index.backing.binding,
+        index_id: request.index_id,
+        project_ids,
+        selection: request.selection_ref,
+        atoms,
+        sources: descriptors,
+        membership_revisions,
+        source_revision: index.source_revision,
+        policy_epoch: index.policy.as_ref().map_or(0, |policy| policy.epoch.get()),
+        policy_digest: index.policy.as_ref().map(|policy| policy.digest),
+    };
+    // Kernel validation: source set equals the atom union, per-project atoms
+    // and revisions, nothing newer than the grant's revision, 48 KiB.
+    authority.validate()?;
+    Ok(authority)
 }
 
 /// Empty-policy indexes retain the existing metadata-only fast path. A policy
@@ -787,6 +980,135 @@ mod tests {
             .collect();
         oversized.grant.memberships[0].membership = oversized.members[0].clone();
         assert!(oversized.build().is_err());
+        Ok(())
+    }
+
+    fn selection_request(f: &Fixture) -> SelectionConnectRequest {
+        SelectionConnectRequest {
+            selection_ref: SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: Incarnation::from_bytes([0x5c; 16]),
+                service_instance: Incarnation::from_bytes([0xe1; 16]),
+                scope_identity: Sha256Digest::from_bytes([0x33; 32]),
+                catalog_revision: f.selection.catalog_revision,
+            },
+            window_selection: WindowScopeSelection {
+                namespace: f.selection.namespace,
+                expected_catalog_revision: f.selection.catalog_revision,
+                index_ids: vec![f.selection.index_id],
+                project_ids: f.selection.project_ids.clone(),
+            },
+            index_id: f.selection.index_id,
+        }
+    }
+    fn build_selection(
+        f: &Fixture,
+        request: &SelectionConnectRequest,
+    ) -> Result<SelectionReadAuthority> {
+        validate_selection_snapshot(
+            request,
+            f.index.clone(),
+            &f.projects,
+            &f.members,
+            f.sources.clone(),
+        )
+    }
+
+    #[test]
+    fn selection_authority_reads_current_membership_atoms_at_the_grant_revision() -> Result<()> {
+        let f = Fixture::new()?;
+        let request = selection_request(&f);
+        let authority = build_selection(&f, &request)?;
+        let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
+        let source = SourceRootId::from_identity(Incarnation::from_bytes([1; 16]));
+        // The current membership's atom (path ""), never the reviewed grant's
+        // narrowed "selected" atom: a selection has no reviewed grant.
+        assert_eq!(authority.project_ids, vec![project]);
+        assert_eq!(
+            authority.atoms,
+            vec![(
+                project,
+                ScopeAtom {
+                    source_root_id: source,
+                    kind: PathScope::Subtree,
+                    path: String::new(),
+                }
+            )]
+        );
+        assert_eq!(
+            authority.membership_revisions,
+            vec![(project, CatalogRevision::INITIAL)]
+        );
+        assert_eq!(authority.sources.len(), 1);
+        assert_eq!(authority.sources[0].source_root_id, source);
+        assert_eq!(authority.backing, f.index.backing.binding);
+        assert_eq!(authority.selection, request.selection_ref);
+        assert_eq!((authority.policy_epoch, authority.policy_digest), (0, None));
+        Ok(())
+    }
+
+    #[test]
+    fn selection_authority_drops_empty_scope_memberships_and_refuses_an_empty_subset() -> Result<()>
+    {
+        let mut f = Fixture::new()?;
+        let second = QueryProjectId::from_identity(Incarnation::from_bytes([2; 16]));
+        let mut project = f.projects[0].clone();
+        project.id = second;
+        f.projects.push(project);
+        let mut empty = f.members[0].clone();
+        empty.project_id = second;
+        empty.scope.clear();
+        f.members.push(empty);
+        let mut request = selection_request(&f);
+        request.window_selection.project_ids.push(second);
+        let first = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
+        assert_eq!(build_selection(&f, &request)?.project_ids, vec![first]);
+        // A selected project with no membership of the index is not read.
+        let mut absent = f.clone();
+        absent.members.pop();
+        assert_eq!(build_selection(&absent, &request)?.project_ids, vec![first]);
+        // With every membership empty or absent, the subset is empty: refused.
+        let mut none = f.clone();
+        none.members[0].scope.clear();
+        assert!(build_selection(&none, &request).is_err());
+        let mut gone = f;
+        gone.members.clear();
+        assert!(build_selection(&gone, &request).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn selection_authority_refuses_foreign_retired_unready_or_projectless_selections() -> Result<()>
+    {
+        let f = Fixture::new()?;
+        let base = selection_request(&f);
+        let mut outside = base.clone();
+        outside.index_id = IndexId::from_identity(Incarnation::from_bytes([9; 16]));
+        assert!(build_selection(&f, &outside).is_err(), "index outside");
+        let mut projectless = base.clone();
+        projectless.window_selection.project_ids.clear();
+        assert!(build_selection(&f, &projectless).is_err(), "no project");
+        let mut drifted = base.clone();
+        drifted.selection_ref.catalog_revision = CatalogRevision::INITIAL.next()?;
+        assert!(build_selection(&f, &drifted).is_err(), "revision drift");
+        let mut retired = f.clone();
+        retired.index.tombstone = true;
+        assert!(build_selection(&retired, &base).is_err(), "retired");
+        let mut pending = f.clone();
+        pending.index.source_import = SourceImportState::PendingMetadata;
+        assert!(build_selection(&pending, &base).is_err(), "import pending");
+        let mut disabled = f.clone();
+        disabled.sources[0].enabled = false;
+        assert!(build_selection(&disabled, &base).is_err(), "disabled");
+        let mut foreign = f.clone();
+        foreign.sources[0].index_id = IndexId::from_identity(Incarnation::from_bytes([8; 16]));
+        assert!(build_selection(&foreign, &base).is_err(), "foreign source");
+        let mut unknown = f.clone();
+        unknown.projects.clear();
+        assert!(build_selection(&unknown, &base).is_err(), "unknown project");
+        let mut missing = f;
+        missing.sources.clear();
+        assert!(build_selection(&missing, &base).is_err(), "missing source");
         Ok(())
     }
 }

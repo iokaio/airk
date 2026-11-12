@@ -48,6 +48,17 @@ pub enum Command {
         identity: WorkerIdentity,
         scope: airk_core::service::ScopedReadRef,
     },
+    /// Private host-only installation of an in-memory W4/A2 selection grant's
+    /// authority, built at its exact catalog revision. `previous` names the
+    /// expired lease of the same live selection being renewed. A separate
+    /// command keeps every catalog-grant frame unchanged.
+    InstallSelectionScope {
+        identity: WorkerIdentity,
+        authority: Box<airk_kernel::scoped_reads::SelectionReadAuthority>,
+        previous: Option<airk_core::service::ScopedReadRef>,
+        lease_generation: u64,
+        expires_unix_ms: u64,
+    },
     GrantScoped {
         identity: WorkerIdentity,
         caller: Incarnation,
@@ -120,6 +131,16 @@ pub enum Reply {
         identity: WorkerIdentity,
         scope: airk_core::service::ScopedReadRef,
     },
+    /// Selection-scope replies never echo a selection ref (N3): the lease
+    /// generation and the fingerprint (which binds the selection) identify it.
+    SelectionScopeInstalled {
+        identity: WorkerIdentity,
+        lease: SelectionLease,
+    },
+    SelectionScopeRevoked {
+        identity: WorkerIdentity,
+        lease: SelectionLease,
+    },
     QueriesConfigured,
     Renewed,
     Activated,
@@ -137,6 +158,33 @@ pub enum Reply {
         grant: ConnectionGrant,
     },
     Failed,
+}
+
+/// The reply identity of one selection-scope lease: never the selection ref.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionLease {
+    pub index_id: airk_core::index_catalog::IndexId,
+    pub lease_generation: u64,
+    pub fingerprint: airk_core::identity::Sha256Digest,
+}
+impl SelectionLease {
+    /// `None` for a catalog-grant ref, which keeps its existing replies.
+    pub fn of(scope: &airk_core::service::ScopedReadRef) -> Option<Self> {
+        scope.selection.map(|_| Self {
+            index_id: scope.index_id,
+            lease_generation: scope.lease_generation,
+            fingerprint: scope.fingerprint,
+        })
+    }
+}
+
+/// The scope a worker reply may echo: catalog-grant refs only. A selection
+/// ref never leaves the private command direction (N3).
+pub fn reply_scope(
+    scope: Option<airk_core::service::ScopedReadRef>,
+) -> Option<airk_core::service::ScopedReadRef> {
+    scope.filter(|scope| scope.selection.is_none())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -240,6 +288,70 @@ mod helper_admission_tests {
         ] {
             assert!(serde_json::from_value::<Command>(missing).is_err());
         }
+    }
+
+    #[test]
+    fn selection_scope_replies_and_admission_proofs_never_carry_a_selection_ref()
+    -> anyhow::Result<()> {
+        use airk_core::{
+            identity::Sha256Digest,
+            index_catalog::{CatalogRevision, IndexId},
+            scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
+            service::ScopedReadRef,
+        };
+        let identity = WorkerIdentity {
+            service: Incarnation::from_bytes([1; 16]),
+            worker: Incarnation::from_bytes([2; 16]),
+            project: ProjectBinding::from_bytes([3; 32]),
+            fencing_generation: 1,
+        };
+        let nonce = Incarnation::from_bytes([0x5c; 16]);
+        let scope = ScopedReadRef {
+            schema: 1,
+            lease_generation: 7,
+            index_id: IndexId::from_identity(Incarnation::from_bytes([4; 16])),
+            grant_id: None,
+            grant_revision: None,
+            selection: Some(SelectionScopeRef {
+                owner: SelectionOwnerKind::Window,
+                grant_nonce: nonce,
+                service_instance: identity.service,
+                scope_identity: Sha256Digest::from_bytes([5; 32]),
+                catalog_revision: CatalogRevision::INITIAL,
+            }),
+            fingerprint: Sha256Digest::from_bytes([6; 32]),
+        };
+        let lease = SelectionLease::of(&scope).expect("a selection lease");
+        let nonce_text = serde_json::to_string(&nonce)?;
+        let nonce_text = nonce_text.trim_matches('"');
+        for reply in [
+            Reply::SelectionScopeInstalled { identity, lease },
+            Reply::SelectionScopeRevoked { identity, lease },
+        ] {
+            let frame = serde_json::to_string(&reply)?;
+            assert!(!frame.contains(nonce_text), "{frame}");
+            assert!(!frame.contains("selection\":{"), "{frame}");
+            assert!(!frame.contains("grant_nonce"), "{frame}");
+        }
+        let proof = SelectionReadAdmission {
+            request_id: Incarnation::from_bytes([7; 16]),
+            identity,
+            scope: reply_scope(Some(scope)),
+        };
+        assert!(proof.scope.is_none());
+        assert!(!serde_json::to_string(&proof)?.contains(nonce_text));
+        // A catalog-grant ref keeps its existing echo unchanged.
+        let catalog = ScopedReadRef {
+            grant_id: Some(airk_core::index_catalog::GrantId::from_identity(
+                Incarnation::from_bytes([8; 16]),
+            )),
+            grant_revision: Some(CatalogRevision::INITIAL),
+            selection: None,
+            ..scope
+        };
+        assert_eq!(reply_scope(Some(catalog)), Some(catalog));
+        assert_eq!(SelectionLease::of(&catalog), None);
+        Ok(())
     }
 
     #[test]

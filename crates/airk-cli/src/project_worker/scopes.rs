@@ -6,7 +6,10 @@ use airk_core::{
     scoped_reads::ScopeReadRefused,
     service::{ConnectionGrant, ScopedReadRef, WorkerIdentity},
 };
-use airk_kernel::{Kernel, scoped_reads::ScopedReadAuthority};
+use airk_kernel::{
+    Kernel,
+    scoped_reads::{ScopedReadAuthority, SelectionReadAuthority},
+};
 use anyhow::{Result, ensure};
 use std::{
     collections::BTreeMap,
@@ -14,17 +17,58 @@ use std::{
 };
 
 const MAX_SCOPES: usize = 128;
+/// Selection entries, apart from `MAX_SCOPES`: 80 live owners plus 80 revoked
+/// entries whose `RevokeScope` is still on its way (selection authority spec
+/// §3.4, N6). The gate enforces the finer live/revoked split.
+const MAX_SELECTION_SCOPES: usize = 160;
 const MAX_PENDING: usize = 128;
 const MAX_SESSIONS: usize = 128;
 const MAX_LIFETIME_MS: u64 = 300_000;
 
+/// The frozen authority a redeemed bearer opens a session with.
+#[derive(Clone)]
+pub(super) enum WorkerAuthority {
+    Catalog(ScopedReadAuthority),
+    Selection(SelectionReadAuthority),
+}
+
 struct Installed {
     reference: ScopedReadRef,
     previous_lease: Option<ScopedReadRef>,
-    authority: ScopedReadAuthority,
+    authority: WorkerAuthority,
     expires: Instant,
     revoked: bool,
     sessions: BTreeMap<Incarnation, Kernel>,
+}
+/// Where a ref is installed: the catalog ledger by grant, or the selection
+/// ledger by the selection's nonce.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Grant(GrantId, IndexId, Sha256Digest),
+    Selection(Incarnation, IndexId, Sha256Digest),
+}
+impl Slot {
+    fn of(reference: &ScopedReadRef) -> Result<Self> {
+        if let Some((grant_id, _)) = reference.catalog_grant() {
+            return Ok(Self::Grant(
+                grant_id,
+                reference.index_id,
+                reference.fingerprint,
+            ));
+        }
+        match (
+            reference.grant_id,
+            reference.grant_revision,
+            reference.selection,
+        ) {
+            (None, None, Some(selection)) => Ok(Self::Selection(
+                selection.grant_nonce,
+                reference.index_id,
+                reference.fingerprint,
+            )),
+            _ => Err(ScopeReadRefused.into()),
+        }
+    }
 }
 impl Installed {
     fn live(&self, reference: ScopedReadRef, now: Instant) -> Result<()> {
@@ -53,6 +97,10 @@ pub(super) struct Scopes {
     // refusal is preferable to resurrecting an evicted revoked authority.
     installed: BTreeMap<(GrantId, IndexId, Sha256Digest), Installed>,
     highwater: BTreeMap<(GrantId, IndexId), CatalogRevision>,
+    // In-memory selection grants by nonce. Unlike catalog tombstones, an entry
+    // is pruned on its RevokeScope: a nonce is never reused and is no longer
+    // live in the gate, so it cannot be resurrected (§3.4).
+    selections: BTreeMap<(Incarnation, IndexId, Sha256Digest), Installed>,
     last_lease_generation: u64,
     pending: BTreeMap<Sha256Digest, (ConnectionGrant, Instant)>,
 }
@@ -63,9 +111,131 @@ impl Scopes {
             required,
             installed: BTreeMap::new(),
             highwater: BTreeMap::new(),
+            selections: BTreeMap::new(),
             last_lease_generation: 0,
             pending: BTreeMap::new(),
         }
+    }
+    fn slot(&self, slot: Slot) -> Option<&Installed> {
+        match slot {
+            Slot::Grant(grant, index, fingerprint) => {
+                self.installed.get(&(grant, index, fingerprint))
+            }
+            Slot::Selection(nonce, index, fingerprint) => {
+                self.selections.get(&(nonce, index, fingerprint))
+            }
+        }
+    }
+    fn slot_mut(&mut self, slot: Slot) -> Option<&mut Installed> {
+        match slot {
+            Slot::Grant(grant, index, fingerprint) => {
+                self.installed.get_mut(&(grant, index, fingerprint))
+            }
+            Slot::Selection(nonce, index, fingerprint) => {
+                self.selections.get_mut(&(nonce, index, fingerprint))
+            }
+        }
+    }
+    pub fn install_selection(
+        &mut self,
+        identity: WorkerIdentity,
+        authority: SelectionReadAuthority,
+        previous: Option<ScopedReadRef>,
+        lease_generation: u64,
+        expires_unix_ms: u64,
+    ) -> Result<ScopedReadRef> {
+        ensure!(
+            identity == self.identity && authority.backing == identity.project,
+            ScopeReadRefused
+        );
+        self.install_selection_lease(
+            authority,
+            lease_generation,
+            Self::native_expiry(expires_unix_ms)?,
+            previous,
+        )
+    }
+    fn install_selection_lease(
+        &mut self,
+        authority: SelectionReadAuthority,
+        lease_generation: u64,
+        expires: Instant,
+        previous: Option<ScopedReadRef>,
+    ) -> Result<ScopedReadRef> {
+        let selection = authority.selection;
+        ensure!(
+            authority.backing == self.identity.project
+                && selection.service_instance == self.identity.service
+                && expires > Instant::now(),
+            ScopeReadRefused
+        );
+        let reference = ScopedReadRef {
+            schema: 1,
+            lease_generation,
+            index_id: authority.index_id,
+            grant_id: None,
+            grant_revision: None,
+            selection: Some(selection),
+            fingerprint: authority.fingerprint()?,
+        };
+        reference.validate()?;
+        let key = (
+            selection.grant_nonce,
+            reference.index_id,
+            reference.fingerprint,
+        );
+        if let Some(existing) = self.selections.get_mut(&key)
+            && existing.reference == reference
+        {
+            ensure!(
+                previous.is_none() || previous == existing.previous_lease,
+                ScopeReadRefused
+            );
+            existing.live(reference, Instant::now())?;
+            existing.expires = existing.expires.min(expires);
+            return Ok(reference);
+        }
+        ensure!(
+            lease_generation > self.last_lease_generation
+                && lease_generation.checked_add(1).is_some(),
+            ScopeReadRefused
+        );
+        if let Some(entry) = self.selections.get_mut(&key) {
+            // Renewal of the same live selection's expired lease only.
+            ensure!(
+                previous == Some(entry.reference)
+                    && !entry.revoked
+                    && entry.expires <= Instant::now(),
+                ScopeReadRefused
+            );
+            let old = entry.reference;
+            entry.revoke_readers();
+            entry.sessions.clear();
+            entry.previous_lease = Some(old);
+            entry.reference = reference;
+            entry.expires = expires;
+            self.pending
+                .retain(|_, (grant, _)| grant.scope != Some(old));
+            self.last_lease_generation = lease_generation;
+            return Ok(reference);
+        }
+        ensure!(
+            previous.is_none() && self.selections.len() < MAX_SELECTION_SCOPES,
+            ScopeReadRefused
+        );
+        self.last_lease_generation = lease_generation;
+        self.selections.insert(
+            key,
+            Installed {
+                reference,
+                previous_lease: None,
+                authority: WorkerAuthority::Selection(authority),
+                expires,
+                revoked: false,
+                sessions: BTreeMap::new(),
+            },
+        );
+        Ok(reference)
     }
     pub fn legacy_allowed(&self) -> bool {
         !self.required
@@ -226,7 +396,7 @@ impl Scopes {
             Installed {
                 reference,
                 previous_lease: None,
-                authority,
+                authority: WorkerAuthority::Catalog(authority),
                 expires,
                 revoked: false,
                 sessions: BTreeMap::new(),
@@ -235,15 +405,14 @@ impl Scopes {
         Ok(reference)
     }
     fn entry(&self, reference: ScopedReadRef) -> Result<&Installed> {
-        let (grant_id, grant_revision) = reference.catalog_grant().ok_or(ScopeReadRefused)?;
-        ensure!(
-            self.highwater.get(&(grant_id, reference.index_id)) == Some(&grant_revision),
-            ScopeReadRefused
-        );
-        let entry = self
-            .installed
-            .get(&(grant_id, reference.index_id, reference.fingerprint))
-            .ok_or(ScopeReadRefused)?;
+        let slot = Slot::of(&reference)?;
+        if let Some((grant_id, grant_revision)) = reference.catalog_grant() {
+            ensure!(
+                self.highwater.get(&(grant_id, reference.index_id)) == Some(&grant_revision),
+                ScopeReadRefused
+            );
+        }
+        let entry = self.slot(slot).ok_or(ScopeReadRefused)?;
         entry.live(reference, Instant::now())?;
         Ok(entry)
     }
@@ -282,7 +451,16 @@ impl Scopes {
         );
         Ok(())
     }
+    /// The catalog-only view of `redeem_authority`, kept for scope tests.
+    #[cfg(test)]
     pub fn redeem(&mut self, grant: &ConnectionGrant) -> Result<Option<ScopedReadAuthority>> {
+        match self.redeem_authority(grant)? {
+            None => Ok(None),
+            Some(WorkerAuthority::Catalog(authority)) => Ok(Some(authority)),
+            Some(WorkerAuthority::Selection(_)) => Err(ScopeReadRefused.into()),
+        }
+    }
+    pub fn redeem_authority(&mut self, grant: &ConnectionGrant) -> Result<Option<WorkerAuthority>> {
         ensure!(grant.identity == self.identity, ScopeReadRefused);
         match grant.scope {
             Some(scope) => {
@@ -320,11 +498,7 @@ impl Scopes {
             kernel.revoke_scoped_reads();
             return Err(ScopeReadRefused.into());
         }
-        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
-        let entry = self
-            .installed
-            .get_mut(&(grant_id, scope.index_id, scope.fingerprint))
-            .ok_or(ScopeReadRefused)?;
+        let entry = self.slot_mut(Slot::of(&scope)?).ok_or(ScopeReadRefused)?;
         ensure!(
             entry.sessions.len() < MAX_SESSIONS && !entry.sessions.contains_key(&session),
             ScopeReadRefused
@@ -334,10 +508,8 @@ impl Scopes {
     }
     pub fn detach(&mut self, scope: Option<ScopedReadRef>, session: Incarnation) {
         if let Some(scope) = scope
-            && let Some((grant_id, _)) = scope.catalog_grant()
-            && let Some(entry) =
-                self.installed
-                    .get_mut(&(grant_id, scope.index_id, scope.fingerprint))
+            && let Ok(slot) = Slot::of(&scope)
+            && let Some(entry) = self.slot_mut(slot)
             && entry.reference == scope
             && let Some(kernel) = entry.sessions.remove(&session)
         {
@@ -347,6 +519,9 @@ impl Scopes {
     pub fn revoke(&mut self, identity: WorkerIdentity, scope: ScopedReadRef) -> Result<()> {
         ensure!(identity == self.identity, ScopeReadRefused);
         scope.validate()?;
+        if let slot @ Slot::Selection(..) = Slot::of(&scope)? {
+            return self.revoke_selection(slot, scope);
+        }
         let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = self
             .installed
@@ -365,15 +540,47 @@ impl Scopes {
         });
         Ok(())
     }
+    /// Revoke and prune a selection lease (§3.3, §3.4). Idempotent: a lease
+    /// that is not installed (never installed, or already pruned) has nothing
+    /// to revoke, so the host's acknowledgement can prune its own entry.
+    fn revoke_selection(&mut self, slot: Slot, scope: ScopedReadRef) -> Result<()> {
+        let Slot::Selection(nonce, index, fingerprint) = slot else {
+            return Err(ScopeReadRefused.into());
+        };
+        let key = (nonce, index, fingerprint);
+        if let Some(entry) = self.selections.get_mut(&key) {
+            if entry.reference == scope {
+                entry.revoke();
+                self.selections.remove(&key);
+            } else if entry.previous_lease == Some(scope) {
+                // The superseded lease's readers were fenced at renewal.
+                entry.previous_lease = None;
+            }
+        }
+        self.pending.retain(|_, (grant, _)| {
+            grant
+                .scope
+                .is_none_or(|bound| Slot::of(&bound).ok() != Some(slot))
+        });
+        Ok(())
+    }
     pub fn close(&mut self) {
-        for entry in self.installed.values_mut() {
+        for entry in self
+            .installed
+            .values_mut()
+            .chain(self.selections.values_mut())
+        {
             entry.revoke();
         }
         self.pending.clear();
     }
     pub fn expire(&mut self) {
         let now = Instant::now();
-        for entry in self.installed.values_mut() {
+        for entry in self
+            .installed
+            .values_mut()
+            .chain(self.selections.values_mut())
+        {
             if now >= entry.expires {
                 // Transport expiry fences this lease, not logical authority.
                 // Only fresh native validation may install a later lease.
@@ -801,6 +1008,89 @@ mod tests {
         scopes.detach(Some(scope), session_id);
         session.close().await?;
         base.close().await?;
+        Ok(())
+    }
+
+    fn selection_fixture(root: &str, nonce: u8) -> (WorkerIdentity, SelectionReadAuthority) {
+        let (identity, catalog) = fixture(root);
+        let project = catalog.project_ids[0];
+        let atom = catalog.grant.memberships[0].membership.scope[0].clone();
+        let authority = SelectionReadAuthority {
+            schema: 1,
+            backing: identity.project,
+            index_id: catalog.index_id,
+            project_ids: vec![project],
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: Incarnation::from_bytes([nonce; 16]),
+                service_instance: identity.service,
+                scope_identity: Sha256Digest::from_bytes([0x33; 32]),
+                catalog_revision: CatalogRevision::INITIAL,
+            },
+            atoms: vec![(project, atom)],
+            sources: catalog.sources.clone(),
+            membership_revisions: vec![(project, CatalogRevision::INITIAL)],
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        };
+        (identity, authority)
+    }
+
+    #[test]
+    fn selection_scope_is_ledgered_apart_and_pruned_by_its_revocation() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (identity, authority) = selection_fixture(root.path().to_str().unwrap(), 0x5c);
+        let mut scopes = Scopes::new(identity, true);
+        let scope = scopes.install_selection_lease(authority.clone(), 1, lifetime(), None)?;
+        assert_eq!(scope.grant_id, None);
+        assert_eq!(scope.selection, Some(authority.selection));
+        assert_eq!((scopes.installed.len(), scopes.selections.len()), (0, 1));
+        let mut issued = grant(identity);
+        scopes.bind(&mut issued, scope)?;
+        assert!(matches!(
+            scopes.redeem_authority(&issued)?,
+            Some(WorkerAuthority::Selection(_))
+        ));
+        let mut pending = grant(identity);
+        pending.token = Sha256Digest::from_bytes([21; 32]);
+        scopes.bind(&mut pending, scope)?;
+        scopes.revoke(identity, scope)?;
+        // Pruned, not tombstoned; the bound bearer died with it.
+        assert_eq!(scopes.selections.len(), 0);
+        assert!(scopes.check(Some(scope)).is_err());
+        assert!(scopes.redeem_authority(&pending).is_err());
+        // A repeated or unknown selection revocation settles idempotently.
+        scopes.revoke(identity, scope)?;
+        // Another service's selection is never installed.
+        let mut foreign = authority;
+        foreign.selection.service_instance = Incarnation::from_bytes([15; 16]);
+        assert!(
+            scopes
+                .install_selection_lease(foreign, 2, lifetime(), None)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selection_capacity_is_separate_from_catalog_capacity() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (identity, catalog) = fixture(root.path().to_str().unwrap());
+        let mut scopes = Scopes::new(identity, true);
+        for n in 0..160u8 {
+            let (_, authority) = selection_fixture(root.path().to_str().unwrap(), n);
+            scopes.install_selection_lease(authority, u64::from(n) + 1, lifetime(), None)?;
+        }
+        let (_, overflow) = selection_fixture(root.path().to_str().unwrap(), 200);
+        assert!(
+            scopes
+                .install_selection_lease(overflow, 500, lifetime(), None)
+                .is_err()
+        );
+        // A full selection ledger leaves catalog capacity untouched.
+        scopes.install_lease(catalog, 501, lifetime(), None)?;
+        assert_eq!((scopes.installed.len(), scopes.selections.len()), (1, 160));
         Ok(())
     }
 }

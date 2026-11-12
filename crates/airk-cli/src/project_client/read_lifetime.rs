@@ -59,7 +59,7 @@ where
                             .read_attempt
                             .is_some_and(|attempt| attempt.request_id == admission.request_id)
                             && admission.identity == identity
-                            && admission.scope == scope
+                            && admission.scope == protocol::reply_scope(scope)
                             && !response.rebind,
                         "native selection admission proof differs from the submitted request"
                     );

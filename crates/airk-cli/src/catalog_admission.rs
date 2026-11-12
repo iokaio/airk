@@ -14,10 +14,10 @@ use airk_core::{
     index_catalog::{
         CatalogRevision, GrantId, IndexId, MAX_SELECTION, QueryProjectId, encoded_size,
     },
-    scoped_reads::ScopeReadRefused,
+    scoped_reads::{ScopeReadRefused, SelectionOwnerKind, SelectionScopeRef},
     service::{ProjectBinding, RequestKey, ScopedReadRef, WorkerIdentity},
 };
-use airk_kernel::scoped_reads::ScopedReadAuthority;
+use airk_kernel::scoped_reads::{ScopedReadAuthority, SelectionReadAuthority};
 pub(crate) use airk_store::service::registry::catalog::operations::FenceTarget;
 use airk_store::service::registry::catalog::operations::{
     FenceConfirmation, FenceConfirmationMethod, FenceIntent, FencePlan as StoreFencePlan,
@@ -36,6 +36,91 @@ const MAX_WORKERS: usize = 128;
 const MAX_PLAN_BYTES: usize = 16 * 1024;
 const MAX_UNPREPARED: usize = 32;
 const MAX_LIFETIME: Duration = Duration::from_secs(300);
+/// Live selection owners: at most 64 windows plus 16 admin sessions
+/// (selection authority spec §3.4, N6).
+const MAX_SELECTION_OWNERS: usize = 80;
+/// Live nonces: a replaced grant's nonce stays live until its owner revokes it
+/// after releasing its own lock (§3.7), so twice the owner bound.
+const MAX_LIVE_SELECTIONS: usize = 2 * MAX_SELECTION_OWNERS;
+/// Gate selection installations, counted apart from `MAX_SCOPES`.
+const MAX_SELECTION_SCOPES: usize = MAX_SELECTION_OWNERS * MAX_SELECTION;
+/// Per worker: live selection entries, and revoked entries still waiting for
+/// the worker's acknowledgement (N6).
+const MAX_WORKER_SELECTION_LIVE: usize = MAX_SELECTION_OWNERS;
+const MAX_WORKER_SELECTION_REVOKED: usize = MAX_SELECTION_OWNERS;
+
+/// In-memory admission key: a persisted catalog grant or an in-memory
+/// selection grant's nonce. Never persisted (§3.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum AuthorityKey {
+    Grant(GrantId),
+    Selection(Incarnation),
+}
+impl AuthorityKey {
+    /// The key and its high-water revision: the grant revision, or the
+    /// selection's catalog revision (one value per nonce).
+    fn of(scope: &ScopedReadRef) -> Result<(Self, CatalogRevision)> {
+        if let Some((id, revision)) = scope.catalog_grant() {
+            return Ok((Self::Grant(id), revision));
+        }
+        match (scope.grant_id, scope.grant_revision, scope.selection) {
+            (None, None, Some(selection)) => Ok((
+                Self::Selection(selection.grant_nonce),
+                selection.catalog_revision,
+            )),
+            _ => Err(ScopeReadRefused.into()),
+        }
+    }
+    fn is_selection(self) -> bool {
+        matches!(self, Self::Selection(_))
+    }
+}
+/// One validated, measured authority payload ready for the ledger.
+struct Candidate {
+    scope: ScopedReadRef,
+    key: AuthorityKey,
+    revision: CatalogRevision,
+    backing: ProjectBinding,
+    projects: Vec<QueryProjectId>,
+}
+impl Candidate {
+    fn catalog(authority: &ScopedReadAuthority) -> Result<Self> {
+        let (grant_id, grant_revision) = (authority.grant.id, authority.grant.revision);
+        Ok(Self {
+            scope: ScopedReadRef {
+                schema: 1,
+                lease_generation: 0,
+                index_id: authority.index_id,
+                grant_id: Some(grant_id),
+                grant_revision: Some(grant_revision),
+                selection: None,
+                fingerprint: authority.fingerprint()?,
+            },
+            key: AuthorityKey::Grant(grant_id),
+            revision: grant_revision,
+            backing: authority.backing,
+            projects: authority.project_ids.clone(),
+        })
+    }
+    fn selection(authority: &SelectionReadAuthority) -> Result<Self> {
+        let selection = authority.selection;
+        Ok(Self {
+            scope: ScopedReadRef {
+                schema: 1,
+                lease_generation: 0,
+                index_id: authority.index_id,
+                grant_id: None,
+                grant_revision: None,
+                selection: Some(selection),
+                fingerprint: authority.fingerprint()?,
+            },
+            key: AuthorityKey::Selection(selection.grant_nonce),
+            revision: selection.catalog_revision,
+            backing: authority.backing,
+            projects: authority.project_ids.clone(),
+        })
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct NativeCatalogRetentionFull;
@@ -230,6 +315,14 @@ impl Installed {
         }
     }
 }
+/// A selection scope revoked locally by a catalog fence (§3.3). In memory
+/// only: never part of `durable` and never persisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LocalRevocation {
+    worker: WorkerIdentity,
+    scope: ScopedReadRef,
+    settled: bool,
+}
 struct PendingFence {
     ticket: FenceTicket,
     request: Option<CatalogRequest>,
@@ -243,8 +336,14 @@ struct PendingFence {
     target: ScopeTarget,
     durable: StoreFencePlan,
     effects_started: bool,
+    local_selection_revocations: Vec<LocalRevocation>,
 }
 impl PendingFence {
+    fn local_revocations_settled(&self) -> bool {
+        self.local_selection_revocations
+            .iter()
+            .all(|revocation| revocation.settled)
+    }
     fn confirmed(&self, target: &FenceTarget) -> bool {
         self.acknowledgements
             .iter()
@@ -285,9 +384,12 @@ struct State {
     #[cfg(feature = "local-inference")]
     provider_completions:
         BTreeMap<(Incarnation, Incarnation), crate::inference_engine::NativeCompletionWitness>,
-    installed: BTreeMap<(Incarnation, GrantId, IndexId, Sha256Digest), Installed>,
-    highwater: BTreeMap<(Incarnation, GrantId, IndexId), CatalogRevision>,
+    installed: BTreeMap<(Incarnation, AuthorityKey, IndexId, Sha256Digest), Installed>,
+    highwater: BTreeMap<(Incarnation, AuthorityKey, IndexId), CatalogRevision>,
     lease_highwater: BTreeMap<Incarnation, u64>,
+    /// Live in-memory selection grants by nonce (§3.4). Registered and
+    /// removed only by the owning plane or a local fence revocation.
+    live_selections: BTreeMap<Incarnation, SelectionOwnerKind>,
     pending: Option<PendingFence>,
     // Non-evicting same-service readonly observations, never durable receipts
     // or authority. Count<=32, aggregate shared request/plan image<=16KiB.
@@ -349,6 +451,47 @@ impl State {
             ScopeReadRefused
         );
         Ok(pending)
+    }
+    /// A selection key requires its nonce to be live for this service; a
+    /// catalog key is unaffected.
+    fn require_live(&self, scope: &ScopedReadRef) -> Result<()> {
+        if let Some(selection) = scope.selection {
+            ensure!(
+                selection.service_instance == self.service
+                    && self.live_selections.get(&selection.grant_nonce) == Some(&selection.owner),
+                ScopeReadRefused
+            );
+        }
+        Ok(())
+    }
+    /// Catalog and selection installations are bounded separately, so
+    /// neither can exhaust the other (§3.4, N6). The catalog bound is the
+    /// unchanged `MAX_SCOPES` over catalog entries.
+    fn has_capacity(&self, worker: WorkerIdentity, key: AuthorityKey) -> bool {
+        if !key.is_selection() {
+            return self
+                .installed
+                .keys()
+                .filter(|(_, key, _, _)| !key.is_selection())
+                .count()
+                < MAX_SCOPES;
+        }
+        let selections = || {
+            self.installed
+                .iter()
+                .filter(|((_, key, _, _), _)| key.is_selection())
+        };
+        let (mut live, mut revoked) = (0, 0);
+        for (_, entry) in selections().filter(|(_, entry)| entry.worker == worker) {
+            if entry.phase == Phase::Revoked {
+                revoked += 1;
+            } else {
+                live += 1;
+            }
+        }
+        selections().count() < MAX_SELECTION_SCOPES
+            && live < MAX_WORKER_SELECTION_LIVE
+            && revoked < MAX_WORKER_SELECTION_REVOKED
     }
     fn reserve_numbers(&mut self, worker: Incarnation) -> Result<(u64, u64)> {
         let nonce = self.next_nonce;
@@ -417,6 +560,7 @@ impl NativeCatalogAdmission {
             installed: BTreeMap::new(),
             highwater: BTreeMap::new(),
             lease_highwater: BTreeMap::new(),
+            live_selections: BTreeMap::new(),
             pending: None,
             unprepared: BTreeMap::new(),
         }))))
@@ -570,7 +714,7 @@ impl NativeCatalogAdmission {
         authority: &ScopedReadAuthority,
         expires: Instant,
     ) -> Result<InstallTicket> {
-        self.reserve_lease(issue, worker, authority, expires, None)
+        self.reserve_lease(issue, worker, Candidate::catalog(authority)?, expires, None)
     }
     /// Native-only decision after the actor freshly ran the canonical builder.
     /// An uncertain renewal is replayed with its original exact previous lease.
@@ -590,7 +734,7 @@ impl NativeCatalogAdmission {
                 .installed
                 .get(&(
                     worker.worker,
-                    authority.grant.id,
+                    AuthorityKey::Grant(authority.grant.id),
                     authority.index_id,
                     fingerprint,
                 ))
@@ -606,7 +750,13 @@ impl NativeCatalogAdmission {
                     }
                 })
         };
-        self.reserve_lease(issue, worker, authority, expires, previous)
+        self.reserve_lease(
+            issue,
+            worker,
+            Candidate::catalog(authority)?,
+            expires,
+            previous,
+        )
     }
     /// Caller has freshly revalidated this immutable payload against the native
     /// catalog. Expiry alone never authorizes renewal or clears logical revoke.
@@ -618,41 +768,84 @@ impl NativeCatalogAdmission {
         previous: ScopedReadRef,
         expires: Instant,
     ) -> Result<InstallTicket> {
-        self.reserve_lease(issue, worker, authority, expires, Some(previous))
+        self.reserve_lease(
+            issue,
+            worker,
+            Candidate::catalog(authority)?,
+            expires,
+            Some(previous),
+        )
+    }
+    /// Native-only decision after the actor freshly built the selection
+    /// authority at the selection's exact catalog revision (§3.2 step 4). An
+    /// expired lease of the same live selection is renewed only here, after
+    /// that fresh build; a refused live check admits nothing.
+    pub fn reserve_selection_scope(
+        &self,
+        issue: IssueTicket,
+        worker: WorkerIdentity,
+        authority: &SelectionReadAuthority,
+        expires: Instant,
+    ) -> Result<InstallTicket> {
+        let candidate = Candidate::selection(authority)?;
+        let previous = {
+            let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+            state.check_issue(issue)?;
+            state.worker(worker)?;
+            state.require_live(&candidate.scope)?;
+            state
+                .installed
+                .get(&(
+                    worker.worker,
+                    candidate.key,
+                    candidate.scope.index_id,
+                    candidate.scope.fingerprint,
+                ))
+                .and_then(|entry| {
+                    if entry.phase == Phase::Installing {
+                        entry.pending_previous
+                    } else if matches!(entry.phase, Phase::Installed | Phase::Expired)
+                        && entry.expires <= Instant::now()
+                    {
+                        Some(entry.scope)
+                    } else {
+                        None
+                    }
+                })
+        };
+        self.reserve_lease(issue, worker, candidate, expires, previous)
     }
     fn reserve_lease(
         &self,
         issue: IssueTicket,
         worker: WorkerIdentity,
-        authority: &ScopedReadAuthority,
+        candidate: Candidate,
         expires: Instant,
         previous: Option<ScopedReadRef>,
     ) -> Result<InstallTicket> {
-        // Validate and measure immutable payload before taking the gate mutex.
-        let (grant_id, grant_revision) = (authority.grant.id, authority.grant.revision);
-        let mut scope = ScopedReadRef {
-            schema: 1,
-            lease_generation: 0,
-            index_id: authority.index_id,
-            grant_id: Some(grant_id),
-            grant_revision: Some(grant_revision),
-            selection: None,
-            fingerprint: authority.fingerprint()?,
-        };
+        // The immutable payload was validated and measured before the mutex.
+        let Candidate {
+            mut scope,
+            key: authority_key,
+            revision: grant_revision,
+            backing,
+            projects,
+        } = candidate;
         ensure!(
-            authority.backing == worker.project && authority.project_ids.len() <= MAX_SELECTION,
+            backing == worker.project && projects.len() <= MAX_SELECTION,
             ScopeReadRefused
         );
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         state.check_issue(issue)?;
         state.worker(worker)?;
         ensure!(worker.service == state.service, ScopeReadRefused);
+        state.require_live(&scope)?;
         let now = Instant::now();
         ensure!(
             expires > now && expires.duration_since(now) <= MAX_LIFETIME,
             ScopeReadRefused
         );
-        let family = (worker.worker, grant_id, scope.index_id);
+        let family = (worker.worker, authority_key, scope.index_id);
         ensure!(
             state
                 .highwater
@@ -660,11 +853,17 @@ impl NativeCatalogAdmission {
                 .is_none_or(|revision| grant_revision >= *revision),
             ScopeReadRefused
         );
-        let key = (worker.worker, grant_id, scope.index_id, scope.fingerprint);
+        let key = (
+            worker.worker,
+            authority_key,
+            scope.index_id,
+            scope.fingerprint,
+        );
         if let Some(existing) = state.installed.get(&key).cloned() {
             ensure!(
                 existing.worker == worker
                     && existing.scope.grant_revision == scope.grant_revision
+                    && existing.scope.selection == scope.selection
                     && existing.phase != Phase::Revoked,
                 ScopeReadRefused
             );
@@ -718,7 +917,7 @@ impl NativeCatalogAdmission {
             });
         }
         ensure!(
-            previous.is_none() && state.installed.len() < MAX_SCOPES,
+            previous.is_none() && state.has_capacity(worker, authority_key),
             ScopeReadRefused
         );
         if state
@@ -729,13 +928,9 @@ impl NativeCatalogAdmission {
             ensure!(
                 state
                     .installed
-                    .values()
-                    .filter(|entry| (
-                        entry.worker.worker,
-                        entry.scope.grant_id,
-                        entry.scope.index_id
-                    ) == (family.0, Some(family.1), family.2))
-                    .all(|entry| entry.phase == Phase::Revoked),
+                    .iter()
+                    .filter(|((owner, key, index, _), _)| (*owner, *key, *index) == family)
+                    .all(|(_, entry)| entry.phase == Phase::Revoked),
                 ScopeReadRefused
             );
         }
@@ -747,7 +942,7 @@ impl NativeCatalogAdmission {
             Installed {
                 worker,
                 scope,
-                projects: authority.project_ids.clone(),
+                projects,
                 expires,
                 nonce,
                 phase: Phase::Installing,
@@ -777,10 +972,18 @@ impl NativeCatalogAdmission {
             worker == ticket.worker && scope == ticket.scope,
             ScopeReadRefused
         );
-        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
+        // A selection revoked while its installation was in flight never
+        // settles as installed (§3.3 live check).
+        state.require_live(&scope)?;
+        let (authority_key, _) = AuthorityKey::of(&scope)?;
         let entry = state
             .installed
-            .get_mut(&(worker.worker, grant_id, scope.index_id, scope.fingerprint))
+            .get_mut(&(
+                worker.worker,
+                authority_key,
+                scope.index_id,
+                scope.fingerprint,
+            ))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -818,10 +1021,16 @@ impl NativeCatalogAdmission {
         state.check_issue(ticket)?;
         state.worker(worker)?;
         scope.validate()?;
-        let (grant_id, grant_revision) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
+        state.require_live(&scope)?;
+        let (authority_key, grant_revision) = AuthorityKey::of(&scope)?;
         let entry = state
             .installed
-            .get(&(worker.worker, grant_id, scope.index_id, scope.fingerprint))
+            .get(&(
+                worker.worker,
+                authority_key,
+                scope.index_id,
+                scope.fingerprint,
+            ))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -829,7 +1038,7 @@ impl NativeCatalogAdmission {
                 && entry.phase == Phase::Installed
                 && state
                     .highwater
-                    .get(&(worker.worker, grant_id, scope.index_id))
+                    .get(&(worker.worker, authority_key, scope.index_id))
                     == Some(&grant_revision)
                 && Instant::now() < entry.expires,
             ScopeReadRefused
@@ -902,18 +1111,21 @@ impl NativeCatalogAdmission {
             ScopeReadRefused
         );
         let generation = state.generation.checked_add(1).ok_or(ScopeReadRefused)?;
-        let targets: Vec<_> = state
+        // Selection scopes never become durable targets (§3.3, F1): they are
+        // collected apart and revoked locally only after the last refusal.
+        let (selection_keys, targets): (Vec<_>, Vec<_>) = state
             .installed
-            .values()
-            .filter(|entry| entry.matches(target) && entry.phase != Phase::Revoked)
-            .flat_map(|entry| {
+            .iter()
+            .filter(|(_, entry)| entry.matches(target) && entry.phase != Phase::Revoked)
+            .flat_map(|(key, entry)| {
                 std::iter::once(entry.scope)
                     .chain(entry.pending_previous)
-                    .map(|scope| FenceTarget {
-                        worker: entry.worker,
-                        scope,
-                    })
+                    .map(move |scope| (*key, entry.worker, scope))
             })
+            .partition(|(_, _, scope)| scope.selection.is_some());
+        let targets: Vec<_> = targets
+            .into_iter()
+            .map(|(_, worker, scope)| FenceTarget { worker, scope })
             .collect();
         let obligation = if let Some(backing) = backing {
             let ScopeTarget::Index(index_id) = target else {
@@ -956,6 +1168,22 @@ impl NativeCatalogAdmission {
             generation,
             service: state.service,
         };
+        // Every refusal check has passed (N5): revoke matching selection
+        // scopes in memory now. Nothing here is persisted.
+        let mut local_selection_revocations = Vec::new();
+        for (entry_key, worker, scope) in selection_keys {
+            if let AuthorityKey::Selection(nonce) = entry_key.1 {
+                state.live_selections.remove(&nonce);
+            }
+            if let Some(entry) = state.installed.get_mut(&entry_key) {
+                entry.phase = Phase::Revoked;
+            }
+            local_selection_revocations.push(LocalRevocation {
+                worker,
+                scope,
+                settled: false,
+            });
+        }
         state.generation = generation;
         state.pending = Some(PendingFence {
             ticket: ticket.clone(),
@@ -970,6 +1198,7 @@ impl NativeCatalogAdmission {
             target,
             durable: durable.clone(),
             effects_started: false,
+            local_selection_revocations,
         });
         Ok(FencePlan {
             ticket,
@@ -1649,7 +1878,12 @@ impl NativeCatalogAdmission {
         let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = state
             .installed
-            .get_mut(&(worker.worker, grant_id, scope.index_id, scope.fingerprint))
+            .get_mut(&(
+                worker.worker,
+                AuthorityKey::Grant(grant_id),
+                scope.index_id,
+                scope.fingerprint,
+            ))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -1676,10 +1910,169 @@ impl NativeCatalogAdmission {
                 && pending
                     .targets
                     .iter()
-                    .all(|target| pending.confirmed(target)),
+                    .all(|target| pending.confirmed(target))
+                && pending.local_revocations_settled(),
             ScopeReadRefused
         );
         Ok(pending.targets.clone())
+    }
+    /// The local selection revocations of this fence that still need the
+    /// worker's `RevokeScope` acknowledgement (§3.3 step 4). In memory only.
+    pub fn unsettled_selection_revocations(
+        &self,
+        ticket: &FenceTicket,
+    ) -> Result<Vec<(WorkerIdentity, ScopedReadRef)>> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        Ok(state
+            .fence(ticket)?
+            .local_selection_revocations
+            .iter()
+            .filter(|revocation| !revocation.settled)
+            .map(|revocation| (revocation.worker, revocation.scope))
+            .collect())
+    }
+    /// The owning plane stores a selection grant: its nonce becomes live
+    /// (§3.1, §3.4). Called nested inside the owner's critical section; the
+    /// gate never calls back into a plane (§3.7).
+    pub fn register_selection(&self, selection: &SelectionScopeRef) -> Result<()> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(
+            selection.service_instance == state.service
+                && !state.live_selections.contains_key(&selection.grant_nonce)
+                && state.live_selections.len() < MAX_LIVE_SELECTIONS,
+            ScopeReadRefused
+        );
+        state
+            .live_selections
+            .insert(selection.grant_nonce, selection.owner);
+        Ok(())
+    }
+    /// Owner revocation (§3.3): under the gate lock, remove each nonce from
+    /// the live set and mark its installations `Revoked`. No generation bump
+    /// and nothing persisted. Returns every installation of those nonces still
+    /// awaiting a worker acknowledgement; the caller sends `RevokeScope` for
+    /// each with no lock held.
+    #[must_use = "send RevokeScope for every returned pair with no lock held"]
+    pub fn revoke_selection(
+        &self,
+        nonces: &[Incarnation],
+    ) -> Result<Vec<(WorkerIdentity, ScopedReadRef)>> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        let mut pairs = Vec::new();
+        for nonce in nonces {
+            state.live_selections.remove(nonce);
+        }
+        for ((_, key, _, _), entry) in &mut state.installed {
+            if let AuthorityKey::Selection(nonce) = key
+                && nonces.contains(nonce)
+            {
+                entry.phase = Phase::Revoked;
+                pairs.extend(
+                    std::iter::once(entry.scope)
+                        .chain(entry.pending_previous)
+                        .map(|scope| (entry.worker, scope)),
+                );
+            }
+        }
+        Ok(pairs)
+    }
+    /// Whether `RevokeScope` must still be sent for this selection pair: its
+    /// entry is present and `Revoked`. An absent entry was already pruned or
+    /// reaped. A present live entry is refused (never revoke a live scope
+    /// through this path).
+    pub fn selection_revocation_pending(
+        &self,
+        worker: WorkerIdentity,
+        scope: ScopedReadRef,
+    ) -> Result<bool> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        let (key, _) = AuthorityKey::of(&scope)?;
+        ensure!(key.is_selection(), ScopeReadRefused);
+        match state
+            .installed
+            .get(&(worker.worker, key, scope.index_id, scope.fingerprint))
+            .filter(|entry| {
+                entry.worker == worker
+                    && (entry.scope == scope || entry.pending_previous == Some(scope))
+            }) {
+            None => Ok(false),
+            Some(entry) => {
+                ensure!(entry.phase == Phase::Revoked, ScopeReadRefused);
+                Ok(true)
+            }
+        }
+    }
+    /// The worker acknowledged `RevokeScope` for a revoked selection scope
+    /// (N1): no `FenceTicket` is involved. Prunes the entry (and its
+    /// high-water once no entry of that family remains) and settles a pending
+    /// fence's matching local revocation.
+    pub fn record_selection_revoked(
+        &self,
+        worker: WorkerIdentity,
+        scope: ScopedReadRef,
+    ) -> Result<()> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        let (key, _) = AuthorityKey::of(&scope)?;
+        ensure!(key.is_selection(), ScopeReadRefused);
+        let entry_key = (worker.worker, key, scope.index_id, scope.fingerprint);
+        if let Some(entry) = state.installed.get_mut(&entry_key) {
+            ensure!(
+                entry.worker == worker
+                    && entry.phase == Phase::Revoked
+                    && (entry.scope == scope || entry.pending_previous == Some(scope)),
+                ScopeReadRefused
+            );
+            if entry.scope == scope {
+                // The current lease is fenced; the entry and its tombstone go.
+                // The nonce is no longer live, so it cannot be resurrected.
+                state.installed.remove(&entry_key);
+            } else {
+                entry.pending_previous = None;
+            }
+        } else {
+            // Already pruned, or never acknowledged as installed by a gate
+            // that has since reaped the worker: nothing to do.
+            ensure!(
+                state.workers.get(&worker.worker) == Some(&worker)
+                    || state.retired_workers.get(&worker.worker) == Some(&worker),
+                ScopeReadRefused
+            );
+        }
+        let family = (worker.worker, key, scope.index_id);
+        if !state
+            .installed
+            .keys()
+            .any(|(owner, key, index, _)| (*owner, *key, *index) == family)
+        {
+            state.highwater.remove(&family);
+        }
+        if let Some(pending) = state.pending.as_mut() {
+            for revocation in &mut pending.local_selection_revocations {
+                if revocation.worker == worker && revocation.scope == scope {
+                    revocation.settled = true;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Whether the selection of this installation was revoked while the
+    /// installation was in flight: the exchange settled, but authority is gone.
+    pub fn selection_install_revoked(&self, ticket: &InstallTicket) -> bool {
+        let Some(selection) = ticket.scope.selection else {
+            return false;
+        };
+        self.0.lock().is_ok_and(|state| {
+            !state.live_selections.contains_key(&selection.grant_nonce)
+                && state
+                    .installed
+                    .get(&(
+                        ticket.worker.worker,
+                        AuthorityKey::Selection(selection.grant_nonce),
+                        ticket.scope.index_id,
+                        ticket.scope.fingerprint,
+                    ))
+                    .is_none_or(|entry| entry.phase == Phase::Revoked)
+        })
     }
     /// Complete native confirmation methods, in canonical target order.
     pub fn confirmations(&self, ticket: &FenceTicket) -> Result<Vec<FenceConfirmation>> {
@@ -1724,6 +2117,12 @@ impl NativeCatalogAdmission {
                         target: target.clone(),
                         method: FenceConfirmationMethod::NativeWorkerReap,
                     });
+                }
+            }
+            // A reaped worker can serve no selection scope either (N1).
+            for revocation in &mut pending.local_selection_revocations {
+                if revocation.worker == worker {
+                    revocation.settled = true;
                 }
             }
         }
@@ -1799,7 +2198,8 @@ impl NativeCatalogAdmission {
                 && pending
                     .targets
                     .iter()
-                    .all(|target| pending.confirmed(target)),
+                    .all(|target| pending.confirmed(target))
+                && pending.local_revocations_settled(),
             ScopeReadRefused
         );
         receipt.validate_for(request, preview_digest, prepared_digest, &pending.durable)?;
@@ -1865,7 +2265,7 @@ impl NativeCatalogAdmission {
             service: state.service,
         };
         let mut workers = BTreeMap::new();
-        let mut installed: BTreeMap<(Incarnation, GrantId, IndexId, Sha256Digest), Installed> =
+        let mut installed: BTreeMap<(Incarnation, AuthorityKey, IndexId, Sha256Digest), Installed> =
             BTreeMap::new();
         let mut highwater = BTreeMap::new();
         let mut lease_highwater = BTreeMap::new();
@@ -1907,7 +2307,8 @@ impl NativeCatalogAdmission {
             // Persisted targets are catalog grants only; a `None` is refused.
             let (grant_id, grant_revision) =
                 target.scope.catalog_grant().ok_or(ScopeReadRefused)?;
-            let family = (target.worker.worker, grant_id, target.scope.index_id);
+            let grant_key = AuthorityKey::Grant(grant_id);
+            let family = (target.worker.worker, grant_key, target.scope.index_id);
             highwater
                 .entry(family)
                 .and_modify(|revision: &mut CatalogRevision| {
@@ -1922,7 +2323,7 @@ impl NativeCatalogAdmission {
                 .or_insert(target.scope.lease_generation);
             let key = (
                 target.worker.worker,
-                grant_id,
+                grant_key,
                 target.scope.index_id,
                 target.scope.fingerprint,
             );
@@ -2004,6 +2405,8 @@ impl NativeCatalogAdmission {
             durable: intent.plan.clone(),
             effects_started: !intent.confirmations.is_empty()
                 || !intent.worker_confirmations.is_empty(),
+            // A restarted gate holds no selection scope (§3.3).
+            local_selection_revocations: Vec::new(),
         });
         // Persisted exact acknowledgements stay valid; no unacknowledged target
         // receives an invented live installation or a reusable bearer.

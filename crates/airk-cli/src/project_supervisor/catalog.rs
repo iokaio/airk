@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
     catalog_admission::{FenceTicket, InstallTicket, IssueTicket, NativeCatalogAdmission},
-    catalog_authority::NativeCatalogAuthoritySelection,
+    catalog_authority::{NativeCatalogAuthoritySelection, SelectionConnectRequest},
     catalog_coordinator::CatalogControl,
 };
 use airk_core::catalog_management::CatalogOperation;
@@ -47,6 +47,12 @@ pub(super) enum Operation {
         ticket: FenceTicket,
         target: FenceTarget,
     },
+    /// Owner or local-fence revocation of a selection scope (§3.3): no
+    /// `FenceTicket`, nothing persisted.
+    RevokeSelection {
+        worker: WorkerIdentity,
+        scope: ScopedReadRef,
+    },
     Reaped {
         worker: WorkerIdentity,
     },
@@ -71,6 +77,21 @@ pub(crate) struct NativeLegacyAuthoritySelection {
 pub(super) enum ConnectionSelection {
     Reviewed(NativeCatalogAuthoritySelection),
     Legacy(NativeLegacyAuthoritySelection),
+    /// An in-memory W4/A2 selection grant (§3.2 step 4): in process only.
+    Selection(Box<SelectionConnectRequest>),
+}
+/// The authority one connection installs.
+enum BuiltAuthority {
+    Catalog(airk_kernel::scoped_reads::ScopedReadAuthority),
+    Selection(airk_kernel::scoped_reads::SelectionReadAuthority),
+}
+impl BuiltAuthority {
+    fn backing(&self) -> ProjectBinding {
+        match self {
+            Self::Catalog(authority) => authority.backing,
+            Self::Selection(authority) => authority.backing,
+        }
+    }
 }
 pub(super) enum Response {
     Attached,
@@ -314,6 +335,11 @@ impl ScopedConnectionDelivery {
         stream: &mut S,
         budget: Duration,
     ) -> Result<()> {
+        // A selection grant's bearer never leaves the service (F4, N2).
+        ensure!(
+            self.scope.selection.is_none(),
+            "a selection scope connection is delivered in process only"
+        );
         let deadline = Instant::now()
             .checked_add(budget)
             .context("native scoped delivery deadline overflow")?;
@@ -346,6 +372,29 @@ impl ScopedConnectionDelivery {
         .await
         .context("native scoped delivery deadline exceeded")??;
         Ok(())
+    }
+    /// Hand a selection connection's grant to the service's own M3 handler
+    /// (N2). The issue check and the live-nonce check guard the hand-over
+    /// exactly as they guard a pipe write. A catalog delivery is refused: it
+    /// keeps the pipe-only path.
+    pub(crate) fn take_in_process(self) -> Result<ConnectionGrant> {
+        ensure!(
+            self.scope.selection.is_some(),
+            "a catalog scope connection is delivered over its pipe only"
+        );
+        let Self {
+            gate,
+            issue,
+            worker,
+            scope,
+            response,
+        } = self;
+        gate.with_scope_issue(issue, worker, scope, move || match response {
+            ControlResponse::Connection { grant, .. } if grant.scope == Some(scope) => Ok(grant),
+            _ => Err(anyhow::anyhow!(
+                "native selection connection payload differs"
+            )),
+        })?
     }
     fn poll_guarded<T>(
         &self,
@@ -518,6 +567,51 @@ impl CatalogControlHandle {
             _ => anyhow::bail!("unexpected catalog connection response"),
         }
     }
+    /// In-process admission of one index of an in-memory selection grant
+    /// (§3.2 step 4). The caller consumes the result only through
+    /// `ScopedConnectionDelivery::take_in_process`.
+    pub(crate) fn issue_selection(
+        &self,
+        request: SelectionConnectRequest,
+        lifetime: Duration,
+    ) -> Result<super::ScopedConnectionDelivery> {
+        ensure!(
+            !lifetime.is_zero() && lifetime <= Duration::from_secs(300),
+            "invalid native selection connection budget"
+        );
+        match self.call(Operation::Connect {
+            selection: ConnectionSelection::Selection(Box::new(request)),
+            lifetime,
+        })? {
+            Response::Connection(delivery) => Ok(*delivery),
+            _ => anyhow::bail!("unexpected native selection connection response"),
+        }
+    }
+    /// Send `RevokeScope` for each pair `NativeCatalogAdmission::
+    /// revoke_selection` returned. Call with no lock held (§3.7). Every pair
+    /// is attempted; the first failure is returned after the rest.
+    pub(crate) fn revoke_selection_scopes(
+        &self,
+        pairs: Vec<(WorkerIdentity, ScopedReadRef)>,
+    ) -> Result<()> {
+        let mut first = None;
+        for (worker, scope) in pairs {
+            if let Err(error) = self.revoke_selection_scope(worker, scope) {
+                first.get_or_insert(error);
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+    fn revoke_selection_scope(&self, worker: WorkerIdentity, scope: ScopedReadRef) -> Result<()> {
+        ensure!(
+            matches!(
+                self.call(Operation::RevokeSelection { worker, scope })?,
+                Response::Revoked
+            ),
+            "unexpected native selection revocation response"
+        );
+        Ok(())
+    }
     pub(crate) fn issue_legacy(
         &self,
         selection: super::NativeLegacyAuthoritySelection,
@@ -572,6 +666,9 @@ impl CatalogControl for CatalogControlHandle {
             "unexpected catalog revocation response"
         );
         Ok(())
+    }
+    fn revoke_selection(&self, worker: WorkerIdentity, scope: ScopedReadRef) -> Result<()> {
+        self.revoke_selection_scope(worker, scope)
     }
     fn confirm_reaped(&self, worker: WorkerIdentity) -> Result<bool> {
         match self.call(Operation::Reaped { worker })? {
@@ -650,6 +747,11 @@ pub(super) enum Expected {
     Revoke {
         ticket: FenceTicket,
         target: FenceTarget,
+    },
+    /// A selection scope's revocation: no `FenceTicket` (N1).
+    RevokeSelection {
+        worker: WorkerIdentity,
+        scope: ScopedReadRef,
     },
     Grant {
         worker: WorkerIdentity,
@@ -771,6 +873,42 @@ impl Pending {
                     .acknowledge_install(ticket, identity, scope)
                     .context("native scope installation acknowledgement could not settle; worker retirement required")?;
                 Ok(Ok(Exchange::Installed))
+            }
+            (Expected::Install(ticket), Reply::SelectionScopeInstalled { identity, lease }) => {
+                ensure!(
+                    identity == ticket.worker()
+                        && Some(lease)
+                            == crate::project_protocol::SelectionLease::of(&ticket.scope()),
+                    "foreign native selection installation reply"
+                );
+                if let Err(error) = self
+                    .gate
+                    .acknowledge_install(ticket, identity, ticket.scope())
+                {
+                    // A selection revoked while this installation was in flight
+                    // settled the exchange; its RevokeScope prunes the worker.
+                    if self.gate.selection_install_revoked(&ticket) {
+                        return Ok(Err(
+                            error.context("native selection revoked during installation")
+                        ));
+                    }
+                    return Err(error.context("native scope installation acknowledgement could not settle; worker retirement required"));
+                }
+                Ok(Ok(Exchange::Installed))
+            }
+            (
+                Expected::RevokeSelection { worker, scope },
+                Reply::SelectionScopeRevoked { identity, lease },
+            ) => {
+                ensure!(
+                    identity == worker
+                        && Some(lease) == crate::project_protocol::SelectionLease::of(&scope),
+                    "foreign native selection revocation reply"
+                );
+                Ok(self
+                    .gate
+                    .record_selection_revoked(identity, scope)
+                    .map(|_| Exchange::Revoked))
             }
             (Expected::Revoke { ticket, target }, Reply::ScopeRevoked { identity, scope }) => {
                 ensure!(
@@ -1277,34 +1415,41 @@ pub(super) fn execute(
                 "invalid native scoped connection budget"
             );
             ensure!(may_allocate, ConnectionSetupPending::Draining);
-            let (namespace, catalog_revision, backing) = match &selection {
-                ConnectionSelection::Reviewed(selected) => (
-                    selected.namespace,
-                    selected.catalog_revision,
-                    selected.backing,
-                ),
-                ConnectionSelection::Legacy(selected) => (
-                    selected.namespace,
-                    selected.catalog_revision,
-                    selected.binding,
+            let (namespace, catalog_revision) = match &selection {
+                ConnectionSelection::Reviewed(selected) => {
+                    (selected.namespace, selected.catalog_revision)
+                }
+                ConnectionSelection::Legacy(selected) => {
+                    (selected.namespace, selected.catalog_revision)
+                }
+                // Exactly the grant's revision: never rolled forward (§3.2).
+                ConnectionSelection::Selection(request) => (
+                    request.window_selection.namespace,
+                    request.selection_ref.catalog_revision,
                 ),
             };
             let issue = gate.begin_issue(namespace, catalog_revision)?;
             let registry = registry.as_mut().context("catalog registry unavailable")?;
             let authority = match selection {
-                ConnectionSelection::Reviewed(selected) => {
-                    crate::catalog_authority::build_catalog_read_authority(registry, &selected)?
-                }
-                ConnectionSelection::Legacy(selected) => {
+                ConnectionSelection::Reviewed(selected) => BuiltAuthority::Catalog(
+                    crate::catalog_authority::build_catalog_read_authority(registry, &selected)?,
+                ),
+                ConnectionSelection::Legacy(selected) => BuiltAuthority::Catalog(
                     crate::catalog_authority::build_legacy_catalog_read_authority(
                         registry,
                         selected.namespace,
                         selected.host,
                         selected.catalog_revision,
                         selected.binding,
-                    )?
-                }
+                    )?,
+                ),
+                ConnectionSelection::Selection(request) => BuiltAuthority::Selection(
+                    crate::catalog_authority::build_selection_read_authority(registry, &request)?,
+                ),
             };
+            // The built authority's backing: the selected (or legacy) binding
+            // for a catalog grant, the index's backing for a selection.
+            let backing = authority.backing();
             let registration = registry.get(backing)?.registration;
             start_worker(
                 workers,
@@ -1330,27 +1475,41 @@ pub(super) fn execute(
             gate.register_worker(identity)?;
             worker.catalog_gate = Some(gate.clone());
             // Reservation and actual private sends share this one actor turn.
-            let ticket = gate.reserve_validated_scope(
-                issue,
-                identity,
-                &authority,
-                Instant::now() + lifetime,
-            )?;
+            let expires = Instant::now() + lifetime;
+            let ticket = match &authority {
+                BuiltAuthority::Catalog(authority) => {
+                    gate.reserve_validated_scope(issue, identity, authority, expires)?
+                }
+                BuiltAuthority::Selection(authority) => {
+                    gate.reserve_selection_scope(issue, identity, authority, expires)?
+                }
+            };
             if ticket.requires_install() {
-                let command = match ticket.previous() {
-                    Some(previous) => WorkerCommand::RenewScopeLease {
+                let command = match (authority, ticket.previous()) {
+                    (BuiltAuthority::Catalog(authority), Some(previous)) => {
+                        WorkerCommand::RenewScopeLease {
+                            identity,
+                            authority: Box::new(authority),
+                            previous,
+                            lease_generation: ticket.scope().lease_generation,
+                            expires_unix_ms: expires_unix_ms(ticket.expires())?,
+                        }
+                    }
+                    (BuiltAuthority::Catalog(authority), None) => WorkerCommand::InstallScope {
                         identity,
                         authority: Box::new(authority),
-                        previous,
                         lease_generation: ticket.scope().lease_generation,
                         expires_unix_ms: expires_unix_ms(ticket.expires())?,
                     },
-                    None => WorkerCommand::InstallScope {
-                        identity,
-                        authority: Box::new(authority),
-                        lease_generation: ticket.scope().lease_generation,
-                        expires_unix_ms: expires_unix_ms(ticket.expires())?,
-                    },
+                    (BuiltAuthority::Selection(authority), previous) => {
+                        WorkerCommand::InstallSelectionScope {
+                            identity,
+                            authority: Box::new(authority),
+                            previous,
+                            lease_generation: ticket.scope().lease_generation,
+                            expires_unix_ms: expires_unix_ms(ticket.expires())?,
+                        }
+                    }
                 };
                 ensure!(
                     matches!(
@@ -1411,6 +1570,38 @@ pub(super) fn execute(
                     Exchange::Revoked
                 ),
                 "native revocation acknowledgement missing"
+            );
+            Ok(Response::Revoked)
+        }
+        Operation::RevokeSelection { worker, scope } => {
+            // Absent: already pruned (acknowledged or reaped). Present and
+            // live: refused, never revoked through this path.
+            if !gate.selection_revocation_pending(worker, scope)?
+                || confirmed_reap(&gate, workers, root, worker, may_allocate)?
+            {
+                return Ok(Response::Revoked);
+            }
+            let child = workers
+                .get_mut(&worker.project)
+                .context("native selection revocation target still unavailable")?;
+            ensure!(
+                child.identity == Some(worker),
+                "native selection revocation worker changed"
+            );
+            let command = WorkerCommand::RevokeScope {
+                identity: worker,
+                scope,
+            };
+            ensure!(
+                matches!(
+                    child.catalog_exchange(
+                        command,
+                        &gate,
+                        Expected::RevokeSelection { worker, scope }
+                    )?,
+                    Exchange::Revoked
+                ),
+                "native selection revocation acknowledgement missing"
             );
             Ok(Response::Revoked)
         }

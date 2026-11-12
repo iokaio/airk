@@ -41,6 +41,11 @@ enum Envelope {
         ProjectBinding,
         oneshot::Sender<Result<crate::project_supervisor::NativeAdministrativeRead>>,
     ),
+    /// In-process selection admission (§3.2 step 4): no `ControlMethod`.
+    Selection(
+        Box<crate::catalog_authority::SelectionConnectRequest>,
+        oneshot::Sender<Result<crate::project_supervisor::ScopedConnectionDelivery>>,
+    ),
 }
 
 /// Receive under a freeze already observed by the metadata actor. The native
@@ -68,6 +73,10 @@ fn receive_checkpoint_frozen(
                     });
                 }
                 Envelope::AdministrativeRead(_, reply) => {
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    let _ = reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress")));
+                }
+                Envelope::Selection(_, reply) => {
                     active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress")));
                 }
@@ -336,6 +345,27 @@ impl CatalogRuntime {
         let selection = crate::catalog_coordinator::native_scoped_selection(registry, request)?;
         self.control
             .issue_scoped(selection, Duration::from_secs(300))
+    }
+    /// Admit one index of an in-memory selection grant (§3.2 step 4). The
+    /// gate's clock must equal the grant's revision exactly; a newer clock
+    /// refuses (`CatalogRevisionChanged`) and is never rolled forward.
+    fn connect_selection(
+        &self,
+        registry: &mut ServiceRegistry,
+        request: crate::catalog_authority::SelectionConnectRequest,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        self.reconcile(registry)?;
+        anyhow::ensure!(
+            self.gate
+                .catalog_clock()
+                .is_some_and(
+                    |clock| clock.namespace == request.window_selection.namespace
+                        && clock.revision == request.selection_ref.catalog_revision
+                ),
+            crate::catalog_coordinator::CatalogRevisionChanged
+        );
+        self.control
+            .issue_selection(request, Duration::from_secs(300))
     }
     fn connect_legacy(
         &self,
@@ -1511,6 +1541,18 @@ impl Management {
                             let _ = sender.send(result);
                             continue;
                         }
+                        Envelope::Selection(request,sender) => {
+                            let result = match (registry.as_mut(),catalog.as_ref()) {
+                                (Ok(registry),Some(native)) => native.connect_selection(registry,*request),
+                                _ => Err(anyhow::anyhow!("catalog_authority_unavailable")),
+                            };
+                            active.fetch_sub(1,Ordering::AcqRel);
+                            match result {
+                                Ok(delivery) => delivery.handoff_native(sender),
+                                Err(error) => { let _ = sender.send(Err(error)); }
+                            }
+                            continue;
+                        }
                         Envelope::Request(method,reply) => (*method,reply),
                         Envelope::Missing(event) => {
                             if missing_work.iter().any(|work| work.event.binding() == event.binding()
@@ -1689,6 +1731,38 @@ impl Management {
             .await
             .map_err(|_| anyhow::anyhow!("native administrative admission outcome unknown"))?
             .map_err(|_| anyhow::anyhow!("native administrative owner unavailable"))?
+    }
+    /// The service's own M3 handler admits a selection read in process
+    /// (§3.2 step 4); the result is consumed only by `take_in_process`.
+    #[allow(
+        dead_code,
+        reason = "called by the M3 window selection read path (selection authority step S1b)"
+    )]
+    pub(crate) async fn connect_selection(
+        &self,
+        request: crate::catalog_authority::SelectionConnectRequest,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        let (sender, receiver) = oneshot::channel();
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        let sent = self
+            .sender
+            .as_ref()
+            .map(|queue| queue.try_send(Envelope::Selection(Box::new(request), sender)));
+        match sent {
+            Some(Ok(())) => {}
+            Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {
+                self.pending.fetch_sub(1, Ordering::AcqRel);
+                return Err(crate::project_supervisor::ConnectionSetupPending::Queue.into());
+            }
+            _ => {
+                self.pending.fetch_sub(1, Ordering::AcqRel);
+                anyhow::bail!("catalog_connection_owner_closed");
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(15), receiver)
+            .await
+            .map_err(|_| anyhow::anyhow!("catalog_connection_outcome_unknown"))?
+            .map_err(|_| anyhow::anyhow!("catalog_connection_owner_closed"))?
     }
     pub(crate) async fn request_legacy(
         &self,

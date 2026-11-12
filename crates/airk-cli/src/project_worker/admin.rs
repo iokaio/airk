@@ -10,9 +10,9 @@ pub(super) fn redeem_scope(
     scopes: &mut scopes::Scopes,
     grant: &ConnectionGrant,
     purpose: SessionPurpose,
-) -> Result<Option<airk_kernel::scoped_reads::ScopedReadAuthority>> {
+) -> Result<Option<scopes::WorkerAuthority>> {
     match purpose {
-        SessionPurpose::Evidence => scopes.redeem(grant),
+        SessionPurpose::Evidence => scopes.redeem_authority(grant),
         SessionPurpose::NativeAdministrativeRead => {
             ensure!(
                 grant.scope.is_none(),
@@ -55,7 +55,7 @@ pub(super) fn redeem(
 ) -> Result<(
     airk_core::identity::Incarnation,
     SessionPurpose,
-    Option<airk_kernel::scoped_reads::ScopedReadAuthority>,
+    Option<scopes::WorkerAuthority>,
 )> {
     let (session, purpose) = state
         .broker

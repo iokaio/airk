@@ -20,6 +20,15 @@ use anyhow::{Result, ensure};
 pub(crate) trait CatalogControl {
     fn uses_gate(&self, gate: &NativeCatalogAdmission) -> bool;
     fn revoke(&self, ticket: &FenceTicket, target: &FenceTarget) -> Result<()>;
+    /// `RevokeScope` for a selection scope the fence revoked locally (§3.3
+    /// step 4). Never a durable target; no `FenceTicket`.
+    fn revoke_selection(
+        &self,
+        _: WorkerIdentity,
+        _: airk_core::service::ScopedReadRef,
+    ) -> Result<()> {
+        anyhow::bail!("native selection revocation unavailable")
+    }
     fn confirm_reaped(&self, worker: WorkerIdentity) -> Result<bool>;
     fn capture_workers(
         &self,
@@ -608,6 +617,11 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
                 &confirmations,
             )?;
             result?;
+        }
+        // Local selection revocations hold the commit until each worker
+        // acknowledges or is reaped; nothing about them is recorded durably.
+        for (worker, scope) in self.gate.unsettled_selection_revocations(&plan.ticket)? {
+            self.control.revoke_selection(worker, scope)?;
         }
         self.gate.require_commit_ready(&plan.ticket)?;
         let confirmations = self.gate.confirmations(&plan.ticket)?;

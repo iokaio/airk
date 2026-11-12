@@ -1043,3 +1043,352 @@ fn expiry_narrowing_requires_exact_ack_and_generation_overflow_preserves_live_sc
     assert_eq!(gate.0.lock().unwrap().installed.len(), 1);
     Ok(())
 }
+
+// Selection read authority (spec §3.3, §3.4): in-memory W4/A2 grants.
+
+fn selection_ref(service: Incarnation, nonce: u8) -> SelectionScopeRef {
+    SelectionScopeRef {
+        owner: SelectionOwnerKind::Window,
+        grant_nonce: Incarnation::from_bytes([nonce; 16]),
+        service_instance: service,
+        scope_identity: Sha256Digest::from_bytes([0x33; 32]),
+        catalog_revision: CatalogRevision::INITIAL,
+    }
+}
+/// The selection authority over the catalog fixture's current membership.
+fn selection_authority(
+    authority: &ScopedReadAuthority,
+    selection: SelectionScopeRef,
+) -> SelectionReadAuthority {
+    let member = &authority.grant.memberships[0].membership;
+    SelectionReadAuthority {
+        schema: 1,
+        backing: authority.backing,
+        index_id: authority.index_id,
+        project_ids: authority.project_ids.clone(),
+        selection,
+        atoms: member
+            .scope
+            .iter()
+            .map(|atom| (member.project_id, atom.clone()))
+            .collect(),
+        sources: authority.sources.clone(),
+        membership_revisions: vec![(member.project_id, member.revision)],
+        source_revision: CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
+    }
+}
+fn install_selection(
+    gate: &NativeCatalogAdmission,
+    worker: WorkerIdentity,
+    authority: &SelectionReadAuthority,
+    namespace: Incarnation,
+) -> Result<(IssueTicket, InstallTicket)> {
+    gate.register_worker(worker)?;
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    let reservation = gate.reserve_selection_scope(issue, worker, authority, expiry())?;
+    gate.acknowledge_install(reservation, worker, reservation.scope)?;
+    Ok((issue, reservation))
+}
+fn selection_live(gate: &NativeCatalogAdmission, nonce: u8) -> bool {
+    gate.0
+        .lock()
+        .unwrap()
+        .live_selections
+        .contains_key(&Incarnation::from_bytes([nonce; 16]))
+}
+
+#[test]
+fn selection_admission_requires_a_live_nonce_of_this_service_and_prunes_after_ack() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    let selection = selection_ref(worker.service, 0x5c);
+    let authority = selection_authority(&catalog, selection);
+    // Not registered: nothing admits it.
+    assert!(install_selection(&gate, worker, &authority, namespace).is_err());
+    // Another service's ref, or a second registration of a nonce, is refused.
+    assert!(
+        gate.register_selection(&selection_ref(Incarnation::from_bytes([42; 16]), 0x5c))
+            .is_err()
+    );
+    gate.register_selection(&selection)?;
+    assert!(gate.register_selection(&selection).is_err());
+    let (issue, reservation) = install_selection(&gate, worker, &authority, namespace)?;
+    let scope = reservation.scope;
+    assert_eq!((scope.grant_id, scope.grant_revision), (None, None));
+    assert_eq!(scope.selection, Some(selection));
+    gate.check_scope_issue(issue, worker, scope)?;
+    // Owner revocation: nothing persisted, no generation bump.
+    let generation = gate.0.lock().unwrap().generation;
+    let pairs = gate.revoke_selection(&[selection.grant_nonce])?;
+    assert_eq!(pairs, vec![(worker, scope)]);
+    assert_eq!(gate.0.lock().unwrap().generation, generation);
+    assert!(gate.check_scope_issue(issue, worker, scope).is_err());
+    assert!(
+        gate.reserve_selection_scope(issue, worker, &authority, expiry())
+            .is_err()
+    );
+    assert!(gate.selection_revocation_pending(worker, scope)?);
+    // The worker's acknowledgement prunes the entry and its high-water.
+    gate.record_selection_revoked(worker, scope)?;
+    {
+        let state = gate.0.lock().unwrap();
+        assert_eq!((state.installed.len(), state.highwater.len()), (0, 0));
+    }
+    assert!(!gate.selection_revocation_pending(worker, scope)?);
+    gate.record_selection_revoked(worker, scope)?;
+    // A catalog ref never settles through the selection path.
+    let (_, catalog_install) = install(&gate, worker, &catalog, namespace)?;
+    assert!(
+        gate.record_selection_revoked(worker, catalog_install.scope)
+            .is_err()
+    );
+    assert!(
+        gate.selection_revocation_pending(worker, catalog_install.scope)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_revocation_races_install_in_either_order_and_never_admits() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    gate.register_worker(worker)?;
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    // Revoke before install: the reservation is refused.
+    let early = selection_ref(worker.service, 0x61);
+    gate.register_selection(&early)?;
+    assert!(gate.revoke_selection(&[early.grant_nonce])?.is_empty());
+    assert!(
+        gate.reserve_selection_scope(
+            issue,
+            worker,
+            &selection_authority(&catalog, early),
+            expiry()
+        )
+        .is_err()
+    );
+    // Install in flight, then revoke: the acknowledgement cannot settle it
+    // as installed, and the reply is classified as a revoked selection.
+    let late = selection_ref(worker.service, 0x62);
+    gate.register_selection(&late)?;
+    let reservation = gate.reserve_selection_scope(
+        issue,
+        worker,
+        &selection_authority(&catalog, late),
+        expiry(),
+    )?;
+    assert!(!gate.selection_install_revoked(&reservation));
+    assert_eq!(
+        gate.revoke_selection(&[late.grant_nonce])?,
+        vec![(worker, reservation.scope)]
+    );
+    assert!(
+        gate.acknowledge_install(reservation, worker, reservation.scope)
+            .is_err()
+    );
+    assert!(gate.selection_install_revoked(&reservation));
+    assert!(
+        gate.check_scope_issue(issue, worker, reservation.scope)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn selection_and_grant_scopes_never_alias_and_keep_separate_capacity() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    let (issue, catalog_install) = install(&gate, worker, &catalog, namespace)?;
+    // 80 live selection entries on one worker (N6), one per owner.
+    for nonce in 1..=80u8 {
+        let selection = selection_ref(worker.service, nonce);
+        gate.register_selection(&selection)?;
+        let reservation = gate.reserve_selection_scope(
+            issue,
+            worker,
+            &selection_authority(&catalog, selection),
+            expiry(),
+        )?;
+        gate.acknowledge_install(reservation, worker, reservation.scope)?;
+    }
+    let overflow = selection_ref(worker.service, 0x90);
+    gate.register_selection(&overflow)?;
+    assert!(
+        gate.reserve_selection_scope(
+            issue,
+            worker,
+            &selection_authority(&catalog, overflow),
+            expiry()
+        )
+        .is_err(),
+        "the worker's live selection bound"
+    );
+    // The full selection ledger leaves the catalog grant admitted, and a
+    // grant revocation fences only the catalog scope.
+    gate.check_scope_issue(issue, worker, catalog_install.scope)?;
+    let plan = gate.close_request_admission(&request(namespace, &catalog))?;
+    assert_eq!(
+        plan.targets,
+        vec![FenceTarget {
+            worker,
+            scope: catalog_install.scope
+        }]
+    );
+    assert!(
+        gate.unsettled_selection_revocations(&plan.ticket)?
+            .is_empty()
+    );
+    assert!(selection_live(&gate, 1));
+    Ok(())
+}
+
+#[test]
+fn index_fence_revokes_selection_locally_and_persists_only_catalog_targets() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    let (_, catalog_install) = install(&gate, worker, &catalog, namespace)?;
+    let selection = selection_ref(worker.service, 0x5c);
+    gate.register_selection(&selection)?;
+    let (_, selected) = install_selection(
+        &gate,
+        worker,
+        &selection_authority(&catalog, selection),
+        namespace,
+    )?;
+    let plan = gate.close_admission(
+        FenceKey::new(&request(namespace, &catalog))?,
+        ScopeTarget::Index(catalog.index_id),
+    )?;
+    let catalog_target = FenceTarget {
+        worker,
+        scope: catalog_install.scope,
+    };
+    assert_eq!(plan.targets, vec![catalog_target.clone()]);
+    assert_eq!(plan.durable.targets, vec![catalog_target]);
+    assert!(!selection_live(&gate, 0x5c));
+    assert_eq!(
+        gate.unsettled_selection_revocations(&plan.ticket)?,
+        vec![(worker, selected.scope)]
+    );
+    gate.record_revoked(&plan.ticket, worker, catalog_install.scope)?;
+    // The local revocation holds the commit until the worker acknowledges.
+    assert!(gate.require_commit_ready(&plan.ticket).is_err());
+    gate.record_selection_revoked(worker, selected.scope)?;
+    assert!(
+        gate.unsettled_selection_revocations(&plan.ticket)?
+            .is_empty()
+    );
+    assert_eq!(gate.require_commit_ready(&plan.ticket)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn worker_reap_settles_local_selection_revocations() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    let selection = selection_ref(worker.service, 0x5c);
+    gate.register_selection(&selection)?;
+    install_selection(
+        &gate,
+        worker,
+        &selection_authority(&catalog, selection),
+        namespace,
+    )?;
+    let plan = gate.close_admission(
+        FenceKey::new(&request(namespace, &catalog))?,
+        ScopeTarget::Index(catalog.index_id),
+    )?;
+    assert!(plan.targets.is_empty());
+    assert!(gate.require_commit_ready(&plan.ticket).is_err());
+    gate.observe_worker_reaped(worker)?;
+    assert!(
+        gate.unsettled_selection_revocations(&plan.ticket)?
+            .is_empty()
+    );
+    assert!(gate.require_commit_ready(&plan.ticket)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn refused_close_revokes_no_selection_scope() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    let selection = selection_ref(worker.service, 0x5c);
+    gate.register_selection(&selection)?;
+    let (issue, selected) = install_selection(
+        &gate,
+        worker,
+        &selection_authority(&catalog, selection),
+        namespace,
+    )?;
+    // Another namespace, then another expected revision: both refused
+    // before any local revocation.
+    let foreign = request(Incarnation::from_bytes([42; 16]), &catalog);
+    assert!(
+        gate.close_admission(
+            FenceKey::new(&foreign)?,
+            ScopeTarget::Index(catalog.index_id)
+        )
+        .is_err()
+    );
+    let mut stale = request(namespace, &catalog);
+    stale.expected_catalog_revision = CatalogRevision::INITIAL.next()?;
+    assert!(
+        gate.close_admission(FenceKey::new(&stale)?, ScopeTarget::Index(catalog.index_id))
+            .is_err()
+    );
+    assert!(selection_live(&gate, 0x5c));
+    gate.check_scope_issue(issue, worker, selected.scope)?;
+    Ok(())
+}
+
+#[test]
+fn restored_pending_fence_holds_only_catalog_targets_and_no_local_revocation() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    install(&gate, worker, &catalog, namespace)?;
+    let selection = selection_ref(worker.service, 0x5c);
+    gate.register_selection(&selection)?;
+    install_selection(
+        &gate,
+        worker,
+        &selection_authority(&catalog, selection),
+        namespace,
+    )?;
+    let request = request(namespace, &catalog);
+    let plan = gate.close_request_admission(&request)?;
+    assert!(
+        plan.durable
+            .targets
+            .iter()
+            .all(|target| target.scope.selection.is_none())
+    );
+    let (intent, _) = durable_fixture(&request, &plan.durable)?;
+    let restored = NativeCatalogAdmission::new(
+        Incarnation::from_bytes([21; 16]),
+        namespace,
+        CatalogRevision::INITIAL,
+        1,
+    )?;
+    let restored_plan = restored.restore_pending_fence(&intent)?;
+    assert_eq!(restored_plan.durable, plan.durable);
+    assert!(
+        restored
+            .unsettled_selection_revocations(&restored_plan.ticket)?
+            .is_empty()
+    );
+    let state = restored.0.lock().unwrap();
+    assert!(state.live_selections.is_empty());
+    assert!(
+        state
+            .pending
+            .as_ref()
+            .unwrap()
+            .local_selection_revocations
+            .is_empty()
+    );
+    Ok(())
+}
