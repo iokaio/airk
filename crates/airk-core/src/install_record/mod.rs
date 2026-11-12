@@ -272,12 +272,116 @@ pub enum SetupPhase {
     PointerWritten,
     LoginRegistered,
     LoginFailed,
+    /// This platform's login startup is not implemented by this build; the
+    /// step's detail names why (Phase 7).
+    LoginUnsupported,
     TrustApplied,
     TrustDeclined,
     TrustUnsupported,
     Started,
     Healthy,
+    // Uninstall and purge (U20, U32): each removal is recorded separately.
+    LoginUnregistered,
+    TrustRemoved,
+    PointerRemoved,
+    RecordRemoved,
+    /// Only with `delete_indexes: purge` or the `purge` kind.
+    DataPurged,
     Complete,
+}
+
+pub const SETUP_RECEIPT_SCHEMA: &str = "airk-setup-receipt/1";
+pub const MAX_SETUP_RECEIPT_BYTES: usize = 256 * 1024;
+/// Upper bounds of one receipt's lists and texts.
+pub const MAX_SETUP_STEPS: usize = 64;
+pub const MAX_SETUP_LEFTOVERS: usize = 256;
+pub const MAX_SETUP_TEXT: usize = 2048;
+
+/// One durable step of a setup transaction. `outcome` is a snake-case code;
+/// `detail` is bounded plain text (paths, reasons), never a credential.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupStep {
+    pub phase: SetupPhase,
+    pub at_unix_ms: u64,
+    pub outcome: String,
+    pub detail: String,
+}
+
+/// An item setup found but did not remove (U14), with its reason.
+/// `restarts_old_service` marks a leftover that can start a pre-split
+/// service again, which is reported first (plan §9.3).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Leftover {
+    pub item: String,
+    pub reason: String,
+    pub restarts_old_service: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupFailure {
+    pub code: String,
+    pub message: String,
+    pub at_unix_ms: u64,
+}
+
+/// The setup receipt `<state>/setup/<operation_id>.json` (plan §9.6;
+/// `docs/split/contracts.md` §5.6). It binds the exact operation bytes it was
+/// started from (`operation_sha256`), records every phase separately, lists
+/// what was retired and what was left, and is closed exactly once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupReceipt {
+    pub schema: String,
+    pub operation_id: Incarnation,
+    pub operation_sha256: Sha256Digest,
+    pub kind: OperationKind,
+    pub expires_unix_ms: u64,
+    pub steps: Vec<SetupStep>,
+    pub retired: Vec<String>,
+    pub leftovers: Vec<Leftover>,
+    pub failure: Option<SetupFailure>,
+    pub closed: bool,
+}
+
+impl SetupReceipt {
+    /// Decode a receipt written by the setup role; canonical bytes only.
+    pub fn decode(bytes: &[u8]) -> Result<Self, Refusal> {
+        let receipt: Self = decode(
+            bytes,
+            MAX_SETUP_RECEIPT_BYTES,
+            SETUP_RECEIPT_SCHEMA,
+            |r: &Self| &r.schema,
+        )?;
+        let text_ok = |text: &str| text.len() <= MAX_SETUP_TEXT;
+        if receipt.steps.len() > MAX_SETUP_STEPS
+            || receipt.leftovers.len() > MAX_SETUP_LEFTOVERS
+            || receipt.retired.len() > MAX_SETUP_LEFTOVERS
+            || !receipt
+                .steps
+                .iter()
+                .all(|step| text_ok(&step.outcome) && text_ok(&step.detail))
+            || !receipt
+                .leftovers
+                .iter()
+                .all(|left| text_ok(&left.item) && text_ok(&left.reason))
+            || !receipt.retired.iter().all(|item| text_ok(item))
+            || receipt
+                .failure
+                .as_ref()
+                .is_some_and(|failure| !text_ok(&failure.code) || !text_ok(&failure.message))
+        {
+            return Err(Refusal::Malformed);
+        }
+        Ok(receipt)
+    }
+
+    /// Whether `phase` has been recorded.
+    pub fn reached(&self, phase: SetupPhase) -> bool {
+        self.steps.iter().any(|step| step.phase == phase)
+    }
 }
 
 fn decode<T: serde::de::DeserializeOwned + Serialize>(

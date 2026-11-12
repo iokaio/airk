@@ -22,10 +22,15 @@ def native_sources():
             yield path, text.splitlines()
 
 
+# Split Phase 6 removed the native-gated extension suites (nativeSmoke,
+# installedEditor) with the extension's native runtime; they return as
+# airkctl-based suites. The rule below still applies to any native test.
+INSTALLED_EDITOR = TESTS / "installedEditor.ts"
+
+
 class NativeReadContract(unittest.TestCase):
     def test_raw_native_tool_calls_use_the_shared_retry_or_state_a_single_shot_reason(self):
         sources = list(native_sources())
-        self.assertTrue(any(path.name == "nativeSmoke.test.ts" for path, _ in sources))
         unexplained = []
         for path, lines in sources:
             for number, line in enumerate(lines):
@@ -35,6 +40,7 @@ class NativeReadContract(unittest.TestCase):
                     unexplained.append(f"{path.relative_to(ROOT)}:{number + 1}")
         self.assertEqual(unexplained, [], "Use requestWithReadRetry/observeQuickStatus, or add `// native read: <why exactly once>`")
 
+    @unittest.skipUnless(INSTALLED_EDITOR.exists(), "installed-editor suite removed in split Phase 6")
     def test_installed_editor_retries_only_through_the_shared_hint_parser(self):
         text = (TESTS / "installedEditor.ts").read_text(encoding="utf-8")
         self.assertIn("readRetryDelay(result.result)", text)

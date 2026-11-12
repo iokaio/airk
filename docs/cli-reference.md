@@ -75,6 +75,7 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl service status`](#airkctl-service-status)
 - [`airkctl service stop`](#airkctl-service-stop)
 - [`airkctl service trust`](#airkctl-service-trust)
+- [`airkctl service uninstall`](#airkctl-service-uninstall)
 - [`airkctl session`](#airkctl-session)
 - [`airkctl settings`](#airkctl-settings)
 - [`airkctl setup-model`](#airkctl-setup-model)
@@ -3362,6 +3363,7 @@ Commands:
   start                  Start the installed service (the install record's verified airk) and wait until it is healthy
   stop                   Stop the service and wait until its process exits; a saved Stop keeps automatic starts off
   restart                Stop the service, wait until its process exits, then start the installed service again
+  uninstall              Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust it added, and the install pointer and record
   logs                   Read the service's diagnostic logs (recent from the running service; all, raw or stopped-service reads from the local files)
   trust                  This installation's HTTPS issuer in your OS trust store; works while the service is down
   issuer-rotation        The saved HTTPS issuer rotation and current endpoint (status only in this version)
@@ -4652,6 +4654,66 @@ Options:
 
       --expected-ca-sha256 <EXPECTED_CA_SHA256>
 
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## airkctl service uninstall
+
+```text
+Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust it added, and the install pointer and record.
+
+Index data, service state, cache and logs are kept unless --purge-indexes. airkctl hands the work to setup and exits; `airkctl service status` and the printed receipt report the outcome. On Windows, Settings > Apps > AIRK Service also removes the program files.
+
+Usage: airkctl service uninstall [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --yes
+          Confirm the uninstall without an interactive prompt
+
+      --purge-indexes
+          Also delete index data, service state, cache and logs
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory

@@ -51,6 +51,8 @@ mod runtime_metadata;
 pub mod runtime_pair;
 pub mod service_configuration;
 pub mod service_frontend;
+/// Phase 7: the private `setup` and `service-login` roles (I4 writer).
+pub mod setup_role;
 /// Compatibility path (split G1): the frame codec moved to `ipc::frame`.
 pub use ipc::frame as service_ipc;
 pub mod service_logs;

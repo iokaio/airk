@@ -31,7 +31,13 @@ observations and carries out the admitted route.
   dispatch. `/mcp` and `/api/v1` keep their admission; they only add
   `cookie_on_bearer_plane` after their Host and `Origin` checks.
 - `ConnectionPeer`: the TCP 4-tuple and its cached same-user proof, attached
-  to each request by the gateway's accept loop.
+  to each request by the gateway's accept loop. Observers (H1): Windows
+  `GetExtendedTcpTable` owning PID + token SID; Linux `/proc/net/tcp` uid;
+  macOS the client socket (local = peer, foreign = listener) found among the
+  TCP sockets of the service's effective uid (`proc_listpids(PROC_UID_ONLY)`,
+  `proc_pidinfo(PROC_PIDLISTFDS)`, `proc_pidfdinfo(PROC_PIDFDSOCKETINFO)`,
+  bounded scan). On macOS a missing match is `Unavailable`, never
+  `OtherUser`; either way the API answers `admin_peer_refused`.
 - `refusal(code)`: an envelope refusal for the gateway.
 
 ## Owned state and invariants
@@ -141,9 +147,9 @@ observations and carries out the admitted route.
 - Destructive rows (typed confirmation wire form undefined) and the Phase 7
   mapping rows above.
 - `/admin/api/v1/events` answers `not_yet_served`.
-- Peer proof: Windows (`GetExtendedTcpTable` + token SID) and Linux
-  (`/proc/net/tcp`). macOS has no observer yet, so its API is refused with
-  `admin_peer_refused` (fail closed, H1).
+- Peer proof qualification: the macOS own-socket observer is implemented
+  but not yet qualified on a macOS host; other platforms (no observer) are
+  refused with `admin_peer_refused` (fail closed, H1).
 
 ## T0
 

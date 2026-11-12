@@ -25,3 +25,4 @@ pub mod service;
 pub mod start;
 pub mod tools;
 pub mod trust;
+pub mod uninstall;

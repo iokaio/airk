@@ -34,6 +34,51 @@ and Mac Neo acceptance are separate pending gates. Use the
 [1.8.23 candidate record](releases/release-1.8.23.md) and its linked task ledger
 for preparation and source validation; older release evidence is historical.
 
+## Split installer and setup role (Phase 7, in progress)
+
+**Status (12 November 2026): source only. Nothing below has been built,
+installed or qualified on any host.** It is the split replacement for the
+pre-split installer flow described in the rest of this page
+([split plan](split/split-plan.md) §9; contracts §5.5–§5.7).
+
+- **Setup role.** `airk __airk_role setup --operation <file> [--plan |
+  --prepare]` (U33) consumes one owner-private `airk-setup-operation/1` file
+  and records every phase in `<state>/setup/<operation_id>.json`
+  (`airk-setup-receipt/1`). It retires receipt-proven pre-split installations
+  through the existing replacement code, drains the running service with
+  exact-image evidence, verifies the placed pair against
+  `payload-inventory.json`, writes the install record and then the install
+  pointer, registers login startup (Windows Task Scheduler, Linux systemd user
+  unit; macOS records `login_unsupported`), starts the service through the
+  installed `airkctl`, and applies certificate trust with consent. Uninstall
+  removes login startup, owned trust, the pointer and the record; index data
+  is deleted only on an explicit purge. Details:
+  [`setup_role/CONTRACT.md`](../crates/airk-cli/src/setup_role/CONTRACT.md).
+- **Login startup** runs `airk __airk_role service-login --install-id <id>`,
+  admitted only for the pointer's installation and the record's exact image.
+- **`airkctl service uninstall --yes [--purge-indexes]`** writes an
+  uninstall operation, starts the setup role and exits (U20).
+- **Windows installer** `installers/windows/airk-service.iss`: per user, no
+  elevation, default `%LOCALAPPDATA%\Programs\AIRK` (`bin\airkctl.exe`,
+  `service\airk.exe`, `notices\`), a data-location page (index data and state;
+  cache and logs), a disclosure page listing earlier AIRK installations found
+  by `setup --plan`, a preflight (`--prepare`) before files are replaced,
+  the "AIRK Admin" Start-menu shortcut and `bin\` on the user `PATH` under its
+  ownership receipt. Unattended: `/DIR=`, `/DATA=`, `/CACHE=`,
+  `/ACKNOWLEDGE-RESET` (required when an earlier installation will be
+  removed) and `/TRUST` (otherwise trust is skipped). Locations must be
+  printable ASCII.
+- **Local build** `pwsh -NoProfile -File scripts/build-local-service-installer.ps1 -ForceBuild`
+  (U37). `scripts/sign-native.py` has no local signing adapter yet (U70), so
+  the build stops unless `-Unsigned` is passed; an unsigned installer is a
+  labeled packaging check that setup refuses at placement.
+
+**Known blockers before a Windows installation works:** `airkctl` refuses a
+record that names a Windows signature until Authenticode verification lands
+(step 3b.1c-sig), so `airkctl service start` (and therefore setup's start
+step) fails on Windows; the local signing adapter (U70) is missing; the
+service does not yet use the record's data, cache and log locations (U89).
+
 ## Required clean break before 1.8.16
 
 The following records the superseded 8 November rebuild policy. The current

@@ -16,6 +16,8 @@ mod secrets;
 #[cfg(test)]
 mod tests;
 
+/// The embedded admin bundle's I4 digests `(inventory, bundle)` (split Phase 7).
+pub(crate) use assets::digests as embedded_asset_digests;
 pub(crate) use peer::ConnectionPeer;
 
 use crate::admin_contract::{

@@ -85,6 +85,12 @@ STARTS = {
     ("crates/airkctl/src/admin.rs", "browse"):
         "external: the desktop's default handler (`cmd /C start`, `open`, `xdg-open`) for "
         "`airkctl admin open`'s owner-only redirect file; the launch code is never an argument",
+    ("crates/airk-cli/src/setup_role/effects.rs", "start"):
+        "external: the installed airkctl `service start` from the setup role's start step "
+        "(U94: one start implementation); setup waits for it",
+    ("crates/airkctl/src/uninstall.rs", "spawn_setup"):
+        "airk's private setup role, detached, for `airkctl service uninstall` (U20); the "
+        "role admits only the owner-only single-use operation file airkctl just wrote",
     ("crates/airkctl/src/launch.rs", "launch"):
         "external: the user's Claude Code, Codex or VS Code client in the foreground "
         "(`airkctl agents launch`, U91); not an airk process",

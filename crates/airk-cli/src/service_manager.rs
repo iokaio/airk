@@ -25,6 +25,9 @@ mod linux;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod macos;
 
+/// Identity prefix of a split installation's login registration (Phase 7).
+const SPLIT_LOGIN_PREFIX: &str = "airk-service-";
+
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Platform {
@@ -207,6 +210,45 @@ impl ServiceManager {
             ],
             true,
         )
+    }
+
+    /// Split Phase 7: the login registration of an AIRK Service installation
+    /// (`setup_role`; `docs/split/contracts.md` §5.7). It runs the install
+    /// record's `airk` as `__airk_role service-login --install-id <id>`. Its
+    /// Windows definition and its ownership receipt live in the installation's
+    /// owner-only state folder (`<state>/login/`), so no pre-split roster or
+    /// receipt names it; the identity is derived from that state folder.
+    pub(crate) fn for_installation(state: &Path, airk: &Path, install_id: &str) -> Result<Self> {
+        let arguments = vec![
+            "__airk_role".into(),
+            "service-login".into(),
+            "--install-id".into(),
+            install_id.into(),
+        ];
+        let mut manager = Self::for_command(state, airk.to_path_buf(), arguments, false)?;
+        let hash = manager
+            .id
+            .strip_prefix("airk-")
+            .context("service identity prefix")?
+            .to_owned();
+        manager.id = format!("{SPLIT_LOGIN_PREFIX}{hash}");
+        let login = Path::new(&manager.data).join("login");
+        manager.definition = match manager.platform {
+            Platform::Windows => login.join(format!("{}.xml", manager.id)),
+            Platform::Linux => manager
+                .definition
+                .with_file_name(format!("{}.service", manager.id)),
+            Platform::Macos => manager
+                .definition
+                .with_file_name(format!("{}.plist", manager.id)),
+        };
+        manager.receipt = login.join("login-owner.json");
+        Ok(manager)
+    }
+
+    /// A split installation's login registration (`for_installation`).
+    fn is_split_login(&self) -> bool {
+        self.id.starts_with(SPLIT_LOGIN_PREFIX)
     }
 
     fn for_command(
@@ -515,6 +557,16 @@ impl ServiceManager {
 
     /// Explicit user action: register login startup and start immediately.
     pub fn install(&self) -> Result<ServiceStatus> {
+        self.install_with(true)
+    }
+
+    /// Register login startup without starting now (split setup role: the
+    /// service is started separately through its detached role).
+    pub(crate) fn register(&self) -> Result<ServiceStatus> {
+        self.install_with(false)
+    }
+
+    fn install_with(&self, start: bool) -> Result<ServiceStatus> {
         #[cfg(target_os = "macos")]
         if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
             return macos::Manager::new(self).install();
@@ -559,7 +611,7 @@ impl ServiceManager {
             let _ = fs::remove_file(&self.definition);
             return Err(error);
         }
-        self.register_and_start()
+        self.register_and(start)
     }
 
     pub fn start(&self) -> Result<ServiceStatus> {
@@ -577,7 +629,7 @@ impl ServiceManager {
             status.manager_output
         );
         if status.loaded == Some(false) {
-            return self.register_and_start();
+            return self.register_and(true);
         }
         self.require_registered(&status)?;
         let invocation = match self.platform {
@@ -820,7 +872,7 @@ impl ServiceManager {
         Ok(())
     }
     fn require_registered(&self, status: &ServiceStatus) -> Result<()> {
-        if self.id.starts_with("airksvc-") || self.legacy_review {
+        if self.id.starts_with("airksvc-") || self.legacy_review || self.is_split_login() {
             ensure!(
                 status.loaded == Some(true) && status.registered_definition_matches == Some(true),
                 "registered service definition is different or could not be verified; inspect OS startup configuration before changing it"
@@ -828,7 +880,7 @@ impl ServiceManager {
         }
         Ok(())
     }
-    fn register_and_start(&self) -> Result<ServiceStatus> {
+    fn register_and(&self, start: bool) -> Result<ServiceStatus> {
         if self.platform == Platform::Windows {
             checked(
                 &self.schtasks(&[
@@ -843,7 +895,9 @@ impl ServiceManager {
             )?;
             let status = self.status()?;
             self.require_registered(&status)?;
-            checked(&self.schtasks(&["/Run", "/TN", &self.id])?)?;
+            if start {
+                checked(&self.schtasks(&["/Run", "/TN", &self.id])?)?;
+            }
         } else if self.platform == Platform::Linux {
             checked(&self.systemctl(&["daemon-reload"]))?;
             let status = self.status()?;
@@ -851,7 +905,9 @@ impl ServiceManager {
             checked(&self.systemctl(&["enable", &self.unit()]))?;
             let status = self.status()?;
             self.require_registered(&status)?;
-            checked(&self.systemctl(&["start", &self.unit()]))?;
+            if start {
+                checked(&self.systemctl(&["start", &self.unit()]))?;
+            }
         } else {
             // bootstrap takes the exact owned file, not a previously loaded label.
             checked(
@@ -879,7 +935,7 @@ impl ServiceManager {
             format!("{:x}", Sha256::digest(&definition)) == receipt.definition_sha256,
             "service definition was modified; refusing to alter it"
         );
-        if self.legacy_review || self.is_direct_runtime() {
+        if self.legacy_review || self.is_direct_runtime() || self.is_split_login() {
             ensure!(
                 definition == self.definition_bytes(&self.plan()?.definition),
                 "legacy definition differs from the reviewed executable, source, data or collection"

@@ -554,6 +554,20 @@ enum ServiceCommand {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
     },
+    /// Remove this AIRK Service installation through its signed setup step: stop the service,
+    /// remove login startup, the certificate trust it added, and the install pointer and record.
+    ///
+    /// Index data, service state, cache and logs are kept unless --purge-indexes. airkctl hands
+    /// the work to setup and exits; `airkctl service status` and the printed receipt report the
+    /// outcome. On Windows, Settings > Apps > AIRK Service also removes the program files.
+    Uninstall {
+        /// Confirm the uninstall without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Also delete index data, service state, cache and logs.
+        #[arg(long)]
+        purge_indexes: bool,
+    },
     /// Read the service's diagnostic logs (recent from the running service; all, raw or
     /// stopped-service reads from the local files).
     Logs {
@@ -2915,6 +2929,22 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
         }
         ServiceCommand::Start { runtime_dir } => {
             return start_service(cx, selection, runtime_dir);
+        }
+        ServiceCommand::Uninstall { yes, purge_indexes } => {
+            if !yes {
+                return usage(
+                    cx,
+                    "service uninstall removes this installation; pass --yes to confirm",
+                );
+            }
+            let verified = match installed(cx) {
+                Ok(verified) => verified,
+                Err(code) => return code,
+            };
+            return match crate::uninstall::launch(&verified, purge_indexes) {
+                Ok(value) => json_line(cx, &value),
+                Err(line) => fail(cx, &line),
+            };
         }
         ServiceCommand::Stop { runtime_dir } => {
             return lifecycle_service(

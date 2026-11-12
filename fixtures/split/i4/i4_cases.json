@@ -248,11 +248,54 @@
   "pointer_written",
   "login_registered",
   "login_failed",
+  "login_unsupported",
   "trust_applied",
   "trust_declined",
   "trust_unsupported",
   "started",
   "healthy",
+  "login_unregistered",
+  "trust_removed",
+  "pointer_removed",
+  "record_removed",
+  "data_purged",
   "complete"
+ ],
+ "receipts": [
+  {
+   "name": "open receipt",
+   "text": "{\"schema\":\"airk-setup-receipt/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"operation_sha256\":\"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\"kind\":\"install\",\"expires_unix_ms\":1800000600000,\"steps\":[{\"phase\":\"locked\",\"at_unix_ms\":1800000000001,\"outcome\":\"locked\",\"detail\":\"\"},{\"phase\":\"predecessors_retired\",\"at_unix_ms\":1800000000002,\"outcome\":\"retired\",\"detail\":\"1 removed, 1 left\"}],\"retired\":[\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"],\"leftovers\":[{\"item\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\"reason\":\"no ownership receipt\",\"restarts_old_service\":false}],\"failure\":null,\"closed\":false}\n",
+   "expect": "ok"
+  },
+  {
+   "name": "closed receipt with a failure",
+   "text": "{\"schema\":\"airk-setup-receipt/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"operation_sha256\":\"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\"kind\":\"install\",\"expires_unix_ms\":1800000600000,\"steps\":[{\"phase\":\"locked\",\"at_unix_ms\":1800000000001,\"outcome\":\"locked\",\"detail\":\"\"},{\"phase\":\"predecessors_retired\",\"at_unix_ms\":1800000000002,\"outcome\":\"retired\",\"detail\":\"1 removed, 1 left\"}],\"retired\":[\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"],\"leftovers\":[{\"item\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\"reason\":\"no ownership receipt\",\"restarts_old_service\":false}],\"failure\":{\"code\":\"service_not_healthy\",\"message\":\"no Health within 60 s\",\"at_unix_ms\":1800000000003},\"closed\":true}\n",
+   "expect": "ok"
+  },
+  {
+   "name": "pretty-printed receipt is not canonical",
+   "text": "{\n \"schema\": \"airk-setup-receipt/1\",\n \"operation_id\": \"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\n \"operation_sha256\": \"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\n \"kind\": \"install\",\n \"expires_unix_ms\": 1800000600000,\n \"steps\": [\n  {\n   \"phase\": \"locked\",\n   \"at_unix_ms\": 1800000000001,\n   \"outcome\": \"locked\",\n   \"detail\": \"\"\n  },\n  {\n   \"phase\": \"predecessors_retired\",\n   \"at_unix_ms\": 1800000000002,\n   \"outcome\": \"retired\",\n   \"detail\": \"1 removed, 1 left\"\n  }\n ],\n \"retired\": [\n  \"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"\n ],\n \"leftovers\": [\n  {\n   \"item\": \"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\n   \"reason\": \"no ownership receipt\",\n   \"restarts_old_service\": false\n  }\n ],\n \"failure\": null,\n \"closed\": false\n}\n",
+   "expect": "install_file_non_canonical"
+  },
+  {
+   "name": "unknown field",
+   "text": "{\"schema\":\"airk-setup-receipt/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"operation_sha256\":\"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\"kind\":\"install\",\"expires_unix_ms\":1800000600000,\"steps\":[{\"phase\":\"locked\",\"at_unix_ms\":1800000000001,\"outcome\":\"locked\",\"detail\":\"\"},{\"phase\":\"predecessors_retired\",\"at_unix_ms\":1800000000002,\"outcome\":\"retired\",\"detail\":\"1 removed, 1 left\"}],\"retired\":[\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"],\"leftovers\":[{\"item\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\"reason\":\"no ownership receipt\",\"restarts_old_service\":false}],\"failure\":null,\"closed\":false,\"extra\":1}\n",
+   "expect": "install_file_malformed"
+  },
+  {
+   "name": "other schema",
+   "text": "{\"schema\":\"airk-setup-receipt/2\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"operation_sha256\":\"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\"kind\":\"install\",\"expires_unix_ms\":1800000600000,\"steps\":[{\"phase\":\"locked\",\"at_unix_ms\":1800000000001,\"outcome\":\"locked\",\"detail\":\"\"},{\"phase\":\"predecessors_retired\",\"at_unix_ms\":1800000000002,\"outcome\":\"retired\",\"detail\":\"1 removed, 1 left\"}],\"retired\":[\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"],\"leftovers\":[{\"item\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\"reason\":\"no ownership receipt\",\"restarts_old_service\":false}],\"failure\":null,\"closed\":false}\n",
+   "expect": "install_file_unknown_schema"
+  },
+  {
+   "name": "unknown phase",
+   "text": "{\"schema\":\"airk-setup-receipt/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"operation_sha256\":\"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\"kind\":\"install\",\"expires_unix_ms\":1800000600000,\"steps\":[{\"phase\":\"rolled_back\",\"at_unix_ms\":1800000000000,\"outcome\":\"x\",\"detail\":\"\"}],\"retired\":[\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"],\"leftovers\":[{\"item\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\"reason\":\"no ownership receipt\",\"restarts_old_service\":false}],\"failure\":null,\"closed\":false}\n",
+   "expect": "install_file_malformed"
+  },
+  {
+   "name": "oversized detail",
+   "text": "{\"schema\":\"airk-setup-receipt/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"operation_sha256\":\"fc040b020aba0e66f7e61167aa21ffc2a8869a793c4df8c6b405a11a91abbd98\",\"kind\":\"install\",\"expires_unix_ms\":1800000600000,\"steps\":[{\"phase\":\"locked\",\"at_unix_ms\":1800000000000,\"outcome\":\"locked\",\"detail\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}],\"retired\":[\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\service-1.4\"],\"leftovers\":[{\"item\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\standalone\",\"reason\":\"no ownership receipt\",\"restarts_old_service\":false}],\"failure\":null,\"closed\":false}\n",
+   "expect": "install_file_malformed"
+  }
  ]
 }

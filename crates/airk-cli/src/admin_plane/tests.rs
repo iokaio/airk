@@ -297,6 +297,35 @@ fn table_parsers_find_the_peer_end_of_the_connection() {
     assert_eq!(peer::linux_peer_uid(&proc_table, other, server), None);
 }
 
+#[test]
+fn macos_own_socket_scan_proves_only_the_client_end() {
+    use crate::admin_contract::{PeerObservation, PeerProof, peer_proof};
+    let client: std::net::SocketAddrV4 = "127.0.0.1:50000".parse().unwrap();
+    let server: std::net::SocketAddrV4 = "127.0.0.1:57421".parse().unwrap();
+    let other: std::net::SocketAddrV4 = "127.0.0.1:50001".parse().unwrap();
+    let socket = |local, remote| peer::OwnSocket { local, remote };
+    let service_end = socket(server, client);
+    let client_end = socket(client, server);
+    let found = |sockets: Vec<peer::OwnSocket>| peer::macos_found_among(sockets, client, server);
+    assert_eq!(found(vec![service_end, client_end]), Some(true));
+    // The same socket shared by two same-uid processes still proves it.
+    assert_eq!(found(vec![client_end, client_end]), Some(true));
+    // Only the service's own end: the browser socket is not the user's.
+    assert_eq!(found(vec![service_end]), None);
+    assert_eq!(
+        found(vec![socket(other, server), socket(client, other)]),
+        None
+    );
+    assert_eq!(found(Vec::new()), None);
+    let proof = |found_among_service_user_sockets| {
+        peer_proof(&PeerObservation::Macos {
+            found_among_service_user_sockets,
+        })
+    };
+    assert_eq!(proof(found(vec![client_end])), PeerProof::SameUser);
+    assert_eq!(proof(found(vec![service_end])), PeerProof::Unavailable);
+}
+
 fn request(
     method: &str,
     target: &str,

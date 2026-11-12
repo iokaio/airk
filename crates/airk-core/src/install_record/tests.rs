@@ -107,11 +107,17 @@ fn setup_phases_are_ordered_as_reviewed() {
         SetupPhase::PointerWritten,
         SetupPhase::LoginRegistered,
         SetupPhase::LoginFailed,
+        SetupPhase::LoginUnsupported,
         SetupPhase::TrustApplied,
         SetupPhase::TrustDeclined,
         SetupPhase::TrustUnsupported,
         SetupPhase::Started,
         SetupPhase::Healthy,
+        SetupPhase::LoginUnregistered,
+        SetupPhase::TrustRemoved,
+        SetupPhase::PointerRemoved,
+        SetupPhase::RecordRemoved,
+        SetupPhase::DataPurged,
         SetupPhase::Complete,
     ];
     let observed: Vec<String> = all
@@ -142,6 +148,27 @@ fn start_requests_decode_with_the_injected_clock_as_reviewed() {
         let nonce: Incarnation = case["nonce"].as_str().unwrap().parse().unwrap();
         let now = case["now_unix_ms"].as_u64().unwrap();
         let observed = outcome(StartRequest::decode(text.as_bytes(), nonce, now), text);
+        assert_eq!(
+            observed,
+            case["expect"].as_str().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}
+
+#[test]
+fn setup_receipts_decode_as_reviewed() {
+    let fixture = fixture();
+    for case in cases(&fixture, "receipts") {
+        let text = case["text"].as_str().unwrap();
+        let observed = match SetupReceipt::decode(text.as_bytes()) {
+            Ok(receipt) => {
+                assert_eq!(canonical(&receipt), text.as_bytes(), "{}", case["name"]);
+                "ok".to_owned()
+            }
+            Err(refusal) => refusal.code().to_owned(),
+        };
         assert_eq!(
             observed,
             case["expect"].as_str().unwrap(),

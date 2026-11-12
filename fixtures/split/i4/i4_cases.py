@@ -179,13 +179,46 @@ def cases():
          "nonce": nonce, "now_unix_ms": NOW + 1, "expect": "install_file_non_canonical"},
     ]
     phases = ["locked", "predecessors_retired", "service_drained", "placed", "record_written", "pointer_written",
-              "login_registered", "login_failed", "trust_applied", "trust_declined", "trust_unsupported",
-              "started", "healthy", "complete"]
+              "login_registered", "login_failed", "login_unsupported", "trust_applied", "trust_declined",
+              "trust_unsupported", "started", "healthy", "login_unregistered", "trust_removed", "pointer_removed",
+              "record_removed", "data_purged", "complete"]
+
+    def receipt(**changes):
+        value = {"schema": "airk-setup-receipt/1", "operation_id": OPERATION_ID,
+                 "operation_sha256": digest(canonical(operation())), "kind": "install",
+                 "expires_unix_ms": NOW + 600_000,
+                 "steps": [{"phase": "locked", "at_unix_ms": NOW + 1, "outcome": "locked", "detail": ""},
+                           {"phase": "predecessors_retired", "at_unix_ms": NOW + 2, "outcome": "retired",
+                            "detail": "1 removed, 1 left"}],
+                 "retired": [ROOT + "\\service-1.4"],
+                 "leftovers": [{"item": ROOT + "\\standalone", "reason": "no ownership receipt",
+                                "restarts_old_service": False}],
+                 "failure": None, "closed": False}
+        value.update(changes)
+        return value
+
+    receipts = [
+        {"name": "open receipt", "text": canonical(receipt()), "expect": "ok"},
+        {"name": "closed receipt with a failure", "text": canonical(receipt(
+            closed=True, failure={"code": "service_not_healthy", "message": "no Health within 60 s",
+                                  "at_unix_ms": NOW + 3})), "expect": "ok"},
+        {"name": "pretty-printed receipt is not canonical", "text": json.dumps(receipt(), indent=1) + "\n",
+         "expect": "install_file_non_canonical"},
+        {"name": "unknown field", "text": canonical({**receipt(), "extra": 1}), "expect": "install_file_malformed"},
+        {"name": "other schema", "text": canonical(receipt(schema="airk-setup-receipt/2")),
+         "expect": "install_file_unknown_schema"},
+        {"name": "unknown phase", "text": canonical(receipt(steps=[{"phase": "rolled_back", "at_unix_ms": NOW,
+                                                                       "outcome": "x", "detail": ""}])),
+         "expect": "install_file_malformed"},
+        {"name": "oversized detail", "text": canonical(receipt(steps=[{"phase": "locked", "at_unix_ms": NOW,
+                                                                         "outcome": "locked", "detail": "x" * 2049}])),
+         "expect": "install_file_malformed"},
+    ]
     return {"schema": SCHEMA, "contract": "crates/airk-core/src/install_record/mod.rs",
             "limits": {"pointer": 4096, "record": 65536, "setup_operation": 16384, "operation_lifetime_ms": 600000,
                        "start_request": 1024, "start_request_lifetime_ms": 30000},
             "pointers": pointers, "records": records, "operations": operations, "start_requests": starts,
-            "phases": phases}
+            "phases": phases, "receipts": receipts}
 
 
 def main():

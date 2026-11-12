@@ -6,8 +6,11 @@
 //! parsing is pure and tested on every host; only the table read is
 //! platform code. Windows: the connection's owning PID from
 //! `GetExtendedTcpTable`, then that process's token user SID. Linux: the
-//! `uid` column of `/proc/net/tcp`. Other platforms (macOS) make no
-//! observation yet, so the proof is `Unavailable` and the API is refused.
+//! `uid` column of `/proc/net/tcp`. macOS: the connection's client socket
+//! (local = the browser end, foreign = the listener) is found among the TCP
+//! sockets of processes whose effective uid is the service's (`peer/macos.rs`
+//! enumerates them; `macos_found_among` decides). Other platforms make no
+//! observation, so the proof is `Unavailable` and the API is refused.
 use crate::admin_contract::{PeerObservation, PeerProof, peer_proof};
 use std::{
     net::{SocketAddr, SocketAddrV4},
@@ -209,9 +212,51 @@ fn observe(client: SocketAddr, server: SocketAddr) -> Option<PeerObservation> {
     })
 }
 
-/// No qualified observer on this platform (macOS: H1 names
-/// `proc_listpids`/`proc_pidfdinfo`, not implemented yet).
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod macos;
+
+/// The IPv4 endpoints of one TCP socket held by a process of the service's
+/// own effective uid (macOS observer record).
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct OwnSocket {
+    pub(super) local: SocketAddrV4,
+    pub(super) remote: SocketAddrV4,
+}
+
+/// macOS own-socket proof: `Some(true)` when the connection's client socket
+/// (local end `client`, foreign end `server`) is among the service user's
+/// sockets. A missing match is `None`, not `Some(false)`: the enumeration
+/// cannot see other users' sockets, may be bounded, and races with the
+/// connection closing, so absence proves nothing (H1: a proof that is not
+/// obtained is refused). Duplicates are fine here: every record already
+/// belongs to the service's uid.
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn macos_found_among(
+    sockets: impl IntoIterator<Item = OwnSocket>,
+    client: SocketAddrV4,
+    server: SocketAddrV4,
+) -> Option<bool> {
+    sockets
+        .into_iter()
+        .any(|socket| socket.local == client && socket.remote == server)
+        .then_some(true)
+}
+
+#[cfg(target_os = "macos")]
+fn observe(client: SocketAddr, server: SocketAddr) -> Option<PeerObservation> {
+    let (client, server) = (v4(client)?, v4(server)?);
+    // SAFETY: geteuid takes no pointers and has no failure mode.
+    let service_uid = unsafe { libc::geteuid() };
+    let found_among_service_user_sockets = macos::own_tcp_sockets(service_uid)
+        .and_then(|sockets| macos_found_among(sockets, client, server));
+    Some(PeerObservation::Macos {
+        found_among_service_user_sockets,
+    })
+}
+
+/// No qualified observer on this platform.
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn observe(client: SocketAddr, server: SocketAddr) -> Option<PeerObservation> {
     let _ = (v4(client), v4(server));
     None

@@ -4,11 +4,10 @@
 //!
 //! A private role is selected before command parsing with
 //! `airk __airk_role <name> …`. A role starts only after its authority is
-//! verified, before any state is opened. This step serves `service-detached`;
-//! every other listed role is refused (`role_not_available`) until its step
-//! lands, and a bare or unknown selector is refused (`role_admission_refused`).
-//! The existing hidden commands (`serve`, workers, guardians, the PDF child)
-//! keep working until Phase 4 retires the user CLI.
+//! verified, before any state is opened. A listed role whose step has not
+//! landed is refused (`role_not_available`), and a bare or unknown selector is
+//! refused (`role_admission_refused`). Phase 7 serves `setup` and
+//! `service-login` (`setup_role`).
 use airk_core::{
     identity::Incarnation,
     install_record::{MAX_START_REQUEST_BYTES, StartMode, StartRequest},
@@ -54,6 +53,10 @@ pub enum RoleRequest {
         runtime_dir: PathBuf,
         operation: String,
     },
+    /// Phase 7 (U33): run one setup operation file (`setup_role`).
+    Setup(crate::setup_role::SetupRequest),
+    /// Phase 7: the login registration's entry (`setup_role::serve_login`).
+    ServiceLogin { install_id: Incarnation },
 }
 
 /// Classify the process arguments (including the program name). `None` means
@@ -175,6 +178,61 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
                 operation: operation.context("role_admission_refused: --operation is required")?,
             })
         }
+        "setup" => {
+            let mut operation = None;
+            let mut mode = None;
+            let mut rest = arguments[1..].iter();
+            while let Some(flag) = rest.next() {
+                match flag.to_str() {
+                    Some("--operation") if operation.is_none() => {
+                        operation = Some(PathBuf::from(
+                            rest.next()
+                                .context("role_admission_refused: missing role argument value")?,
+                        ));
+                    }
+                    Some("--plan") if mode.is_none() => {
+                        mode = Some(crate::setup_role::SetupMode::Plan);
+                    }
+                    Some("--prepare") if mode.is_none() => {
+                        mode = Some(crate::setup_role::SetupMode::Prepare);
+                    }
+                    _ => bail!("role_admission_refused: unexpected role argument"),
+                }
+            }
+            let operation = operation.context("role_admission_refused: --operation is required")?;
+            ensure!(
+                operation.is_absolute(),
+                "role_admission_refused: --operation must be absolute"
+            );
+            Ok(RoleRequest::Setup(crate::setup_role::SetupRequest {
+                operation,
+                mode: mode.unwrap_or(crate::setup_role::SetupMode::Complete),
+            }))
+        }
+        "service-login" => {
+            let mut install_id = None;
+            let mut rest = arguments[1..].iter();
+            while let Some(flag) = rest.next() {
+                let value = rest
+                    .next()
+                    .context("role_admission_refused: missing role argument value")?;
+                match flag.to_str() {
+                    Some("--install-id") if install_id.is_none() => {
+                        install_id = Some(
+                            value
+                                .to_str()
+                                .and_then(|value| value.parse::<Incarnation>().ok())
+                                .context("role_admission_refused: invalid --install-id")?,
+                        );
+                    }
+                    _ => bail!("role_admission_refused: unexpected role argument"),
+                }
+            }
+            Ok(RoleRequest::ServiceLogin {
+                install_id: install_id
+                    .context("role_admission_refused: --install-id is required")?,
+            })
+        }
         // The binary dispatches the interim role before role parsing.
         INTERIM => bail!("role_admission_refused: {INTERIM} is dispatched by the airk binary"),
         name if ROLES.contains(&name) => bail!("role_not_available: {name}"),
@@ -266,6 +324,10 @@ pub async fn run(request: RoleRequest) -> Result<()> {
                 "client error input exceeds 16 KiB"
             );
             crate::service_logs::record_client_error(&runtime_dir, &operation, &input)
+        }
+        RoleRequest::Setup(request) => crate::setup_role::run(request).await,
+        RoleRequest::ServiceLogin { install_id } => {
+            crate::setup_role::serve_login(install_id).await
         }
     }
 }

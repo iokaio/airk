@@ -128,10 +128,12 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i3/launch_exchange.json
 !fixtures/split/i4/i4_cases.json
 !fixtures/split/i1/control_methods.json
+!fixtures/split/i1/admin_launch_code.json
 !fixtures/split/i1/window_plane.json
 !fixtures/split/agents/config_cases.json
 !fixtures/split/i1/request_recovery.json
 !fixtures/split/i4/role_admission.json
+!fixtures/split/i4/interruptions.json
 !fixtures/wire/airkctl_session_frames.json
 !fixtures/wire/catalog_receipt.json
 !fixtures/wire/native_outcomes.json
@@ -141,10 +143,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/wire/usage_page.json
 !packages/contracts-gen/i3.schema.json
 !packages/vscode/src/generated/i2.schema.json
-!packages/vscode/src/test/diagnosticLogs.test.ts
-!packages/vscode/src/test/extensionUninstall.test.ts
 !packages/vscode/src/test/fixtures/httpAuthorityDigest.json
-!packages/vscode/src/test/serviceBootstrap.test.ts
 !rust-toolchain.toml
 !scripts/build-service-container.py
 !scripts/build-service-runtime.py

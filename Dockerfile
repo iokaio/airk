@@ -106,6 +106,7 @@ COPY fixtures/split/agents/config_cases.json ./fixtures/split/agents/config_case
 COPY fixtures/split/parity ./fixtures/split/parity
 COPY fixtures/split/i1/request_recovery.json ./fixtures/split/i1/request_recovery.json
 COPY fixtures/split/i4/role_admission.json ./fixtures/split/i4/role_admission.json
+COPY fixtures/split/i4/interruptions.json ./fixtures/split/i4/interruptions.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
 COPY fixtures/wire/native_outcomes.json ./fixtures/wire/native_outcomes.json
@@ -115,9 +116,6 @@ COPY fixtures/wire/session_frames.json ./fixtures/wire/session_frames.json
 COPY fixtures/wire/usage_page.json ./fixtures/wire/usage_page.json
 COPY packages/contracts-gen/i3.schema.json ./packages/contracts-gen/i3.schema.json
 COPY packages/vscode/src/generated/i2.schema.json ./packages/vscode/src/generated/i2.schema.json
-COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts
-COPY packages/vscode/src/test/extensionUninstall.test.ts ./packages/vscode/src/test/extensionUninstall.test.ts
-COPY packages/vscode/src/test/serviceBootstrap.test.ts ./packages/vscode/src/test/serviceBootstrap.test.ts
 COPY scripts/check-container.py ./scripts/check-container.py
 COPY scripts/check-macos-direct-runtime.py ./scripts/check-macos-direct-runtime.py
 COPY scripts/check-managed-runtime.py ./scripts/check-managed-runtime.py

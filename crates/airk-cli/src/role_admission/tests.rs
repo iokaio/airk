@@ -58,12 +58,10 @@ fn bare_unknown_and_pending_roles_are_refused() {
         refusal(parse(&args(&["airk", SELECTOR, "shell"])).unwrap())
             .starts_with("role_admission_refused")
     );
-    for pending in ["service-login", "pdf-child", "setup"] {
-        assert_eq!(
-            refusal(parse(&args(&["airk", SELECTOR, pending])).unwrap()),
-            format!("role_not_available: {pending}")
-        );
-    }
+    assert_eq!(
+        refusal(parse(&args(&["airk", SELECTOR, "pdf-child"])).unwrap()),
+        "role_not_available: pdf-child"
+    );
 }
 
 #[test]
@@ -370,6 +368,104 @@ fn service_foreground_takes_an_absolute_root_and_a_bounded_idle_grace() {
         assert!(
             error.starts_with("role_admission_refused"),
             "{refused:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn setup_takes_an_absolute_operation_and_one_mode() {
+    let operation = std::env::temp_dir()
+        .join("airk-setup-fixture")
+        .join("operation.json");
+    let operation_text = operation.to_str().unwrap();
+    for (extra, mode) in [
+        (None, crate::setup_role::SetupMode::Complete),
+        (Some("--plan"), crate::setup_role::SetupMode::Plan),
+        (Some("--prepare"), crate::setup_role::SetupMode::Prepare),
+    ] {
+        let mut line = vec!["airk", SELECTOR, "setup", "--operation", operation_text];
+        line.extend(extra);
+        assert_eq!(
+            parse(&args(&line)).unwrap().unwrap(),
+            RoleRequest::Setup(crate::setup_role::SetupRequest {
+                operation: operation.clone(),
+                mode,
+            })
+        );
+    }
+    for line in [
+        vec!["airk", SELECTOR, "setup"],
+        vec!["airk", SELECTOR, "setup", "--operation", "operation.json"],
+        vec!["airk", SELECTOR, "setup", "--operation"],
+        vec![
+            "airk",
+            SELECTOR,
+            "setup",
+            "--operation",
+            operation_text,
+            "--plan",
+            "--prepare",
+        ],
+        vec![
+            "airk",
+            SELECTOR,
+            "setup",
+            "--operation",
+            operation_text,
+            "--operation",
+            operation_text,
+        ],
+        vec![
+            "airk",
+            SELECTOR,
+            "setup",
+            "--operation",
+            operation_text,
+            "--yes",
+        ],
+    ] {
+        assert!(
+            refusal(parse(&args(&line)).unwrap()).starts_with("role_admission_refused"),
+            "{line:?}"
+        );
+    }
+}
+
+#[test]
+fn service_login_takes_one_install_id() {
+    let id = "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d";
+    assert_eq!(
+        parse(&args(&[
+            "airk",
+            SELECTOR,
+            "service-login",
+            "--install-id",
+            id
+        ]))
+        .unwrap()
+        .unwrap(),
+        RoleRequest::ServiceLogin {
+            install_id: id.parse().unwrap()
+        }
+    );
+    for line in [
+        vec!["airk", SELECTOR, "service-login"],
+        vec!["airk", SELECTOR, "service-login", "--install-id"],
+        vec!["airk", SELECTOR, "service-login", "--install-id", "0D0D"],
+        vec![
+            "airk",
+            SELECTOR,
+            "service-login",
+            "--install-id",
+            id,
+            "--install-id",
+            id,
+        ],
+        vec!["airk", SELECTOR, "service-login", "--runtime-dir", "/x"],
+    ] {
+        assert!(
+            refusal(parse(&args(&line)).unwrap()).starts_with("role_admission_refused"),
+            "{line:?}"
         );
     }
 }

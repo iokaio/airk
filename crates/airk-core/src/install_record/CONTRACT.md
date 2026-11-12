@@ -16,7 +16,15 @@ installation:
   locations, signing facts and the installing operation; at most 64 KiB.
 - `SetupOperation` (`airk-setup-operation/1`): one owner-private request the
   setup role consumes once, valid for at most ten minutes; at most 16 KiB.
-- `SetupPhase`: the ordered durable phases of a setup transaction.
+- `SetupPhase`: the durable phases of a setup transaction, including the
+  uninstall and purge removals and `login_unsupported` (split Phase 7).
+- `SetupReceipt` (`airk-setup-receipt/1`): the setup role's receipt
+  `<state>/setup/<operation_id>.json`, at most 256 KiB. It binds the
+  operation bytes (`operation_sha256`), records each phase as a separate
+  step with an outcome code and bounded detail, lists retired items and
+  leftovers (U14), and carries a failure and a `closed` flag. Written by the
+  setup role (`airk-cli` `setup_role`); read by `airkctl` and later
+  installers.
 
 ## Interface and invariants
 

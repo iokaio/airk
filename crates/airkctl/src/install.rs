@@ -45,19 +45,7 @@ fn unverified(code: &str, message: impl Into<String>) -> Discovery {
 /// The fixed per-user pointer path (§5.2): native folders, never inherited
 /// `HOME`, `XDG_*` or `LOCALAPPDATA` overrides.
 pub fn pointer_path() -> anyhow::Result<PathBuf> {
-    #[cfg(windows)]
-    let base = airk_process::user_folders::known_folder(
-        airk_process::user_folders::KnownFolder::LocalAppData,
-    )?
-    .join("AIRK");
-    #[cfg(target_os = "macos")]
-    let base = airk_process::user_folders::home()?.join("Library/Application Support/AIRK");
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let base = airk_process::user_folders::home()?.join(".config/airk");
-    #[cfg(not(any(windows, unix)))]
-    anyhow::bail!("AIRK installations are unsupported on this platform");
-    #[cfg(any(windows, unix))]
-    Ok(base.join("install-pointer").join("current.json"))
+    airk_process::user_folders::install_pointer()
 }
 
 /// The signature check of the platform this build runs on (§5.4.3; step

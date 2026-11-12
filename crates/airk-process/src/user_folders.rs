@@ -154,6 +154,24 @@ pub fn home() -> Result<PathBuf> {
     anyhow::bail!("native user directories are unsupported on this platform")
 }
 
+/// The fixed per-user I4 install pointer (`docs/split/contracts.md` §5.2):
+/// native folders, never inherited `HOME`, `XDG_*` or `LOCALAPPDATA`
+/// overrides. The setup role writes it; `airkctl` and later installers read
+/// it. Moved from `airkctl` `install.rs` (split Phase 7) so both share one
+/// definition.
+pub fn install_pointer() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let base = known_folder(KnownFolder::LocalAppData)?.join("AIRK");
+    #[cfg(target_os = "macos")]
+    let base = home()?.join("Library/Application Support/AIRK");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let base = home()?.join(".config/airk");
+    #[cfg(not(any(windows, unix)))]
+    anyhow::bail!("AIRK installations are unsupported on this platform");
+    #[cfg(any(windows, unix))]
+    Ok(base.join("install-pointer").join("current.json"))
+}
+
 /// An absolute location whose existing ancestor is canonicalized and whose
 /// missing suffix is kept; parent traversal is refused (U86).
 pub fn canonical_location(path: &Path) -> Result<PathBuf> {
