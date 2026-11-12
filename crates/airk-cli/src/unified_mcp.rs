@@ -996,7 +996,7 @@ pub async fn serve_combined(
         }) as Arc<dyn ExplorerTools>
     });
     let backend = Arc::new(Unified::combined(backend, explorer)?);
-    crate::client_owner::watch()?;
+    airk_process::client_owner::watch()?;
     let close = backend.clone();
     let result = airk_mcp::remote::serve_with_input_lifecycle(
         backend.clone(),
@@ -1226,7 +1226,7 @@ async fn serve_selected(
         (!no_default).then_some(primary),
         explorer,
     )?);
-    crate::client_owner::watch()?;
+    airk_process::client_owner::watch()?;
     let close = ready.clone();
     let observation_close = backend.clone();
     let served = airk_mcp::remote::serve_with_input_lifecycle(
@@ -1312,7 +1312,7 @@ pub async fn serve_roots(
         (!no_default).then_some(primary),
         explorer,
     )?);
-    crate::client_owner::watch()?;
+    airk_process::client_owner::watch()?;
     let close = ready.clone();
     let observation_close = backend.clone();
     let lookup_close = lookups.clone();

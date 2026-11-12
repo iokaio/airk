@@ -84,7 +84,6 @@ pub mod service_manager;
 mod checkpoint_fence;
 mod child_job;
 
-pub mod client_owner;
 mod native_command;
 mod native_process;
 mod process_diagnostics;

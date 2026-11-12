@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native process lifetime primitives shared by supervision and extraction.
 pub mod child_job;
+pub mod client_owner;
 pub mod detached;
 pub mod monotonic;
+pub mod private_stdio;
 pub mod user_folders;
 pub use child_job::ChildJob;
 #[cfg(windows)]

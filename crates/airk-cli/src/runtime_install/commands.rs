@@ -807,7 +807,7 @@ pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Re
         RuntimeCommand::Launch { install_dir, args } => {
             let (_, executable, _) = selected(install_dir)?;
             runtime_pair::require_legacy_stdio(&executable)?;
-            crate::client_owner::watch()?;
+            airk_process::client_owner::watch()?;
             launcher_repair::require_settled(install_dir)?;
             let mut command = Command::new(executable);
             ensure!(

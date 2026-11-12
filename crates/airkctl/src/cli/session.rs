@@ -211,29 +211,25 @@ impl Options {
 pub fn serve(mut options: Options) -> u8 {
     if options.owner_watch && options.owner.is_none() {
         options.owner = owner_probe();
+        if options.owner.is_none() {
+            // Owner loss could not be observed; refuse rather than outlive it.
+            return crate::contract::ExitClass::Internal.code();
+        }
     }
-    // TODO(3f.3): protocol 1 moved the frame streams to private, non-inheritable
-    // duplicates and redirected the standard handles (null / stderr) so no
-    // stray print or inherited child handle can corrupt a frame. That needs
-    // platform FFI (`libc` / `windows-sys`), which airkctl does not depend on.
-    // `cli::run` writes only to its `Io`, but a child it spawns (service
-    // start) still inherits these handles.
-    serve_streams(std::io::stdin(), std::io::stdout(), options)
+    // Frames move to private, non-inheritable duplicates; the standard
+    // handles then read the null device and write to stderr, so no stray
+    // print or child (a detached service start) can corrupt a frame.
+    match airk_process::private_stdio::private_streams() {
+        Ok((input, output)) => serve_streams(input, output, options),
+        Err(_) => crate::contract::ExitClass::Internal.code(),
+    }
 }
 
-#[cfg(unix)]
+/// The owner (the editor's extension host) as `airk service session`
+/// observed it (`airk_process::client_owner`).
 fn owner_probe() -> Option<OwnerProbe> {
-    let parent = std::os::unix::process::parent_id();
-    Some(Box::new(move || {
-        std::os::unix::process::parent_id() != parent
-    }))
-}
-
-// TODO(3f.3): Windows owner observation (protocol 1 used `client_owner`, a
-// process handle wait) needs `windows-sys`, which airkctl does not depend on.
-#[cfg(not(unix))]
-fn owner_probe() -> Option<OwnerProbe> {
-    None
+    let observer = airk_process::client_owner::observe().ok()?;
+    Some(Box::new(move || observer.exited()))
 }
 
 /// Serve framed requests from `input` and write replies and events to

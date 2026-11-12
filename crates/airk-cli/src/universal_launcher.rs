@@ -174,7 +174,7 @@ pub fn run(executable: &Path, args: Vec<OsString>) -> Result<()> {
     if let Ok((_, main, _)) = crate::runtime_install::selected(&install) {
         crate::runtime_pair::require_legacy_stdio(&main)?;
     }
-    crate::client_owner::watch()?;
+    airk_process::client_owner::watch()?;
     let target = crate::runtime_install::verified_launcher(&install)?;
     if digest(&target)? == digest(executable)?
         && !args.iter().any(|arg| {
