@@ -1869,3 +1869,141 @@ fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `explorer …` (split step 3d): the same operation through `airk` (into
+/// `--output`) and `airkctl` (into `--output-file`, U79, through M11) writes
+/// the same result and prints the same `{written, ok}` line, apart from the
+/// file name and the drafts' clock fields.
+#[test]
+fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-explorer");
+    let control = service.control.to_str().unwrap().to_owned();
+    let out = tempfile::tempdir()?;
+    let ctl = |arguments: &[&str]| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = ["airkctl", "--service-runtime-dir", control.as_str()]
+            .into_iter()
+            .chain(arguments.iter().copied())
+            .map(std::ffi::OsString::from)
+            .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    // Drafts carry the clock that wrote them.
+    fn timeless(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                fields.retain(|key, _| !key.ends_with("_ms") && !key.ends_with("_at"));
+                fields.values_mut().for_each(timeless);
+            }
+            Value::Array(rows) => rows.iter_mut().for_each(timeless),
+            _ => {}
+        }
+    }
+    let read = |path: &std::path::Path| -> anyhow::Result<Value> {
+        let mut value: Value = serde_json::from_slice(&fs::read(path)?)?;
+        timeless(&mut value);
+        Ok(value)
+    };
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        ("list-templates", vec![]),
+        (
+            "get-template",
+            vec!["--args", r#"{"id":"no-such-template"}"#],
+        ),
+        (
+            "draft-search",
+            vec!["--args", r#"{"query":"recover a password"}"#],
+        ),
+        ("draft-search", vec!["--args", r#"{"query":1}"#]),
+        (
+            "validate-draft",
+            vec!["--args", r#"{"kind":"search","draft":{}}"#],
+        ),
+        ("draft-plan", vec!["--args", "[1]"]),
+    ];
+    for (index, (command, extra)) in cases.iter().enumerate() {
+        let old_path = out.path().join(format!("old-{index}.json"));
+        let new_path = out.path().join(format!("new-{index}.json"));
+        let before = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .args(["explorer", command])
+            .args(extra)
+            .arg("--output")
+            .arg(&old_path)
+            .output()?;
+        let mut line = vec!["explorer", command];
+        line.extend(extra.iter().copied());
+        line.extend(["--output-file", new_path.to_str().unwrap()]);
+        let (code, stdout, stderr) = ctl(&line);
+        assert_eq!(
+            code == 0,
+            before.status.success(),
+            "{command} {extra:?}: {stderr}"
+        );
+        assert_eq!(
+            stdout.replace(&format!("new-{index}"), &format!("old-{index}")),
+            String::from_utf8(before.stdout)?,
+            "{command} {extra:?}"
+        );
+        assert_eq!(old_path.exists(), new_path.exists(), "{command} {extra:?}");
+        if new_path.exists() {
+            assert_eq!(read(&new_path)?, read(&old_path)?, "{command} {extra:?}");
+        } else {
+            assert_eq!(
+                stderr
+                    .lines()
+                    .last()
+                    .unwrap_or_default()
+                    .strip_prefix("airkctl: "),
+                String::from_utf8(before.stderr)?
+                    .lines()
+                    .last()
+                    .unwrap_or_default()
+                    .strip_prefix("Error: "),
+                "{command} {extra:?}"
+            );
+        }
+    }
+    // proposal-status reads a written draft.
+    let draft = out.path().join("old-2.json");
+    let old_status = out.path().join("old-status.json");
+    let new_status = out.path().join("new-status.json");
+    let before = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .args(["explorer", "proposal-status", "--draft"])
+        .arg(&draft)
+        .arg("--output")
+        .arg(&old_status)
+        .output()?;
+    let (code, _, stderr) = ctl(&[
+        "explorer",
+        "proposal-status",
+        "--draft",
+        draft.to_str().unwrap(),
+        "--output-file",
+        new_status.to_str().unwrap(),
+    ]);
+    assert_eq!(code == 0, before.status.success(), "{stderr}");
+    assert_eq!(read(&new_status)?, read(&old_status)?);
+    // An existing output file is refused alike and left unchanged.
+    let (code, _, _) = ctl(&[
+        "explorer",
+        "list-templates",
+        "--output-file",
+        new_status.to_str().unwrap(),
+    ]);
+    assert_ne!(code, 0);
+    assert_eq!(read(&new_status)?, read(&old_status)?);
+    Ok(())
+}

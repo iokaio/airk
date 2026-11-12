@@ -118,6 +118,11 @@ enum Command {
     Init,
     /// Print the offline model catalog and the CPU choice for this host.
     ModelCatalog,
+    /// Offline Explorer drafts, validation and templates; results go to a new --output-file.
+    Explorer {
+        #[command(subcommand)]
+        action: ExplorerCommand,
+    },
     /// Read one project setting view; read-only.
     Settings {
         #[arg(value_parser = ["extraction_policy", "vector_selection", "vector_status", "roots", "scan_limits", "quota_policy", "quota_status"])]
@@ -168,6 +173,65 @@ enum Command {
     },
     #[command(flatten)]
     Evidence(Box<EvidenceCommand>),
+}
+
+#[derive(clap::Args)]
+struct ExplorerIo {
+    /// Tool arguments as one JSON object, exactly as for the MCP tool of the same name.
+    #[arg(long, default_value = "{}")]
+    args: String,
+    /// New file for the result (must not exist). Results are never sent to an Explorer Inbox.
+    #[arg(long)]
+    output_file: PathBuf,
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
+enum ExplorerCommand {
+    /// Write a proposed Explorer Search form (MCP draft_search) after schema validation.
+    DraftSearch {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write a proposed Explorer strategy (MCP draft_strategy).
+    DraftStrategy {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write a proposed Explorer plan (MCP draft_plan).
+    DraftPlan {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write a proposed Explorer view (MCP suggest_view).
+    SuggestView {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Validate a draft without writing a proposal.
+    ValidateDraft {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// List the bundled strategy templates.
+    ListTemplates {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write one bundled template.
+    GetTemplate {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Report the status of a written draft.
+    ProposalStatus {
+        /// The draft file (at most 1 MiB).
+        #[arg(long)]
+        draft: PathBuf,
+        /// New file for the result (must not exist).
+        #[arg(long)]
+        output_file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1299,6 +1363,118 @@ fn usage_command(cx: &mut Context, selection: Selection, action: UsageCommand) -
     }
 }
 
+/// A new owner-only file holding `value` as pretty JSON, as `airk` wrote it.
+fn write_new(path: &Path, value: &Value) -> Result<(), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|error| {
+        format!(
+            "create new output file {} (it must not exist): {error}",
+            path.display()
+        )
+    })?;
+    let text = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+    file.write_all(&text)
+        .and_then(|()| file.write_all(b"\n"))
+        .map_err(|error| error.to_string())
+}
+
+/// `explorer …` (step 3d): M11, then the result in a new `--output-file`
+/// and `airk`'s `{written, ok}` line; a draft reports `ok` from its
+/// `valid` flag, and a result that reports a problem exits non-zero.
+fn explorer_command(cx: &mut Context, selection: Selection, action: ExplorerCommand) -> u8 {
+    use airk_core::service::ExplorerOperation as Op;
+    type Input = Result<(Map<String, Value>, Option<Value>), String>;
+    let parsed = |io: &ExplorerIo| -> Input {
+        match serde_json::from_str(&io.args)
+            .map_err(|error| format!("--args must be one JSON object: {error}"))?
+        {
+            Value::Object(map) => Ok((map, None)),
+            _ => Err("--args must be one JSON object".into()),
+        }
+    };
+    let (operation, output, input) = match action {
+        ExplorerCommand::DraftSearch { io } => {
+            (Op::DraftSearch, io.output_file.clone(), parsed(&io))
+        }
+        ExplorerCommand::DraftStrategy { io } => {
+            (Op::DraftStrategy, io.output_file.clone(), parsed(&io))
+        }
+        ExplorerCommand::DraftPlan { io } => (Op::DraftPlan, io.output_file.clone(), parsed(&io)),
+        ExplorerCommand::SuggestView { io } => {
+            (Op::SuggestView, io.output_file.clone(), parsed(&io))
+        }
+        ExplorerCommand::ValidateDraft { io } => {
+            (Op::ValidateDraft, io.output_file.clone(), parsed(&io))
+        }
+        ExplorerCommand::ListTemplates { io } => {
+            (Op::ListTemplates, io.output_file.clone(), parsed(&io))
+        }
+        ExplorerCommand::GetTemplate { io } => {
+            (Op::GetTemplate, io.output_file.clone(), parsed(&io))
+        }
+        ExplorerCommand::ProposalStatus { draft, output_file } => {
+            let document: Input = std::fs::File::open(&draft)
+                .map_err(|error| error.to_string())
+                .and_then(|mut file| bounded(&mut file, 1 << 20).map_err(|line| line.message))
+                .and_then(|bytes| {
+                    serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string())
+                })
+                .map(|document| (Map::new(), Some(document)));
+            (Op::ProposalStatus, output_file, document)
+        }
+    };
+    let (arguments, document) = match input {
+        Ok(input) => input,
+        Err(message) => return fail(cx, &crate::registration::failed(&message)),
+    };
+    let control = match selection.control.clone() {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    let draft = matches!(
+        operation,
+        Op::DraftSearch | Op::DraftStrategy | Op::DraftPlan | Op::SuggestView
+    );
+    let method = ControlMethod::ExplorerOffline {
+        operation,
+        arguments,
+        document,
+        project: selection.project,
+    };
+    let value = match crate::service::request(&control, method, VERSION) {
+        Ok(ControlResponse::ExplorerOffline { result }) => result,
+        Ok(ControlResponse::ExplorerOfflineFailed { message }) => {
+            return fail(cx, &crate::registration::failed(&message));
+        }
+        Ok(other) => return fail(cx, &crate::service::refusal(&other)),
+        Err(line) => return fail(cx, &line),
+    };
+    let ok = !draft || value["valid"] == serde_json::json!(true);
+    if let Err(message) = write_new(&output, &value) {
+        return fail(cx, &crate::registration::failed(&message));
+    }
+    let printed = json_line(cx, &serde_json::json!({"written": output, "ok": ok}));
+    if !ok {
+        return fail(
+            cx,
+            &crate::registration::failed(&format!(
+                "result written to {} reports a problem",
+                output.display()
+            )),
+        );
+    }
+    printed
+}
+
 /// `settings <view> [--validate-file]` (step 3c.5c): N1.
 fn settings_command(
     cx: &mut Context,
@@ -2151,6 +2327,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
         Command::Init => init(cx, selection),
+        Command::Explorer { action } => explorer_command(cx, selection, action),
         Command::ModelCatalog => {
             let control = match selection.control.clone() {
                 Some(control) => control,

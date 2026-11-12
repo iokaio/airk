@@ -17,6 +17,7 @@ use tokio::{
 };
 pub(crate) mod checkpoint;
 mod configuration;
+mod explorer;
 mod http;
 mod journal;
 mod lifecycle;
@@ -509,10 +510,12 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
-            // M11 lands its handler in step 3d-2; until then the typed refusal.
-            ControlMethod::ExplorerOffline { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::ExplorerOffline {
+                operation,
+                arguments,
+                document,
+                project,
+            } => explorer::run(operation, arguments, document, project),
             ControlMethod::UsageDocument {
                 project,
                 catalog,
