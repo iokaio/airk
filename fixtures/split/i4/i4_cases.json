@@ -7,7 +7,9 @@
   "setup_operation": 16384,
   "operation_lifetime_ms": 600000,
   "start_request": 1024,
-  "start_request_lifetime_ms": 30000
+  "start_request_lifetime_ms": 30000,
+  "replacement_notice": 4096,
+  "replacement_notice_lifetime_ms": 600000
  },
  "pointers": [
   {
@@ -237,6 +239,74 @@
    "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
    "now_unix_ms": 1800000000001,
    "expect": "install_file_non_canonical"
+  }
+ ],
+ "replacement_notices": [
+  {
+   "name": "notice in force",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "ok"
+  },
+  {
+   "name": "notice at its creation",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1800000000000,
+   "expect": "ok"
+  },
+  {
+   "name": "expired at its deadline",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1800000600000,
+   "expect": "replacement_notice_expired"
+  },
+  {
+   "name": "clock before creation",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1799999999999,
+   "expect": "replacement_notice_expired"
+  },
+  {
+   "name": "lifetime above ten minutes",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600001}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "replacement_notice_lifetime_too_long"
+  },
+  {
+   "name": "expiry not after creation",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000000000}\n",
+   "now_unix_ms": 1800000000000,
+   "expect": "replacement_notice_lifetime_too_long"
+  },
+  {
+   "name": "relative program folder",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_location_relative"
+  },
+  {
+   "name": "unknown field",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000,\"pid\":4}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_malformed"
+  },
+  {
+   "name": "other schema",
+   "text": "{\"schema\":\"airk-install-replacing/2\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_unknown_schema"
+  },
+  {
+   "name": "pretty-printed notice is not canonical",
+   "text": "{\n \"schema\": \"airk-install-replacing/1\",\n \"operation_id\": \"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\n \"program\": \"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\n \"created_unix_ms\": 1800000000000,\n \"expires_unix_ms\": 1800000600000\n}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_non_canonical"
+  },
+  {
+   "name": "oversize",
+   "text": "{\"schema\":\"airk-install-replacing/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\\\\xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000}\n",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_oversize"
   }
  ],
  "phases": [

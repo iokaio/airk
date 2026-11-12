@@ -25,6 +25,12 @@ pub const START_REQUEST_SCHEMA: &str = "airk-start-request/1";
 pub const MAX_START_REQUEST_BYTES: usize = 1024;
 /// A start request is consumed within this many milliseconds (plan §5.1).
 pub const MAX_START_REQUEST_LIFETIME_MS: u64 = 30_000;
+pub const REPLACEMENT_NOTICE_SCHEMA: &str = "airk-install-replacing/1";
+/// `replacing.json` beside the pointer (`current.json`).
+pub const REPLACEMENT_NOTICE_FILE: &str = "replacing.json";
+pub const MAX_REPLACEMENT_NOTICE_BYTES: usize = 4 * 1024;
+/// A notice outlives no setup operation: the same ten minutes.
+pub const MAX_REPLACEMENT_NOTICE_LIFETIME_MS: u64 = MAX_SETUP_OPERATION_LIFETIME_MS;
 
 /// Why a pointer, record or operation was refused. Readers map every case to
 /// `installation_unverified` (I2 exit 7).
@@ -44,6 +50,8 @@ pub enum Refusal {
     StartRequestNonceMismatch,
     StartRequestExpired,
     StartRequestLifetimeTooLong,
+    ReplacementNoticeExpired,
+    ReplacementNoticeLifetimeTooLong,
 }
 
 impl Refusal {
@@ -63,6 +71,8 @@ impl Refusal {
             Self::StartRequestNonceMismatch => "start_request_nonce_mismatch",
             Self::StartRequestExpired => "start_request_expired",
             Self::StartRequestLifetimeTooLong => "start_request_lifetime_too_long",
+            Self::ReplacementNoticeExpired => "replacement_notice_expired",
+            Self::ReplacementNoticeLifetimeTooLong => "replacement_notice_lifetime_too_long",
         }
     }
 }
@@ -243,6 +253,23 @@ pub struct SetupOperation {
 pub enum StartMode {
     Explicit,
     Automatic,
+}
+
+/// Setup is replacing or removing the installed files (`replacing.json` beside
+/// the pointer). Setup writes it before it stops the service and removes it
+/// when its operation completes or fails; the expiry covers an installer that
+/// was killed in between. While a notice decodes, editor windows release the
+/// installed `airkctl` (end their sessions, start no command) and reconnect
+/// once it is gone, so an upgrade never needs the editor closed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplacementNotice {
+    pub schema: String,
+    pub operation_id: Incarnation,
+    /// Absolute program folder being replaced or removed.
+    pub program: String,
+    pub created_unix_ms: u64,
+    pub expires_unix_ms: u64,
 }
 
 /// An owner-private, single-use request that admits the `service-detached`
@@ -533,6 +560,31 @@ impl StartRequest {
             return Err(Refusal::StartRequestExpired);
         }
         Ok(request)
+    }
+}
+
+impl ReplacementNotice {
+    /// Decode a notice and check it against the caller's clock; only an `Ok`
+    /// notice is in force.
+    pub fn decode(bytes: &[u8], now_unix_ms: u64) -> Result<Self, Refusal> {
+        let notice: Self = decode(
+            bytes,
+            MAX_REPLACEMENT_NOTICE_BYTES,
+            REPLACEMENT_NOTICE_SCHEMA,
+            |n: &Self| &n.schema,
+        )?;
+        if !absolute(&notice.program) {
+            return Err(Refusal::RelativeLocation);
+        }
+        if notice.expires_unix_ms <= notice.created_unix_ms
+            || notice.expires_unix_ms - notice.created_unix_ms > MAX_REPLACEMENT_NOTICE_LIFETIME_MS
+        {
+            return Err(Refusal::ReplacementNoticeLifetimeTooLong);
+        }
+        if now_unix_ms >= notice.expires_unix_ms || now_unix_ms < notice.created_unix_ms {
+            return Err(Refusal::ReplacementNoticeExpired);
+        }
+        Ok(notice)
     }
 }
 

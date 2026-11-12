@@ -135,6 +135,31 @@ fn setup_phases_are_ordered_as_reviewed() {
 }
 
 #[test]
+fn replacement_notices_decode_with_the_injected_clock_as_reviewed() {
+    let fixture = fixture();
+    let limits = &fixture["limits"];
+    assert_eq!(
+        limits["replacement_notice"],
+        MAX_REPLACEMENT_NOTICE_BYTES as u64
+    );
+    assert_eq!(
+        limits["replacement_notice_lifetime_ms"],
+        MAX_REPLACEMENT_NOTICE_LIFETIME_MS
+    );
+    for case in cases(&fixture, "replacement_notices") {
+        let text = case["text"].as_str().unwrap();
+        let now = case["now_unix_ms"].as_u64().unwrap();
+        let observed = outcome(ReplacementNotice::decode(text.as_bytes(), now), text);
+        assert_eq!(
+            observed,
+            case["expect"].as_str().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}
+
+#[test]
 fn start_requests_decode_with_the_injected_clock_as_reviewed() {
     let fixture = fixture();
     let limits = &fixture["limits"];

@@ -844,6 +844,19 @@ separately [P]:
 | 9 | `started` → `healthy` | `Health` with exact pair | Readiness failure reported, not hidden |
 | 10 | `complete` | Receipt closed | — |
 
+**Replacement notice (1.8.30).** Before phase 3 stops an installed service
+it will replace or remove, setup writes `airk-install-replacing/1`
+(`replacing.json` beside the pointer: `{schema, operation_id, program,
+created_unix_ms, expires_unix_ms (≤ 10 min)}`, canonical, owner-only; fixtures
+`replacement_notices` in `fixtures/split/i4/i4_cases.json`). It stays through
+placement and is removed when the receipt closes (complete or failed); an
+expired notice is not in force. While one is in force the extension ends its
+`airkctl session`, runs no `airkctl` and shows "AIRK Service is being
+updated"; after it is gone the extension verifies the installation again and
+reconnects. This is how phase 3 drains editor sessions, so an upgrade does
+not need the editor closed. An extension older than 1.8.30 does not read the
+notice and still holds `airkctl` (`installation_files_in_use`).
+
 Upgrades replace files in place (fixed layout); changing the program folder
 writes the new copy, switches the pointer, then removes the receipt-owned old
 folder. Fixtures also cover same-build repair, compatible upgrade, rejected

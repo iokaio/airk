@@ -25,6 +25,14 @@ installation:
   leftovers (U14), and carries a failure and a `closed` flag. Written by the
   setup role (`airk-cli` `setup_role`); read by `airkctl` and later
   installers.
+- `ReplacementNotice` (`airk-install-replacing/1`, 1.8.30): `replacing.json`
+  beside the pointer, at most 4 KiB, lifetime at most ten minutes, decoded
+  against the caller's clock. The setup role writes it before it stops an
+  installed service it will replace or remove, keeps it through file
+  placement and removes it when the operation completes or fails. While one
+  decodes, the extension ends its `airkctl session`, runs no `airkctl` and
+  reconnects after it is gone (so an upgrade does not need the editor
+  closed); an expired or undecodable notice is not in force.
 
 ## Interface and invariants
 

@@ -178,6 +178,34 @@ def cases():
         {"name": "pretty-printed request is not canonical", "text": json.dumps(json.loads(start()), indent=1) + "\n",
          "nonce": nonce, "now_unix_ms": NOW + 1, "expect": "install_file_non_canonical"},
     ]
+    def notice(**changes):
+        value = {"schema": "airk-install-replacing/1", "operation_id": OPERATION_ID, "program": PROGRAM,
+                 "created_unix_ms": NOW, "expires_unix_ms": NOW + 600_000}
+        value.update(changes)
+        return canonical(value)
+
+    notices = [
+        {"name": "notice in force", "text": notice(), "now_unix_ms": NOW + 1, "expect": "ok"},
+        {"name": "notice at its creation", "text": notice(), "now_unix_ms": NOW, "expect": "ok"},
+        {"name": "expired at its deadline", "text": notice(), "now_unix_ms": NOW + 600_000,
+         "expect": "replacement_notice_expired"},
+        {"name": "clock before creation", "text": notice(), "now_unix_ms": NOW - 1,
+         "expect": "replacement_notice_expired"},
+        {"name": "lifetime above ten minutes", "text": notice(expires_unix_ms=NOW + 600_001), "now_unix_ms": NOW + 1,
+         "expect": "replacement_notice_lifetime_too_long"},
+        {"name": "expiry not after creation", "text": notice(expires_unix_ms=NOW), "now_unix_ms": NOW,
+         "expect": "replacement_notice_lifetime_too_long"},
+        {"name": "relative program folder", "text": notice(program="Programs\\AIRK"), "now_unix_ms": NOW + 1,
+         "expect": "install_location_relative"},
+        {"name": "unknown field", "text": canonical({**json.loads(notice()), "pid": 4}), "now_unix_ms": NOW + 1,
+         "expect": "install_file_malformed"},
+        {"name": "other schema", "text": notice(schema="airk-install-replacing/2"), "now_unix_ms": NOW + 1,
+         "expect": "install_file_unknown_schema"},
+        {"name": "pretty-printed notice is not canonical", "text": json.dumps(json.loads(notice()), indent=1) + "\n",
+         "now_unix_ms": NOW + 1, "expect": "install_file_non_canonical"},
+        {"name": "oversize", "text": notice(program=PROGRAM + "\\" + "x" * 5000), "now_unix_ms": NOW + 1,
+         "expect": "install_file_oversize"},
+    ]
     phases = ["locked", "predecessors_retired", "service_drained", "placed", "record_written", "pointer_written",
               "login_registered", "login_failed", "login_unsupported", "trust_applied", "trust_declined",
               "trust_unsupported", "started", "healthy", "login_unregistered", "trust_removed", "pointer_removed",
@@ -216,9 +244,10 @@ def cases():
     ]
     return {"schema": SCHEMA, "contract": "crates/airk-core/src/install_record/mod.rs",
             "limits": {"pointer": 4096, "record": 65536, "setup_operation": 16384, "operation_lifetime_ms": 600000,
-                       "start_request": 1024, "start_request_lifetime_ms": 30000},
+                       "start_request": 1024, "start_request_lifetime_ms": 30000,
+                       "replacement_notice": 4096, "replacement_notice_lifetime_ms": 600000},
             "pointers": pointers, "records": records, "operations": operations, "start_requests": starts,
-            "phases": phases, "receipts": receipts}
+            "replacement_notices": notices, "phases": phases, "receipts": receipts}
 
 
 def main():
