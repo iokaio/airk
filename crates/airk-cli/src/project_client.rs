@@ -52,6 +52,47 @@ fn scoped_setup_rejection(
     )
 }
 
+/// Obtains one in-process selection connection grant: the service's own
+/// `Management::connect_selection` then `ScopedConnectionDelivery::
+/// take_in_process` (selection authority §3.2 step 4). Called for the first
+/// connect and for every reconnect, so each re-runs admission.
+pub(crate) type SelectionConnector = Arc<dyn Fn() -> SelectionGrantFuture + Send + Sync>;
+pub(crate) type SelectionGrantFuture =
+    std::pin::Pin<Box<dyn Future<Output = Result<airk_core::service::ConnectionGrant>> + Send>>;
+
+/// A window's W4 grant as one index's read session sees it. It holds no
+/// nonce, lease or service instance: the connector owns the authority and
+/// the failure bodies echo only the selection and its identity (F4, N3).
+pub(crate) struct SelectionSession {
+    pub(crate) window_selection: airk_core::service::WindowScopeSelection,
+    pub(crate) scope_identity: airk_core::identity::Sha256Digest,
+    pub(crate) index_id: airk_core::index_catalog::IndexId,
+    pub(crate) connect: SelectionConnector,
+}
+
+/// The selection-path analogue of `scoped_setup_rejection` (§3.2 step 5):
+/// `requested_scope` names the window selection and its scope identity
+/// only; the error's text is never included.
+fn selection_setup_rejection(
+    session: &SelectionSession,
+    error: &anyhow::Error,
+) -> serde_json::Value {
+    let retryable = setup_retryable(error);
+    let mut body = serde_json::json!({
+        "error": {"code": "scoped_connection_unavailable", "retryable": retryable,
+            "query_submitted": false},
+        "requested_scope": {"confirmed": false, "selection": {
+            "window_scope_selection": session.window_selection,
+            "scope_identity": session.scope_identity}},
+    });
+    if retryable {
+        body["error"]["retry_after_ms"] = 100.into();
+        body["error"]["fresh_brokerage_required"] = true.into();
+    }
+    serde_json::json!({"content": [{"type": "text", "text": body.to_string()}],
+        "structuredContent": body, "isError": true})
+}
+
 fn setup_retryable(error: &anyhow::Error) -> bool {
     error.is::<RetrySetup>()
         || error
@@ -312,7 +353,7 @@ impl Connection {
             }
             .into());
         }
-        let (role, mut grant) = match response {
+        let (role, grant) = match response {
             ControlResponse::Connection { role, grant } => (role, grant),
             ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
                 return Err(airk_core::scoped_reads::ScopeReadRefused.into());
@@ -360,10 +401,72 @@ impl Connection {
                 "scoped connection differs from the selected reviewed grant"
             );
         }
+        Self::attach(
+            root,
+            &role,
+            grant,
+            client,
+            crate::read_attempt::supported(&observation.version),
+        )
+        .await
+    }
+    /// Connect under a window's W4 grant: the grant comes from the service's
+    /// in-process admission, never from a control-pipe brokerage (§3.2
+    /// step 4), and must name the session's index and selection identity.
+    async fn connect_selection(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+        owner: &StatusOwner,
+        ticket: RequestTicket,
+        session: &SelectionSession,
+    ) -> Result<Self> {
+        let _admitted = owner
+            .after_evidence_wait(ticket)
+            .and_then(|fresh| owner.admit_ticket(&fresh))?;
+        let grant = (session.connect)().await?;
+        let scope = grant
+            .scope
+            .context("selection connection omitted its native authority")?;
+        scope.validate()?;
+        ensure!(
+            scope.index_id == session.index_id
+                && scope.selection.is_some_and(|selection| {
+                    selection.scope_identity == session.scope_identity
+                        && selection.catalog_revision
+                            == session.window_selection.expected_catalog_revision
+                }),
+            "selection connection differs from the window's grant"
+        );
+        ensure!(
+            grant.protocol == PROTOCOL_VERSION
+                && grant.identity.project == project
+                && grant.caller == local_ipc::caller_identity()?,
+            "brokered worker identity mismatch"
+        );
+        let role = protocol::role(grant.identity.worker);
+        Self::attach(
+            root,
+            &role,
+            grant,
+            client,
+            crate::read_attempt::supported(env!("CARGO_PKG_VERSION")),
+        )
+        .await
+    }
+    /// Hand an admitted grant to its worker over the private host-worker
+    /// endpoint (the only serialized carrier of a selection scope, N3).
+    async fn attach(
+        root: &Path,
+        role: &str,
+        mut grant: airk_core::service::ConnectionGrant,
+        client: airk_core::usage::ClientFamily,
+        read_attempt_supported: bool,
+    ) -> Result<Self> {
         let setup_started = Instant::now();
         let mut stream = tokio::time::timeout(
             Duration::from_secs(5),
-            local_ipc::connect(&local_ipc::endpoint(root, &role)?),
+            local_ipc::connect(&local_ipc::endpoint(root, role)?),
         )
         .await??;
         grant.client = client;
@@ -383,7 +486,7 @@ impl Connection {
             healthy: true,
             scoped: grant.scope.is_some(),
             read_scope: grant.scope,
-            read_attempt_supported: crate::read_attempt::supported(&observation.version),
+            read_attempt_supported,
             status_receipt: Default::default(),
         })
     }
@@ -645,6 +748,9 @@ pub(crate) struct Backend {
     status: Arc<StatusOwner>,
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
     catalog_session: Option<airk_core::service::ScopedConnectRequest>,
+    /// A window's W4 grant (selection authority §3.2 step 4); exclusive
+    /// with `catalog_session`.
+    selection_session: Option<SelectionSession>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceFence {
@@ -775,7 +881,7 @@ fn status_scope(root: &Path, project: ProjectBinding) -> Result<Option<CacheScop
 }
 impl airk_mcp::remote::RemoteTools for Backend {
     fn local_help(&self) -> bool {
-        self.catalog_session.is_none()
+        !self.scoped()
     }
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         self.catalog_session.as_ref()
@@ -814,6 +920,11 @@ impl airk_mcp::remote::RemoteTools for Backend {
 }
 
 impl Backend {
+    /// A catalog or selection session: help, status and diagnostics go to
+    /// the restricted worker, never to the local or pinned paths.
+    fn scoped(&self) -> bool {
+        self.catalog_session.is_some() || self.selection_session.is_some()
+    }
     fn accept_source_fence(&self, fence: SourceFence) -> bool {
         if fence.project != self.project {
             return false;
@@ -915,7 +1026,7 @@ impl Backend {
         let context =
             source_expires.map_or_else(|| context.clone(), |expires| context.narrowed(expires));
         Box::pin(async move {
-            if tool == "airk_help" && self.catalog_session.is_none() {
+            if tool == "airk_help" && !self.scoped() {
                 return Ok(serde_json::to_value(airk_mcp::help::call(
                     serde_json::Value::Object(arguments),
                 ))?);
@@ -939,7 +1050,7 @@ impl Backend {
             if source_expires.is_some_and(|until| Instant::now() >= until) {
                 return Ok(source_scope_superseded());
             }
-            if tool == "airk_status" && self.catalog_session.is_none() {
+            if tool == "airk_status" && !self.scoped() {
                 let client = self
                     .client
                     .lock()
@@ -962,7 +1073,7 @@ impl Backend {
                 self.status.invalidate();
                 crate::runtime_metadata::observe_process();
             }
-            if observed.is_none() && self.catalog_session.is_none() {
+            if observed.is_none() && !self.scoped() {
                 self.status
                     .bind_initial_pinned_scope(self.root.clone(), self.project)
                     .await?;
@@ -1047,6 +1158,16 @@ impl Backend {
                         Some(selection),
                     )
                     .await
+                } else if let Some(session) = &self.selection_session {
+                    Connection::connect_selection(
+                        &self.root,
+                        self.project,
+                        client,
+                        &self.status,
+                        ticket,
+                        session,
+                    )
+                    .await
                 } else {
                     Connection::connect_frontend(
                         &self.root,
@@ -1070,7 +1191,7 @@ impl Backend {
                     Err(error) if error.is::<RetiredRequest>() => {
                         return Ok(source_scope_superseded());
                     }
-                    Err(_) if tool == "airk_diagnostics" && self.catalog_session.is_none() => {
+                    Err(_) if tool == "airk_diagnostics" && !self.scoped() => {
                         return Ok(
                             crate::runtime_metadata::unavailable(&self.root, self.project).await,
                         );
@@ -1078,6 +1199,9 @@ impl Backend {
                     Err(error) => {
                         if let Some(selection) = &self.catalog_session {
                             return Ok(scoped_setup_rejection(selection, &error));
+                        }
+                        if let Some(session) = &self.selection_session {
+                            return Ok(selection_setup_rejection(session, &error));
                         }
                         return setup_rejection(&error).ok_or(error);
                     }
@@ -1172,6 +1296,7 @@ pub(crate) fn source_tools(root: PathBuf, project: ProjectBinding) -> Arc<Backen
         status: Arc::new(StatusOwner::default()),
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
         catalog_session: None,
+        selection_session: None,
     })
 }
 
@@ -1193,7 +1318,43 @@ pub(crate) fn source_tools_owned(
         latest_source: std::sync::Mutex::new(None),
         status,
         catalog_session: None,
+        selection_session: None,
     })
+}
+
+/// One index of a window's W4 grant read through its backing project's
+/// worker. Every connect and reconnect calls `session.connect` (the
+/// in-process admission), never the control-pipe brokerage (§3.2 step 4).
+pub(crate) fn selection_tools(
+    root: PathBuf,
+    project: ProjectBinding,
+    session: SelectionSession,
+) -> Result<Arc<Backend>> {
+    let status = Arc::new(StatusOwner::default());
+    let semantic = (
+        &session.window_selection,
+        &session.scope_identity,
+        &session.index_id,
+    );
+    status.scoped_scope(
+        session.window_selection.namespace,
+        project,
+        airk_core::identity::framed_digest(
+            b"airk/frontend-selection-session/1",
+            &[&serde_json::to_vec(&semantic)?],
+        ),
+    );
+    Ok(Arc::new(Backend {
+        root,
+        project,
+        state: ChannelPool::default(),
+        state_waiters: Arc::new(tokio::sync::Semaphore::new(128)),
+        latest_source: Default::default(),
+        status,
+        client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
+        catalog_session: None,
+        selection_session: Some(session),
+    }))
 }
 
 pub fn scoped_tools(
@@ -1237,6 +1398,7 @@ pub(crate) fn scoped_backend(
         status,
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
         catalog_session: Some(selection),
+        selection_session: None,
     }))
 }
 
@@ -1510,6 +1672,60 @@ mod tests {
         release.notify_one();
         peer.await??;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod selection_session_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// N3 and §3.2 step 5: a refused selection connect echoes the window
+    /// selection and its scope identity only. The error's text (which could
+    /// name anything) and the grant's nonce or service instance never
+    /// appear.
+    #[test]
+    fn a_selection_setup_failure_echoes_only_the_selection_and_its_identity() {
+        let selection = json!({
+            "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "expected_catalog_revision": 12,
+            "index_ids": ["idx_01010101010101010101010101010101"],
+            "project_ids": ["prj_02020202020202020202020202020202"],
+        });
+        let session = SelectionSession {
+            window_selection: serde_json::from_value(selection.clone()).unwrap(),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([0x5c; 32]),
+            index_id: "idx_01010101010101010101010101010101".parse().unwrap(),
+            connect: Arc::new(|| -> SelectionGrantFuture {
+                Box::pin(async {
+                    Result::<airk_core::service::ConnectionGrant>::Err(anyhow::anyhow!("unused"))
+                })
+            }),
+        };
+        let nonce = "91".repeat(16);
+        let instance = "e1".repeat(16);
+        let error = anyhow::anyhow!("grant_nonce {nonce} service_instance {instance}");
+        let body = selection_setup_rejection(&session, &error);
+        let text = body.to_string();
+        for secret in [
+            nonce.as_str(),
+            instance.as_str(),
+            "grant_nonce",
+            "service_instance",
+        ] {
+            assert!(!text.contains(secret), "{secret}: {text}");
+        }
+        let expected = json!({
+            "error": {"code": "scoped_connection_unavailable", "retryable": false,
+                "query_submitted": false},
+            "requested_scope": {"confirmed": false, "selection": {
+                "window_scope_selection": selection, "scope_identity": "5c".repeat(32)}},
+        });
+        assert_eq!(body["structuredContent"], expected);
+        assert_eq!(body["isError"], true);
+        let echoed: serde_json::Value =
+            serde_json::from_str(body["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(echoed, expected);
     }
 }
 

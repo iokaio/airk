@@ -65,9 +65,6 @@ pub(super) enum Served {
     /// http-trust --action inspect` ran, through the same callers, in the
     /// service. Its body is exactly `{"http_trust":{"action":"inspect"}}`.
     TrustInspect,
-    /// Not served in this phase (`not_yet_served`); the reason is beside
-    /// each entry and in `CONTRACT.md`.
-    Deferred,
 }
 
 /// The reviewed mapping of table methods that name no `ControlMethod`.
@@ -82,13 +79,6 @@ pub(super) const MAPPINGS: &[(&str, Served)] = &[
     ),
     ("LogsExport", Served::Equivalent("Logs")),
     ("HttpTrust.Inspect", Served::TrustInspect),
-    // No service handler for the storage inventory or purge yet (Phase 7).
-    ("StorageInventory", Served::Deferred),
-    ("StoragePurge", Served::Deferred),
-    // Login startup is managed offline by `airkctl` until Phase 7 (U75).
-    ("LoginStartup.Status", Served::Deferred),
-    ("LoginStartup.Install", Served::Deferred),
-    ("LoginStartup.Uninstall", Served::Deferred),
 ];
 
 /// How the row whose table `method` is `method` is served.

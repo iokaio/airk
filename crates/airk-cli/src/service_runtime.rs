@@ -22,10 +22,12 @@ mod explorer;
 mod http;
 mod journal;
 mod lifecycle;
+mod login;
 mod registration;
 mod resolve;
 mod rotation;
 mod scope_grant;
+mod storage;
 mod tools_call;
 mod usage;
 mod window_plane;
@@ -111,22 +113,34 @@ struct State {
     lifecycle: Mutex<Option<airk_core::service_lifecycle::LifecycleRecord>>,
     /// W1-W8 and M12 (split step 3f.2): this instance's windows, in memory.
     windows: Mutex<window_plane::WindowPlane>,
+    /// Sends `RevokeScope` for the selection scopes of dropped window grants
+    /// (selection authority §3.3); present with the catalog gate.
+    selection_control: Option<crate::project_supervisor::CatalogControlHandle>,
     /// A1 launch codes and admin sessions (split Phase 5), in memory.
     admin: Arc<crate::admin_plane::AdminPlane>,
 }
 
 /// The window plane with the system clock (Unix milliseconds) and the OS
-/// random source for window, draft and handoff ids and 256-bit leases. W4
-/// is checked by the catalog check it shares with the admin grant
-/// (`scope_grant`), but W4 itself is still refused at dispatch until reads
-/// under in-memory grants are admitted, so the validator is not reached
-/// yet. Before W4 is served, the blocking check must move out of the
-/// `windows` lock (check first, then store the grant under the lock).
+/// random source for window, draft and handoff ids, 256-bit leases and
+/// selection grant nonces. W4 is checked by the catalog check it shares with
+/// the admin grant (`scope_grant`); the dispatch runs that check outside the
+/// `windows` lock (`window_plane::grant_unlocked`), so the inline validator
+/// below is reached only by a plane call that bypasses the dispatch. With a
+/// catalog gate, a stored grant's nonce is registered live with it, nested
+/// inside the windows lock (selection authority §3.7).
 fn windows(
     instance: airk_core::identity::Incarnation,
     control: std::path::PathBuf,
+    gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
 ) -> window_plane::WindowPlane {
     let random = || new_instance_id().expect("the OS random source is available");
+    let registrar = gate.map(|gate| -> window_plane::SelectionRegistrar {
+        Box::new(
+            move |selection: &airk_core::scoped_reads::SelectionScopeRef| {
+                gate.register_selection(selection).map_err(|_| ())
+            },
+        )
+    });
     window_plane::WindowPlane::new(
         instance,
         Box::new(|| {
@@ -144,6 +158,47 @@ fn windows(
         }),
         Box::new(move |selection| scope_grant::check(&control, selection)),
     )
+    .with_selection_authority(Box::new(random), registrar)
+}
+
+/// Owner revocation of dropped window grants (selection authority §3.3,
+/// N4): remove each nonce from the gate's live set and mark its
+/// installations revoked, under the gate lock only. Returns the pairs that
+/// still need a worker `RevokeScope`. Call with no owner lock held (§3.7).
+fn revoke_in_gate(
+    gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
+    dropped: window_plane::Dropped,
+) -> Vec<(
+    airk_core::service::WorkerIdentity,
+    airk_core::service::ScopedReadRef,
+)> {
+    let nonces = dropped.into_nonces();
+    match gate {
+        Some(gate) if !nonces.is_empty() => gate.revoke_selection(&nonces).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// [`revoke_in_gate`], then `RevokeScope` to each affected worker on a
+/// blocking thread (it waits for each acknowledgement). A revoked nonce is
+/// no longer live, so its scope is unusable even before the worker answers.
+fn revoke_dropped(state: &State, dropped: window_plane::Dropped) {
+    let pairs = revoke_in_gate(state.catalog_gate.as_ref(), dropped);
+    if let (false, Some(control)) = (pairs.is_empty(), state.selection_control.clone()) {
+        drop(tokio::task::spawn_blocking(move || {
+            control.revoke_selection_scopes(pairs)
+        }));
+    }
+}
+
+/// The W4 catalog check off the async workers.
+async fn blocking_scope_check(
+    control: std::path::PathBuf,
+    selection: airk_core::service::WindowScopeSelection,
+) -> window_plane::CheckResult {
+    tokio::task::spawn_blocking(move || scope_grant::check(&control, &selection))
+        .await
+        .unwrap_or_else(|_| Err(scope_grant::SCOPE_UNAVAILABLE.to_owned()))
 }
 
 /// The admin plane's A2 catalog check: the shared `scope_grant` check, off
@@ -585,13 +640,27 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
-            // W4 has its catalog check (`scope_grant`), but reads under an
-            // in-memory grant need a scoped-read admission that does not
-            // exist yet (a reviewed catalog grant is required today); until
-            // then the typed refusal.
-            ControlMethod::WindowScopeGrant { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            // W4 (U77, selection authority S1b): the catalog check runs with
+            // the windows lock released; the stored grant's nonce is
+            // registered live, and every dropped nonce is revoked after the
+            // lock is released (§3.7).
+            ControlMethod::WindowScopeGrant {
+                window_id,
+                lease,
+                selection,
+            } => {
+                let control = state.control_root.clone();
+                let (response, dropped) = window_plane::grant_unlocked(
+                    &state.windows,
+                    &window_id,
+                    &lease,
+                    &selection,
+                    |selection| blocking_scope_check(control, selection),
+                )
+                .await;
+                revoke_dropped(&state, dropped);
+                response
+            }
             // A2 belongs to an admin session, which the pipe never has; the
             // admin plane serves it without this endpoint.
             ControlMethod::AdminScopeGrant { .. } => ControlResponse::Failure {
@@ -606,14 +675,21 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             | ControlMethod::AssistanceSubmit { .. }
             | ControlMethod::AssistanceDrain { .. }
             | ControlMethod::HandoffPublish { .. }
-            | ControlMethod::ExplorerHandoff { .. }) => match state.windows.lock() {
-                Ok(mut windows) => windows.handle(&method).unwrap_or(ControlResponse::Failure {
-                    code: "window_plane_unavailable".into(),
-                }),
-                Err(_) => ControlResponse::Failure {
-                    code: "window_plane_unavailable".into(),
-                },
-            },
+            | ControlMethod::ExplorerHandoff { .. }) => {
+                let dispatched = match state.windows.lock() {
+                    Ok(mut windows) => windows.dispatch(&method),
+                    Err(_) => None,
+                };
+                match dispatched {
+                    Some((response, dropped)) => {
+                        revoke_dropped(&state, dropped);
+                        response
+                    }
+                    None => ControlResponse::Failure {
+                        code: "window_plane_unavailable".into(),
+                    },
+                }
+            }
             ControlMethod::ExplorerOffline {
                 operation,
                 arguments,
@@ -668,6 +744,81 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
+            // M22/M23 (U100) and M21 (U101): file system and OS work off the
+            // async workers; a failure carries its leading code.
+            ControlMethod::StorageInventory {} => {
+                let control = state.control_root.clone();
+                let answer = tokio::task::spawn_blocking(move || {
+                    storage::inventory(&storage::served_locations(&control)?)
+                })
+                .await;
+                match answer {
+                    Ok(Ok(inventory)) => ControlResponse::StorageInventory { inventory },
+                    Ok(Err(error)) => ControlResponse::Failure {
+                        code: storage::failure_code(&error, "storage_unavailable"),
+                    },
+                    Err(_) => ControlResponse::Failure {
+                        code: "storage_unavailable".into(),
+                    },
+                }
+            }
+            ControlMethod::StoragePurgePlan { kind } => {
+                let (control, log) = (state.control_root.clone(), state.log.clone());
+                let answer = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                    let plan =
+                        storage::purge_plan(kind, &storage::served_locations(&control)?, &log)?;
+                    let digest = plan.digest()?;
+                    Ok((plan, digest))
+                })
+                .await;
+                match answer {
+                    Ok(Ok((plan, plan_digest))) => {
+                        ControlResponse::StoragePurgePlan { plan, plan_digest }
+                    }
+                    Ok(Err(error)) => ControlResponse::Failure {
+                        code: storage::failure_code(&error, "storage_unavailable"),
+                    },
+                    Err(_) => ControlResponse::Failure {
+                        code: "storage_unavailable".into(),
+                    },
+                }
+            }
+            ControlMethod::StoragePurge { kind, plan_digest } => {
+                let (control, log) = (state.control_root.clone(), state.log.clone());
+                let answer = tokio::task::spawn_blocking(move || {
+                    storage::purge(
+                        kind,
+                        plan_digest,
+                        &storage::served_locations(&control)?,
+                        &log,
+                    )
+                })
+                .await;
+                match answer {
+                    Ok(Ok(receipt)) => ControlResponse::StoragePurged { receipt },
+                    Ok(Err(error)) => ControlResponse::Failure {
+                        code: storage::failure_code(&error, "storage_unavailable"),
+                    },
+                    Err(_) => ControlResponse::Failure {
+                        code: "storage_unavailable".into(),
+                    },
+                }
+            }
+            ControlMethod::LoginStartup { action } => {
+                let control = state.control_root.clone();
+                let answer =
+                    tokio::task::spawn_blocking(move || login::login_startup(action, &control))
+                        .await;
+                match answer {
+                    Ok(Ok(login)) => ControlResponse::LoginStartup { login },
+                    Ok(Err(error)) => ControlResponse::Failure {
+                        code: storage::failure_code(&error, login::UNAVAILABLE),
+                    },
+                    Err(_) => ControlResponse::Failure {
+                        code: login::UNAVAILABLE.into(),
+                    },
+                }
+            }
             ControlMethod::AbandonLifecycle { id } => {
                 match lifecycle::abandon(&state.control_root, state.instance, id) {
                     Ok(record) => ControlResponse::LifecycleAbandoned { record },
@@ -719,6 +870,25 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     code: lifecycle::failure_code(&error),
                 },
             },
+            // M3 under a window's W4 grant (selection authority §3.2).
+            ControlMethod::ToolsCall {
+                tool,
+                arguments,
+                selection: airk_core::service::ToolSelection::Window { window_id, lease },
+                response_mode,
+                usage_client,
+            } => {
+                tools_call::window_response(
+                    &state,
+                    window_id,
+                    lease,
+                    tool,
+                    arguments,
+                    response_mode,
+                    usage_client,
+                )
+                .await
+            }
             ControlMethod::ToolsCall {
                 tool,
                 arguments,
@@ -932,6 +1102,10 @@ async fn serve_with_admission(
         }
         None => None,
     };
+    // The same attached port, for owner revocation of window grants.
+    let selection_control = catalog_binding
+        .as_ref()
+        .map(|binding| binding.control.clone());
     let management = crate::service_management::Management::start_with_catalog(
         root.canonicalize()?,
         instance,
@@ -945,6 +1119,7 @@ async fn serve_with_admission(
     sources.set_missing_reporter(management.missing_reporter())?;
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
+    let plane = windows(instance, root.canonicalize()?, catalog_gate.clone());
     let state = Arc::new(State {
         http: std::sync::OnceLock::new(),
         checkpoint: Arc::new(checkpoint::Coordinator::new(root)?),
@@ -966,7 +1141,8 @@ async fn serve_with_admission(
         native_administrative: Default::default(),
         native_caller: local_ipc::caller_identity()?,
         lifecycle: Mutex::new(None),
-        windows: Mutex::new(windows(instance, root.canonicalize()?)),
+        windows: Mutex::new(plane),
+        selection_control,
         admin: Arc::new(
             crate::admin_plane::AdminPlane::new(
                 admin_dispatch(root.canonicalize()?, instance),
@@ -1056,6 +1232,22 @@ async fn serve_with_admission(
     })
     .await;
     connections.shutdown().await;
+    // Service end (selection authority §3.3): revoke every window grant's
+    // nonce before the workers drain; no handler holds the windows lock now.
+    let ended = match state.windows.lock() {
+        Ok(mut windows) => Some(windows.end()),
+        Err(_) => None,
+    };
+    if let Some(ended) = ended {
+        let pairs = revoke_in_gate(state.catalog_gate.as_ref(), ended);
+        if let (false, Some(control)) = (pairs.is_empty(), state.selection_control.clone()) {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(5),
+                tokio::task::spawn_blocking(move || control.revoke_selection_scopes(pairs)),
+            )
+            .await;
+        }
+    }
     let accepted = state
         .lifecycle
         .lock()
@@ -1339,6 +1531,128 @@ mod connection_failure_tests {
                 fallback
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod window_selection_revocation_tests {
+    use super::*;
+    use airk_core::{
+        identity::{Incarnation, Sha256Digest},
+        index_catalog::CatalogRevision,
+        scoped_reads::SelectionScopeRef,
+        service::{WindowLease, WindowScopeSelection},
+    };
+
+    const INSTANCE: [u8; 16] = [0xe1; 16];
+
+    fn gate() -> crate::catalog_admission::NativeCatalogAdmission {
+        crate::catalog_admission::NativeCatalogAdmission::new(
+            Incarnation::from_bytes(INSTANCE),
+            Incarnation::from_bytes([0x0a; 16]),
+            CatalogRevision::try_from(12u64).unwrap(),
+            1,
+        )
+        .unwrap()
+    }
+
+    /// A plane whose stored grants register with `gate`, as `windows`
+    /// wires it, under a fixed clock and fixed identifiers.
+    fn plane(gate: &crate::catalog_admission::NativeCatalogAdmission) -> window_plane::WindowPlane {
+        let registrar = gate.clone();
+        let mut nonces = 0u8;
+        window_plane::WindowPlane::new(
+            Incarnation::from_bytes(INSTANCE),
+            Box::new(|| 0),
+            Box::new(|_| Incarnation::from_bytes([0xa0; 16])),
+            Box::new(|| WindowLease::from_bytes([0x1a; 32])),
+            Box::new(|_: &WindowScopeSelection| Err("unused".into())),
+        )
+        .with_selection_authority(
+            Box::new(move || {
+                nonces += 1;
+                Incarnation::from_bytes([0x90 + nonces; 16])
+            }),
+            Some(Box::new(move |selection: &SelectionScopeRef| {
+                registrar.register_selection(selection).map_err(|_| ())
+            })),
+        )
+    }
+
+    fn selection() -> WindowScopeSelection {
+        serde_json::from_value(serde_json::json!({
+            "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "expected_catalog_revision": 12,
+            "index_ids": ["idx_01010101010101010101010101010101"],
+            "project_ids": ["prj_02020202020202020202020202020202"],
+        }))
+        .unwrap()
+    }
+
+    fn selection_ref(nonce: u8) -> SelectionScopeRef {
+        SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: Incarnation::from_bytes([nonce; 16]),
+            service_instance: Incarnation::from_bytes(INSTANCE),
+            scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+            catalog_revision: CatalogRevision::try_from(12u64).unwrap(),
+        }
+    }
+
+    /// A stored grant's nonce is live in the gate (a second registration of
+    /// it is refused); replacing and closing revoke the dropped nonces
+    /// there, so each can be registered again only after its revocation.
+    #[tokio::test]
+    async fn dropped_window_grants_are_revoked_in_the_gate() {
+        let gate = gate();
+        let windows = Mutex::new(plane(&gate));
+        let opened = windows
+            .lock()
+            .unwrap()
+            .dispatch(&ControlMethod::WindowOpen {
+                label: "a".into(),
+                owner_pid: 1,
+            });
+        assert!(revoke_in_gate(Some(&gate), opened.unwrap().1).is_empty());
+        let (id, lease) = (
+            Incarnation::from_bytes([0xa0; 16]),
+            WindowLease::from_bytes([0x1a; 32]),
+        );
+        let check = |selection: WindowScopeSelection| {
+            std::future::ready(Ok((
+                Sha256Digest::from_bytes([0x5c; 32]),
+                selection.expected_catalog_revision,
+            )))
+        };
+        let (granted, dropped) =
+            window_plane::grant_unlocked(&windows, &id, &lease, &selection(), check).await;
+        assert!(matches!(
+            granted,
+            ControlResponse::WindowScopeGranted { .. }
+        ));
+        assert!(revoke_in_gate(Some(&gate), dropped).is_empty());
+        assert!(
+            gate.register_selection(&selection_ref(0x91)).is_err(),
+            "live"
+        );
+        // Replace: the first nonce is dropped and revoked.
+        let (_, replaced) =
+            window_plane::grant_unlocked(&windows, &id, &lease, &selection(), check).await;
+        assert!(gate.register_selection(&selection_ref(0x91)).is_err());
+        assert!(revoke_in_gate(Some(&gate), replaced).is_empty());
+        assert!(gate.register_selection(&selection_ref(0x91)).is_ok());
+        // Close: the second nonce.
+        let close = ControlMethod::WindowClose {
+            window_id: id,
+            lease: lease.clone(),
+        };
+        let (closed, dropped) = windows.lock().unwrap().dispatch(&close).unwrap();
+        assert!(matches!(closed, ControlResponse::WindowClosed {}));
+        assert!(gate.register_selection(&selection_ref(0x92)).is_err());
+        assert!(revoke_in_gate(Some(&gate), dropped).is_empty());
+        assert!(gate.register_selection(&selection_ref(0x92)).is_ok());
+        // Without a gate nothing is revoked or sent.
+        assert!(revoke_in_gate(None, windows.lock().unwrap().end()).is_empty());
     }
 }
 

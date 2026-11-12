@@ -501,6 +501,23 @@ pub enum ControlMethod {
     AbandonLifecycle {
         id: Sha256Digest,
     },
+    /// M22 (U100): the service's own locations with sizes; read-only.
+    StorageInventory {},
+    /// M23 (U100): the exact files a purge of `kind` would delete now, and
+    /// the plan digest a purge must name. Deletes nothing.
+    StoragePurgePlan {
+        kind: crate::storage_admin::StorageLocationKind,
+    },
+    /// M23 (U100): delete exactly the plan `plan_digest` names, if it is
+    /// still the current plan (cache contents or closed logs only).
+    StoragePurge {
+        kind: crate::storage_admin::StorageLocationKind,
+        plan_digest: Sha256Digest,
+    },
+    /// M21 (U101): login startup status, install or uninstall (Windows).
+    LoginStartup {
+        action: crate::storage_admin::LoginStartupAction,
+    },
     /// M14 (`service record-error`): append a bounded client error to the raw
     /// job-error ring, as `airk service record-error` did. `input` is the
     /// error's JSON text (`{code, detail}`), at most
@@ -698,6 +715,10 @@ impl ControlMethod {
             | Self::HandoffPublish { .. }
             | Self::ExplorerHandoff { .. }
             | Self::AbandonLifecycle { .. }
+            | Self::StorageInventory {}
+            | Self::StoragePurgePlan { .. }
+            | Self::StoragePurge { .. }
+            | Self::LoginStartup { .. }
             | Self::AgentEndpoint {}
             | Self::AgentConnectionInfo { .. }
             | Self::AgentConnectionOwnership { .. }
@@ -1511,6 +1532,23 @@ pub enum ControlResponse {
     /// M20: the record, abandoned (or already terminal).
     LifecycleAbandoned {
         record: crate::service_lifecycle::LifecycleRecord,
+    },
+    /// M22.
+    StorageInventory {
+        inventory: crate::storage_admin::StorageInventory,
+    },
+    /// M23 plan, with the digest a purge must name.
+    StoragePurgePlan {
+        plan: crate::storage_admin::StoragePurgePlan,
+        plan_digest: Sha256Digest,
+    },
+    /// M23 done (planned files that stayed are listed, never hidden).
+    StoragePurged {
+        receipt: crate::storage_admin::StoragePurgeReceipt,
+    },
+    /// M21 status after the action.
+    LoginStartup {
+        login: crate::storage_admin::LoginStartupStatus,
     },
     /// M5: the request is journaled (`duplicate` when this exact request was
     /// already journaled under its nonce).

@@ -884,3 +884,150 @@ fn a_service_restart_fails_the_read_resyncs_once_and_reopens_the_window() {
     service.finished(&script);
     assert!(!text.contains(&lease) && !text.contains(&"1a".repeat(32)));
 }
+
+/// Selection authority S1b: with a W4 grant held, a read that names no
+/// explicit selection reaches M3 under `selection: {"window": …}` fenced to
+/// the session's instance (the TODO(3f.3) `Io` seam); without a grant it is
+/// not routed.
+#[test]
+fn scope_select_in_memory_grant_reaches_the_read() {
+    let clock = Arc::new(ManualClock::default());
+    let mut script = pipe("open_lease_held_by_session", &["window_open"], 1);
+    script.extend(pipe(
+        "scope_select_in_memory_grant",
+        &["window_scope_grant"],
+        1,
+    ));
+    script.extend(close_a0());
+    let service = FakeService::new(E1, script.clone());
+    let read = transcript("scope_select_in_memory_grant")
+        .into_iter()
+        .find(|step| step["send"]["method"].get("tools_call").is_some())
+        .expect("the fixture's M3 frame");
+    let expected = (
+        read["send"]["method"]["tools_call"]["selection"].clone(),
+        read["send"]["expected_instance"].clone(),
+    );
+    let routed = Arc::new(Mutex::new(Vec::new()));
+    let seen = routed.clone();
+    let mut client = Client::start(options(&clock, Some(service.clone()), move |argv, io| {
+        let route = io.window.as_deref().map(|route| {
+            (
+                json!({"window": {"window_id": route.window_id, "lease": route.lease}}),
+                json!(route.instance),
+            )
+        });
+        seen.lock().unwrap().push((argv.to_vec(), route));
+        writeln!(io.stdout, "{{}}").unwrap();
+        0
+    }));
+    client.ask(&hello());
+    let before = frame(
+        0x0b,
+        json!({"invoke": {"argv": ["search", "--query", "fixture"], "deadline_ms": 60000}}),
+    );
+    assert_eq!(client.ask(&before)["outcome"]["status"], "invoked");
+    let select = session_steps("scope_select_in_memory_grant", "send");
+    assert_eq!(client.ask(&select[0])["outcome"]["status"], "scope");
+    let invoked = client.ask(&select[1]);
+    assert_eq!(invoked["outcome"]["exit_code"], 0, "{invoked}");
+    let (rest, code, text) = client.eof();
+    assert!(rest.is_empty());
+    assert_eq!(code, 0);
+    service.finished(&script);
+    let argv: Vec<String> = ["search", "--query", "fixture"].map(String::from).to_vec();
+    assert_eq!(
+        *routed.lock().unwrap(),
+        vec![(argv.clone(), None), (argv, Some(expected))]
+    );
+    assert!(
+        !text.contains(&"1a".repeat(32)),
+        "the lease stays in-process"
+    );
+}
+
+/// The catalog moved from revision 12 to 13 in the same namespace.
+fn catalog_detail_at(revision: u64) -> (Value, Value) {
+    let method = ControlMethod::CatalogDetail {
+        entity: airk_core::catalog_management::CatalogEntity::Index {
+            id: "idx_01010101010101010101010101010101".parse().unwrap(),
+        },
+        expected_catalog_revision: None,
+    };
+    let reply = ControlResponse::CatalogDetail {
+        detail: airk_core::catalog_management::CatalogDetail {
+            namespace: "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a".parse().unwrap(),
+            revision: CatalogRevision::try_from(revision).unwrap(),
+            item: None,
+        },
+        capabilities: airk_core::index_catalog::CatalogCapabilities {
+            maximum_registry_schema: 1,
+            authority_contract: 1,
+            policy_contract: 1,
+            reference_refresh_contract: None,
+            production_activation_enabled: true,
+        },
+    };
+    (
+        json!({"protocol": 1, "expected_instance": E1,
+            "method": serde_json::to_value(&method).unwrap()}),
+        serde_json::to_value(&reply).unwrap(),
+    )
+}
+
+/// U99 Q4: a routed read refused with `scoped_read_unavailable` after a
+/// catalog revision change re-selects once at the current revision and
+/// retries once; the second refusal is returned unchanged. A later refusal
+/// with no revision change re-selects nothing.
+#[test]
+fn a_stale_window_read_reselects_once_and_retries_once() {
+    let clock = Arc::new(ManualClock::default());
+    let mut script = pipe("open_lease_held_by_session", &["window_open"], 1);
+    let granted = pipe("scope_select_in_memory_grant", &["window_scope_grant"], 1);
+    let mut reselect = granted[0].clone();
+    reselect.0["method"]["window_scope_grant"]["selection"]["expected_catalog_revision"] =
+        json!(13);
+    reselect.1 = json!({"status": "window_scope_granted", "scope_identity": "5d".repeat(32),
+        "catalog_revision": 13, "expires_at_ms": 30002});
+    script.extend(granted);
+    script.push(catalog_detail_at(13));
+    script.push(reselect);
+    script.push(catalog_detail_at(13));
+    script.extend(close_a0());
+    let service = FakeService::new(E1, script.clone());
+    let runs = Arc::new(AtomicU64::new(0));
+    let counted = runs.clone();
+    let mut client = Client::start(options(&clock, Some(service.clone()), move |_, io| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        let route = io.window.as_deref_mut().expect("a routed read");
+        route.refused = Some("scoped_read_unavailable".into());
+        ExitClass::Refused.code()
+    }));
+    client.ask(&hello());
+    let select = session_steps("scope_select_in_memory_grant", "send");
+    assert_eq!(client.ask(&select[0])["outcome"]["status"], "scope");
+    let first = client.ask(&select[1]);
+    assert_eq!(
+        first["outcome"]["exit_code"],
+        ExitClass::Refused.code(),
+        "{first}"
+    );
+    assert_eq!(runs.load(Ordering::SeqCst), 2, "the read and one retry");
+    let mut again = select[1].clone();
+    again["id"] = json!(id(0x0d));
+    let second = client.ask(&again);
+    assert_eq!(
+        second["outcome"]["exit_code"],
+        ExitClass::Refused.code(),
+        "{second}"
+    );
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        3,
+        "no re-select at the same revision"
+    );
+    let (rest, code, _) = client.eof();
+    assert!(rest.is_empty());
+    assert_eq!(code, 0);
+    service.finished(&script);
+}

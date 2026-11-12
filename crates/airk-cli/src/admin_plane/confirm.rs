@@ -83,8 +83,21 @@ async fn expected(
         (Confirmation::PlanId, ControlMethod::PlanExecute { id, .. }) => {
             Ok(Some(plan_confirmation_text(id)))
         }
-        // The storage rows are not served yet (`operations::MAPPINGS`).
-        (Confirmation::StorageTarget, _) => Err(AdminCode::NotYetServed),
+        // U100: the location's path as the service's inventory lists it now.
+        (Confirmation::StorageTarget, ControlMethod::StoragePurge { kind, .. }) => {
+            let response = dispatch(ControlMethod::StorageInventory {})
+                .await
+                .map_err(|_| AdminCode::AdminInternal)?;
+            let ControlResponse::StorageInventory { inventory } = response else {
+                return Err(AdminCode::AdminConfirmationMismatch);
+            };
+            inventory
+                .locations
+                .into_iter()
+                .find(|location| location.kind == *kind)
+                .map(|location| Some(location.path))
+                .ok_or(AdminCode::AdminConfirmationMismatch)
+        }
         _ => Err(AdminCode::AdminMalformedRequest),
     }
 }

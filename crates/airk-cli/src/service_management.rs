@@ -1177,6 +1177,10 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::HandoffPublish { .. }
         | ControlMethod::ExplorerHandoff { .. }
         | ControlMethod::AbandonLifecycle { .. }
+        | ControlMethod::StorageInventory {}
+        | ControlMethod::StoragePurgePlan { .. }
+        | ControlMethod::StoragePurge { .. }
+        | ControlMethod::LoginStartup { .. }
         | ControlMethod::AgentEndpoint {}
         | ControlMethod::AgentConnectionInfo { .. }
         | ControlMethod::AgentConnectionOwnership { .. }
@@ -1734,10 +1738,6 @@ impl Management {
     }
     /// The service's own M3 handler admits a selection read in process
     /// (§3.2 step 4); the result is consumed only by `take_in_process`.
-    #[allow(
-        dead_code,
-        reason = "called by the M3 window selection read path (selection authority step S1b)"
-    )]
     pub(crate) async fn connect_selection(
         &self,
         request: crate::catalog_authority::SelectionConnectRequest,

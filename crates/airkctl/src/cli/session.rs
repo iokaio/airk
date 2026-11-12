@@ -311,7 +311,7 @@ where
         service: None,
         instance: None,
         window: None,
-        scoped: false,
+        scope: None,
         delivered: 0,
         acked: None,
         resync_sent: false,
@@ -534,6 +534,24 @@ fn failed(code: SessionFailure) -> SessionOutcome {
     }
 }
 
+/// The refusal of a read under a stale, replaced or released W4 grant.
+const SCOPE_UNAVAILABLE: &str = "scoped_read_unavailable";
+
+/// The window-scope read routing of a snapshot holding a W4 grant.
+fn window_route(snapshot: &Snapshot) -> Option<crate::cli::WindowRoute> {
+    let (Some(instance), Some(window), Some(_)) =
+        (snapshot.instance, &snapshot.window, &snapshot.scope)
+    else {
+        return None;
+    };
+    Some(crate::cli::WindowRoute {
+        window_id: window.id,
+        lease: window.lease.clone(),
+        instance,
+        refused: None,
+    })
+}
+
 /// Codes after which the window or the instance the session holds is gone.
 fn restart_code(code: &str) -> bool {
     matches!(
@@ -557,6 +575,8 @@ struct Snapshot {
     instance: Option<Incarnation>,
     window: Option<Window>,
     acked: Option<u64>,
+    /// The held W4 grant's selection.
+    scope: Option<WindowScopeSelection>,
 }
 
 /// What a worker observed, applied by the session loop. Everything except
@@ -571,6 +591,8 @@ struct Effects {
     /// Renewal confirmed the held window.
     renewed: bool,
     scoped: Option<bool>,
+    /// With `scoped: Some(true)`: the selection now granted.
+    granted: Option<WindowScopeSelection>,
     acked: Option<u64>,
     drafts: Vec<AssistanceDraft>,
     subscribed: Option<(Vec<EventTopic>, EventCursor)>,
@@ -818,7 +840,7 @@ impl Worker {
                 ControlMethod::WindowScopeGrant {
                     window_id: window.id,
                     lease: window.lease.clone(),
-                    selection,
+                    selection: selection.clone(),
                 }
             }) {
                 Ok(ControlResponse::WindowScopeGranted {
@@ -827,6 +849,7 @@ impl Worker {
                     expires_at_ms,
                 }) => {
                     effects.scoped = Some(true);
+                    effects.granted = Some(selection);
                     SessionOutcome::Scope {
                         scope_identity: scope_identity.to_string(),
                         catalog_revision: catalog_revision.get(),
@@ -1061,34 +1084,25 @@ impl Worker {
             arguments.push("--service-runtime-dir".into());
             arguments.push(root.clone().into_os_string());
         }
-        // TODO(3f.3, window-scope read routing): with a W4 grant (`scoped`), a
-        // read that names no explicit selection must call M3 with
-        // `ToolSelection::Window { window_id, lease }` fenced to the snapshot's
-        // instance (window_plane.json `scope_select_in_memory_grant`). `cli::run`
-        // has no way to receive that selection (its `Io` carries none and no
-        // flag may carry the lease), so this needs a cli.rs seam, for example
-        // an `Io` field with the window selection and expected instance that
-        // `resolve_call` uses when `Selection` is `Unselected`.
         arguments.extend(argv.into_iter().map(OsString::from));
-        let mut input = std::io::Cursor::new(stdin.unwrap_or_default().into_bytes());
-        let mut stdout = Bounded {
-            bytes: Vec::new(),
-            overflow: false,
-        };
-        let mut stderr = Tail::default();
-        let exit_code = {
-            let mut io = crate::cli::Io {
-                stdin: &mut input,
-                stdout: &mut stdout,
-                stderr: &mut stderr,
-                full_responses: self.shared.full_responses,
-            };
-            let invoker = &self.shared.invoker;
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                invoker.run(arguments, &mut io)
-            }))
-            .unwrap_or(ExitClass::Internal.code())
-        };
+        let stdin = stdin.unwrap_or_default();
+        // With a W4 grant, a read that names no explicit selection calls M3
+        // with `ToolSelection::Window`, fenced to the snapshot's instance
+        // (window_plane.json `scope_select_in_memory_grant`).
+        let mut route = window_route(snapshot);
+        let mut ran = self.command(arguments.clone(), &stdin, route.as_mut());
+        // U99 Q4: on `scoped_read_unavailable` caused by a catalog revision
+        // change, re-select once at the current revision and retry the read
+        // once. The retry's outcome, refused or not, is returned unchanged.
+        if route
+            .as_ref()
+            .is_some_and(|route| route.refused.as_deref() == Some(SCOPE_UNAVAILABLE))
+            && self.reselect(snapshot, effects)
+        {
+            let mut retry = window_route(snapshot);
+            ran = self.command(arguments, &stdin, retry.as_mut());
+        }
+        let (exit_code, stdout, stderr) = ran;
         if stdout.overflow {
             return failed(SessionFailure::SessionResponseOversize);
         }
@@ -1116,6 +1130,84 @@ impl Worker {
             stdout: String::from_utf8_lossy(&stdout.bytes).into_owned(),
             stderr,
             error,
+        }
+    }
+
+    /// One in-process command line with captured streams.
+    fn command(
+        &self,
+        arguments: Vec<OsString>,
+        stdin: &str,
+        window: Option<&mut crate::cli::WindowRoute>,
+    ) -> (u8, Bounded, Tail) {
+        let mut input = std::io::Cursor::new(stdin.as_bytes());
+        let mut stdout = Bounded {
+            bytes: Vec::new(),
+            overflow: false,
+        };
+        let mut stderr = Tail::default();
+        let exit_code = {
+            let mut io = crate::cli::Io {
+                stdin: &mut input,
+                stdout: &mut stdout,
+                stderr: &mut stderr,
+                full_responses: self.shared.full_responses,
+                window,
+            };
+            let invoker = &self.shared.invoker;
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                invoker.run(arguments, &mut io)
+            }))
+            .unwrap_or(ExitClass::Internal.code())
+        };
+        (exit_code, stdout, stderr)
+    }
+
+    /// U99 Q4: whether the held grant's catalog moved to another revision
+    /// in the same namespace, and a re-select of the same indexes and
+    /// projects at the current revision was granted. Called at most once per
+    /// read; a refused re-select leaves the first outcome in place.
+    fn reselect(&self, snapshot: &Snapshot, effects: &mut Effects) -> bool {
+        let (Some(service), Some(instance), Some(held)) =
+            (&self.service, snapshot.instance, &snapshot.scope)
+        else {
+            return false;
+        };
+        let Some(index) = held.index_ids.first() else {
+            return false;
+        };
+        let observed = service.request(
+            ControlMethod::CatalogDetail {
+                entity: airk_core::catalog_management::CatalogEntity::Index { id: *index },
+                expected_catalog_revision: None,
+            },
+            instance,
+        );
+        let current = match observed {
+            Ok(ControlResponse::CatalogDetail { detail, .. })
+                if detail.namespace == held.namespace
+                    && detail.revision != held.expected_catalog_revision =>
+            {
+                WindowScopeSelection {
+                    expected_catalog_revision: detail.revision,
+                    ..held.clone()
+                }
+            }
+            _ => return false,
+        };
+        match self.plane(snapshot, effects, |window| {
+            ControlMethod::WindowScopeGrant {
+                window_id: window.id,
+                lease: window.lease.clone(),
+                selection: current.clone(),
+            }
+        }) {
+            Ok(ControlResponse::WindowScopeGranted { .. }) => {
+                effects.scoped = Some(true);
+                effects.granted = Some(current);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1247,9 +1339,10 @@ struct Session {
     service: Option<Arc<dyn Service>>,
     instance: Option<Incarnation>,
     window: Option<Window>,
-    /// A W4 grant is held (consumed by the window-scope read routing TODO).
-    #[allow(dead_code)]
-    scoped: bool,
+    /// The selection of the held W4 grant: reads with no explicit selection
+    /// are routed to it, and it is re-selected once on revision drift (U99
+    /// Q4).
+    scope: Option<WindowScopeSelection>,
     /// Highest Assistance sequence emitted; repeats are suppressed.
     delivered: u64,
     acked: Option<u64>,
@@ -1408,6 +1501,7 @@ impl Session {
             instance: self.instance,
             window: self.window.clone(),
             acked: self.acked,
+            scope: self.scope.clone(),
         }
     }
 
@@ -1441,7 +1535,7 @@ impl Session {
     /// The window's grant and Assistance state end with its window or instance.
     fn reset_plane(&mut self) {
         self.shared.epoch.fetch_add(1, Ordering::SeqCst);
-        self.scoped = false;
+        self.scope = None;
         self.delivered = 0;
         self.acked = None;
         if let Some(subscription) = self.subscription.as_mut() {
@@ -1484,8 +1578,10 @@ impl Session {
         if effects.renewed {
             self.resync_sent = false;
         }
-        if let Some(scoped) = effects.scoped {
-            self.scoped = scoped;
+        match effects.scoped {
+            Some(true) => self.scope = effects.granted,
+            Some(false) => self.scope = None,
+            None => {}
         }
         if let Some(acked) = effects.acked {
             self.acked = Some(self.acked.map_or(acked, |held| held.max(acked)));

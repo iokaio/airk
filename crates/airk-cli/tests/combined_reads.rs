@@ -3441,6 +3441,7 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
                 stdout: &mut stdout,
                 stderr: &mut stderr,
                 full_responses: true,
+                window: None,
             };
             let code = airkctl::cli::run(arguments, &mut io);
             (code, stdout, stderr)

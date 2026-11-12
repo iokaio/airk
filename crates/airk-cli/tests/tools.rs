@@ -708,6 +708,7 @@ fn airkctl_outcome(parity: &Parity, arguments: &[&str]) -> (Option<i32>, Option<
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: true,
+        window: None,
     };
     let line = std::iter::once("airkctl")
         .chain(arguments.iter().copied())
@@ -993,6 +994,7 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: true,
+            window: None,
         };
         let code = airkctl::cli::run(line.into_iter().map(Into::into).collect(), &mut io);
         assert_eq!(
@@ -1174,6 +1176,7 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = std::iter::once("airkctl")
             .chain(arguments.iter().copied())
@@ -1331,6 +1334,7 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = std::iter::once("airkctl")
             .chain(arguments.iter().copied())
@@ -1601,6 +1605,7 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: true,
+            window: None,
         };
         let line = std::iter::once("airkctl")
             .chain(arguments.iter().copied())
@@ -1726,6 +1731,7 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: true,
+            window: None,
         };
         let line = std::iter::once("airkctl")
             .chain([
@@ -1942,6 +1948,7 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: true,
+            window: None,
         };
         let line = std::iter::once("airkctl")
             .chain(selection.iter().copied())
@@ -2067,6 +2074,7 @@ fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: false,
+        window: None,
     };
     let line = [
         "airkctl",
@@ -2101,6 +2109,7 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = ["airkctl", "--service-runtime-dir", control.as_str()]
             .into_iter()
@@ -2281,6 +2290,7 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = [
             "airkctl",
@@ -2543,6 +2553,7 @@ fn airkctl_trust_and_issuer_rotation_match_airk() -> anyhow::Result<()> {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = [
             "airkctl",
@@ -2658,6 +2669,7 @@ fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Resu
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = [
             "airkctl",
@@ -2808,6 +2820,7 @@ fn airkctl_explorer_get_handoff_reads_a_published_handoff() -> anyhow::Result<()
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: false,
+            window: None,
         };
         let line = [
             "airkctl",

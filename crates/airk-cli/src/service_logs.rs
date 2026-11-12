@@ -28,6 +28,7 @@ const LOW_WATER_BYTES: u64 = 100_000_000;
 const RECORD_BYTES: usize = airk_core::service_logs::MAX_RECORD_BYTES;
 const READ_BYTES: usize = airk_core::service_logs::RECENT_READ_BYTES;
 
+mod closed;
 mod raw;
 pub(crate) const OWNER_RECORDS: [&str; 2] = [OWNER, raw::OWNER];
 pub use raw::export as export_raw;
@@ -195,24 +196,7 @@ impl Sink {
         segment: u64,
     ) -> Result<()> {
         // Service job failures and explicit client failures share one stream.
-        struct WriteGuard(File);
-        impl Drop for WriteGuard {
-            fn drop(&mut self) {
-                let _ = self.0.unlock();
-            }
-        }
-        let write = self.lock.try_clone()?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        loop {
-            match write.try_lock() {
-                Ok(()) => break,
-                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(5))
-                }
-                Err(error) => return Err(error).context("diagnostic_writer_busy_or_unavailable"),
-            }
-        }
-        let _guard = WriteGuard(write);
+        let _guard = lock_writer(&self.lock)?;
         bytes.push(b'\n');
         ensure!(
             bytes.len() <= self.record_bytes,
@@ -264,6 +248,27 @@ impl Sink {
         file.sync_data()?;
         Ok(())
     }
+}
+/// Holds a ring's `writer.lock` (every append, rotation and closed-log purge).
+struct WriteGuard(File);
+impl Drop for WriteGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+fn lock_writer(lock: &File) -> Result<WriteGuard> {
+    let write = lock.try_clone()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match write.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(5))
+            }
+            Err(error) => return Err(error).context("diagnostic_writer_busy_or_unavailable"),
+        }
+    }
+    Ok(WriteGuard(write))
 }
 fn open_file(path: &Path, create: bool) -> Result<File> {
     let mut options = OpenOptions::new();
@@ -319,6 +324,8 @@ fn make_record(
 enum Message {
     Record(LogRecord),
     Failure(LogRecord, JobFailure),
+    /// U100: list or delete closed ring files between appends.
+    Closed(closed::Request, SyncSender<Result<closed::Reply>>),
     Stop,
 }
 #[derive(Clone)]
@@ -326,6 +333,9 @@ pub(crate) struct Log {
     sender: Option<SyncSender<Message>>,
     counters: Arc<Counters>,
     instance: Incarnation,
+    /// The control root the writer was started for (its log folder is
+    /// `service_locations::log_parent(root)`).
+    root: PathBuf,
 }
 pub(crate) struct Guard {
     sender: Option<SyncSender<Message>>,
@@ -346,6 +356,7 @@ impl Log {
         let counters = Arc::new(Counters::default());
         let observed = counters.clone();
         let (sender, receiver) = sync_channel(64);
+        let log_root = root.clone();
         let thread = std::thread::Builder::new()
             .name("airk-diagnostic-log".into())
             .spawn(move || {
@@ -375,6 +386,11 @@ impl Log {
                     }
                     let record = match message {
                         Message::Stop => break,
+                        Message::Closed(request, reply) => {
+                            // A failed send means the requester gave up waiting.
+                            let _ = reply.send(closed::serve(&root, request));
+                            continue;
+                        }
                         Message::Record(record) => record,
                         Message::Failure(record, failure) => {
                             let saved = raw::append(&root, &mut raw_sink, &record, &failure);
@@ -406,6 +422,7 @@ impl Log {
                 sender: enabled.then(|| sender.clone()),
                 counters,
                 instance,
+                root: log_root,
             },
             Guard {
                 sender: enabled.then_some(sender),
@@ -435,6 +452,45 @@ impl Log {
         {
             self.counters.lose();
         }
+    }
+    /// U100: the folder holding this writer's rings (the `logs` location
+    /// of an adopted installation).
+    pub(crate) fn log_folder(&self) -> Result<PathBuf> {
+        crate::service_locations::log_parent(&self.root)
+    }
+    /// U100: the closed (`previous-*`) files of both rings, sorted, listed on
+    /// the writer thread under each ring's `writer.lock`. Blocking.
+    pub(crate) fn closed_log_files(&self) -> Result<Vec<airk_core::storage_admin::PurgeFile>> {
+        match self.closed(closed::Request::List)? {
+            closed::Reply::Listed(files) => Ok(files),
+            closed::Reply::Deleted(_) => anyhow::bail!("diagnostic_log_writer_unavailable"),
+        }
+    }
+    /// U100: delete exactly `plan` on the writer thread, between appends and
+    /// under each ring's `writer.lock`, if it still equals the closed files
+    /// (`storage_purge_plan_changed` otherwise). `current.jsonl`, the lock and
+    /// the owner records are never deleted. Blocking.
+    pub(crate) fn delete_closed_logs(
+        &self,
+        plan: &[airk_core::storage_admin::PurgeFile],
+    ) -> Result<Vec<airk_core::storage_admin::PurgedFile>> {
+        match self.closed(closed::Request::Delete(plan.to_vec()))? {
+            closed::Reply::Deleted(files) => Ok(files),
+            closed::Reply::Listed(_) => anyhow::bail!("diagnostic_log_writer_unavailable"),
+        }
+    }
+    fn closed(&self, request: closed::Request) -> Result<closed::Reply> {
+        let sender = self
+            .sender
+            .as_ref()
+            .context("diagnostic_log_writer_unavailable")?;
+        let (reply, answer) = sync_channel(1);
+        sender
+            .send(Message::Closed(request, reply))
+            .map_err(|_| anyhow::anyhow!("diagnostic_log_writer_unavailable"))?;
+        answer
+            .recv_timeout(closed::REPLY_DEADLINE)
+            .map_err(|_| anyhow::anyhow!("diagnostic_writer_busy_or_unavailable"))?
     }
     pub fn telemetry(&self) -> LogTelemetry {
         LogTelemetry {

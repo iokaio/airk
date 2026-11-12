@@ -27,10 +27,10 @@ use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Capabilities of the served operations of this build (contracts §3.5); an
-/// unserved operation's capability is absent. Not yet: `window-scope/1` and
-/// `assistance/1` (W4 and window reads, Phase 5), `handoff/1` (M12),
-/// `offline-recovery/1` (trust and issuer recovery, 3e.5; login status,
-/// Phase 7).
+/// unserved operation's capability is absent. `window-scope/1`: W4 and
+/// single-index reads under it (selection authority S1b). Not yet:
+/// `assistance/1` (Phase 5), `handoff/1` (M12), `offline-recovery/1` (trust
+/// and issuer recovery, 3e.5; login status, Phase 7).
 const CAPABILITIES: &[&str] = &[
     "session/2",
     "events/1",
@@ -41,6 +41,7 @@ const CAPABILITIES: &[&str] = &[
     "agents-launch/1",
     "agents-verify/1",
     "admin-launch/1",
+    "window-scope/1",
 ];
 
 /// The streams and environment one run uses.
@@ -50,6 +51,22 @@ pub struct Io<'a> {
     pub stderr: &'a mut dyn Write,
     /// `AIRK_MCP_RESPONSE_MODE=full`, as the pre-split CLI read it.
     pub full_responses: bool,
+    /// The `airkctl session` window whose W4 grant a read with no explicit
+    /// selection uses (window_plane.json `scope_select_in_memory_grant`).
+    /// `None` outside a session.
+    pub window: Option<&'a mut WindowRoute>,
+}
+
+/// A session's window-scope read routing: M3 `ToolSelection::Window`, fenced
+/// to the session's service instance. The lease never reaches an argument,
+/// a flag or an output.
+pub struct WindowRoute {
+    pub window_id: airk_core::identity::Incarnation,
+    pub lease: airk_core::service::WindowLease,
+    pub instance: airk_core::identity::Incarnation,
+    /// The routed call's refusal code (`ControlResponse::Failure`), set by
+    /// the call so the session can react to `scoped_read_unavailable`.
+    pub refused: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1076,6 +1093,13 @@ fn resolve_call(
     if !matches!(explicit, ToolSelection::Unselected) || matches!(tool, "airk_help" | "help") {
         return Ok((control(cx, selection)?, explicit));
     }
+    if let Some(route) = cx.io.window.as_deref() {
+        let routed = ToolSelection::Window {
+            window_id: route.window_id,
+            lease: route.lease.clone(),
+        };
+        return Ok((window_control(cx, selection)?, routed));
+    }
     let (control, registration) = project_for(cx, selection)?;
     Ok((
         control,
@@ -1083,6 +1107,28 @@ fn resolve_call(
             binding: registration.binding,
         },
     ))
+}
+
+/// The control root of a session-routed window read: the flag's, else the
+/// installation's.
+fn window_control(cx: &mut Context, selection: &Selection) -> Result<PathBuf, u8> {
+    if let Some(control) = &selection.control {
+        return Ok(control.clone());
+    }
+    match crate::install::discover() {
+        crate::install::Discovery::Verified(found) => {
+            Ok(PathBuf::from(&found.record.locations.state))
+        }
+        _ => Err(fail(
+            cx,
+            &ErrorLine::new(
+                ExitClass::ServiceMissing,
+                "installation_not_found",
+                false,
+                "No AIRK installation was found; pass --service-runtime-dir <service control directory>.",
+            ),
+        )),
+    }
 }
 
 /// The control root and the registered project a command names: by
@@ -2328,7 +2374,15 @@ fn call(
     } else {
         ToolResponseMode::Terse
     };
-    let response = match crate::service::request(
+    // A session-routed read is fenced to the session's service instance.
+    let routed = matches!(selection, ToolSelection::Window { .. });
+    let expected_instance = cx
+        .io
+        .window
+        .as_deref()
+        .filter(|_| routed)
+        .map(|route| route.instance);
+    let response = match crate::service::request_fenced(
         &control,
         ControlMethod::ToolsCall {
             tool,
@@ -2338,10 +2392,16 @@ fn call(
             usage_client: airk_core::usage::ClientFamily::Cli,
         },
         VERSION,
+        expected_instance,
     ) {
         Ok(response) => response,
         Err(line) => return fail(cx, &line),
     };
+    if let (true, ControlResponse::Failure { code }, Some(route)) =
+        (routed, &response, cx.io.window.as_deref_mut())
+    {
+        route.refused = Some(code.clone());
+    }
     match response {
         ControlResponse::ToolResult { result } => {
             let printed = print_json(cx, &result);

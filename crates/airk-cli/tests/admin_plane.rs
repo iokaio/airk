@@ -148,6 +148,7 @@ fn admin_url(control: &Path) -> (u8, String, String) {
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: false,
+        window: None,
     };
     let line = [
         "airkctl",

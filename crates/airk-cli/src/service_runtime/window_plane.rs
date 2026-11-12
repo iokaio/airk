@@ -3,15 +3,24 @@
 //! W1–W8 and M12. All state belongs to one `service_instance` and is lost on
 //! restart. Time, identifiers, leases and the catalog scope check are
 //! injected, so every rule is exercised under a manual clock.
+//!
+//! W4 grants carry an in-memory selection authority (selection authority
+//! spec §3.1, step S1b): each stored grant draws a fresh nonce and registers
+//! it live with the admission gate. Every path that drops a grant (sweep,
+//! close, release, replace, service end) returns its nonce as a [`Dropped`]
+//! value that the caller revokes after releasing the windows lock (§3.3,
+//! §3.7, N4). The W4 check and the read re-check run with the lock released
+//! ([`grant_unlocked`], [`read_unlocked`]).
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     index_catalog::CatalogRevision,
+    scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
     service::{
         AssistanceDraft, AssistanceWindow, ControlMethod, ControlResponse, WindowLease,
         WindowScopeSelection,
     },
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, future::Future, sync::Mutex};
 
 const MAX_WINDOWS: usize = 64;
 const LABEL_BYTES: usize = 128;
@@ -29,6 +38,10 @@ const WINDOW_LABEL_INVALID: &str = "window_label_invalid";
 const WINDOW_UNKNOWN: &str = "window_unknown";
 const WINDOW_LEASE_INVALID: &str = "window_lease_invalid";
 const WINDOW_SCOPE_NOT_GRANTED: &str = "window_scope_not_granted";
+const WINDOW_PLANE_UNAVAILABLE: &str = "window_plane_unavailable";
+/// A stale, replaced or released grant, an unregistered nonce or a selection
+/// without a project (§3.2, §3.5); an existing code.
+const SCOPE_UNAVAILABLE: &str = "scoped_read_unavailable";
 const ASSISTANCE_DRAFT_OVERSIZE: &str = "assistance_draft_oversize";
 const ASSISTANCE_QUEUE_FULL: &str = "assistance_queue_full";
 const ASSISTANCE_DRAIN_LIMIT_INVALID: &str = "assistance_drain_limit_invalid";
@@ -54,14 +67,69 @@ pub(super) type LeaseSource = Box<dyn FnMut() -> WindowLease + Send>;
 /// revision, or the failure code (for example `scoped_read_unavailable`).
 pub(super) type ScopeValidator =
     Box<dyn Fn(&WindowScopeSelection) -> Result<(Sha256Digest, CatalogRevision), String> + Send>;
+/// The outcome of that check, as the unlocked W4 and read paths receive it.
+pub(super) type CheckResult = Result<(Sha256Digest, CatalogRevision), String>;
+
+/// Draws a fresh selection grant nonce (128 random bits in the service).
+pub(super) type NonceSource = Box<dyn FnMut() -> Incarnation + Send>;
+/// Registers a stored grant's nonce live with the admission gate. Called
+/// nested inside the windows lock (§3.7: owner, then gate; the gate never
+/// calls back into the plane).
+pub(super) type SelectionRegistrar = Box<dyn Fn(&SelectionScopeRef) -> Result<(), ()> + Send>;
 
 /// A window's in-memory scope grant (U77), resolved by M3 `selection: Window`.
 #[derive(Clone, Debug)]
-#[expect(dead_code, reason = "read by the M3 window selection in step 3f.4")]
 pub(super) struct WindowGrant {
     pub(super) selection: WindowScopeSelection,
     pub(super) scope_identity: Sha256Digest,
     pub(super) catalog_revision: CatalogRevision,
+    /// The in-memory authority admission keys on (§3.1). Its `Debug`
+    /// redacts the nonce; it never reaches a reply or failure body (N3).
+    pub(super) selection_ref: SelectionScopeRef,
+}
+
+/// The selection nonces of the grants one plane call dropped. The caller
+/// revokes them (`NativeCatalogAdmission::revoke_selection`) after it has
+/// released the windows lock (§3.3, §3.7, N4).
+#[must_use = "revoke every dropped selection nonce with no lock held"]
+#[derive(Default)]
+pub(super) struct Dropped(Vec<Incarnation>);
+
+impl Dropped {
+    fn push(&mut self, grant: Option<WindowGrant>) {
+        if let Some(grant) = grant {
+            self.0.push(grant.selection_ref.grant_nonce);
+        }
+    }
+    fn absorb(&mut self, other: Dropped) {
+        self.0.extend(other.0);
+    }
+    pub(super) fn into_nonces(self) -> Vec<Incarnation> {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for Dropped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Dropped({} nonces)", self.0.len())
+    }
+}
+
+/// A W4 attempt resolved under the lock: the window and its grant
+/// generation, re-checked when the result is stored (§3.7 step 3).
+struct GrantAttempt {
+    window_id: Incarnation,
+    lease: WindowLease,
+    sequence: u64,
+}
+
+/// A read's grant, resolved under the lock and re-confirmed after the check
+/// (§3.2). Holds the lease only to locate the window again; never printed.
+pub(super) struct ReadGrant {
+    window_id: Incarnation,
+    lease: WindowLease,
+    sequence: u64,
+    pub(super) grant: WindowGrant,
 }
 
 struct QueuedDraft {
@@ -88,6 +156,8 @@ struct Window {
     draft_bytes: usize,
     handoffs: Vec<Handoff>,
     grant: Option<WindowGrant>,
+    /// Bumped on every grant store, release and replace (§3.7).
+    grant_sequence: u64,
 }
 
 impl Window {
@@ -108,6 +178,10 @@ pub(super) struct WindowPlane {
     ids: IdSource,
     leases: LeaseSource,
     validate_scope: ScopeValidator,
+    nonces: NonceSource,
+    /// `None` without a catalog gate: the nonce is then never live and every
+    /// read under the grant is refused at admission.
+    registrar: Option<SelectionRegistrar>,
     /// Open windows in opening order (W5 lists them in this order).
     windows: Vec<Window>,
 }
@@ -120,18 +194,52 @@ impl WindowPlane {
         leases: LeaseSource,
         validate_scope: ScopeValidator,
     ) -> Self {
+        let mut drawn = 0u64;
         Self {
             service_instance,
             clock,
             ids,
             leases,
             validate_scope,
+            // Deterministic and never registered: the service replaces it
+            // through `with_selection_authority`.
+            nonces: Box::new(move || {
+                drawn += 1;
+                let mut bytes = [0x5e; 16];
+                bytes[1..9].copy_from_slice(&drawn.to_be_bytes());
+                Incarnation::from_bytes(bytes)
+            }),
+            registrar: None,
             windows: Vec::new(),
         }
     }
 
-    /// Answers the ten window-plane methods; `None` for every other method.
+    /// The service's nonce source and, with a catalog gate, its live-set
+    /// registration (§3.1, §3.4).
+    pub(super) fn with_selection_authority(
+        mut self,
+        nonces: NonceSource,
+        registrar: Option<SelectionRegistrar>,
+    ) -> Self {
+        self.nonces = nonces;
+        self.registrar = registrar;
+        self
+    }
+
+    /// The window-plane methods without their dropped nonces (the fixture
+    /// replay and the tests use this).
+    #[cfg(test)]
     pub(super) fn handle(&mut self, method: &ControlMethod) -> Option<ControlResponse> {
+        self.dispatch(method).map(|(response, _dropped)| response)
+    }
+
+    /// Answers the ten window-plane methods; `None` for every other method.
+    /// W4 here runs the check inline; the service routes W4 through
+    /// [`grant_unlocked`] instead, so the check never runs under its lock.
+    pub(super) fn dispatch(
+        &mut self,
+        method: &ControlMethod,
+    ) -> Option<(ControlResponse, Dropped)> {
         use ControlMethod as M;
         if !matches!(
             method,
@@ -149,20 +257,22 @@ impl WindowPlane {
             return None;
         }
         let now = (self.clock)();
-        self.sweep(now);
+        let mut dropped = self.sweep(now);
         let outcome = match method {
             M::WindowOpen {
                 label,
                 owner_pid: _,
             } => self.open(label, now),
             M::WindowRenew { window_id, lease } => self.renew(window_id, lease, now),
-            M::WindowClose { window_id, lease } => self.close(window_id, lease, now),
+            M::WindowClose { window_id, lease } => self.close(window_id, lease, now, &mut dropped),
             M::WindowScopeGrant {
                 window_id,
                 lease,
                 selection,
-            } => self.grant(window_id, lease, selection, now),
-            M::WindowScopeRelease { window_id, lease } => self.release(window_id, lease, now),
+            } => self.grant(window_id, lease, selection, now, &mut dropped),
+            M::WindowScopeRelease { window_id, lease } => {
+                self.release(window_id, lease, now, &mut dropped)
+            }
             M::AssistanceWindows {} => Ok(self.list()),
             M::AssistanceSubmit {
                 window_id,
@@ -185,7 +295,10 @@ impl WindowPlane {
             M::ExplorerHandoff { handoff_id } => self.read_handoff(handoff_id),
             _ => return None,
         };
-        Some(outcome.unwrap_or_else(|code| ControlResponse::Failure { code }))
+        Some((
+            outcome.unwrap_or_else(|code| ControlResponse::Failure { code }),
+            dropped,
+        ))
     }
 
     /// The grant M3 `selection: Window { window_id, lease }` reads under.
@@ -206,14 +319,33 @@ impl WindowPlane {
     }
 
     /// Expiry acts as close (drops queue, handoffs and grant); expired
-    /// handoffs are dropped.
-    fn sweep(&mut self, now: u64) {
-        self.windows.retain(|window| window.alive(now));
+    /// handoffs are dropped. Returns the expired windows' grant nonces.
+    fn sweep(&mut self, now: u64) -> Dropped {
+        let mut dropped = Dropped::default();
+        self.windows.retain_mut(|window| {
+            let alive = window.alive(now);
+            if !alive {
+                dropped.push(window.grant.take());
+            }
+            alive
+        });
         for window in &mut self.windows {
             window
                 .handoffs
                 .retain(|handoff| now < handoff.expires_at_ms);
         }
+        dropped
+    }
+
+    /// Service end: every grant's nonce, revoked before the workers drain
+    /// (§3.3).
+    pub(super) fn end(&mut self) -> Dropped {
+        let mut dropped = Dropped::default();
+        for window in &mut self.windows {
+            window.grant_sequence = window.grant_sequence.wrapping_add(1);
+            dropped.push(window.grant.take());
+        }
+        dropped
     }
 
     fn open(&mut self, label: &str, now: u64) -> Outcome {
@@ -235,6 +367,7 @@ impl WindowPlane {
             draft_bytes: 0,
             handoffs: Vec::new(),
             grant: None,
+            grant_sequence: 0,
         });
         Ok(ControlResponse::WindowOpened {
             window_id: id,
@@ -250,30 +383,86 @@ impl WindowPlane {
         Ok(ControlResponse::WindowRenewed { ttl_ms: TTL_MS })
     }
 
-    fn close(&mut self, id: &Incarnation, lease: &WindowLease, now: u64) -> Outcome {
+    fn close(
+        &mut self,
+        id: &Incarnation,
+        lease: &WindowLease,
+        now: u64,
+        dropped: &mut Dropped,
+    ) -> Outcome {
         let index = locate(&self.windows, id, lease, now)?;
-        self.windows.remove(index);
+        dropped.push(self.windows.remove(index).grant);
         Ok(ControlResponse::WindowClosed {})
     }
 
-    /// A successful grant renews the window, so the grant's `expires_at_ms`
-    /// is the window's expiry. A failed grant leaves the previous one.
+    /// The inline W4 (fixture replay and tests): the steps of
+    /// [`grant_unlocked`] with nothing released between them.
     fn grant(
         &mut self,
         id: &Incarnation,
         lease: &WindowLease,
         selection: &WindowScopeSelection,
         now: u64,
+        dropped: &mut Dropped,
     ) -> Outcome {
+        let attempt = self.grant_attempt(id, lease, now)?;
+        let checked = (self.validate_scope)(selection);
+        self.store_grant(&attempt, selection, checked, now, dropped)
+    }
+
+    fn grant_attempt(
+        &self,
+        id: &Incarnation,
+        lease: &WindowLease,
+        now: u64,
+    ) -> Result<GrantAttempt, String> {
         let index = locate(&self.windows, id, lease, now)?;
-        let (scope_identity, catalog_revision) = (self.validate_scope)(selection)?;
+        Ok(GrantAttempt {
+            window_id: *id,
+            lease: lease.clone(),
+            sequence: self.windows[index].grant_sequence,
+        })
+    }
+
+    /// §3.7 step 3: the window must still be alive under the same lease
+    /// (`window_unknown`) with no grant stored or released since the attempt
+    /// began (`scoped_read_unavailable`: the last writer under the lock
+    /// won). Then a fresh nonce is drawn and registered live (gate, nested),
+    /// the replaced nonce collected and the grant stored. A successful grant
+    /// renews the window, so the grant's `expires_at_ms` is the window's
+    /// expiry. A failed grant leaves the previous one.
+    fn store_grant(
+        &mut self,
+        attempt: &GrantAttempt,
+        selection: &WindowScopeSelection,
+        checked: CheckResult,
+        now: u64,
+        dropped: &mut Dropped,
+    ) -> Outcome {
+        let index = locate(&self.windows, &attempt.window_id, &attempt.lease, now)?;
+        let (scope_identity, catalog_revision) = checked?;
+        if self.windows[index].grant_sequence != attempt.sequence {
+            return Err(SCOPE_UNAVAILABLE.into());
+        }
+        let selection_ref = SelectionScopeRef {
+            owner: SelectionOwnerKind::Window,
+            grant_nonce: (self.nonces)(),
+            service_instance: self.service_instance,
+            scope_identity,
+            catalog_revision,
+        };
+        if let Some(register) = &self.registrar {
+            register(&selection_ref).map_err(|()| SCOPE_UNAVAILABLE.to_owned())?;
+        }
         let window = &mut self.windows[index];
+        window.grant_sequence = window.grant_sequence.wrapping_add(1);
         window.renewed_at_ms = now;
-        window.grant = Some(WindowGrant {
+        dropped.push(window.grant.replace(WindowGrant {
             selection: selection.clone(),
             scope_identity,
             catalog_revision,
-        });
+            selection_ref,
+        }));
         Ok(ControlResponse::WindowScopeGranted {
             scope_identity,
             catalog_revision,
@@ -281,10 +470,61 @@ impl WindowPlane {
         })
     }
 
-    fn release(&mut self, id: &Incarnation, lease: &WindowLease, now: u64) -> Outcome {
+    fn release(
+        &mut self,
+        id: &Incarnation,
+        lease: &WindowLease,
+        now: u64,
+        dropped: &mut Dropped,
+    ) -> Outcome {
         let index = locate(&self.windows, id, lease, now)?;
-        self.windows[index].grant = None;
+        let window = &mut self.windows[index];
+        window.grant_sequence = window.grant_sequence.wrapping_add(1);
+        dropped.push(window.grant.take());
         Ok(ControlResponse::WindowScopeReleased {})
+    }
+
+    /// §3.2 step 1: the window's grant and its generation, copied under the
+    /// lock.
+    fn read_attempt(
+        &self,
+        id: &Incarnation,
+        lease: &WindowLease,
+        now: u64,
+    ) -> Result<ReadGrant, String> {
+        let index = locate(&self.windows, id, lease, now)?;
+        let window = &self.windows[index];
+        let grant = window.grant.clone().ok_or(WINDOW_SCOPE_NOT_GRANTED)?;
+        Ok(ReadGrant {
+            window_id: *id,
+            lease: lease.clone(),
+            sequence: window.grant_sequence,
+            grant,
+        })
+    }
+
+    /// After the check: the window is still alive (`window_unknown`) and its
+    /// grant was neither replaced nor released (`scoped_read_unavailable`).
+    fn read_confirm(&self, read: &ReadGrant, now: u64) -> Result<(), String> {
+        let index = locate(&self.windows, &read.window_id, &read.lease, now)?;
+        if self.windows[index].grant_sequence == read.sequence {
+            Ok(())
+        } else {
+            Err(SCOPE_UNAVAILABLE.into())
+        }
+    }
+
+    /// U99 Q5: a successful read under the grant renews the window, unless
+    /// the window or its grant changed meanwhile.
+    pub(super) fn renew_after_read(&mut self, read: &ReadGrant) -> bool {
+        let now = (self.clock)();
+        match locate(&self.windows, &read.window_id, &read.lease, now) {
+            Ok(index) if self.windows[index].grant_sequence == read.sequence => {
+                self.windows[index].renewed_at_ms = now;
+                true
+            }
+            _ => false,
+        }
     }
 
     fn list(&self) -> ControlResponse {
@@ -424,6 +664,97 @@ impl WindowPlane {
             })
             .ok_or_else(|| HANDOFF_UNKNOWN.into())
     }
+}
+
+/// W4 with the catalog check outside the windows lock (§3.7): resolve under
+/// the lock, unlock, `check`, lock again and store only if the window and
+/// its grant generation are unchanged. Returns the reply and every nonce the
+/// sweeps and the replacement dropped, for revocation after this returns.
+pub(super) async fn grant_unlocked<F, Fut>(
+    plane: &Mutex<WindowPlane>,
+    id: &Incarnation,
+    lease: &WindowLease,
+    selection: &WindowScopeSelection,
+    check: F,
+) -> (ControlResponse, Dropped)
+where
+    F: FnOnce(WindowScopeSelection) -> Fut,
+    Fut: Future<Output = CheckResult>,
+{
+    let mut dropped = Dropped::default();
+    let attempt = match plane.lock() {
+        Ok(mut windows) => {
+            let now = (windows.clock)();
+            dropped.absorb(windows.sweep(now));
+            windows.grant_attempt(id, lease, now)
+        }
+        Err(_) => Err(WINDOW_PLANE_UNAVAILABLE.to_owned()),
+    };
+    let outcome = match attempt {
+        Ok(attempt) => {
+            let checked = check(selection.clone()).await;
+            match plane.lock() {
+                Ok(mut windows) => {
+                    let now = (windows.clock)();
+                    dropped.absorb(windows.sweep(now));
+                    windows.store_grant(&attempt, selection, checked, now, &mut dropped)
+                }
+                Err(_) => Err(WINDOW_PLANE_UNAVAILABLE.to_owned()),
+            }
+        }
+        Err(code) => Err(code),
+    };
+    (
+        outcome.unwrap_or_else(|code| ControlResponse::Failure { code }),
+        dropped,
+    )
+}
+
+/// §3.2 steps 1-2 for M3 `selection: Window`: sweep (expired grants are
+/// returned for revocation), resolve the grant under the lock, refuse a
+/// selection without a project (§3.5), run the full `check` with the lock
+/// released (U99 Q3) and require exactly the stored identity and revision,
+/// then lock again: a window closed meanwhile is `window_unknown`, a grant
+/// replaced or released meanwhile `scoped_read_unavailable`.
+pub(super) async fn read_unlocked<F, Fut>(
+    plane: &Mutex<WindowPlane>,
+    id: &Incarnation,
+    lease: &WindowLease,
+    check: F,
+) -> (Result<ReadGrant, String>, Dropped)
+where
+    F: FnOnce(WindowScopeSelection) -> Fut,
+    Fut: Future<Output = CheckResult>,
+{
+    let mut dropped = Dropped::default();
+    let read = match plane.lock() {
+        Ok(mut windows) => {
+            let now = (windows.clock)();
+            dropped.absorb(windows.sweep(now));
+            windows.read_attempt(id, lease, now)
+        }
+        Err(_) => Err(WINDOW_PLANE_UNAVAILABLE.to_owned()),
+    };
+    let read = match read {
+        Ok(read) if read.grant.selection.project_ids.is_empty() => {
+            return (Err(SCOPE_UNAVAILABLE.into()), dropped);
+        }
+        Ok(read) => read,
+        Err(code) => return (Err(code), dropped),
+    };
+    match check(read.grant.selection.clone()).await {
+        Ok(checked) if checked == (read.grant.scope_identity, read.grant.catalog_revision) => {}
+        _ => return (Err(SCOPE_UNAVAILABLE.into()), dropped),
+    }
+    let confirmed = match plane.lock() {
+        Ok(mut windows) => {
+            let now = (windows.clock)();
+            dropped.absorb(windows.sweep(now));
+            windows.read_confirm(&read, now)
+        }
+        Err(_) => Err(WINDOW_PLANE_UNAVAILABLE.to_owned()),
+    };
+    (confirmed.map(|()| read), dropped)
 }
 
 /// The live window `id` owned by `lease`. Unknown, closed or expired →
@@ -1035,5 +1366,369 @@ mod tests {
         assert!(!debug.contains(window.1.as_str()));
         assert!(leases_equal(&window.1, &window.1.clone()));
         assert!(!leases_equal(&window.1, &other.1));
+    }
+
+    // Selection authority step S1b (spec §3.2, §3.3, §3.7, N3, N4).
+
+    const INDEX: &str = "idx_01010101010101010101010101010101";
+
+    /// A plane whose registrar records every registered nonce and refuses
+    /// while `refuse` is set.
+    fn registering_plane(
+        clock: &Arc<AtomicU64>,
+    ) -> (Arc<Mutex<Vec<Incarnation>>>, Arc<AtomicU8>, WindowPlane) {
+        let registered = Arc::new(Mutex::new(Vec::new()));
+        let refuse = Arc::new(AtomicU8::new(0));
+        let (log, gate) = (Arc::clone(&registered), Arc::clone(&refuse));
+        let mut drawn = 0u8;
+        let plane = fixture_plane(INSTANCE_1, clock).with_selection_authority(
+            Box::new(move || {
+                drawn += 1;
+                Incarnation::from_bytes([0x90 + drawn; 16])
+            }),
+            Some(Box::new(move |selection: &SelectionScopeRef| {
+                if gate.load(Ordering::SeqCst) != 0 {
+                    return Err(());
+                }
+                log.lock().unwrap().push(selection.grant_nonce);
+                Ok(())
+            })),
+        );
+        (registered, refuse, plane)
+    }
+
+    fn nonce(plane: &WindowPlane, window: &(Incarnation, WindowLease)) -> Incarnation {
+        plane
+            .scope(&window.0, &window.1)
+            .unwrap()
+            .selection_ref
+            .grant_nonce
+    }
+
+    fn dispatched(plane: &mut WindowPlane, method: ControlMethod) -> (Value, Vec<Incarnation>) {
+        let (reply, dropped) = plane.dispatch(&method).expect("a window-plane method");
+        (serde_json::to_value(reply).unwrap(), dropped.into_nonces())
+    }
+
+    #[test]
+    fn a_stored_grant_registers_a_fresh_nonce_and_a_refused_registration_keeps_the_old_one() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (registered, refuse, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        assert_eq!(
+            grant(&mut plane, &window, INDEX)["status"],
+            "window_scope_granted"
+        );
+        let first = nonce(&plane, &window);
+        assert_eq!(first, Incarnation::from_bytes([0x91; 16]));
+        let scope = plane.scope(&window.0, &window.1).unwrap();
+        assert_eq!(
+            scope.selection_ref,
+            SelectionScopeRef {
+                owner: SelectionOwnerKind::Window,
+                grant_nonce: first,
+                service_instance: INSTANCE_1.parse().unwrap(),
+                scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+                catalog_revision: CatalogRevision::try_from(12u64).unwrap(),
+            }
+        );
+        refuse.store(1, Ordering::SeqCst);
+        assert_eq!(
+            grant(&mut plane, &window, INDEX),
+            failure("scoped_read_unavailable")
+        );
+        assert_eq!(nonce(&plane, &window), first, "the previous grant stays");
+        assert_eq!(*registered.lock().unwrap(), vec![first]);
+    }
+
+    #[test]
+    fn every_path_that_drops_a_grant_returns_its_nonce() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        let selection = selection(INDEX);
+        let grant_method = |window: &(Incarnation, WindowLease)| ControlMethod::WindowScopeGrant {
+            window_id: window.0,
+            lease: window.1.clone(),
+            selection: selection.clone(),
+        };
+        // A new grant replaces the old one: the old nonce is dropped.
+        let (_, none) = dispatched(&mut plane, grant_method(&window));
+        assert!(none.is_empty());
+        let first = nonce(&plane, &window);
+        let (reply, replaced) = dispatched(&mut plane, grant_method(&window));
+        assert_eq!(reply["status"], "window_scope_granted");
+        assert_eq!(replaced, vec![first]);
+        // W4b release.
+        let second = nonce(&plane, &window);
+        let release = ControlMethod::WindowScopeRelease {
+            window_id: window.0,
+            lease: window.1.clone(),
+        };
+        assert_eq!(dispatched(&mut plane, release.clone()).1, vec![second]);
+        assert!(dispatched(&mut plane, release).1.is_empty(), "idempotent");
+        // W3 close.
+        dispatched(&mut plane, grant_method(&window));
+        let third = nonce(&plane, &window);
+        let close = ControlMethod::WindowClose {
+            window_id: window.0,
+            lease: window.1.clone(),
+        };
+        assert_eq!(dispatched(&mut plane, close).1, vec![third]);
+        // Expiry, swept by any window-plane method.
+        let expiring = open(&mut plane, "b");
+        dispatched(&mut plane, grant_method(&expiring));
+        let fourth = nonce(&plane, &expiring);
+        clock.store(TTL_MS, Ordering::SeqCst);
+        let (_, swept) = dispatched(&mut plane, ControlMethod::AssistanceWindows {});
+        assert_eq!(swept, vec![fourth]);
+        // Service end.
+        let last = open(&mut plane, "c");
+        dispatched(&mut plane, grant_method(&last));
+        let fifth = nonce(&plane, &last);
+        assert_eq!(plane.end().into_nonces(), vec![fifth]);
+        assert!(plane.end().into_nonces().is_empty());
+    }
+
+    fn checked(
+        identity: u8,
+    ) -> impl FnOnce(WindowScopeSelection) -> std::future::Ready<CheckResult> {
+        move |selection| {
+            std::future::ready(Ok((
+                Sha256Digest::from_bytes([identity; 32]),
+                selection.expected_catalog_revision,
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_w4_check_runs_with_the_windows_lock_released() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        let plane = Mutex::new(plane);
+        let (reply, dropped) = grant_unlocked(
+            &plane,
+            &window.0,
+            &window.1,
+            &selection(INDEX),
+            |selection| {
+                assert!(plane.try_lock().is_ok(), "the check runs unlocked");
+                checked(0x77)(selection)
+            },
+        )
+        .await;
+        assert!(dropped.into_nonces().is_empty());
+        assert_eq!(
+            serde_json::to_value(reply).unwrap(),
+            json!({"status": "window_scope_granted", "scope_identity": "77".repeat(32),
+                "catalog_revision": 12, "expires_at_ms": TTL_MS})
+        );
+        let (read, _) = read_unlocked(&plane, &window.0, &window.1, |selection| {
+            assert!(plane.try_lock().is_ok(), "the read re-check runs unlocked");
+            checked(0x77)(selection)
+        })
+        .await;
+        assert_eq!(
+            read.ok().unwrap().grant.scope_identity,
+            Sha256Digest::from_bytes([0x77; 32])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_window_closed_during_the_check_is_window_unknown() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        let plane = Mutex::new(plane);
+        let close = ControlMethod::WindowClose {
+            window_id: window.0,
+            lease: window.1.clone(),
+        };
+        let (reply, _) = grant_unlocked(
+            &plane,
+            &window.0,
+            &window.1,
+            &selection(INDEX),
+            |selection| {
+                let _ = plane.lock().unwrap().dispatch(&close);
+                checked(0x77)(selection)
+            },
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_value(reply).unwrap(),
+            failure(WINDOW_UNKNOWN)
+        );
+        let reopened = open(&mut plane.lock().unwrap(), "b");
+        assert_eq!(
+            grant(&mut plane.lock().unwrap(), &reopened, INDEX)["status"],
+            "window_scope_granted"
+        );
+        let identity = plane
+            .lock()
+            .unwrap()
+            .scope(&reopened.0, &reopened.1)
+            .unwrap();
+        let close = ControlMethod::WindowClose {
+            window_id: reopened.0,
+            lease: reopened.1.clone(),
+        };
+        let (read, dropped) = read_unlocked(&plane, &reopened.0, &reopened.1, |selection| {
+            let (_, closed) = plane.lock().unwrap().dispatch(&close).unwrap();
+            assert_eq!(
+                closed.into_nonces(),
+                vec![identity.selection_ref.grant_nonce]
+            );
+            std::future::ready(Ok((
+                identity.scope_identity,
+                selection.expected_catalog_revision,
+            )))
+        })
+        .await;
+        assert_eq!(read.err().unwrap(), WINDOW_UNKNOWN);
+        assert!(dropped.into_nonces().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_concurrent_regrant_during_the_check_is_scoped_read_unavailable() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        let plane = Mutex::new(plane);
+        // W4 racing W4: the one that stored under the lock first wins.
+        let (reply, dropped) = grant_unlocked(
+            &plane,
+            &window.0,
+            &window.1,
+            &selection(INDEX),
+            |selection| {
+                assert_eq!(
+                    grant(&mut plane.lock().unwrap(), &window, INDEX)["status"],
+                    "window_scope_granted"
+                );
+                checked(0x77)(selection)
+            },
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_value(reply).unwrap(),
+            failure("scoped_read_unavailable")
+        );
+        assert!(dropped.into_nonces().is_empty());
+        let winner = plane.lock().unwrap().scope(&window.0, &window.1).unwrap();
+        assert_eq!(winner.scope_identity, Sha256Digest::from_bytes([0x5c; 32]));
+        // A read racing a re-grant.
+        let (read, _) = read_unlocked(&plane, &window.0, &window.1, |selection| {
+            assert_eq!(
+                grant(&mut plane.lock().unwrap(), &window, INDEX)["status"],
+                "window_scope_granted"
+            );
+            std::future::ready(Ok((
+                winner.scope_identity,
+                selection.expected_catalog_revision,
+            )))
+        })
+        .await;
+        assert_eq!(read.err().unwrap(), "scoped_read_unavailable");
+    }
+
+    #[tokio::test]
+    async fn a_read_requires_a_project_and_exactly_the_stored_identity() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        let mut no_project = selection(INDEX);
+        no_project.project_ids.clear();
+        let method = ControlMethod::WindowScopeGrant {
+            window_id: window.0,
+            lease: window.1.clone(),
+            selection: no_project,
+        };
+        // §3.5: granted, but its reads are refused before any check.
+        assert_eq!(
+            dispatched(&mut plane, method).0["status"],
+            "window_scope_granted"
+        );
+        let plane = Mutex::new(plane);
+        let (read, _) = read_unlocked(&plane, &window.0, &window.1, |_| -> std::future::Ready<_> {
+            panic!("no check without a project")
+        })
+        .await;
+        assert_eq!(read.err().unwrap(), "scoped_read_unavailable");
+        assert_eq!(
+            grant(&mut plane.lock().unwrap(), &window, INDEX)["status"],
+            "window_scope_granted"
+        );
+        // Any other identity or revision (a catalog change) refuses.
+        let (read, _) = read_unlocked(&plane, &window.0, &window.1, checked(0x77)).await;
+        assert_eq!(read.err().unwrap(), "scoped_read_unavailable");
+        let (read, _) = read_unlocked(&plane, &window.0, &window.1, |_| {
+            std::future::ready(Err("scoped_read_unavailable".to_owned()))
+        })
+        .await;
+        assert_eq!(read.err().unwrap(), "scoped_read_unavailable");
+        let other = (window.0, WindowLease::from_bytes([0x33; 32]));
+        let (read, _) = read_unlocked(&plane, &other.0, &other.1, checked(0x5d)).await;
+        assert_eq!(read.err().unwrap(), WINDOW_LEASE_INVALID);
+    }
+
+    #[tokio::test]
+    async fn expiry_swept_at_a_window_read_returns_the_grant_nonce() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        grant(&mut plane, &window, INDEX);
+        let held = nonce(&plane, &window);
+        clock.store(TTL_MS, Ordering::SeqCst);
+        let plane = Mutex::new(plane);
+        let (read, dropped) = read_unlocked(&plane, &window.0, &window.1, checked(0x5c)).await;
+        assert_eq!(read.err().unwrap(), WINDOW_UNKNOWN);
+        assert_eq!(dropped.into_nonces(), vec![held]);
+    }
+
+    #[tokio::test]
+    async fn a_successful_read_renews_the_window_unless_its_grant_changed() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, _, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        grant(&mut plane, &window, INDEX);
+        let plane = Mutex::new(plane);
+        clock.store(TTL_MS - 1, Ordering::SeqCst);
+        let (read, _) = read_unlocked(&plane, &window.0, &window.1, checked(0x5c)).await;
+        let read = read.ok().unwrap();
+        assert!(plane.lock().unwrap().renew_after_read(&read));
+        clock.store(2 * TTL_MS - 2, Ordering::SeqCst);
+        assert_eq!(
+            renew(&mut plane.lock().unwrap(), window.clone())["status"],
+            "window_renewed",
+            "the read renewed the window (U99 Q5)"
+        );
+        let release = ControlMethod::WindowScopeRelease {
+            window_id: window.0,
+            lease: window.1.clone(),
+        };
+        let _ = plane.lock().unwrap().dispatch(&release);
+        assert!(!plane.lock().unwrap().renew_after_read(&read));
+    }
+
+    #[test]
+    fn the_grant_nonce_never_reaches_a_reply_failure_or_debug() {
+        let clock = Arc::new(AtomicU64::new(0));
+        let (_, refuse, mut plane) = registering_plane(&clock);
+        let window = open(&mut plane, "a");
+        let granted = grant(&mut plane, &window, INDEX);
+        let held = nonce(&plane, &window).to_string();
+        refuse.store(1, Ordering::SeqCst);
+        let refused = grant(&mut plane, &window, INDEX);
+        let debug = format!(
+            "{:?} {:?}",
+            plane.scope(&window.0, &window.1).unwrap(),
+            plane.end()
+        );
+        for text in [granted.to_string(), refused.to_string(), debug] {
+            assert!(!text.contains(&held), "{text}");
+            assert!(!text.contains(window.1.as_str()), "{text}");
+        }
     }
 }

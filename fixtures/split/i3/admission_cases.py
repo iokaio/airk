@@ -613,6 +613,7 @@ def operations():
         ("jobs.get", "Job", ALL4), ("requests.list", "ClientRequestList", MGMT),
         ("requests.receipt", "RequestReceipt", MGMT), ("recovery.plan", "Plan", MGMT),
         ("recovery.plan_items", "PlanItems", MGMT), ("storage.inventory", "StorageInventory", MGMT),
+        ("storage.purge_plan", "StoragePurgePlan", MGMT),
         ("logs.recent", "Logs", MGMT), ("logs.export", "LogsExport", MGMT),
         ("agents.connection", "HttpConnectionInfo", MGMT), ("agents.ownership", "HttpConnectionOwnership", MGMT),
         ("agents.verify", "AgentConnectionVerify", MGMT), ("https.trust_status", "HttpTrust.Inspect", MGMT),

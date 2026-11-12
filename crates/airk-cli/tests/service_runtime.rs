@@ -4374,6 +4374,7 @@ fn airkctl(arguments: &[&str]) -> (u8, String, String) {
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: false,
+        window: None,
     };
     let line = std::iter::once("airkctl")
         .chain(arguments.iter().copied())
@@ -4753,6 +4754,7 @@ fn airkctl_with_input(arguments: &[&str], input: &[u8]) -> (u8, String, String) 
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: false,
+        window: None,
     };
     let line = std::iter::once("airkctl")
         .chain(arguments.iter().copied())

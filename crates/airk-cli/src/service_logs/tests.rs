@@ -207,6 +207,7 @@ fn finite_queue_accounts_loss_and_flush_finishes_even_with_live_publisher_clones
         sender: Some(sender),
         counters: counters.clone(),
         instance: Incarnation::from_bytes([1; 16]),
+        root: PathBuf::new(),
     };
     let start = std::time::Instant::now();
     blocked.record(LogKind::ControlFailed, None, None);

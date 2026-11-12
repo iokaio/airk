@@ -985,6 +985,156 @@
           "bytes": "{\"status\":\"admin_scope_granted\",\"scope_identity\":\"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c\",\"catalog_revision\":12,\"expires_at_ms\":1800000,\"selection\":{\"namespace\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"expected_catalog_revision\":12,\"index_ids\":[\"idx_01010101010101010101010101010101\"],\"project_ids\":[\"prj_02020202020202020202020202020202\"]}}"
         }
       ]
+    },
+    {
+      "variant": "storage_inventory",
+      "method": "M22",
+      "methods": [
+        {
+          "name": "inventory",
+          "bytes": "{\"storage_inventory\":{}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "with_kind",
+          "bytes": "{\"storage_inventory\":{\"kind\":\"cache\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "inventory",
+          "bytes": "{\"status\":\"storage_inventory\",\"inventory\":{\"schema\":1,\"locations\":[{\"kind\":\"program\",\"path\":\"C:/AIRK Service/program\",\"bytes\":900,\"files\":3,\"complete\":true,\"purge\":\"not_purgeable\"},{\"kind\":\"data\",\"path\":\"C:/AIRK Service/data\",\"bytes\":4000,\"files\":20,\"complete\":true,\"purge\":\"not_purgeable\"},{\"kind\":\"state\",\"path\":\"C:/AIRK Service/state/service\",\"bytes\":300,\"files\":5,\"complete\":true,\"purge\":\"not_purgeable\"},{\"kind\":\"cache\",\"path\":\"C:/AIRK Service/cache/service\",\"bytes\":50,\"files\":2,\"complete\":true,\"purge\":\"cache_contents\"},{\"kind\":\"logs\",\"path\":\"C:/AIRK Service/logs/service\",\"bytes\":70,\"files\":3,\"complete\":true,\"purge\":\"closed_logs\"}],\"not_covered\":[\"exports and copies sent to agent providers\"]}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_inventory",
+          "bytes": "{\"status\":\"storage_inventory\"}"
+        }
+      ]
+    },
+    {
+      "variant": "storage_purge_plan",
+      "method": "M23",
+      "methods": [
+        {
+          "name": "logs",
+          "bytes": "{\"storage_purge_plan\":{\"kind\":\"logs\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "cache",
+          "bytes": "{\"storage_purge_plan\":{\"kind\":\"cache\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_kind",
+          "bytes": "{\"storage_purge_plan\":{\"kind\":\"everything\"}}"
+        },
+        {
+          "name": "without_kind",
+          "bytes": "{\"storage_purge_plan\":{}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "plan",
+          "bytes": "{\"status\":\"storage_purge_plan\",\"plan\":{\"schema\":1,\"kind\":\"logs\",\"path\":\"C:/AIRK Service/logs/service\",\"files\":[{\"relative\":\"airk.1.log\",\"bytes\":30},{\"relative\":\"airk.2.log\",\"bytes\":20}],\"truncated\":false},\"plan_digest\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_digest",
+          "bytes": "{\"status\":\"storage_purge_plan\",\"plan\":{\"schema\":1,\"kind\":\"logs\",\"path\":\"C:/AIRK Service/logs/service\",\"files\":[{\"relative\":\"airk.1.log\",\"bytes\":30},{\"relative\":\"airk.2.log\",\"bytes\":20}],\"truncated\":false}}"
+        }
+      ]
+    },
+    {
+      "variant": "storage_purge",
+      "method": "M23",
+      "methods": [
+        {
+          "name": "purge",
+          "bytes": "{\"storage_purge\":{\"kind\":\"logs\",\"plan_digest\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "without_digest",
+          "bytes": "{\"storage_purge\":{\"kind\":\"logs\"}}"
+        },
+        {
+          "name": "short_digest",
+          "bytes": "{\"storage_purge\":{\"kind\":\"logs\",\"plan_digest\":\"0e0e\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "purged",
+          "bytes": "{\"status\":\"storage_purged\",\"receipt\":{\"schema\":1,\"kind\":\"logs\",\"path\":\"C:/AIRK Service/logs/service\",\"plan_digest\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"files\":[{\"relative\":\"airk.1.log\",\"deleted\":true},{\"relative\":\"airk.2.log\",\"deleted\":false,\"retained\":\"gone\"}],\"complete\":false}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_receipt",
+          "bytes": "{\"status\":\"storage_purged\"}"
+        }
+      ]
+    },
+    {
+      "variant": "login_startup",
+      "method": "M21",
+      "methods": [
+        {
+          "name": "status",
+          "bytes": "{\"login_startup\":{\"action\":\"status\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "install",
+          "bytes": "{\"login_startup\":{\"action\":\"install\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "uninstall",
+          "bytes": "{\"login_startup\":{\"action\":\"uninstall\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "start_is_not_served",
+          "bytes": "{\"login_startup\":{\"action\":\"start\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "registered",
+          "bytes": "{\"status\":\"login_startup\",\"login\":{\"schema\":1,\"supported\":true,\"registered\":true,\"command\":\"\\\"C:\\\\AIRK Service\\\\program\\\\airk.exe\\\"\"}}"
+        },
+        {
+          "name": "unsupported",
+          "bytes": "{\"status\":\"login_startup\",\"login\":{\"schema\":1,\"supported\":false,\"registered\":false,\"detail\":\"login startup is not managed by the service on this platform\"}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_status",
+          "bytes": "{\"status\":\"login_startup\"}"
+        }
+      ]
     }
   ]
 }

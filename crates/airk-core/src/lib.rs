@@ -449,6 +449,7 @@ pub trait EmbeddingProvider: Send + Sync {
 
 pub mod service_console;
 pub mod service_lifecycle;
+pub mod storage_admin;
 pub mod storage_format;
 
 pub mod inference_provider;

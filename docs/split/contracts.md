@@ -128,9 +128,9 @@ current classes, `session_commands.rs:102` [V]).
 | M18 [contract 3e.5: `Status` only; amended] | `HttpIssuerRotation { action: Status }` (`service issuer-rotation status`) | `HttpIssuerRotation { result: Value }` or `HttpIssuerRotationRefused { message }` | `http_endpoint::rotation::output` (moved from `http_rotation.rs` by `scripts/dev/split_u90b_cert_trust.py`), the `--action status` document. Not served: `Prepare` (install lock, managed policy, pending activation, settled lifecycle and selected-runtime checks need the install record, Phase 7) and `Commit` (the service would stop and restart itself; needs the U85 restart path); `TrustNew`, `Abort` and `Finalize` change OS trust and stay local to the CLI (U75) but need `TlsIdentity` and the rotation record, which `airkctl` cannot link yet | R | Read |
 | M19 [split-native, U85; lands 3b.1e] | `Lifecycle { action: Stop \| Restart, caller: Incarnation, key: RequestKey }`; the key comes from `RequestEpoch` as every keyed mutation's does | `LifecycleAccepted { record: LifecycleRecord, service_instance, process_id }` | The existing lifecycle ledger (`airk-store` `begin_lifecycle`/`advance_lifecycle`, unchanged format) with `LifecycleRequest { caller, key, action, expected_instance: this instance, runtime: this executable's digest, manager: false }`; the drain path advances Draining → Complete (Stop) or → Starting (Restart); the next admitted start completes a pending record, including one left by a crashed predecessor. `airkctl` waits for `process_id` to exit, then Restart runs `service start`. OS-manager ownership and forced stop: Phase 7 | M, X | Keyed by `(caller, key)`; a replay returns the same record |
 | M20 [served 3e-m20; amended, U80] | `AbandonLifecycle { id: Sha256Digest }` | `LifecycleAbandoned { record }` | `lifecycle::abandon` :86's rule on the control-root ledger (`airk-store` `lifecycle_by_id`, `advance_lifecycle`, unchanged format); a record this instance is draining is refused `lifecycle_request_in_progress`, an unknown id `lifecycle_request_unknown` | M | Already terminal → same record [V :91-96] |
-| M21 | `LoginStartup { action: Plan \| Status \| Install \| Start \| Stop \| Uninstall }` | `LoginStartup { result: Value }` | `commands.rs:288-328`, `install_login_startup` :872, `stop_login` `runtime_install.rs:2634`, `ServiceManager::plan/status/start` | R / M, X | Install/uninstall converge [I] |
-| M22 | `StorageInventory {}` | `StorageInventory { result: Value }` | `inventory::inventory` :110 | R | Read |
-| M23 | `StoragePurge { preview: Option<Sha256Digest> }` | `StoragePurge { result: Value }` (preview returns its digest) | `inventory::purge` :267 | M, X | Apply only with the preview digest |
+| M21 | (U101) `LoginStartup { action: Status \| Install \| Uninstall }` | `LoginStartup { login: LoginStartupStatus }` (Windows; elsewhere `supported: false`) | `commands.rs:288-328`, `install_login_startup` :872, `stop_login` `runtime_install.rs:2634`, `ServiceManager::plan/status/start` | R / M, X | Install/uninstall converge [I] |
+| M22 | (U100) `StorageInventory {}` | `StorageInventory { inventory }`: the install record's five locations in order, sizes, reviewed purge rule each (`airk_core::storage_admin`) | `inventory::inventory` :110 | R | Read |
+| M23 | (U100) `StoragePurgePlan { kind }` → `StoragePurgePlan { plan, plan_digest }`; `StoragePurge { kind, plan_digest }` → `StoragePurged { receipt }` | Cache contents or closed logs only; the purge applies exactly the current plan the digest names; planned files that stay are listed | `inventory::purge` :267 | M, X | Apply only with the preview digest |
 | V1 [served 3e.9] | `AgentConnectionVerify { connection_id }` | `AgentConnectionVerified { result: {schema, connection_id, url, verified, http_status?, protocol_version?, server?, detail?} }` or `AgentRefused { message }` | `http_commands::verify_connection_at`: one MCP `initialize` over HTTPS pinned to the installation's public issuer with the stored credential, then `DELETE` of that session; the token never leaves the service (replaces the extension's HTTPS `verifyMcp`) | R | Read |
 
 The window plane (W1–W8) and the launch code (A1) are C3 (§2.5–2.7).
@@ -283,6 +283,29 @@ Rules fixed by `window_plane.json` [P]:
   `handoff { handoff_id, expires_at_ms }`; it and `scope_release` →
   `scope_released` are §3.7 rows to add with the I2 window step.
 
+**W4 served (amendment, selection authority step S1b,
+`docs/split/selection-authority-spec.md`; U99).** The service answers W4 and
+reads under it. The catalog check runs with the windows lock released; the
+window and its grant generation are re-checked before the grant is stored
+(window closed meanwhile → `window_unknown`; a concurrent grant or release
+won → `scoped_read_unavailable`). Each stored grant draws a fresh in-memory
+nonce registered live with the scoped-read admission gate; close, release,
+replace, lease expiry (swept on every window-plane method and on every M3
+`selection: Window`) and service end revoke it after the lock is released.
+M3 `selection: Window{window_id, lease}` sweeps, resolves the grant, refuses a
+selection without a project (`scoped_read_unavailable`), runs the full
+catalog check again with the lock released (U99 Q3) and requires the stored
+scope identity and catalog revision exactly (any catalog change →
+`scoped_read_unavailable`; the grant is never refreshed by the service). The
+read connects in process (no `ControlMethod` carries the selection
+authority), runs the same handlers as a catalog-grant read and answers the
+same `ToolResult`; only `scope_observation` names the selection instead of a
+reviewed grant. A successful read renews the window (U99 Q5). Refusals are
+`ControlResponse::Failure` with the existing codes; failure bodies echo only
+the selection and its scope identity, never the nonce, the lease or the
+service instance. A selection of more than one index answers
+`not_yet_served` until the combined fan-out (spec §3.6) lands.
+
 ### 2.6 Event subscription basis (C3)
 
 No new I1 method: sessions and the admin stream poll the existing `Events`
@@ -320,8 +343,9 @@ is the session's current expiry; logout, expiry, eviction and restart drop
 the grant, and a failed check leaves the previous one. The pipe has no admin
 session: `AdminScopeGrant` → `admin_session_required`; the metadata relay
 refuses it (`console_method_not_reviewed`) and `airkctl session`'s `control`
-relay refuses it by method. Reads under an A2 (or W4) grant are not served
-yet: under the catalog gate a read is admitted only against a persisted,
+relay refuses it by method. Reads under a W4 grant are served (§2.5
+amendment, step S1b). Reads under an A2 grant are not served
+yet (step S2): under the catalog gate a read is admitted only against a persisted,
 user-reviewed catalog grant, so an in-memory grant needs a new scoped-read
 authority in the kernel's admission (its own reviewed contract step); a
 current grant's admin search answers `not_yet_served`.
@@ -466,6 +490,18 @@ Assistance queue and scope grant, fails in-flight reads with
 `service_restarted` (retryable), and leaves accepted mutations to receipts.
 Deadline and owner-loss tests use the injected `Timing`/clock seam
 [V `session.rs:51-66`] and observed events, no sleeps.
+
+Window-scope reads (amendment, selection authority S1b; U99 Q4). While a W4
+grant is held, an `invoke` whose read names no explicit selection calls M3
+with `selection: Window{..}` fenced to the session's instance; the lease
+reaches the in-process command only through the `cli::Io` window seam, never
+an argument or output. When that read is refused `scoped_read_unavailable`
+and the catalog (read with `CatalogDetail` of the first selected index) is
+at another revision in the same namespace, the session re-selects once: the
+same indexes and projects at the current revision (W4). If that is granted it
+retries the read once and returns the retry's outcome unchanged, refused or
+not; otherwise it returns the first outcome. It never re-selects twice for
+one read.
 
 ### 3.8 Session admission and the token rule
 

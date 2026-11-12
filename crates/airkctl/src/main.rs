@@ -12,6 +12,7 @@ fn main() -> ExitCode {
         stdout: &mut stdout.lock(),
         stderr: &mut stderr.lock(),
         full_responses: std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("full"),
+        window: None,
     };
     ExitCode::from(airkctl::cli::run(std::env::args_os().collect(), &mut io))
 }

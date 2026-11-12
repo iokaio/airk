@@ -843,6 +843,27 @@
    ]
   },
   {
+   "operation": "storage.purge_plan",
+   "method": "StoragePurgePlan",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
    "operation": "logs.recent",
    "method": "Logs",
    "plane": "management",

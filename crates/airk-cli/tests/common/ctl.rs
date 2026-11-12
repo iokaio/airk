@@ -152,6 +152,7 @@ fn run(line: Vec<OsString>, full_responses: bool, input: &[u8]) -> Output {
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses,
+            window: None,
         };
         airkctl::cli::run(line, &mut io)
     };

@@ -218,6 +218,20 @@ are then in `locations.logs`, and `airkctl service logs` reads them there
 per registration by the client (`airkctl` defaults them to `locations.data`);
 the service derives no cache folder. `service-foreground` adopts nothing.
 
+## Login startup from the service (U101)
+
+The serving service manages its installation's login registration (M21,
+`service_runtime::login`) only through this facade: `login_target(control)`
+names the installation whose `locations.state` is the service's control root
+(else `None`); `login_registered` reads `owned_registration_exists`;
+`login_install` and `login_uninstall` hold the setup lock (`install.lock`,
+so they never interleave with a setup or removal) and call the same
+`effects::register_login`/`unregister_login` with the same
+`ServiceManager::for_installation` identity. Both converge
+(`already_registered`, `absent`). `login_uninstall` refuses
+(`login_startup_in_use`) while the registration's own instance runs, because
+removing it ends that instance, which is the serving service.
+
 ## T0
 
 ```console

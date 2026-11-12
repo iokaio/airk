@@ -9,8 +9,12 @@
 use crate::tool_call::{
     call, is_local_help, local_help, project_backend, require_envelope, with_defaults,
 };
-use airk_core::service::{
-    CombinedConnectRequest, ControlResponse, ToolResponseMode, ToolSelection, ToolsCatalogDetail,
+use airk_core::{
+    identity::Incarnation,
+    service::{
+        CombinedConnectRequest, ControlResponse, ToolResponseMode, ToolSelection,
+        ToolsCatalogDetail, WindowLease,
+    },
 };
 use airk_mcp::{remote::RemoteTools, response::ResponseMode};
 use anyhow::{Result, ensure};
@@ -107,6 +111,158 @@ pub(super) async fn response(
     }
 }
 
+/// M3 under a window's W4 grant (selection authority §3.2; U99 Q3, Q5):
+/// sweep and resolve the grant, run the full catalog check with the windows
+/// lock released, then read through the in-process selection connection and
+/// the canonical handlers. A successful read renews the window. Refusals are
+/// the existing codes: `window_unknown`, `window_lease_invalid`,
+/// `window_scope_not_granted`, `scoped_read_unavailable`.
+pub(super) async fn window_response(
+    state: &Arc<super::State>,
+    window_id: Incarnation,
+    lease: WindowLease,
+    tool: String,
+    arguments: Map<String, Value>,
+    mode: ToolResponseMode,
+    client: airk_core::usage::ClientFamily,
+) -> ControlResponse {
+    let control = state.control_root.clone();
+    let (resolved, dropped) =
+        super::window_plane::read_unlocked(&state.windows, &window_id, &lease, |selection| {
+            super::blocking_scope_check(control, selection)
+        })
+        .await;
+    super::revoke_dropped(state, dropped);
+    let read = match resolved {
+        Ok(read) => read,
+        Err(code) => return ControlResponse::Failure { code },
+    };
+    let result = match window_read(state, &read.grant, tool, arguments, mode, client).await {
+        Ok(result) => result,
+        Err(WindowRead::Refused(code)) => {
+            return ControlResponse::Failure { code: code.into() };
+        }
+        Err(WindowRead::Failed(error)) => return failed(&error),
+    };
+    if result["isError"].as_bool() != Some(true)
+        && let Ok(mut windows) = state.windows.lock()
+    {
+        windows.renew_after_read(&read);
+    }
+    ControlResponse::ToolResult { result }
+}
+
+enum WindowRead {
+    Refused(&'static str),
+    Failed(anyhow::Error),
+}
+
+/// One read under the grant. One index reads through one in-process
+/// selection connection whose every connect re-runs admission (exact
+/// revision, live nonce, authority build). Several indexes need the
+/// combined fan-out (§3.6), which is not served yet.
+async fn window_read(
+    state: &Arc<super::State>,
+    grant: &super::window_plane::WindowGrant,
+    tool: String,
+    arguments: Map<String, Value>,
+    mode: ToolResponseMode,
+    client: airk_core::usage::ClientFamily,
+) -> std::result::Result<Value, WindowRead> {
+    let [index_id] = grant.selection.index_ids.as_slice() else {
+        return Err(WindowRead::Refused("not_yet_served"));
+    };
+    let registration = selection_backing(&state.control_root, grant, *index_id)
+        .await
+        .map_err(|_| WindowRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    let request = crate::catalog_authority::SelectionConnectRequest {
+        selection_ref: grant.selection_ref,
+        window_selection: grant.selection.clone(),
+        index_id: *index_id,
+    };
+    let owner = Arc::clone(state);
+    let connect: crate::project_client::SelectionConnector =
+        Arc::new(move || -> crate::project_client::SelectionGrantFuture {
+            let (owner, request) = (Arc::clone(&owner), request.clone());
+            Box::pin(async move {
+                owner
+                    .management
+                    .connect_selection(request)
+                    .await?
+                    .take_in_process()
+            })
+        });
+    let inner = crate::project_client::selection_tools(
+        state.control_root.clone(),
+        registration.binding,
+        crate::project_client::SelectionSession {
+            window_selection: grant.selection.clone(),
+            scope_identity: grant.scope_identity,
+            index_id: *index_id,
+            connect,
+        },
+    )
+    .map_err(WindowRead::Failed)?;
+    inner.client(client);
+    let backend = project_backend(
+        inner,
+        registration.binding.to_string(),
+        &registration.collection,
+    )
+    .map_err(WindowRead::Failed)?;
+    let result = async {
+        let result = call(backend.as_ref(), tool, arguments, response_mode(mode)).await?;
+        require_envelope(&result)?;
+        Ok(result)
+    }
+    .await;
+    released(backend.as_ref(), result)
+        .await
+        .map_err(WindowRead::Failed)
+}
+
+/// The selected index's backing project, read at exactly the grant's
+/// catalog revision (never rolled forward): present, not retired, import
+/// complete.
+async fn selection_backing(
+    control: &Path,
+    grant: &super::window_plane::WindowGrant,
+    index_id: airk_core::index_catalog::IndexId,
+) -> Result<airk_core::service::ProjectRegistration> {
+    use airk_core::{
+        catalog_management::{CatalogEntity, CatalogItem},
+        index_catalog::SourceImportState,
+        scoped_reads::ScopeReadRefused,
+        service::ControlMethod,
+    };
+    let response = super::request(
+        control,
+        ControlMethod::CatalogDetail {
+            entity: CatalogEntity::Index { id: index_id },
+            expected_catalog_revision: Some(grant.catalog_revision),
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogDetail { detail, .. } = response else {
+        return Err(ScopeReadRefused.into());
+    };
+    ensure!(
+        detail.namespace == grant.selection.namespace && detail.revision == grant.catalog_revision,
+        ScopeReadRefused
+    );
+    let Some(CatalogItem::Index(index)) = detail.item else {
+        return Err(ScopeReadRefused.into());
+    };
+    index.validate()?;
+    ensure!(
+        index.id == index_id
+            && !index.tombstone
+            && index.source_import == SourceImportState::Complete,
+        ScopeReadRefused
+    );
+    Ok(index.backing)
+}
+
 /// The narrowing defaults `--combined-session` added to every call.
 fn combined_defaults(
     project_ids: Option<Vec<airk_core::index_catalog::QueryProjectId>>,
@@ -151,8 +307,11 @@ async fn run(
         ToolSelection::Unselected => {
             anyhow::bail!("project binding required")
         }
-        // A window's W4 scope grant is read in step 3f.2.
-        ToolSelection::Window { .. } => anyhow::bail!("window scope reads are not yet served"),
+        // Dispatched to `window_response` before this point; it needs the
+        // service's window plane and in-process admission.
+        ToolSelection::Window { .. } => {
+            anyhow::bail!("window scope reads are served by the service dispatch")
+        }
         // Answered by `response` before this point.
         ToolSelection::Admin => {
             anyhow::bail!("admin scope reads are served only by the admin plane")

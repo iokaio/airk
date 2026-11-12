@@ -351,7 +351,6 @@ impl AdminPlane {
             Served::Direct => row.method.as_str(),
             Served::Equivalent(method) => method,
             Served::TrustInspect => return self.trust_status(operation, &body).await,
-            Served::Deferred => return Err(AdminCode::NotYetServed),
         };
         if !operations::names(target, &body) {
             return Err(AdminCode::AdminMalformedRequest);

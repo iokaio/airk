@@ -10,6 +10,7 @@ fn run_line(arguments: &[&str]) -> (u8, String, String) {
         stdout: &mut stdout,
         stderr: &mut stderr,
         full_responses: false,
+        window: None,
     };
     let mut line = vec![OsString::from("airkctl")];
     line.extend(arguments.iter().map(OsString::from));
@@ -45,7 +46,8 @@ fn version_answers_locally_in_both_formats() {
             "agents/1",
             "agents-launch/1",
             "agents-verify/1",
-            "admin-launch/1"
+            "admin-launch/1",
+            "window-scope/1"
         ])
     );
 }

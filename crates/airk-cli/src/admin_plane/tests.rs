@@ -1015,7 +1015,7 @@ fn grants_end_with_their_session_and_never_cross_instances() {
 #[test]
 fn rows_without_a_control_method_follow_the_reviewed_mapping() {
     use operations::{MAPPINGS, Served, served};
-    let expected: [(&str, Served); 9] = [
+    let expected: [(&str, Served); 4] = [
         (
             "HttpConnectionInfo",
             Served::Equivalent("AgentConnectionInfo"),
@@ -1026,11 +1026,6 @@ fn rows_without_a_control_method_follow_the_reviewed_mapping() {
         ),
         ("LogsExport", Served::Equivalent("Logs")),
         ("HttpTrust.Inspect", Served::TrustInspect),
-        ("StorageInventory", Served::Deferred),
-        ("StoragePurge", Served::Deferred),
-        ("LoginStartup.Status", Served::Deferred),
-        ("LoginStartup.Install", Served::Deferred),
-        ("LoginStartup.Uninstall", Served::Deferred),
     ];
     assert_eq!(MAPPINGS, expected);
     // A name is a `ControlMethod` variant when decoding it fails for a
@@ -1057,7 +1052,7 @@ fn rows_without_a_control_method_follow_the_reviewed_mapping() {
                 assert!(!is_variant(&row.method), "{}", row.operation);
                 assert!(is_variant(method), "{}", row.operation);
             }
-            Served::TrustInspect | Served::Deferred => {
+            Served::TrustInspect => {
                 assert!(!is_variant(&row.method), "{}", row.operation)
             }
         }
@@ -1079,21 +1074,6 @@ async fn mapped_rows_are_served_by_their_mapping() {
     .await;
     assert_eq!(status, 409);
     assert_eq!(*sent.lock().unwrap(), [info]);
-    // Phase 7 rows are not served yet.
-    for (operation, body) in [
-        ("storage.inventory", r#"{"storage_inventory":{}}"#),
-        (
-            "service.login_startup_status",
-            r#"{"login_startup":{"action":"status"}}"#,
-        ),
-    ] {
-        let (status, reply) = envelope(&plane, api_call(&cookie, &csrf, operation, body)).await;
-        assert_eq!(
-            (status, error_code(&reply).as_str()),
-            (503, "not_yet_served"),
-            "{operation}"
-        );
-    }
     // Trust inspection takes exactly its body; this plane has no inspector.
     let (status, _) = envelope(
         &plane,

@@ -1191,6 +1191,108 @@ pub(crate) fn installed_locations() -> Result<Option<airk_core::install_record::
     Ok(files::read_installation()?.map(|installed| installed.record.locations))
 }
 
+/// U101: the login registration of this user's installation, as the service
+/// manages it for the admin Service page and `airkctl service login`. The
+/// identity (`ServiceManager::for_installation`) and the register/unregister
+/// effects are the ones the setup transaction uses; changes hold the setup
+/// lock, so they never interleave with a setup or removal.
+pub(crate) struct LoginTarget {
+    state: PathBuf,
+    airk: PathBuf,
+    install_id: Incarnation,
+}
+
+impl LoginTarget {
+    /// What the registration starts (`service-login` role).
+    pub(crate) fn command(&self) -> String {
+        format!(
+            "\"{}\" __airk_role service-login --install-id {}",
+            self.airk.display(),
+            self.install_id
+        )
+    }
+
+    fn manager(&self) -> Result<crate::service_manager::ServiceManager> {
+        crate::service_manager::ServiceManager::for_installation(
+            &self.state,
+            &self.airk,
+            &self.install_id.to_string(),
+        )
+    }
+}
+
+/// The installation whose `locations.state` is `control` (the serving
+/// service's control root), or `None` (no installation, or another one).
+pub(crate) fn login_target(control: &Path) -> Result<Option<LoginTarget>> {
+    let Some(installed) = files::read_installation()? else {
+        return Ok(None);
+    };
+    let record = installed.record;
+    let normal = |path: &Path| -> Result<PathBuf> {
+        crate::user_paths::canonical_location(&std::path::absolute(path)?)
+    };
+    let state = PathBuf::from(&record.locations.state);
+    if normal(control)? != normal(&state)? {
+        return Ok(None);
+    }
+    Ok(Some(LoginTarget {
+        airk: plan::program_file(
+            Path::new(&record.locations.program),
+            &record.executables.airk.path,
+        ),
+        install_id: record.install_id,
+        state,
+    }))
+}
+
+/// Whether the installation's own login registration exists (read-only).
+pub(crate) fn login_registered(target: &LoginTarget) -> Result<bool> {
+    target.manager()?.owned_registration_exists()
+}
+
+/// Register login startup (idempotent: `already_registered`).
+pub(crate) fn login_install(target: &LoginTarget) -> Result<&'static str> {
+    let _lock = files::lock()?;
+    let (phase, outcome, detail) = effects::register_login(
+        Host::current(),
+        &target.state,
+        &target.airk,
+        target.install_id,
+    );
+    ensure!(
+        phase == SetupPhase::LoginRegistered,
+        "login_startup_failed: {detail}"
+    );
+    Ok(outcome)
+}
+
+/// Remove the login registration (idempotent: `absent`). Removing it stops
+/// the instance the registration started (`ServiceManager::stop`), which is
+/// the serving service itself, so that case is refused: the reply could
+/// never be delivered.
+pub(crate) fn login_uninstall(target: &LoginTarget) -> Result<&'static str> {
+    let _lock = files::lock()?;
+    let manager = target.manager()?;
+    if manager.owned_registration_exists()? {
+        ensure!(
+            login_uninstall_allowed(manager.status()?.running),
+            "login_startup_in_use: removing login startup ends the instance it started, which is this service"
+        );
+    }
+    effects::unregister_login(
+        Host::current(),
+        &target.state,
+        &target.airk,
+        target.install_id,
+    )
+}
+
+/// Pure: the registration's own instance must not be running (it is the
+/// serving service); an unknown state is left to `ServiceManager::stop`.
+pub(crate) fn login_uninstall_allowed(running: Option<bool>) -> bool {
+    running != Some(true)
+}
+
 /// The `service-login` role (§5.7): the pointer's installation must be
 /// `install_id`, this image must be its record's `airk` (path and digest),
 /// and the login receipt must name this registration. Then the service runs
