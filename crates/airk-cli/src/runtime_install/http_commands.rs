@@ -40,7 +40,7 @@ async fn control(install: &Path) -> Result<(PathBuf, ServiceHealth)> {
 }
 /// The service's own health at a known control root, accepting requests.
 async fn healthy(control: PathBuf) -> Result<(PathBuf, ServiceHealth)> {
-    let response = service_runtime::request(&control, ControlMethod::Health).await?;
+    let response = control_client::request(&control, ControlMethod::Health).await?;
     let ControlResponse::Health { observation } = response else {
         return refused(response);
     };
@@ -149,7 +149,7 @@ pub(crate) async fn endpoint_at(control: PathBuf) -> Result<serde_json::Value> {
     checked_endpoint(control, health).await
 }
 async fn checked_endpoint(control: PathBuf, health: ServiceHealth) -> Result<serde_json::Value> {
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
         health.instance,
@@ -181,7 +181,7 @@ async fn checked_connection(
     health: ServiceHealth,
     id: Incarnation,
 ) -> Result<serde_json::Value> {
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
         health.instance,
@@ -262,7 +262,7 @@ pub async fn lookup_connection(
     local_ipc::require_existing_root(&control)?;
     let ControlResponse::Health {
         observation: health,
-    } = service_runtime::request_for_version(&control, ControlMethod::Health, &approval.version)
+    } = control_client::request_for_version(&control, ControlMethod::Health, &approval.version)
         .await?
     else {
         bail!("HTTP lookup native health unavailable");
@@ -292,7 +292,7 @@ async fn ownership(
     id: Incarnation,
 ) -> Result<serde_json::Value> {
     use crate::http_endpoint::{ConnectionOwnership, CredentialStore};
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
         health.instance,
@@ -364,7 +364,7 @@ pub(crate) async fn verify_connection_at(
     id: Incarnation,
 ) -> Result<serde_json::Value> {
     let (control, health) = healthy(control).await?;
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
         health.instance,
@@ -592,7 +592,7 @@ async fn enroll_at(
                 .to_owned())
         })
         .transpose()?;
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         control,
         ControlMethod::HttpEnroll {
             connection_id: id,
@@ -640,7 +640,7 @@ pub async fn setup(
     let (control, health) = if let Some(saved) = runtime_control {
         let saved = saved.canonicalize()?;
         crate::install_layout::validate_control_root(&saved)?;
-        let response = service_runtime::request(&saved, ControlMethod::Health).await?;
+        let response = control_client::request(&saved, ControlMethod::Health).await?;
         let ControlResponse::Health { observation } = response else {
             return refused(response);
         };
@@ -667,7 +667,7 @@ pub async fn setup(
 
 pub async fn revoke(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
     let (control, health) = control(install).await?;
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpRevoke { connection_id: id },
         health.instance,
@@ -757,12 +757,12 @@ pub async fn trust(
         Some(policy) => policy.metadata_approval()?,
         None => selected_preflight(install)?.approval,
     };
-    let response = service_runtime::request(&control, ControlMethod::Health).await?;
+    let response = control_client::request(&control, ControlMethod::Health).await?;
     let ControlResponse::Health { observation } = response else {
         return refused(response);
     };
     require_matching_health(&approval, &observation)?;
-    let response = service_runtime::request_for_instance(
+    let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
         observation.instance,

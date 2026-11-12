@@ -88,7 +88,7 @@ pub(super) fn read(
                 let (identity, current_epoch) = registry.saved_request_epoch()?;
                 let lifecycle = serde_json::json!({"explicitly_stopped":registry.service_explicitly_stopped()?,"pending":registry.pending_lifecycle()?,
                     "recorded_instance":registry.recorded_service_instance()?,"namespace":identity,"epoch":current_epoch});
-                let page = crate::service_management::console_page(
+                let page = crate::registry_console::console_page(
                     &mut registry,
                     after,
                     revision,
@@ -233,7 +233,7 @@ mod tests {
             )?;
             registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
         }
-        let page = crate::service_management::console_page(&mut registry, None, None, 16, 1)?;
+        let page = crate::registry_console::console_page(&mut registry, None, None, 16, 1)?;
         assert_eq!(page.projects.len(), 5);
         let (results, omitted) = configuration_results(&registry, &page)?;
         assert!(omitted);

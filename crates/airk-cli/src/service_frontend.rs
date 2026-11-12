@@ -307,7 +307,7 @@ pub async fn resolve_scoped(
         let control = crate::runtime_install::installed_control(&install).await?;
         (Some(install), control)
     };
-    let response = crate::service_runtime::request(
+    let response = crate::control_client::request(
         &control,
         ControlMethod::CatalogDetail {
             entity: CatalogEntity::Index {

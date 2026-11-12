@@ -83,7 +83,7 @@ async fn policy(
         .await?;
         connection.read_native(NativeRead::UsagePolicy).await?
     } else {
-        crate::service_runtime::administrative_read(
+        crate::usage_client::administrative_read(
             control,
             project,
             NativeRead::UsagePolicy,

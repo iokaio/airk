@@ -54,6 +54,8 @@ pub(crate) use catalog::{
     AdministrativeKey, CatalogControlHandle, NativeAdministrativeConnection,
     NativeAdministrativeRead, NativeLegacyAuthoritySelection, ScopedConnectionDelivery,
 };
+pub(crate) type NativeCatalogCoordinator =
+    crate::catalog_coordinator::CatalogCoordinator<CatalogControlHandle>;
 
 /// Explicit pre-query setup admission. Accepted catalog exchanges and unknown
 /// worker outcomes never construct this type.

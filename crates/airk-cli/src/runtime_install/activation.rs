@@ -479,7 +479,7 @@ async fn probe_observed(root: &Path, approval: &Approval, observed: ServiceHealt
         && crate::checkpoint_fence::admission_closed(&intent.control)?
     {
         let operation = operation.parse()?;
-        let response = service_runtime::request_for_version_and_instance(
+        let response = control_client::request_for_version_and_instance(
             &intent.control,
             ControlMethod::UpgradeRecoveryProbe {
                 operation_id: operation,
@@ -502,9 +502,9 @@ async fn probe_observed(root: &Path, approval: &Approval, observed: ServiceHealt
         observed.instance,
         &observed.executable_sha256,
     )? {
-        service_runtime::request_initialized_probe(&permit).await?
+        control_client::request_initialized_probe(&permit).await?
     } else {
-        service_runtime::request_for_version(
+        control_client::request_for_version(
             &layout::control(root)?,
             ControlMethod::RequestEpoch,
             &approval.version,

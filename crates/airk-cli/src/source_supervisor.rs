@@ -27,6 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod checkpoint;
+use crate::catalog_source_change_control::NativeMissingSourceEvent;
 pub(crate) use checkpoint::SourceCheckpointObservation;
 
 #[derive(Default)]
@@ -42,51 +43,6 @@ struct Replies {
     missing: BTreeMap<ProjectBinding, (u64, u64)>,
     removal_results: BTreeMap<ProjectBinding, (bool, bool)>,
     policy_acks: BTreeMap<ProjectBinding, (Incarnation, Incarnation, bool)>,
-}
-
-/// Native watcher evidence only. Wire callers cannot construct or deserialize
-/// this event; the accepted metadata owner rechecks its current catalog binding.
-pub(crate) struct NativeMissingSourceEvent {
-    project: ProjectBinding,
-    registration_epoch: u64,
-    configuration_epoch: u64,
-}
-impl NativeMissingSourceEvent {
-    pub(crate) fn binding(&self) -> ProjectBinding {
-        self.project
-    }
-    pub(crate) fn registration_epoch(&self) -> u64 {
-        self.registration_epoch
-    }
-    pub(crate) fn configuration_epoch(&self) -> u64 {
-        self.configuration_epoch
-    }
-    fn observed(
-        registry: &ServiceRegistry,
-        project: ProjectBinding,
-        registration_epoch: u64,
-        configuration_epoch: u64,
-    ) -> Result<Option<Self>> {
-        if !registry.is_registered(project)? {
-            return Ok(None);
-        }
-        let current = registry.watch(project)?;
-        if current.project.fencing_generation != registration_epoch
-            || current.configuration_epoch != configuration_epoch
-            || !current.observation.enabled
-        {
-            return Ok(None);
-        }
-        match std::fs::symlink_metadata(&current.project.registration.root) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(Self {
-                project,
-                registration_epoch,
-                configuration_epoch,
-            })),
-            Ok(_) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
 }
 
 /// Implementations retain only a weak metadata-actor sender. An unavailable or

@@ -235,8 +235,6 @@ impl CatalogApplyOutcomeUnknown {
         }
     }
 }
-pub(crate) type NativeCatalogCoordinator =
-    CatalogCoordinator<crate::project_supervisor::CatalogControlHandle>;
 
 /// Called by the authenticated metadata actor. Context defaults remain
 /// preferences; the persisted reviewed grant is the evidence authority.

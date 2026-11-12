@@ -13,7 +13,7 @@ use airk_core::{
 async fn current_endpoint(install: &Path, control: &Path) -> Result<EndpointDescriptor> {
     let saved = snapshot::identity(install)?;
     let ControlResponse::Health { observation } =
-        service_runtime::request(control, ControlMethod::Health).await?
+        control_client::request(control, ControlMethod::Health).await?
     else {
         bail!("issuer rotation requires authenticated live service health");
     };
@@ -22,7 +22,7 @@ async fn current_endpoint(install: &Path, control: &Path) -> Result<EndpointDesc
         observation.executable_sha256 == saved.executable_sha256,
         "issuer service image changed"
     );
-    let ControlResponse::HttpEndpoint { endpoint } = service_runtime::request_for_instance(
+    let ControlResponse::HttpEndpoint { endpoint } = control_client::request_for_instance(
         control,
         ControlMethod::HttpEndpoint,
         observation.instance,
@@ -203,7 +203,7 @@ pub(super) async fn run(install: &Path, input: Input) -> Result<serde_json::Valu
             // reply/journal acknowledgment. Never checkpoint that fresh owner as old.
             if record.phase == Phase::Restarting {
                 if let Ok(ControlResponse::Health { observation }) =
-                    service_runtime::request(&control, ControlMethod::Health).await
+                    control_client::request(&control, ControlMethod::Health).await
                     && observation.instance != record.old_endpoint.service_instance
                 {
                     finish_started(install, &control, &record, &observation).await?;

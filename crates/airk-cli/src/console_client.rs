@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trusted console metadata over bounded parent pipes; never an MCP/evidence proxy.
-use crate::{runtime_pair, service_ipc, service_runtime};
+use crate::{control_client, runtime_pair, service_ipc};
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse},
@@ -38,7 +38,7 @@ async fn handle(
     if let Some(code) = method.metadata_relay_refusal() {
         return failure(code);
     }
-    let health = service_runtime::request(root, ControlMethod::Health).await;
+    let health = control_client::request(root, ControlMethod::Health).await;
     let observation = match health {
         Ok(ControlResponse::Health { observation }) => observation,
         Ok(ControlResponse::Incompatible { .. }) => {
@@ -55,7 +55,7 @@ async fn handle(
     if matches!(method, ControlMethod::Health) {
         return ControlResponse::Health { observation };
     }
-    service_runtime::request_for_instance(root, method, observation.instance)
+    control_client::request_for_instance(root, method, observation.instance)
         .await
         .unwrap_or_else(|_| failure("service_request_outcome_unknown"))
 }

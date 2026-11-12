@@ -21,6 +21,32 @@ REFERENCE = re.compile(r'crate::([a-z0-9_]+)')
 INLINE_TESTS = re.compile(r'\n#\[cfg\(test\)\]\s*\nmod\s+\w+\s*\{')
 
 
+def grouped(text):
+    """First-level names of `crate::{a, b::c, …}` grouped imports."""
+    names = []
+    for match in re.finditer(r'crate::\{', text):
+        index, depth, start = match.end(), 1, match.end()
+        while depth and index < len(text):
+            character = text[index]
+            if character == '{':
+                depth += 1
+            elif character == '}':
+                depth -= 1
+                if depth == 0:
+                    names.append(text[start:index])
+            elif character == ',' and depth == 1:
+                names.append(text[start:index])
+                start = index + 1
+            index += 1
+    found = []
+    for item in names:
+        item = re.sub(r'//[^\n]*', '', item).strip()
+        head = re.match(r'([a-z0-9_]+)', item)
+        if head:
+            found.append(head.group(1))
+    return found
+
+
 def modules(source):
     return sorted(set(MOD.findall((source / 'lib.rs').read_text(encoding='utf-8'))))
 
@@ -38,20 +64,22 @@ def is_test(source, path):
             or 'tests' in relative.parts[:-1])
 
 
-def measure(source):
+def measure(source, include_tests=False):
     names = modules(source)
     lines, edges = {}, defaultdict(lambda: defaultdict(int))
     for name in names:
         total = 0
         for path in files_of(source, name):
-            if is_test(source, path):
+            test_file = is_test(source, path)
+            if test_file and not include_tests:
                 continue
             text = path.read_text(encoding='utf-8')
             cut = INLINE_TESTS.search(text)
-            if cut:
+            if not test_file:
+                total += (text[:cut.start()] if cut else text).count('\n')
+            if cut and not include_tests:
                 text = text[:cut.start()]
-            total += text.count('\n')
-            for target in REFERENCE.findall(text):
+            for target in REFERENCE.findall(text) + grouped(text):
                 if target in names and target != name:
                     edges[name][target] += 1
         lines[name] = total
@@ -126,11 +154,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--crate', default='airk-cli')
     parser.add_argument('--json', type=Path)
+    parser.add_argument('--include-tests', action='store_true',
+                        help='count references in unit tests too (each crate must compile its tests)')
     parser.add_argument('--groups', type=Path,
                         help='a module-group file (docs/simplify/airk-cli-groups.json); reports back edges')
     args = parser.parse_args(argv)
     source = ROOT / 'crates' / args.crate / 'src'
-    lines, edges = measure(source)
+    lines, edges = measure(source, args.include_tests)
     found = cycles(lines, edges)
     if args.groups:
         groups = json.loads(args.groups.read_text(encoding='utf-8'))

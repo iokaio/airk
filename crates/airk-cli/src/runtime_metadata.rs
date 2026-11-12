@@ -188,7 +188,7 @@ pub(crate) async fn bundle(
 ) -> serde_json::Value {
     use airk_core::service::{ControlMethod, ControlResponse};
     let worker = Some(observe_process());
-    let health = crate::service_runtime::request_for_version_and_instance(
+    let health = crate::control_client::request_for_version_and_instance(
         control,
         ControlMethod::Health,
         env!("CARGO_PKG_VERSION"),
@@ -244,7 +244,7 @@ pub(crate) async fn work(
 ) -> serde_json::Value {
     use airk_core::service::ControlMethod;
     let request = |method| {
-        crate::service_runtime::request_for_version_and_instance(
+        crate::control_client::request_for_version_and_instance(
             control,
             method,
             env!("CARGO_PKG_VERSION"),
@@ -414,14 +414,14 @@ pub(crate) async fn unavailable(
     project: airk_core::service::ProjectBinding,
 ) -> serde_json::Value {
     use airk_core::service::{ControlMethod, ControlResponse};
-    let health = crate::service_runtime::request(control, ControlMethod::Health).await;
+    let health = crate::control_client::request(control, ControlMethod::Health).await;
     let service = match health {
         Ok(ControlResponse::Health { observation }) => Some(observation),
         _ => None,
     };
     let mut work = if let Some(service) = &service {
         let request = |method| {
-            crate::service_runtime::request_for_version_and_instance(
+            crate::control_client::request_for_version_and_instance(
                 control,
                 method,
                 &service.version,

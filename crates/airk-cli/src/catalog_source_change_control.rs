@@ -15,6 +15,7 @@ use airk_core::{
     },
     identity::{Incarnation, Sha256Digest},
     index_catalog::{DenyId, IndexDefinition, MAX_SOURCE_ROOTS, ScopeAtom, SourceImportState},
+    service::ProjectBinding,
     service_configuration::{ConfigurationRequest, ProjectConfiguration},
     source_policy::{PolicyChange, SourcePolicy, SourceRoot},
 };
@@ -893,6 +894,51 @@ fn require_missing_with_plain_parent(root: &Path) -> Result<()> {
     }
     anyhow::bail!("missing source parent observation exceeds bound")
 }
+/// Native watcher evidence only. Wire callers cannot construct or deserialize
+/// this event; the accepted metadata owner rechecks its current catalog binding.
+pub(crate) struct NativeMissingSourceEvent {
+    project: ProjectBinding,
+    registration_epoch: u64,
+    configuration_epoch: u64,
+}
+impl NativeMissingSourceEvent {
+    pub(crate) fn binding(&self) -> ProjectBinding {
+        self.project
+    }
+    pub(crate) fn registration_epoch(&self) -> u64 {
+        self.registration_epoch
+    }
+    pub(crate) fn configuration_epoch(&self) -> u64 {
+        self.configuration_epoch
+    }
+    pub(crate) fn observed(
+        registry: &ServiceRegistry,
+        project: ProjectBinding,
+        registration_epoch: u64,
+        configuration_epoch: u64,
+    ) -> Result<Option<Self>> {
+        if !registry.is_registered(project)? {
+            return Ok(None);
+        }
+        let current = registry.watch(project)?;
+        if current.project.fencing_generation != registration_epoch
+            || current.configuration_epoch != configuration_epoch
+            || !current.observation.enabled
+        {
+            return Ok(None);
+        }
+        match std::fs::symlink_metadata(&current.project.registration.root) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(Self {
+                project,
+                registration_epoch,
+                configuration_epoch,
+            })),
+            Ok(_) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
 /// Private metadata-actor entry only. The event has no wire constructor: only
 /// SourceSupervisor's validated native observation can produce it. This fresh
 /// check admits the original native retirement decision, not a promise that a
@@ -901,7 +947,7 @@ pub(crate) fn draft_missing_from_event(
     registry: &mut ServiceRegistry,
     control: &Path,
     selection: &SourceMutationDraftSelection,
-    event: &crate::source_supervisor::NativeMissingSourceEvent,
+    event: &NativeMissingSourceEvent,
 ) -> Result<SourceMutationDraft> {
     crate::install_layout::validate_control_root(control)?;
     ensure!(

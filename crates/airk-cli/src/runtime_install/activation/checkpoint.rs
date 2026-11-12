@@ -766,7 +766,7 @@ pub(crate) async fn prepare_native_checkpoint(
     loop {
         let response = tokio::time::timeout_at(
             until,
-            service_runtime::request_for_version_and_instance(
+            control_client::request_for_version_and_instance(
                 control,
                 method,
                 version,
@@ -951,7 +951,7 @@ pub(super) async fn settle_admission(root: &Path, intent: &Intent) -> Result<()>
             if version.len() == 3 && version.as_slice() >= [1, 8, 14].as_slice() {
                 match health_identity(root, &approval, &runtime_pair::digest_file(&main)?).await {
                     Ok(owner) => {
-                        let response = service_runtime::request_for_version_and_instance(
+                        let response = control_client::request_for_version_and_instance(
                             &intent.control,
                             ControlMethod::ReleaseUpgradeAdmission {
                                 operation_id: operation,

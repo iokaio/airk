@@ -38,6 +38,7 @@ pub use ipc::endpoint as local_ipc;
 mod native_admin_connections;
 pub(crate) mod read_attempt;
 mod reference_refresh_control;
+mod registry_console;
 pub(crate) mod service_inference;
 /// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
 /// which must not depend on service or IPC protocol code.
@@ -109,6 +110,8 @@ mod user_paths;
 pub mod cli_io;
 pub mod client_requests;
 pub mod console_client;
+/// Client side of the native service control transport (moved from `service_runtime`).
+pub(crate) mod control_client;
 pub mod explorer_assistance;
 mod request_journal;
 pub mod session;

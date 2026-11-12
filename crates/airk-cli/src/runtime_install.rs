@@ -5,7 +5,7 @@
 use crate::install_files::{
     MAC_LAUNCHER_IMAGE, launcher_path, main_name, read_bounded, safe_file, sync_directory,
 };
-use crate::{local_ipc, runtime_pair, service_runtime};
+use crate::{control_client, local_ipc, runtime_pair, service_runtime};
 use airk_core::service::{ControlMethod, ControlResponse, ServiceHealth};
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Subcommand, ValueEnum};
@@ -730,15 +730,6 @@ pub fn default_project_data(root: &Path) -> Result<PathBuf> {
     }
     let (_, channel) = crate::install_layout::retained_parameters(root)?;
     Ok(discover_user_paths(channel)?.data)
-}
-
-/// Installed frontends use the elected broker and direct project transport.
-/// They never initialize a local Kernel if installation, policy or health fails.
-pub async fn bridge_installed(
-    root: &Path,
-    project: airk_core::service::ProjectBinding,
-) -> Result<()> {
-    crate::project_client::bridge(installed_control(root).await?, project).await
 }
 
 /// Verify the selected runtime and elected service without opening a collection.
@@ -1984,7 +1975,7 @@ async fn health_identity(
     approval: &Approval,
     expected_sha256: &str,
 ) -> Result<ServiceHealth> {
-    let response = service_runtime::request_for_version(
+    let response = control_client::request_for_version(
         &layout::control(root)?,
         ControlMethod::Health,
         &approval.version,
@@ -2651,7 +2642,7 @@ async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str)
         let observed = health_identity(root, approval, expected_sha256).await?;
         ensure!(
             matches!(
-                service_runtime::request_for_version_and_instance(
+                control_client::request_for_version_and_instance(
                     &control,
                     ControlMethod::Shutdown,
                     &approval.version,

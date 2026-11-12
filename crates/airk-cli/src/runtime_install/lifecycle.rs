@@ -249,7 +249,7 @@ async fn observation(
     approval: &Approval,
     expected_sha256: &str,
 ) -> Result<ServiceHealth> {
-    let ControlResponse::Health { observation } = service_runtime::request_for_version(
+    let ControlResponse::Health { observation } = control_client::request_for_version(
         &layout::control(root)?,
         ControlMethod::Health,
         &approval.version,
@@ -305,7 +305,7 @@ async fn resume(
                     current.instance == record.request.expected_instance,
                     "service_instance_changed"
                 );
-                let result = service_runtime::request_for_version_and_instance(
+                let result = control_client::request_for_version_and_instance(
                     &control,
                     ControlMethod::Shutdown,
                     &approval.version,
@@ -364,7 +364,7 @@ async fn resume(
         healthy.instance != record.request.expected_instance,
         "lifecycle_predecessor_is_still_active"
     );
-    let result = service_runtime::request_for_version_and_instance(
+    let result = control_client::request_for_version_and_instance(
         &control,
         ControlMethod::RequestEpoch,
         &approval.version,

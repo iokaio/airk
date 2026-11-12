@@ -14,6 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+mod imported_legacy;
 
 fn live(context: &ReadAttemptContext) -> Result<()> {
     ensure!(
@@ -288,7 +289,7 @@ impl LazyBackend {
                     crate::combined_frontend::resolve(None, Some(&self.control), selection).await?
                 }
                 HttpSelection::ImportedLegacy { selection } => {
-                    crate::runtime_install::http_legacy::create_imported_backend(
+                    imported_legacy::create_imported_backend(
                         self.control.clone(),
                         selection.as_ref().clone(),
                     )?

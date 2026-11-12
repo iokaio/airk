@@ -39,14 +39,14 @@ impl crate::service_configuration::ConfigurationReads for Path {
         &self,
         project: ProjectBinding,
     ) -> impl std::future::Future<Output = Result<ControlResponse>> + Send {
-        crate::service_runtime::request(self, ControlMethod::Inspection { project })
+        crate::control_client::request(self, ControlMethod::Inspection { project })
     }
     fn administrative_read(
         &self,
         project: ProjectBinding,
         read: airk_core::native_reads::NativeRead,
     ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send {
-        crate::service_runtime::administrative_read(
+        crate::usage_client::administrative_read(
             self,
             project,
             read,

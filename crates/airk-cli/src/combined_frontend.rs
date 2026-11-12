@@ -229,7 +229,7 @@ impl Session for CombinedConnectRequest {
                 tokio::time::Instant::from_std(deadline),
                 instance.get_or_try_init(|| async {
                     let health =
-                        crate::service_runtime::request(control, ControlMethod::Health).await?;
+                        crate::control_client::request(control, ControlMethod::Health).await?;
                     let ControlResponse::Health { observation } = health else {
                         return Err(anyhow::Error::from(ScopeReadRefused));
                     };
@@ -240,7 +240,7 @@ impl Session for CombinedConnectRequest {
             .map_err(|_| ScopeReadRefused)??;
             let response = tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
-                crate::service_runtime::request_for_instance(
+                crate::control_client::request_for_instance(
                     control,
                     ControlMethod::ValidateCombinedDelivery {
                         selection: self.clone(),

@@ -352,7 +352,7 @@ mod copied_genesis_recovery_tests {
                 Ok::<_, anyhow::Error>(())
             }
             .await;
-            let _ = service_runtime::request_for_version(
+            let _ = control_client::request_for_version(
                 &control,
                 ControlMethod::Shutdown,
                 env!("CARGO_PKG_VERSION"),

@@ -89,6 +89,50 @@ references.
 **Same crate, so no change needed:** `runtime_install` ↔ `service_manager`
 and `universal_launcher`, and `catalog_admission` ↔ `catalog_coordinator`.
 
+## Step 2a: in-place moves (12 November, uncompiled until the primary's check)
+
+Behavior-preserving moves only: code moved verbatim with its doc comments;
+only paths, `use` lines and the visibility noted below changed. Back edges
+reported by `module_graph.py --groups` went from 12 to 2. The large cycle
+shrank from 18 modules (50,354 lines) to 11 (29,500), all of it closed by the
+two remaining edges.
+
+| Item | From | To | Notes |
+|---|---|---|---|
+| `request`, `request_for_version`, `request_for_instance`, `request_for_version_and_instance`, `request_scoped`, `prebaseline_metadata_method`, `request_initialized_probe` | `service_runtime` | new `control_client` (installer group) | `service_runtime` re-exports the four public functions (integration tests use them) and, under `cfg(test)`, the probe and `prebaseline_metadata_method` (now `pub(crate)`) for existing tests |
+| `administrative_read` | `service_runtime` | `usage_client` | `service_runtime` re-exports it |
+| `NativeCatalogCoordinator` alias | `catalog_coordinator` | `project_supervisor` | it names the supervisor's handle type |
+| `NativeMissingSourceEvent` and its impl | `source_supervisor` | `catalog_source_change_control` | `observed` widened from private to `pub(crate)` for its one caller, `source_supervisor` |
+| `bridge_installed` | `runtime_install` | `project_client` | no callers in the workspace; public path changes |
+| `create_imported_backend`, `ImportedBackend` | `runtime_install::http_legacy` | new `http_backend::imported_legacy` | only `http_backend` constructs it |
+| `console_page`, `console_page_role`, `observed` | `service_management` | new `registry_console` (catalog group) | `console_page_role` widened to `pub(crate)` |
+
+In-crate callers now use the new paths. Group changes in
+`airk-cli-groups.json`: `installer` now precedes `supervisor` (no edge joins
+them in either direction), so `runtime_metadata`, which needs `project_worker`
+and `runtime_install`, moved from `service` to `supervisor`;
+`control_client` joined `installer` and `registry_console` joined `catalog`.
+
+**Remaining, not a single small move.** Both remaining edges and one edge
+the script does not count start in the `airk runtime …` dispatcher
+(`runtime_install::commands::run_with`, 58 command arms) and its HTTP setup
+handlers (`runtime_install::http_commands`):
+
+- `commands.rs` `SourceScope` → `service_frontend::RootScope::new` and
+  `metadata_before` (registry observation owned by the frontend);
+- `http_commands::resolved_existing_connection` →
+  `http_backend::validate` → `combined_frontend::validate_http_selection`;
+- `commands.rs` → `service_runtime::serve` (three arms) and
+  `managed_service::serve`; `runtime_install::activation` →
+  `service_runtime::checkpoint` (packet read/digest). The script misses these
+  because they go through `use crate::{…, service_runtime}`.
+
+Removing them needs either moving the dispatcher and the HTTP setup handlers
+above the service group (with `pub(crate)` widening of many private
+`runtime_install` submodules) or hooks injected by the caller, and moving
+`service_runtime::checkpoint` to a lower module. That is a design choice for
+the next step, not a move.
+
 ## Order (one step at a time; each compiles and passes before the next)
 
 1. **Measurement script.** Commit the module-graph script

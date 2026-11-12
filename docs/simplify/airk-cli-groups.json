@@ -7,8 +7,8 @@
   "endpoint",
   "inference",
   "catalog",
-  "supervisor",
   "installer",
+  "supervisor",
   "frontend",
   "https",
   "service",
@@ -63,22 +63,11 @@
    "catalog_source_change_control",
    "catalog_split_control",
    "catalog_test_fixture",
-   "reference_refresh_control"
-  ],
-  "supervisor": [
-   "derived_worker",
-   "project_protocol",
-   "project_supervisor",
-   "project_worker",
-   "project_worker_split",
-   "source_protocol",
-   "source_supervisor",
-   "source_worker",
-   "worker_host",
-   "worker_scope",
-   "worker_transport"
+   "reference_refresh_control",
+   "registry_console"
   ],
   "installer": [
+   "control_client",
    "legacy_processes",
    "legacy_startup",
    "manual_start",
@@ -86,6 +75,20 @@
    "runtime_legacy_origin",
    "service_manager",
    "universal_launcher"
+  ],
+  "supervisor": [
+   "derived_worker",
+   "project_protocol",
+   "project_supervisor",
+   "project_worker",
+   "project_worker_split",
+   "runtime_metadata",
+   "source_protocol",
+   "source_supervisor",
+   "source_worker",
+   "worker_host",
+   "worker_scope",
+   "worker_transport"
   ],
   "frontend": [
    "client_requests",
@@ -108,7 +111,6 @@
   ],
   "service": [
    "native_admin_connections",
-   "runtime_metadata",
    "service_management",
    "service_runtime",
    "setup_role"

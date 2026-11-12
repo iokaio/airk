@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native reports travel directly to their project worker, in exact bounded pages.
-use airk_core::service::ProjectBinding;
+use airk_core::service::{ControlMethod, ControlResponse, ProjectBinding};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -27,6 +27,41 @@ pub fn require_native_success(value: Value) -> Result<Value> {
         return Err(NativeReadFailure(value).into());
     }
     Ok(value)
+}
+
+/// Administrative metadata transport. Credentials remain inside Runtime and
+/// the complete canonical native value/error is preserved for native clients.
+pub async fn administrative_read(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+    request: airk_core::native_reads::NativeRead,
+    client: airk_core::usage::ClientFamily,
+) -> Result<serde_json::Value> {
+    let response = crate::console_client::request(
+        control,
+        ControlMethod::NativeRead {
+            project,
+            request: request.clone(),
+            usage_client: client,
+        },
+    )
+    .await?;
+    match response {
+        ControlResponse::NativeRead { result } => {
+            crate::usage_client::require_native_success(result)
+        }
+        ControlResponse::Failure { code } if code == "native_administrative_legacy" => {
+            let mut connection =
+                crate::project_client::Connection::connect_as(control, project, client).await?;
+            crate::usage_client::require_native_success(connection.read_native(request).await?)
+        }
+        response @ ControlResponse::Failure { .. } => Err(
+            crate::usage_client::NativeReadFailure::from_response(serde_json::to_value(response)?)
+                .into(),
+        ),
+        // Never retain an unexpected credential-plane response as error data.
+        _ => anyhow::bail!("unexpected native administrative response"),
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -281,7 +316,7 @@ async fn collect_selected(
                 .read_native_with_context(request(cursor), context)
                 .await?
         } else {
-            crate::service_runtime::administrative_read(
+            administrative_read(
                 control,
                 project,
                 request(cursor),

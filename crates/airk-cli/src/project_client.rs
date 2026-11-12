@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A query client obtains one grant, then communicates only with the project worker.
 use crate::{
+    control_client,
     local_ipc::{self, Stream},
     project_protocol::{self as protocol, Accepted, Query},
-    service_runtime,
 };
 use airk_core::service::{ControlMethod, ControlResponse, PROTOCOL_VERSION, ProjectBinding};
 use anyhow::{Context, Result, ensure};
@@ -287,7 +287,7 @@ impl Connection {
                         .and_then(|fresh| owner.admit_ticket(&fresh))
                 })
                 .transpose()?;
-            service_runtime::request(root, ControlMethod::Health).await?
+            control_client::request(root, ControlMethod::Health).await?
         };
         let observation = match response {
             ControlResponse::Health { observation } => observation,
@@ -342,7 +342,7 @@ impl Connection {
             },
             None => ControlMethod::Connect { project },
         };
-        let response = service_runtime::request(root, method).await?;
+        let response = control_client::request(root, method).await?;
         if selection.is_some() && !matches!(&response, ControlResponse::Connection { .. }) {
             let retryable = matches!(&response, ControlResponse::Failure { code } if matches!(code.as_str(),
                 "broker_busy" | "project_starting_or_unavailable" | "project_unavailable_or_busy"
@@ -1298,6 +1298,19 @@ pub(crate) fn source_tools(root: PathBuf, project: ProjectBinding) -> Arc<Backen
         catalog_session: None,
         selection_session: None,
     })
+}
+
+/// Installed frontends use the elected broker and direct project transport.
+/// They never initialize a local Kernel if installation, policy or health fails.
+pub async fn bridge_installed(
+    root: &Path,
+    project: airk_core::service::ProjectBinding,
+) -> Result<()> {
+    bridge(
+        crate::runtime_install::installed_control(root).await?,
+        project,
+    )
+    .await
 }
 
 pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
