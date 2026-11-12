@@ -10,6 +10,9 @@ export type AirkctlState =
     /** Workspace untrusted or native execution disabled: help and local UI only. */
     | { readonly kind: 'gated'; readonly reason: 'workspace_untrusted' | 'native_execution_disabled' }
     | { readonly kind: 'checking' }
+    /** Setup is replacing or removing the installed files (an I4 replacement
+     * notice is in force): `airkctl` is released and not run until it ends. */
+    | { readonly kind: 'updating'; readonly program: string }
     /** No install pointer. `predecessor`: only a pre-split installation exists. */
     | { readonly kind: 'not_installed'; readonly predecessor: boolean }
     /** Refuse to execute; explain and point to the installer. */
@@ -34,6 +37,8 @@ export type AirkctlState =
 
 export interface Observations {
     readonly gate?: 'workspace_untrusted' | 'native_execution_disabled';
+    /** The program folder of a replacement notice in force. */
+    readonly replacing?: string;
     readonly verification?: Verification;
     readonly version?: { readonly document?: { readonly version: string; readonly capabilities: readonly string[] }; readonly compatibility?: Compatibility; readonly invalid?: string };
     readonly status?: { readonly value?: ServiceStatus; readonly error?: ErrorLine | { readonly code: string; readonly message: string; readonly retryable: boolean } };
@@ -44,6 +49,7 @@ export interface Observations {
  * and a later step is never trusted when an earlier one failed. */
 export function deriveState(observed: Observations): AirkctlState {
     if (observed.gate) { return { kind: 'gated', reason: observed.gate }; }
+    if (observed.replacing !== undefined) { return { kind: 'updating', program: observed.replacing }; }
     const verification = observed.verification;
     if (!verification) { return { kind: 'checking' }; }
     if (verification.state === 'not_found') { return { kind: 'not_installed', predecessor: verification.predecessor }; }

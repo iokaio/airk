@@ -8,7 +8,8 @@ searches on this computer. The extension does not contain the service.
 **Installing or updating this extension never installs, updates, repairs or
 removes AIRK Service**; the service has its own installer and uninstaller.
 
-Download AIRK Service from **https://airk.ioka.io** or from the versioned
+Download the AIRK Service installer from the AIRK downloads page,
+**https://airk.ioka.io/#downloads**, or from the versioned
 [GitHub Releases](https://github.com/iokaio/airk/releases), then:
 
 - **Windows:** run the AIRK Service installer (`.exe`) and follow its steps. No

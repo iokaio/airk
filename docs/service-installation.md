@@ -64,7 +64,9 @@ pre-split installer flow described in the rest of this page
   cache and logs), a disclosure page listing earlier AIRK installations found
   by `setup --plan`, a preflight (`--prepare`) before files are replaced
   (it refuses while VS Code runs a pre-split AIRK extension: update the
-  extension first or close VS Code),
+  extension first or close VS Code; from 1.8.30 open VS Code windows with an
+  up-to-date extension release AIRK while setup replaces it, through the I4
+  replacement notice, and reconnect afterwards, so VS Code can stay open),
   the "AIRK Admin" Start-menu shortcut and `bin\` on the user `PATH` under its
   ownership receipt. Unattended: `/DIR=`, `/DATA=`, `/CACHE=`,
   `/ACKNOWLEDGE-RESET` (required when an earlier installation will be

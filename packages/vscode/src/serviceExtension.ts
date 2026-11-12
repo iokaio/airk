@@ -11,11 +11,11 @@ import * as path from 'node:path';
 import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState } from './airkctl/index';
 import { systemVerifyHost } from './airkctl/verify';
 import { AirkctlToolSession } from './airkctl/tools';
-import { AirkctlExplorerHost, describe } from './airkctl/features/explorerHost';
+import { AirkctlExplorerHost, describe, projectRows } from './airkctl/features/explorerHost';
 import { ACTION_LABELS, guidance, type GuidanceAction } from './airkctl/status/guidance';
 import {
     connectAgent, connectionInfo, connectionUrl, credentialHeader, inputCredential, listAgents, removeAgents, repairAgents,
-    reportedConnections, sweepWithoutService, type Client, type RemovedEntry,
+    reportedConnections, retiredStdioWithoutIndex, sweepWithoutService, type Client, type RemovedEntry,
 } from './airkctl/agents/index';
 import { setEvidenceTransport } from './explorerEvidence';
 import { ExplorerSidebar } from './explorerSidebar';
@@ -76,6 +76,7 @@ class SplitExtension implements vscode.Disposable {
         void vscode.commands.executeCommand('setContext', 'airk.serviceState', state.kind);
         this.definitions.fire();
         if (state.kind === 'not_installed') { void this.sweep(); }
+        if (state.kind === 'ready') { void this.retireStdioEntries(); }
         // Notify once per distinct state; the site opens only on a user action.
         const key = JSON.stringify([state.kind, 'code' in state ? state.code : undefined, 'reason' in state ? state.reason : undefined]);
         if (advice.severity === 'none' || key === this.lastNotified) { return; }
@@ -112,6 +113,31 @@ class SplitExtension implements vscode.Disposable {
             this.notify('info', `Removed ${removed.length} AIRK agent ${removed.length === 1 ? 'entry' : 'entries'} that no installed AIRK Service can serve (see Output). Connect again once AIRK Service is installed and an index exists.`, ['airk.showExtensionOutput', 'airk.downloadService']);
         })().finally(() => { this.sweeping = undefined; });
         return this.sweeping;
+    }
+
+    /** §8.4 "Service found", U28: once per window, remove this window's
+     * pre-split stdio AIRK entries (for example `airk-launcher.exe … mcp`)
+     * whose folder has no index in the service, and record them. They can never
+     * be served: the service is HTTPS only. HTTPS entries are left to
+     * `airkctl agents`. */
+    private stdioRetired?: Promise<void>;
+    retireStdioEntries(): Promise<void> {
+        if (!vscode.workspace.isTrusted || !vscode.workspace.getConfiguration('airk').get<boolean>('mcp.registrationEnabled', true)) { return Promise.resolve(); }
+        this.stdioRetired ??= (async () => {
+            const roots = projectRows(await this.airkctl.session.json(['projects'])).map(row => row.root);
+            const { removed, skipped } = await sweepWithoutService(this.folders(), undefined, undefined, retiredStdioWithoutIndex(roots));
+            for (const item of skipped) { this.output.appendLine(`AIRK: ${item.file} was not checked: ${item.reason}`); }
+            if (!removed.length) { return; }
+            const previous = this.context.workspaceState.get<RemovedEntry[]>(REMOVED_ENTRIES_KEY, []);
+            await this.context.workspaceState.update(REMOVED_ENTRIES_KEY, [...previous, ...removed].slice(-256));
+            for (const entry of removed) { this.output.appendLine(`AIRK: removed ${entry.agent} entry "${entry.serverKey}" from ${entry.file}: ${entry.reason}`); }
+            this.notify('info', `Removed ${removed.length} retired AIRK agent ${removed.length === 1 ? 'entry' : 'entries'} (stdio; the AIRK Service serves HTTPS only; see Output). Once this folder has an index, create a connection in AIRK Admin and use Connect Coding Agent.`, ['airk.showExtensionOutput']);
+        })().catch(error => {
+            // A failed attempt (service not answering yet) may run again on the next ready state.
+            this.stdioRetired = undefined;
+            this.output.appendLine(`AIRK: retired agent entries were not checked: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        return this.stdioRetired;
     }
 
     /** "Reconnect Coding Agents…" (U28): one confirmation rewrites stale entries

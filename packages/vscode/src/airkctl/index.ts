@@ -10,13 +10,15 @@ import { AirkctlCommandError, AirkctlSession, type InvokeResult, type SessionOpt
 import { deriveState, executable, type AirkctlState, type Observations } from './states';
 import { compatibility, EXTENSION_REQUIREMENTS, parseVersionDocument, VersionDocumentInvalid } from './version';
 import { AirkctlVerifier, type Verification, type VerifyHost } from './verify';
+import { decodeReplacementNotice, MAX_REPLACEMENT_NOTICE_BYTES, replacementNoticePath } from './install';
 
 export { AirkctlCommandError, AirkctlSession } from './session';
 export type { AirkctlState } from './states';
 
 /** Download page and release list (U59); the "not installed" state, the
- * Download command and the Marketplace README use these exact links. */
-export const DOWNLOAD_URL = 'https://airk.ioka.io';
+ * Download command and the Marketplace README use these exact links. The
+ * site's downloads section is the `#downloads` anchor of its home page. */
+export const DOWNLOAD_URL = 'https://airk.ioka.io/#downloads';
 export const RELEASES_URL = 'https://github.com/iokaio/airk/releases';
 
 /** Commands the session refuses (contracts §3.8): one-shots only. */
@@ -33,6 +35,10 @@ export interface AirkctlOptions {
     readonly gate: () => 'workspace_untrusted' | 'native_execution_disabled' | undefined;
     readonly session?: Omit<SessionOptions, 'clientVersion'>;
     readonly log?: (line: string) => void;
+    /** Replacement-notice poll interval; 0 turns polling off (tests drive `poll`). Default 1 s. */
+    readonly noticePollMs?: number;
+    /** Unix milliseconds; tests inject a clock. */
+    readonly now?: () => number;
 }
 
 export class Airkctl {
@@ -42,6 +48,10 @@ export class Airkctl {
     private current: AirkctlState = { kind: 'checking' };
     private readonly listeners = new Set<(state: AirkctlState) => void>();
     private checking?: Promise<AirkctlState>;
+    /** The program folder of the replacement notice in force, if any. */
+    private replacing?: string;
+    private noticeTimer?: ReturnType<typeof setInterval>;
+    private polling?: Promise<void>;
     readonly session: AirkctlSession;
 
     constructor(private readonly options: AirkctlOptions) {
@@ -50,8 +60,47 @@ export class Airkctl {
         this.session = new AirkctlSession({ ...options.session, clientVersion: options.clientVersion, contracts: EXTENSION_REQUIREMENTS.supported }, () => {
             const gate = this.options.gate();
             if (gate) { throw new AirkctlUnavailable(gate); }
+            if (this.replacing !== undefined) { throw new AirkctlUnavailable('updating'); }
             if (!executable(this.current)) { throw new AirkctlUnavailable(this.current.kind); }
         });
+        const every = options.noticePollMs ?? 1000;
+        if (every > 0) {
+            this.noticeTimer = setInterval(() => { void this.poll(); }, every);
+            this.noticeTimer.unref?.();
+        }
+    }
+
+    /** The replacement notice in force (I4 `replacing.json` beside the pointer), or undefined. */
+    private async notice(): Promise<string | undefined> {
+        const host = this.options.verifyHost;
+        const file = replacementNoticePath(host.home, host.platform);
+        try {
+            const facts = await host.lstat(file);
+            if (!facts || facts.kind !== 'file') { return undefined; }
+            return decodeReplacementNotice(await host.read(file, MAX_REPLACEMENT_NOTICE_BYTES), (this.options.now ?? Date.now)()).program;
+        } catch { return undefined; }
+    }
+    /**
+     * One observation of the replacement notice. While setup replaces or
+     * removes the installed files, release the installed `airkctl` (end the
+     * session; no command runs) so the installer never waits on this window;
+     * once the notice is gone or expired, verify and reconnect.
+     */
+    poll(): Promise<void> {
+        this.polling ??= (async () => {
+            const program = await this.notice();
+            if (program !== undefined && this.replacing === undefined) {
+                this.replacing = program;
+                this.options.log?.(`AIRK Service is being updated (${program}); releasing airkctl.`);
+                this.forget();
+                this.publish({ extensionVersion: this.options.clientVersion, replacing: program });
+            } else if (program === undefined && this.replacing !== undefined) {
+                this.replacing = undefined;
+                this.options.log?.('AIRK Service update finished; reconnecting.');
+                await this.check();
+            }
+        })().finally(() => { this.polling = undefined; });
+        return this.polling;
     }
     get state(): AirkctlState { return this.current; }
     /** The verified installation, after a successful check. */
@@ -63,13 +112,25 @@ export class Airkctl {
     /** Re-run discovery: gate, verification, version handshake and service
      * status. On request ("Check again") and on bounded recovery. */
     check(): Promise<AirkctlState> {
-        this.checking ??= this.observe().finally(() => { this.checking = undefined; });
+        this.checking ??= this.observe()
+            .catch(error => {
+                // The notice appeared during this check: settle on `updating`.
+                if (error instanceof AirkctlUnavailable && error.reason === 'updating') { return this.publish({ extensionVersion: this.options.clientVersion }); }
+                throw error;
+            })
+            .finally(() => { this.checking = undefined; });
         return this.checking;
     }
     private async observe(): Promise<AirkctlState> {
         const observed: { -readonly [K in keyof Observations]: Observations[K] } = { extensionVersion: this.options.clientVersion };
         const gate = this.options.gate();
         if (gate) { return this.publish({ ...observed, gate }); }
+        const replacing = await this.notice();
+        if (replacing !== undefined) {
+            this.replacing = replacing; this.forget();
+            return this.publish({ ...observed, replacing });
+        }
+        this.replacing = undefined;
         const verification = await this.verifier.verify();
         observed.verification = verification;
         if (verification.state !== 'verified') { this.forget(); return this.publish(observed); }
@@ -110,7 +171,8 @@ export class Airkctl {
     }
     private forget(): void { this.verified = undefined; this.session.unbind(); }
     private publish(observed: Observations): AirkctlState {
-        const next = deriveState(observed);
+        // A check that started before the notice appeared cannot clear it.
+        const next = deriveState(this.replacing !== undefined && observed.replacing === undefined ? { ...observed, replacing: this.replacing } : observed);
         this.current = next;
         for (const listener of [...this.listeners]) { try { listener(next); } catch { /* Listener failures stay local. */ } }
         return next;
@@ -125,11 +187,14 @@ export class Airkctl {
     async oneShot(argv: readonly string[], options: { input?: string; timeoutMs?: number } = {}): Promise<InvokeResult> {
         const gate = this.options.gate();
         if (gate) { throw new AirkctlUnavailable(gate); }
+        if (this.replacing !== undefined) { throw new AirkctlUnavailable('updating'); }
         if (!executable(this.current)) { throw new AirkctlUnavailable(this.current.kind); }
         return this.direct(argv, options);
     }
     private async direct(argv: readonly string[], options: { input?: string; timeoutMs?: number }): Promise<InvokeResult> {
+        if (this.replacing !== undefined) { throw new AirkctlUnavailable('updating'); }
         const verification = await this.verifier.verify();
+        if (this.replacing !== undefined) { throw new AirkctlUnavailable('updating'); }
         if (verification.state !== 'verified' || (this.verified && verification.sha256 !== this.verified.sha256)) {
             void this.check();
             throw new AirkctlUnavailable('installation_changed');
@@ -160,7 +225,10 @@ export class Airkctl {
     /** `airkctl admin open`: the sign-in link opens in the browser; the code never reaches the extension. */
     openAdmin(): Promise<InvokeResult> { return this.oneShot(['admin', 'open']); }
 
-    dispose(): void { this.session.dispose(); this.listeners.clear(); }
+    dispose(): void {
+        if (this.noticeTimer !== undefined) { clearInterval(this.noticeTimer); this.noticeTimer = undefined; }
+        this.session.dispose(); this.listeners.clear();
+    }
 }
 
 /** `airkctl` is not executed in this state; `reason` is the state kind or gate. */

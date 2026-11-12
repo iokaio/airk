@@ -9,7 +9,6 @@ import * as path from 'node:path';
 import type { Airkctl } from '../index';
 import { AirkctlCommandError } from '../session';
 import { PROJECT_FILES, removeAll, MAX_BYTES, type Agent, type Removal } from './recognizer';
-
 const INCARNATION = /^[0-9a-f]{32}$/;
 export type Client = 'claude' | 'codex' | 'vscode';
 
@@ -101,13 +100,40 @@ export const systemSweepFileSystem: SweepFileSystem = {
     },
 };
 
+/** Which recognized project entries a sweep removes (`folder` is the window
+ * folder holding the file) and the reason recorded for each. */
+export interface SweepOptions {
+    select?: (entry: Removal, folder: string) => boolean;
+    reason?: (entry: Removal) => string;
+}
+
+/** Service found (§8.4, U28): a pre-split stdio entry can never be served (the
+ * service is HTTPS only). It is removed and recorded when no index of the
+ * service covers its root; an entry whose root is indexed is left for
+ * "Connect Coding Agent", which writes an HTTPS entry for a connection. */
+export function retiredStdioWithoutIndex(indexedRoots: readonly string[], windows = process.platform === 'win32'): SweepOptions {
+    const same = (left: string, right: string) => {
+        const a = path.resolve(left), b = path.resolve(right);
+        return windows ? a.toLowerCase() === b.toLowerCase() : a === b;
+    };
+    return {
+        select: (entry, folder) => entry.recognized.kind === 'stdio'
+            && !indexedRoots.some(root => same(root, entry.recognized.kind === 'stdio' && entry.recognized.root ? entry.recognized.root : folder)),
+        reason: () => 'Retired stdio AIRK entry with no AIRK Service index for its folder; the AIRK Service serves HTTPS only.',
+    };
+}
+
 /**
  * No service installed (U12, §8.4): remove recognized AIRK entries from this
  * window's project files with the removal-only recognizer and return what was
  * removed. Folders that are links or resolve outside the project are skipped
  * (as `agents list` skips them); user-level files are left to the service.
  */
-export async function sweepWithoutService(folders: readonly string[], files: SweepFileSystem = systemSweepFileSystem, now = Date.now): Promise<{ removed: RemovedEntry[]; skipped: { file: string; reason: string }[] }> {
+export async function sweepWithoutService(folders: readonly string[], files: SweepFileSystem = systemSweepFileSystem, now = Date.now,
+    options: SweepOptions = {}): Promise<{ removed: RemovedEntry[]; skipped: { file: string; reason: string }[] }> {
+    const select = options.select ?? (() => true);
+    const reasonFor = options.reason ?? ((entry: Removal) => entry.recognized.kind === 'stdio' ? 'Retired stdio AIRK entry; the AIRK Service serves HTTPS only.'
+        : 'AIRK HTTPS entry with no installed AIRK Service to serve its connection.');
     const removed: RemovedEntry[] = [], skipped: { file: string; reason: string }[] = [];
     for (const root of folders) {
         let realRoot: string;
@@ -128,15 +154,11 @@ export async function sweepWithoutService(folders: readonly string[], files: Swe
             let source: string;
             try { source = await files.read(file); } catch (error) { skipped.push({ file, reason: error instanceof Error ? error.message : String(error) }); continue; }
             let result: { text: string; removed: Removal[] };
-            try { result = removeAll(agent, source); } catch (error) { skipped.push({ file, reason: error instanceof Error ? error.message : String(error) }); continue; }
+            try { result = removeAll(agent, source, entry => select(entry, root)); } catch (error) { skipped.push({ file, reason: error instanceof Error ? error.message : String(error) }); continue; }
             if (!result.removed.length || result.text === source) { continue; }
             try { await files.write(file, result.text); } catch (error) { skipped.push({ file, reason: error instanceof Error ? error.message : String(error) }); continue; }
             for (const entry of result.removed) {
-                removed.push({
-                    file, agent, serverKey: entry.target.serverKey, kind: entry.recognized.kind, removedAt: now(),
-                    reason: entry.recognized.kind === 'stdio' ? 'Retired stdio AIRK entry; the AIRK Service serves HTTPS only.'
-                        : 'AIRK HTTPS entry with no installed AIRK Service to serve its connection.',
-                });
+                removed.push({ file, agent, serverKey: entry.target.serverKey, kind: entry.recognized.kind, removedAt: now(), reason: reasonFor(entry) });
             }
         }
     }

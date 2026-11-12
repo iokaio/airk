@@ -268,10 +268,10 @@ export function removableEntries(agent: Agent, source: string): Removal[] {
     });
 }
 /** Remove every removable entry of one project file; returns the new text and what was removed. */
-export function removeAll(agent: Agent, source: string): { text: string; removed: Removal[] } {
+export function removeAll(agent: Agent, source: string, select: (entry: Removal) => boolean = () => true): { text: string; removed: Removal[] } {
     let text = source;
     const removed: Removal[] = [];
-    for (const entry of removableEntries(agent, source)) {
+    for (const entry of removableEntries(agent, source).filter(select)) {
         text = remove(agent, 'project', text, entry.target);
         removed.push(entry);
     }

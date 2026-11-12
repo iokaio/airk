@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { DOWNLOAD_URL, RELEASES_URL } from '../airkctl';
 
 const README = fs.readFileSync(path.resolve(__dirname, '..', '..', 'README.md'), 'utf8');
-const REVIEWED = { heading: '## Requires AIRK Service', download: 'https://airk.ioka.io', releases: 'https://github.com/iokaio/airk/releases' };
+const REVIEWED = { heading: '## Requires AIRK Service', download: 'https://airk.ioka.io/#downloads', releases: 'https://github.com/iokaio/airk/releases' };
 
 test('the README opens with the Requires AIRK Service section', () => {
     const lines = README.split(/\r?\n/).filter(line => line.trim());

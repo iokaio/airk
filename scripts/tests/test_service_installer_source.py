@@ -75,10 +75,11 @@ class ServiceInstallerSource(unittest.TestCase):
     def test_an_old_extension_blocks_the_data_page_and_is_warned_about(self):
         # Setup's plan reports a running pre-split extension as a blocker;
         # the data page must not advance past it, and the page says to update
-        # or close VS Code first (a closed editor cannot be observed).
+        # the extension or close VS Code first: an up-to-date extension releases
+        # AIRK during setup (replacement notice, 1.8.30); an older one does not.
         text = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("(Pos('\"location_problems\":[]', Json) > 0) and (Pos('\"blockers\":[]', Json) > 0)", text)
-        self.assertIn("update the AIRK extension in VS Code to {#AirkVersion} or later, or close", text)
+        self.assertIn("update the AIRK extension to {#AirkVersion} or later first, or close ' +\n    'VS Code.", text)
 
     def test_the_checks_catch_the_defects_they_name(self):
         self.assertEqual(code_comment_problems("[Code]\n{ below {tmp} and }\nbegin end;\n"), [2])

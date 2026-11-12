@@ -19,7 +19,8 @@ use airk_core::{
     identity::{Incarnation, Sha256Digest},
     install_record::{
         Contracts, Executable, Executables, InstallPointer, InstallRecord, InstalledBy, Installer,
-        Leftover, POINTER_SCHEMA, RECORD_FILE, RECORD_SCHEMA, SETUP_RECEIPT_SCHEMA, SetupFailure,
+        Leftover, MAX_REPLACEMENT_NOTICE_LIFETIME_MS, POINTER_SCHEMA, RECORD_FILE, RECORD_SCHEMA,
+        REPLACEMENT_NOTICE_SCHEMA, ReplacementNotice, SETUP_RECEIPT_SCHEMA, SetupFailure,
         SetupOperation, SetupPhase, SetupReceipt, SetupStep, Signing, TrustChoice,
     },
 };
@@ -184,8 +185,15 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
     .map_err(|code| anyhow::anyhow!("{code}"))?;
     for action in actions {
         if let Err(error) = setup.perform(action).await {
+            // Editor windows reconnect to whatever the failure left in place.
+            let _ = files::remove_replacement_notice();
             return setup.fail(error);
         }
+    }
+    if setup.receipt.closed {
+        // Kept through placement (`awaiting_placement`); withdrawn once the
+        // operation is closed. A failed removal expires on its own.
+        let _ = files::remove_replacement_notice();
     }
     let status = if setup.receipt.closed {
         "complete"
@@ -594,6 +602,25 @@ impl Setup {
         controls.dedup();
         paths.sort();
         paths.dedup();
+        let replacing = self.mode == Mode::Prepare || plan::removes(self.operation.kind);
+        if replacing && paths.iter().any(|path| path.is_file()) {
+            // Before the service stops: editor windows end their sessions on
+            // the installed images instead of waiting to reconnect (§9.6.2).
+            let now = (self.clock)();
+            let program = self
+                .existing
+                .as_ref()
+                .map(|installed| installed.record.locations.program.clone())
+                .unwrap_or_else(|| self.program().display().to_string());
+            files::write_replacement_notice(&ReplacementNotice {
+                schema: REPLACEMENT_NOTICE_SCHEMA.into(),
+                operation_id: self.operation.operation_id,
+                program,
+                created_unix_ms: now,
+                expires_unix_ms: now + MAX_REPLACEMENT_NOTICE_LIFETIME_MS,
+            })
+            .context("replacement_notice_unwritten: open editor windows could not be told to release AIRK")?;
+        }
         let mut details = Vec::new();
         let mut outcome = "not_running";
         for control in &controls {

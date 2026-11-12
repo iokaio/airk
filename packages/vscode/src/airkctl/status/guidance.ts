@@ -31,6 +31,8 @@ export function guidance(state: AirkctlState): Guidance {
     const message = describe(state);
     switch (state.kind) {
         case 'checking': return { severity: 'none', message, status: '$(sync~spin) AIRK', actions: [] };
+        // No notification: the installer is on screen; the window reconnects by itself.
+        case 'updating': return { severity: 'none', message, status: '$(sync~spin) AIRK Service updating', actions: [] };
         case 'gated': return {
             severity: 'none', message, status: '$(shield) AIRK',
             actions: state.reason === 'workspace_untrusted' ? ['airk.manageWorkspaceTrust'] : ['airk.enableNativeExecution'],

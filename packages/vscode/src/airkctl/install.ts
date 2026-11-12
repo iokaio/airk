@@ -17,7 +17,8 @@ export const RECORD_FILE = 'install-record.json';
 export type InstallRefusalCode =
     | 'install_file_oversize' | 'install_file_malformed' | 'install_file_unknown_schema' | 'install_file_non_canonical'
     | 'install_record_digest_mismatch' | 'install_id_mismatch' | 'install_version_mismatch'
-    | 'install_location_relative' | 'install_executable_outside_program';
+    | 'install_location_relative' | 'install_executable_outside_program'
+    | 'replacement_notice_expired' | 'replacement_notice_lifetime_too_long';
 
 export class InstallRefusal extends Error {
     constructor(readonly code: InstallRefusalCode | string, detail?: string) {
@@ -136,6 +137,29 @@ export function decodePointer(bytes: Buffer): InstallPointer {
     if (!absoluteLocation(pointer.program)) { throw new InstallRefusal('install_location_relative'); }
     if (pointer.record !== RECORD_FILE) { throw malformed('record file name'); }
     return pointer;
+}
+
+export const REPLACEMENT_NOTICE_SCHEMA = 'airk-install-replacing/1';
+export const REPLACEMENT_NOTICE_FILE = 'replacing.json';
+export const MAX_REPLACEMENT_NOTICE_BYTES = 4 * 1024;
+export const MAX_REPLACEMENT_NOTICE_LIFETIME_MS = 10 * 60 * 1000;
+/** Setup is replacing or removing the installed files (`ReplacementNotice`). */
+export interface ReplacementNotice { schema: string; operation_id: string; program: string; created_unix_ms: number; expires_unix_ms: number }
+const NOTICE = struct([['schema', str], ['operation_id', incarnation], ['program', str], ['created_unix_ms', u64], ['expires_unix_ms', u64]]);
+/** Decode a notice against the caller's clock; only a returned notice is in force. */
+export function decodeReplacementNotice(bytes: Buffer, nowUnixMs: number): ReplacementNotice {
+    const notice = decode<ReplacementNotice>(bytes, MAX_REPLACEMENT_NOTICE_BYTES, REPLACEMENT_NOTICE_SCHEMA, NOTICE);
+    if (!absoluteLocation(notice.program)) { throw new InstallRefusal('install_location_relative'); }
+    if (notice.expires_unix_ms <= notice.created_unix_ms || notice.expires_unix_ms - notice.created_unix_ms > MAX_REPLACEMENT_NOTICE_LIFETIME_MS) {
+        throw new InstallRefusal('replacement_notice_lifetime_too_long');
+    }
+    if (nowUnixMs >= notice.expires_unix_ms || nowUnixMs < notice.created_unix_ms) { throw new InstallRefusal('replacement_notice_expired'); }
+    return notice;
+}
+/** `replacing.json` beside the pointer. */
+export function replacementNoticePath(home: string, platform: HostPlatform): string {
+    const pointer = pointerPath(home, platform);
+    return (platform === 'win32' ? path.win32 : path.posix).join((platform === 'win32' ? path.win32 : path.posix).dirname(pointer), REPLACEMENT_NOTICE_FILE);
 }
 
 /** Decode a record and check it against the pointer that named it. */

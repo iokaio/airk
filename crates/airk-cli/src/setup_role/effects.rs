@@ -286,14 +286,16 @@ pub(crate) fn await_sessions(images: &[PathBuf]) -> Result<String> {
     let deadline = Instant::now() + SESSIONS;
     loop {
         let mut open = Vec::new();
+        let mut incomplete = None;
         for image in images.iter().filter(|image| image.is_file()) {
             let audit = crate::legacy_processes::audit(image);
-            ensure!(
-                audit.complete,
-                "process_observation_incomplete: processes running {} could not all be observed ({})",
-                image.display(),
-                audit.failure.as_deref().unwrap_or("unobserved")
-            );
+            if !audit.complete && incomplete.is_none() {
+                incomplete = Some(format!(
+                    "processes running {} could not all be observed ({})",
+                    image.display(),
+                    audit.failure.as_deref().unwrap_or("unobserved")
+                ));
+            }
             open.extend(
                 audit
                     .matching_executable_pids
@@ -302,15 +304,39 @@ pub(crate) fn await_sessions(images: &[PathBuf]) -> Result<String> {
                     .map(|pid| format!("{} (process {pid})", image.display())),
             );
         }
-        if open.is_empty() {
-            return Ok(format!("{} installed image(s) not running", images.len()));
+        match session_wait(&open, incomplete.as_deref(), Instant::now() >= deadline) {
+            SessionWait::Done => {
+                return Ok(format!("{} installed image(s) not running", images.len()));
+            }
+            SessionWait::Refuse(message) => bail!(message),
+            SessionWait::Observe => std::thread::sleep(Duration::from_millis(250)),
         }
-        ensure!(
-            Instant::now() < deadline,
-            "installation_files_in_use: close the programs using AIRK (VS Code windows with the AIRK extension, open airkctl sessions) and retry: {}",
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SessionWait {
+    Done,
+    Observe,
+    Refuse(String),
+}
+
+/// Pure: one observation of the installed images during the drain. Done only
+/// on a complete scan that finds none running; until the deadline anything
+/// else is observed again (processes exit during the drain, and one that
+/// exits mid-scan can leave that scan incomplete); at the deadline a running
+/// image is reported first because closing it is the user's action.
+fn session_wait(open: &[String], incomplete: Option<&str>, expired: bool) -> SessionWait {
+    match (open.is_empty(), incomplete, expired) {
+        (true, None, _) => SessionWait::Done,
+        (_, _, false) => SessionWait::Observe,
+        (false, _, true) => SessionWait::Refuse(format!(
+            "installation_files_in_use: programs still use AIRK; update the AIRK extension in VS Code (an extension older than 1.8.30 does not release AIRK during setup) or close VS Code, end open airkctl sessions, and retry: {}",
             open.join(", ")
-        );
-        std::thread::sleep(Duration::from_millis(250));
+        )),
+        (true, Some(detail), true) => {
+            SessionWait::Refuse(format!("process_observation_incomplete: {detail}"))
+        }
     }
 }
 
@@ -463,4 +489,41 @@ pub(crate) fn purge(location: &Path, protected: &[PathBuf], keep: &[&str]) -> Re
         std::fs::remove_dir(location)?;
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod session_wait_tests {
+    use super::{SessionWait, session_wait};
+
+    #[test]
+    fn an_incomplete_scan_is_observed_again_until_the_deadline() {
+        let open = vec!["airkctl.exe (process 7)".to_string()];
+        assert_eq!(session_wait(&[], None, false), SessionWait::Done);
+        assert_eq!(session_wait(&[], None, true), SessionWait::Done);
+        assert_eq!(
+            session_wait(&[], Some("unobserved"), false),
+            SessionWait::Observe
+        );
+        assert_eq!(session_wait(&open, None, false), SessionWait::Observe);
+        assert_eq!(
+            session_wait(&open, Some("unobserved"), false),
+            SessionWait::Observe
+        );
+        let SessionWait::Refuse(message) = session_wait(&[], Some("unobserved"), true) else {
+            panic!("an incomplete scan at the deadline is refused");
+        };
+        assert!(
+            message.starts_with("process_observation_incomplete: unobserved"),
+            "{message}"
+        );
+        for incomplete in [None, Some("unobserved")] {
+            let SessionWait::Refuse(message) = session_wait(&open, incomplete, true) else {
+                panic!("a running image at the deadline is refused");
+            };
+            assert!(
+                message.starts_with("installation_files_in_use:") && message.contains("process 7"),
+                "{message}"
+            );
+        }
+    }
 }

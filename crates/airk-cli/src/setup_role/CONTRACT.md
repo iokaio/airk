@@ -130,13 +130,22 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
 - `drain`: for the operation's and the existing record's control roots, a
   `Health` from this user's service whose reported image SHA-256 is the
   existing record's or the payload's `airk`, then `Shutdown` fenced to its
-  instance and the exit of its process (60 s). Before placement or removal,
+  instance and the exit of its process (60 s). First, when installed images
+  exist and the step places or removes files, setup writes the I4
+  replacement notice (`replacing.json` beside the pointer, ten minutes) so
+  editor windows end their `airkctl` sessions; the notice stays through
+  placement and is removed when the receipt closes (complete or failed).
+  Before placement or removal,
   every process running exactly an installed image (except this one) must
   exit by itself within 15 s (`installation_files_in_use`); nothing is
   terminated. Re-observed until `placed` (or `login_unregistered`) is durable.
   Process observation (`legacy_processes`) counts as unobserved only a
   process that could be this user's: on Windows an `OpenProcess` denial (5,
-  another account) or invalid parameter (87, exited) is not a miss.
+  another account) or invalid parameter (87, exited) is not a miss, nor is a
+  failed image or owner query on a process whose open handle reports an exit
+  code other than `STILL_ACTIVE`. An incomplete scan is observed again within
+  the same 15 s; at the deadline a running image is reported
+  (`installation_files_in_use`), otherwise `process_observation_incomplete`.
 - Old editor extensions: for placing kinds, `--plan` reports and `--prepare`
   refuses (`old_extension_running`) while any process runs the native `airk`
   of a pre-split AIRK editor extension (`plan::pre_split_extension_image`:

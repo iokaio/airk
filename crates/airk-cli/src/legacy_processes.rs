@@ -147,7 +147,10 @@ fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
     };
     use windows_sys::Win32::System::{
         ProcessStatus::K32EnumProcesses,
-        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW},
+        Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            QueryFullProcessImageNameW,
+        },
     };
     let mut pids = vec![0u32; MAX_SCANNED];
     let mut bytes = 0u32;
@@ -188,6 +191,13 @@ fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
         }
         // SAFETY: a successful OpenProcess transfers one owned native handle.
         let process = unsafe { OwnedHandle::from_raw_handle(process) };
+        // The open handle keeps the PID from being reused, so a failed query
+        // below is a miss only while the process is still running.
+        let exit_code = || {
+            let mut code = 0u32;
+            // SAFETY: live read-only handle and writable exit-code storage.
+            (unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) } != 0).then_some(code)
+        };
         let mut path = vec![0u16; 32768];
         let mut length = path.len() as u32;
         // SAFETY: live read-only handle, writable path buffer and bounded length.
@@ -196,7 +206,9 @@ fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
         } == 0
             || length as usize >= path.len()
         {
-            result.missed();
+            if still_running(exit_code()) {
+                result.missed();
+            }
             continue;
         }
         let path = PathBuf::from(OsString::from_wide(&path[..length as usize]));
@@ -206,7 +218,8 @@ fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
         match crate::local_ipc::process_user(pid) {
             Ok(owner) if owner == user => result.matched(pid),
             Ok(_) => (),
-            Err(_) => result.missed(),
+            Err(_) if still_running(exit_code()) => result.missed(),
+            Err(_) => (),
         }
     }
     Ok(result)
@@ -217,6 +230,14 @@ fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn other_or_gone(error: Option<i32>) -> bool {
     matches!(error, Some(5) | Some(87))
+}
+/// Pure (Windows): whether a process whose image or owner query failed may
+/// still be running, from `GetExitCodeProcess` on its open handle. Only an
+/// observed exit code other than `STILL_ACTIVE` (259) proves it exited (a
+/// process that exits while setup drains); an unknown answer stays a miss.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn still_running(exit_code: Option<u32>) -> bool {
+    exit_code.is_none_or(|code| code == 259)
 }
 #[cfg(target_os = "macos")]
 fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
@@ -304,6 +325,13 @@ mod tests {
             "deleted owned fixture not observed: {observation:?}"
         );
         Ok(())
+    }
+    #[test]
+    fn a_failed_query_is_excused_only_by_an_observed_exit() {
+        assert!(!still_running(Some(0)));
+        assert!(!still_running(Some(1)));
+        assert!(still_running(Some(259)), "STILL_ACTIVE");
+        assert!(still_running(None), "unknown exit state stays a miss");
     }
     #[test]
     fn only_another_accounts_or_an_exited_process_is_not_a_miss() {

@@ -68,9 +68,10 @@ export function describe(state: AirkctlState): string {
     switch (state.kind) {
         case 'gated': return state.reason === 'workspace_untrusted' ? 'AIRK runs only in a trusted workspace.' : 'AIRK native execution is turned off (airk.runtime.nativeExecution).';
         case 'checking': return 'Checking for AIRK Service…';
+        case 'updating': return 'AIRK Service is being updated. This window released AIRK for the installer and reconnects when setup finishes.';
         case 'not_installed': return state.predecessor
-            ? 'AIRK Service is not installed. An older AIRK is still present; this extension does not use or change it, and the AIRK Service installer will remove it.'
-            : 'AIRK Service is not installed.';
+            ? 'AIRK Service is not installed. An older AIRK is still present; this extension does not use or change it, and the AIRK Service installer (https://airk.ioka.io/#downloads) will remove it.'
+            : 'AIRK Service is not installed. Download its installer from https://airk.ioka.io/#downloads (Download AIRK Service), run it, then choose Check again.';
         case 'unverified': return `AIRK Service could not be verified (${state.code}): ${state.detail} Reinstall it with the AIRK Service installer.`;
         case 'incompatible': return `AIRK Service ${state.airkctlVersion} (I2 ${state.airkctlContracts.join(', ') || '?'}) is not compatible with this extension ${state.extensionVersion} (I2 ${state.extensionContracts.join(', ')}): ${state.reason}${state.missing ? ` (${state.missing.join(', ')})` : ''}. Install a matching AIRK Service or extension.`;
         case 'stopped': return state.explicitlyStopped ? 'AIRK Service was stopped. Start it to continue.' : 'AIRK Service is installed but not running.';

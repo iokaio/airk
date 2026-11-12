@@ -10,8 +10,8 @@ use airk_core::{
     identity::Sha256Digest,
     install_record::{
         AdminAssets, InstallPointer, InstallRecord, MAX_POINTER_BYTES, MAX_RECORD_BYTES,
-        MAX_SETUP_OPERATION_BYTES, MAX_SETUP_RECEIPT_BYTES, RECORD_FILE, SetupReceipt, Signing,
-        canonical,
+        MAX_REPLACEMENT_NOTICE_BYTES, MAX_SETUP_OPERATION_BYTES, MAX_SETUP_RECEIPT_BYTES,
+        RECORD_FILE, REPLACEMENT_NOTICE_FILE, ReplacementNotice, SetupReceipt, Signing, canonical,
     },
 };
 use airk_ipc::private_record::{self, PrivateLock};
@@ -251,6 +251,34 @@ pub(crate) fn write_pointer(pointer: &InstallPointer) -> Result<()> {
         MAX_POINTER_BYTES,
         true,
     )
+}
+
+/// Announce that setup replaces or removes the installed files (I4
+/// `ReplacementNotice`): editor windows release the installed `airkctl`.
+pub(crate) fn write_replacement_notice(notice: &ReplacementNotice) -> Result<()> {
+    let folder = pointer_folder()?;
+    airk_ipc::endpoint::prepare_root(&folder)?;
+    private_record::write_private(
+        &folder,
+        REPLACEMENT_NOTICE_FILE,
+        &canonical(notice),
+        MAX_REPLACEMENT_NOTICE_BYTES,
+        true,
+    )
+}
+
+/// Withdraw the notice; `false` when none existed.
+pub(crate) fn remove_replacement_notice() -> Result<bool> {
+    let path = pointer_folder()?.join(REPLACEMENT_NOTICE_FILE);
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+        Ok(_) => {
+            private_record::private_file(&path)?;
+            std::fs::remove_file(&path)?;
+            Ok(true)
+        }
+    }
 }
 
 /// Remove the pointer; `false` when none existed.

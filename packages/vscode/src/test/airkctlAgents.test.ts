@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { declarations, recognize, remove, removeAll, type Agent, type Scope } from '../airkctl/agents/recognizer';
-import { connectionUrl, inputCredential, reportedConnections, sweepWithoutService, type SweepFileSystem } from '../airkctl/agents';
+import { connectionUrl, inputCredential, reportedConnections, retiredStdioWithoutIndex, sweepWithoutService, type SweepFileSystem } from '../airkctl/agents';
 
 const repo = path.resolve(__dirname, '../../../..');
 interface ConfigCase {
@@ -63,6 +63,29 @@ test('the no-service sweep removes recognized project entries only and keeps eve
     assert.equal(files.get(path.join('/w', '.mcp.json')), '{\n  "mcpServers": {}\n}\n');
     assert.equal(files.get(path.join('/x', '.mcp.json')), foreign.source, 'entries AIRK did not provably write are never touched');
     assert.deepEqual(removeAll('claude', foreign.source!).removed, []);
+});
+
+test('with a service, only retired stdio entries whose folder has no index are removed', async () => {
+    const stdio = fixture.cases.find(item => item.name === 'claude: stdio AIRK entries are retired; an absent launcher is reported')!;
+    const https = fixture.cases.find(item => item.name === 'claude: U92 entry is ok and connect is idempotent')!;
+    const run = async (indexed: string[]) => {
+        const files = new Map<string, string>([[path.join('/w', '.mcp.json'), stdio.source!], [path.join('/y', '.mcp.json'), https.source!]]);
+        const fsys: SweepFileSystem = {
+            lstat: async file => files.has(file) ? { directory: false, link: false } : [path.resolve('/w'), path.resolve('/y')].includes(path.resolve(file)) ? { directory: true, link: false } : undefined,
+            realpath: async file => path.resolve(file),
+            read: async file => files.get(file)!,
+            write: async (file, text) => { files.set(file, text); },
+        };
+        const result = await sweepWithoutService(['/w', '/y'], fsys, () => 9, retiredStdioWithoutIndex(indexed));
+        assert.equal(files.get(path.join('/y', '.mcp.json')), https.source, 'HTTPS entries are left to airkctl agents');
+        assert.ok(result.removed.every(entry => entry.kind === 'stdio' && /no AIRK Service index/.test(entry.reason)));
+        return result.removed.map(entry => entry.serverKey).sort();
+    };
+    // `airk-project-abc` names --root /work/proj; `airk` has no --root, so its folder (/w) counts.
+    assert.deepEqual(await run([]), ['airk', 'airk-project-abc']);
+    assert.deepEqual(await run(['/work/proj']), ['airk']);
+    assert.deepEqual(await run(['/w']), ['airk-project-abc']);
+    assert.deepEqual(await run(['/w', '/work/proj']), []);
 });
 
 test('credential input, connection URL and reported connections are strict', async () => {

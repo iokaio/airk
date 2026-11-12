@@ -511,8 +511,10 @@ begin
     'AIRK keeps index data and service state in one folder, and cache and logs in another. ' +
     'Choose folders that only your account uses. Index data moves later only through the ' +
     'AIRK admin Storage page or airkctl, never by this installer.' + #13#10 + #13#10 +
-    'Before you continue, update the AIRK extension in VS Code to {#AirkVersion} or later, or close ' +
-    'VS Code. An older AIRK extension sets up the old AIRK again.',
+    'If VS Code is open, update the AIRK extension to {#AirkVersion} or later first, or close ' +
+    'VS Code. With an up-to-date extension, open VS Code windows release AIRK while setup ' +
+    'runs and reconnect when it finishes; an older extension keeps AIRK in use or sets up ' +
+    'the old AIRK again.',
     False, '');
   DataPage.Add('Index data and service state');
   DataPage.Add('Cache and logs');
@@ -565,7 +567,7 @@ begin
         PlanProgressPage.Hide;
       end;
       if not Result then begin
-        MsgBox(Text + #13#10 + #13#10 + 'Resolve the items above (choose other folders on this page, or update or close VS Code), then click Next.',
+        MsgBox(Text + #13#10 + #13#10 + 'Resolve the items above (choose other folders on this page, or update the AIRK extension or close VS Code), then click Next.',
           mbError, MB_OK);
         Result := False;
         Exit;
