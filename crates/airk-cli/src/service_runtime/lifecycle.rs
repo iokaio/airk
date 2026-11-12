@@ -100,6 +100,31 @@ pub(super) fn admit_start(root: &Path, mode: StartMode) -> Result<()> {
     })
 }
 
+/// M20 (U80): abandon a stuck record. A terminal record answers unchanged,
+/// as the CLI's abandon did; a record this instance is draining is refused,
+/// because the drain settles it.
+pub(super) fn abandon(
+    root: &Path,
+    instance: Incarnation,
+    id: airk_core::identity::Sha256Digest,
+) -> Result<LifecycleRecord> {
+    let record = ServiceRegistry::open_saved(root)?
+        .lifecycle_by_id(id)?
+        .ok_or_else(|| anyhow::anyhow!("lifecycle_request_unknown"))?;
+    if matches!(
+        record.phase,
+        LifecyclePhase::Complete | LifecyclePhase::Abandoned
+    ) {
+        return Ok(record);
+    }
+    if record.phase == LifecyclePhase::Draining && record.request.expected_instance == instance {
+        anyhow::bail!("lifecycle_request_in_progress");
+    }
+    ServiceRegistry::with_existing_lifecycle(root, namespace(root)?, |ledger| {
+        ledger.advance_lifecycle(&record, LifecyclePhase::Abandoned)
+    })
+}
+
 /// The saved explicit Stop and the pending lifecycle record (U87).
 pub(super) fn status(root: &Path) -> Result<(bool, Option<LifecycleRecord>)> {
     let saved = ServiceRegistry::open_saved(root)?;

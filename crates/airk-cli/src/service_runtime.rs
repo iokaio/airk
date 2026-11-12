@@ -556,10 +556,14 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
-            // M20 lands its handler in step 3e-m20b; until then the typed refusal.
-            ControlMethod::AbandonLifecycle { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::AbandonLifecycle { id } => {
+                match lifecycle::abandon(&state.control_root, state.instance, id) {
+                    Ok(record) => ControlResponse::LifecycleAbandoned { record },
+                    Err(error) => ControlResponse::Failure {
+                        code: lifecycle::failure_code(&error),
+                    },
+                }
+            }
             ControlMethod::LifecycleStatus => match lifecycle::status(&state.control_root) {
                 Ok((explicitly_stopped, pending)) => ControlResponse::LifecycleStatus {
                     explicitly_stopped,

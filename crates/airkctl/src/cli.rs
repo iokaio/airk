@@ -357,6 +357,14 @@ enum ServiceCommand {
         #[arg(long, default_value = "json", value_parser = ["json", "text"])]
         format: String,
     },
+    /// Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged.
+    AbandonLifecycle {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        request_id: airk_core::identity::Sha256Digest,
+    },
     /// Report the installation and whether the service is running, with its saved Stop and
     /// any unfinished stop or restart.
     Status {
@@ -2224,6 +2232,31 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
             operation,
         } => {
             return record_error_service(cx, selection, runtime_dir, operation);
+        }
+        ServiceCommand::AbandonLifecycle {
+            runtime_dir,
+            request_id,
+        } => {
+            let control = match runtime_dir.or(selection.control.clone()) {
+                Some(control) => control,
+                None => match installed(cx) {
+                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
+                    Err(code) => return code,
+                },
+            };
+            return match crate::service::request(
+                &control,
+                ControlMethod::AbandonLifecycle { id: request_id },
+                VERSION,
+            ) {
+                // `airk runtime abandon-lifecycle` printed this shape.
+                Ok(ControlResponse::LifecycleAbandoned { record }) => json_line(
+                    cx,
+                    &serde_json::json!({"status": "lifecycle", "record": record}),
+                ),
+                Ok(other) => fail(cx, &crate::service::refusal(&other)),
+                Err(line) => fail(cx, &line),
+            };
         }
         ServiceCommand::Status { runtime_dir } => {
             return status_service(cx, selection, runtime_dir);

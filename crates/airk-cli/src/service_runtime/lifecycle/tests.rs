@@ -62,3 +62,55 @@ fn ledger_refusals_keep_their_code_and_others_are_unavailable() {
         );
     }
 }
+
+/// M20 on a real ledger: a pending restart of another instance is abandoned,
+/// a repeat answers the same record, this instance's drain is refused and an
+/// unknown id is refused.
+#[test]
+fn abandon_marks_a_stuck_record_and_refuses_this_instances_drain() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    let mut registry = ServiceRegistry::open(&root, Incarnation::from_bytes([9; 16]))?;
+    let mut request = |nonce: u8, instance: u8| -> Result<LifecycleRecord> {
+        let (namespace, epoch) = registry.request_epoch()?;
+        registry.begin_lifecycle(&LifecycleRequest {
+            caller: Incarnation::from_bytes([2; 16]),
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([nonce; 16]),
+            },
+            action: LifecycleAction::Restart,
+            expected_instance: Incarnation::from_bytes([instance; 16]),
+            runtime: Sha256Digest::from_bytes([4; 32]),
+            manager: false,
+        })
+    };
+    let stuck = request(1, 3)?;
+    drop(registry);
+    let this = Incarnation::from_bytes([8; 16]);
+    let abandoned = abandon(&root, this, stuck.id)?;
+    assert_eq!(abandoned.phase, LifecyclePhase::Abandoned);
+    let again = abandon(&root, this, stuck.id)?;
+    assert_eq!((again.id, again.phase), (abandoned.id, abandoned.phase));
+    let mut registry = ServiceRegistry::open(&root, Incarnation::from_bytes([9; 16]))?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    let draining = registry.begin_lifecycle(&LifecycleRequest {
+        caller: Incarnation::from_bytes([2; 16]),
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([6; 16]),
+        },
+        action: LifecycleAction::Stop,
+        expected_instance: this,
+        runtime: Sha256Digest::from_bytes([4; 32]),
+        manager: false,
+    })?;
+    drop(registry);
+    let refused = abandon(&root, this, draining.id).unwrap_err();
+    assert_eq!(failure_code(&refused), "lifecycle_request_in_progress");
+    let unknown = abandon(&root, this, Sha256Digest::from_bytes([0xee; 32])).unwrap_err();
+    assert_eq!(failure_code(&unknown), "lifecycle_request_unknown");
+    Ok(())
+}
