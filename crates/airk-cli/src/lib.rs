@@ -103,6 +103,7 @@ pub mod cli_io;
 pub mod client_requests;
 pub mod console_client;
 pub mod explorer_assistance;
+mod request_journal;
 pub mod session;
 pub mod session_protocol;
 pub mod unified_mcp;
