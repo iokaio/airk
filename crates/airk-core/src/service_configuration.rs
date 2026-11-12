@@ -12,6 +12,73 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_CONFIGURATION_BYTES: usize = 16_384;
 
+/// A project configuration draft as a client reads or builds it (the
+/// `configure --file` JSON); the service prepares it into a
+/// [`ProjectConfiguration`] with its pinned inputs (contracts M9).
+// M9 carries the draft inside `ControlMethod`, which is `Clone`.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConfigurationDraft {
+    Unregister,
+    PrepareDerivedCleanup,
+    DeleteDerived {
+        preview: crate::identity::Sha256Digest,
+    },
+    Vectors {
+        enabled: bool,
+    },
+    Detail {
+        level: crate::extraction::IndexDetail,
+    },
+    RetainedProfile {
+        target: crate::retention::RetainedProfile,
+    },
+    VectorSelection {
+        policy: crate::vector_selection::VectorSelectionPolicy,
+    },
+    AddRoot {
+        alias: String,
+        path: std::path::PathBuf,
+    },
+    RemoveRoot {
+        alias: String,
+    },
+    InstallModel {
+        directory: std::path::PathBuf,
+    },
+    BundledModel,
+    Usage {
+        mode: crate::usage::RecordingMode,
+    },
+    ClearUsage,
+    UsageFeedback {
+        request_id: String,
+        usefulness: crate::usage::Usefulness,
+    },
+    ImportUsage {
+        path: std::path::PathBuf,
+        expected_sha256: Option<crate::identity::Sha256Digest>,
+    },
+    ExtractionPolicy {
+        path: std::path::PathBuf,
+    },
+    ScanLimits {
+        path: std::path::PathBuf,
+    },
+    ResetScanLimits,
+    QuotaPolicy {
+        path: std::path::PathBuf,
+    },
+    Calibrate {
+        tokenizer: std::path::PathBuf,
+        baseline: std::path::PathBuf,
+        returned: std::path::PathBuf,
+        generation: u64,
+        content_kind: crate::usage::ContentKind,
+        record: bool,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputFile {

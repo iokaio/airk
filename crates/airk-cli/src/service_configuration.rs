@@ -1,78 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trusted preparation reads explicit bounded input files; control receives only selectors.
+#[cfg(test)]
+use airk_core::usage::ContentKind;
 use airk_core::{
-    extraction::IndexDetail,
     service::{ControlMethod, ControlResponse, ProjectBinding},
     service_configuration::{ConfigurationRequest, InputFile, ProjectConfiguration},
-    usage::{ContentKind, RecordingMode},
-    vector_selection::VectorSelectionPolicy,
 };
 use anyhow::{Context, Result, ensure};
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Draft {
-    Unregister,
-    PrepareDerivedCleanup,
-    DeleteDerived {
-        preview: airk_core::identity::Sha256Digest,
-    },
-    Vectors {
-        enabled: bool,
-    },
-    Detail {
-        level: IndexDetail,
-    },
-    RetainedProfile {
-        target: airk_core::retention::RetainedProfile,
-    },
-    VectorSelection {
-        policy: VectorSelectionPolicy,
-    },
-    AddRoot {
-        alias: String,
-        path: PathBuf,
-    },
-    RemoveRoot {
-        alias: String,
-    },
-    InstallModel {
-        directory: PathBuf,
-    },
-    BundledModel,
-    Usage {
-        mode: RecordingMode,
-    },
-    ClearUsage,
-    UsageFeedback {
-        request_id: String,
-        usefulness: airk_core::usage::Usefulness,
-    },
-    ImportUsage {
-        path: PathBuf,
-        expected_sha256: Option<airk_core::identity::Sha256Digest>,
-    },
-    ExtractionPolicy {
-        path: PathBuf,
-    },
-    ScanLimits {
-        path: PathBuf,
-    },
-    ResetScanLimits,
-    QuotaPolicy {
-        path: PathBuf,
-    },
-    Calibrate {
-        tokenizer: PathBuf,
-        baseline: PathBuf,
-        returned: PathBuf,
-        generation: u64,
-        content_kind: ContentKind,
-        record: bool,
-    },
-}
+/// The draft `configure` reads and the `usage` commands build; owned by
+/// `airk_core` so every client sends the same JSON (split step 3c.5a).
+pub use airk_core::service_configuration::ConfigurationDraft as Draft;
+
 fn selected(path: &Path) -> Result<PathBuf> {
     let text = path.to_str().context("configuration input must be UTF-8")?;
     ensure!(
@@ -130,8 +70,12 @@ fn usage_import(
     );
     Ok(ProjectConfiguration::ImportUsage { input })
 }
-impl Draft {
-    pub fn prepare(self) -> Result<ProjectConfiguration> {
+/// The draft's preparation into a project configuration (CLI-side checks).
+pub trait PrepareDraft {
+    fn prepare(self) -> Result<ProjectConfiguration>;
+}
+impl PrepareDraft for Draft {
+    fn prepare(self) -> Result<ProjectConfiguration> {
         let configuration = match self {
             Self::Vectors { enabled } => ProjectConfiguration::Vectors { enabled },
             Self::Detail { level } => ProjectConfiguration::Detail { level },
