@@ -1,5 +1,15 @@
 # AIRK documentation
 
+**Split Phase 4 (unpublished, non-shippable interim).** `airk` is the service
+only; `airk` with no arguments starts it in the background or says it is already
+running. `airkctl` is the command-line client, with every surviving command
+under the same names and arguments. The pre-split `runtime …`, `setup`,
+`uninstall`, `host` and `service legacy …` operations are reachable only as
+`airk __airk_role setup-interim <arguments>` until Phase 7. The installer and
+extension are being reworked under the [split plan](split/split-plan.md)
+(Phases 6–7). See [headless use](headless-cli.md) and the generated
+[CLI reference](cli-reference.md).
+
 **Stopped source checkpoint (10 November 2026).** Manual installation of the
 1.8.23 candidate reported an HTTP cleanup refusal. The native eligibility fix
 is committed but untested. No installer was rebuilt for that fix. Installer
@@ -32,12 +42,12 @@ installed acceptance. Merge and publication remain separate actions.
   source watcher run inside it. A stuck owner is quarantined: its project
   reports it and other projects keep running until an explicit service
   restart.
-- **Temporary processes.** These are one `airk service session` per VS Code
-  window, CLI and installer one-shots, at most one PDF parser child and a
+- **Temporary processes.** These are one window helper per VS Code window
+  (`airkctl session` after the split), CLI and installer one-shots, at most one PDF parser child and a
   user-opened `tools shell`.
 - **Agents.** They connect directly to `https://127.0.0.1:<port>/mcp`. Claude
   Code and Codex receive their token from the one-shot
-  `airk runtime http-credential` helper.
+  `airkctl agents credential` helper.
 - **Startup.** Login startup is registered on every install unless the user
   opted out, and the service never exits when idle.
 - **Replacement.** Installation through 1.9.0 inclusive captures affected agent entries.

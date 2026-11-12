@@ -137,6 +137,32 @@ pub fn installed_runtime_fixture(owner: &Path) -> anyhow::Result<(PathBuf, PathB
     reviewed::installed_runtime(owner)
 }
 
+/// U93: the pre-split operations (`runtime`, `setup`, `uninstall`, `host`,
+/// `service legacy`, the process-fixture workers) are reached only through
+/// `airk __airk_role setup-interim` until Phase 7; other arguments pass as is.
+pub fn interim<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let pre_split = matches!(
+        args.first().copied(),
+        Some(
+            "runtime"
+                | "setup"
+                | "uninstall"
+                | "host"
+                | "project-worker"
+                | "derived-worker"
+                | "source-worker"
+        )
+    ) || args.starts_with(&["service", "legacy"]);
+    if pre_split {
+        ["__airk_role", "setup-interim"]
+            .into_iter()
+            .chain(args.iter().copied())
+            .collect()
+    } else {
+        args.to_vec()
+    }
+}
+
 pub fn fixture_command(owner: &Path, args: &[&str]) -> anyhow::Result<std::process::Output> {
     reviewed::fixture_command(owner, args)
 }
@@ -259,7 +285,10 @@ impl Service {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
+        // U93: the pre-split operations this builder still drives sit behind
+        // the interim selector, which precedes their global arguments.
         command
+            .args(["__airk_role", "setup-interim"])
             .arg("--service-install-dir")
             .arg(&managed.install)
             .arg("--root")
@@ -1217,6 +1246,8 @@ pub fn legacy_airk_command(root: &Path, data: &Path, collection: &str) -> Comman
     } else {
         native_command()
     };
+    // U93: interim selector first (see `installed_command`).
+    command.args(["__airk_role", "setup-interim"]);
     if let Some(service) = &service {
         command
             .arg("--root")
@@ -1271,6 +1302,8 @@ pub fn legacy_airk_scoped_command(root: &Path, data: &Path, collection: &str) ->
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    // U93: interim selector first (see `installed_command`).
+    command.args(["__airk_role", "setup-interim"]);
     command
         .arg("--service-runtime-dir")
         .arg(&service.control)

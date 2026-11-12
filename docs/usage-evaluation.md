@@ -32,8 +32,8 @@ For an original fictional `counts.json`:
 
 ```console
 python scripts/usage-evidence.py adapt --adapter openai-responses --input counts.json --model-revision-sha256 MODEL_DIGEST --event-id RANDOM_32_HEX_ID --unix-ms OBSERVATION_UTC_MS --client codex --elapsed-ms 12000 --tool-round-trips 3 > measurement.json
-airk usage import measurement.json --preview
-airk usage import measurement.json
+airkctl usage import measurement.json --preview
+airkctl usage import measurement.json
 ```
 
 Replace the uppercase placeholders with the actual identities/time. Use the same `--root`, `--data-dir` and `--collection` options as the agent. `--airk-request-id` is repeatable. The report keeps client, model/tokenizer and provenance categories separate. Imports remain self-reported even when converted from provider-shaped counters.
@@ -47,8 +47,8 @@ Replace the uppercase placeholders with the actual identities/time. Use the same
 
 ```console
 python scripts/usage-evidence.py pair --with-airk with-session.json --without-airk without-session.json --with-result passed --without-result passed --attest-matched-task-and-model --event-id RANDOM_32_HEX_ID --unix-ms OBSERVATION_UTC_MS --client codex > pair.json
-airk usage import pair.json --preview
-airk usage import pair.json
+airkctl usage import pair.json --preview
+airkctl usage import pair.json
 ```
 
 5. Collect the resulting `paired_task` objects in one JSON array and compare repeated trials:

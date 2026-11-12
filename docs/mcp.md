@@ -63,7 +63,7 @@ In 1.8.7, a setup deadline that closes admission retains its typed expiry after 
 
 ## Implemented tools
 
-`help` combines native documentation and optional bundled Explorer guidance. With no arguments it returns an overview and 35-topic catalog covering CLI/MCP usage, indexing/jobs, health, freshness, models, resources, storage, installation/retirement, troubleshooting, privacy and interpretation limits. `topic` selects bundled version-matched guidance; `command` selects exact public command help generated from the native executable's parser; `tool` selects a current MCP description/schema. It executes no command and reads no sources/indexes. The stdio frontend serves help without querying a project worker, and `airk tools call airk_help` works without a workspace registration or running service.
+`help` combines native documentation and optional bundled Explorer guidance. With no arguments it returns an overview and 35-topic catalog covering CLI/MCP usage, indexing/jobs, health, freshness, models, resources, storage, installation/retirement, troubleshooting, privacy and interpretation limits. `topic` selects bundled version-matched guidance; `command` selects exact public command help generated from the native executable's parser; `tool` selects a current MCP description/schema. It executes no command and reads no sources/indexes. Help needs no workspace registration. Since split Phase 4, `airkctl tools` commands, including `tools call airk_help`, are answered by the running service.
 
 Help accepts `max_bytes` (4096–32768, default 8192) and 1-based `start_line`. Repeat the same selector with `next_line` to continue. The budget covers the complete help JSON payload. Unknown selectors, conflicting command/tool requests and out-of-range budgets fail explicitly. Native command help is unavailable explicitly when a non-native host supplies no parser catalog. Both response modes return the same guidance.
 
@@ -164,10 +164,10 @@ To explicitly request vector retrieval from a connected coding agent, ask: “Ca
 The existing native CLI can run the same search without a coding agent and print JSON. Use the same root, storage directory and collection as the MCP connection:
 
 ```console
-airk --root <workspace> --data-dir <storage> --collection <collection> search "how is a forgotten password recovered" --mode vector --limit 5
+airkctl --root <workspace> --data-dir <storage> --collection <collection> search "how is a forgotten password recovered" --mode vector --limit 5
 ```
 
-This CLI command exercises native retrieval directly; `airk mcp` starts the stdio protocol server. An enabled collection needs a published model and DiskANN index before explicit vector retrieval can succeed.
+This CLI command exercises the same native retrieval; agents use the service's HTTPS `/mcp` endpoint (the stdio `airk mcp` command is retired). An enabled collection needs a published model and DiskANN index before explicit vector retrieval can succeed.
 
 ## Call tools without a coding agent
 
@@ -191,13 +191,13 @@ operations remain a backend subset. Historical `airk_<operation>` aliases,
 including `airk_parse` and grant-bound `airk_query_scope`, remain accepted:
 
 ```console
-airk tools list
-airk tools help airk_search
-airk tools help airk_search --json
-airk --root <workspace> --data-dir <storage> --collection <collection> tools call airk_search --args-file query.json
+airkctl tools list
+airkctl tools help airk_search
+airkctl tools help airk_search --json
+airkctl --root <workspace> --data-dir <storage> --collection <collection> tools call airk_search --args-file query.json
 ```
 
-Save the search JSON above as `query.json`. `--args` also accepts an inline JSON object; `--args-file` avoids operating-system shell quoting. Inputs must be UTF-8 JSON objects in regular files, at most 64 KiB. Omitting both options supplies `{}` for tools such as `airk_status`. `list --json` returns the complete tool catalog. Listing and help need no existing workspace or index.
+Save the search JSON above as `query.json`. `--args` also accepts an inline JSON object; `--args-file` avoids operating-system shell quoting. Inputs must be UTF-8 JSON objects in regular files, at most 64 KiB. Omitting both options supplies `{}` for tools such as `airk_status`. `list --json` returns the complete tool catalog. Listing and help need no existing workspace or index, but they do need the running service.
 
 Calls print the MCP tool-result envelope as JSON, including content, citations, revision identity and `isError` when present. Failed tools print their error result and exit nonzero; invalid local input and protocol errors use stderr and also exit nonzero. Calls retain the same collection isolation, argument validation, evidence budgets and optional usage accounting as agent requests. No extra observation is recorded by the CLI wrapper. Local calls default to the CLI client label; the extension terminal supplies the VS Code label.
 
@@ -212,7 +212,7 @@ call airk_search --args-file query.json
 exit
 ```
 
-Enter JSON directly without shell quoting. Argument-file paths are relative to the workspace and may contain spaces; enclosing double quotes are optional. The console expands JSON text content for readable display and labels tool errors; one-shot `tools call` commands retain the raw MCP envelope for scripts. This console accepts AIRK tool commands, not PowerShell or shell commands. Failed calls leave the console available for correction; EOF or `exit` closes it. Standalone users can launch the same console with `airk --root <workspace> --data-dir <storage> --collection <collection> tools shell`.
+Enter JSON directly without shell quoting. Argument-file paths are relative to the workspace and may contain spaces; enclosing double quotes are optional. The console expands JSON text content for readable display and labels tool errors; one-shot `tools call` commands retain the raw MCP envelope for scripts. This console accepts AIRK tool commands, not PowerShell or shell commands. Failed calls leave the console available for correction; EOF or `exit` closes it. Standalone users can launch the same console with `airkctl --root <workspace> --data-dir <storage> --collection <collection> tools shell`.
 
 Opening the console does not index or download a model. Trust is required in the editor. Reopening the same collection focuses its existing console; removed collections, changed storage/helper bindings, trust loss on refresh and extension shutdown close affected consoles. Terminal sessions are transient and do not revive against old collection bindings.
 
@@ -222,7 +222,7 @@ The unified tool inventory is shared across clients. Code details count toward f
 
 ## Remembered evidence and conditional reads
 
-`changes` and `airk changes` validate current remembered citations/handles and report independent scheduler freshness. Unavailable retained baselines are explicit; observed history and move/similarity suggestions are bounded and do not prove filesystem intent. Follow returned validation pages before treating a request as consumed. See [changes](changes.md).
+`changes` and `airkctl changes` validate current remembered citations/handles and report independent scheduler freshness. Unavailable retained baselines are explicit; observed history and move/similarity suggestions are bounded and do not prove filesystem intent. Follow returned validation pages before treating a request as consumed. See [changes](changes.md).
 
 `file_info`, `read_file`, `outline` and `context` additionally accept `if_evidence`, `follow_moves`, `known_hash` and `artifact_id`. Normal payload fields remain top-level; an additive `read` object provides publication, status, requested/resolved path, validator, basis and reason. A matching representation validator yields `read.status: "not_modified"` and omits the ordinary payload. A supplied `known_hash` that differs from a present indexed source fails explicitly; source hashes alone do not suppress evidence. Move following defaults to false and requires both the current artifact handle and matching source hash; an old path alone cannot redirect.
 
@@ -236,7 +236,7 @@ Text source locations use 1-based inclusive source lines. PDF locations cite pag
 
 A grammar-derived definition is a syntax fact, not runtime behavior or a resolved reference. Partial syntax is exposed in file_info; declarations containing parse errors are suppressed. Textual references can include strings, comments and definitions. Search is not answer generation.
 
-[Agent integration](agent-integration.md) describes configuration and client approval/setup. [Collections](collections.md) defines the persisted scope. Run airk index after changes; workers reopen the active generation on each operation.
+[Agent integration](agent-integration.md) describes configuration and client approval/setup. [Collections](collections.md) defines the persisted scope. Run airkctl index after changes; workers reopen the active generation on each operation.
 
 [The online tool-alignment review](history/agent-tool-alignment.md) maps common coding tasks to these tools and records client discovery/configuration differences. Keep one shared tool contract; client adapters handle setup and optional guidance. Status/list counts describe indexed snapshots, not live [workspace coverage](index-coverage.md).
 

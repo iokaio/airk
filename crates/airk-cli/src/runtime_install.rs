@@ -1896,7 +1896,7 @@ fn self_test_observation(main: &Path) -> Result<serde_json::Value> {
     // A fixed native command, no shell, no source or collection parameters.
     let mut command = Command::new(main);
     command
-        .args(["runtime", "self-test"])
+        .args(["__airk_role", "setup-interim", "runtime", "self-test"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -2173,7 +2173,8 @@ async fn start_with_observation_clock(
     let service_executable =
         crate::process_roles::executable(main, crate::process_roles::Role::Service)?;
     let mut arguments: Vec<std::ffi::OsString> = vec![
-        "serve".into(),
+        "__airk_role".into(),
+        "service-foreground".into(),
         "--runtime-dir".into(),
         control.as_os_str().to_owned(),
     ];

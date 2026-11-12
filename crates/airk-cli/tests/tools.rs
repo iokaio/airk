@@ -578,6 +578,8 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     parity.substitute_path(state.path(), "<STATE>");
     parity.service(&service);
     parity.mask_json_fields(CLOCK_FIELDS);
+    // The receipt budget depends on the fixture paths' length.
+    parity.mask_json_fields(&["receipt_bytes_budget"]);
     let calls = [
         ("airk_read_file", json!({"path": "recovery.md"})),
         ("airk_file_info", json!({"path": "recovery.md"})),
@@ -815,6 +817,8 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
     parity.substitute_path(state.path(), "<STATE>");
     parity.service(&service);
     parity.mask_json_fields(CLOCK_FIELDS);
+    // The receipt budget depends on the fixture paths' length.
+    parity.mask_json_fields(&["receipt_bytes_budget"]);
     let mut compared = 0;
     for read in &reads {
         let name = parity.name(&read.join(" "));
@@ -1972,7 +1976,14 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
     parity.service(&service);
     parity.mask_json_fields(CLOCK_FIELDS);
     // Measured resource figures (timings, memory, OS counters) vary per run.
-    parity.mask_json_fields(&["*_us", "peak_rss_bytes", "value"]);
+    parity.mask_json_fields(&[
+        "*_us",
+        "peak_rss_bytes",
+        "value",
+        "*disk_growth_bytes",
+        "returned_utf8_bytes",
+        "measured_disk_bytes",
+    ]);
     parity.mask_text("measured_usage_text", mask_measured_usage_text);
     for read in &reads {
         for (name, old, selection) in [
@@ -2933,6 +2944,7 @@ fn mask_measured_usage_text(text: &str) -> String {
     'scan: while !rest.is_empty() {
         for (marker, close) in [
             ("root_binding", Some(']')),
+            ("latency_buckets", Some(']')),
             ("Us: ", None),
             ("Bytes: ", None),
             ("RSS: Some(", None),
@@ -2956,6 +2968,18 @@ fn mask_measured_usage_text(text: &str) -> String {
                         rest = &after[digits..];
                     }
                 }
+                continue 'scan;
+            }
+        }
+        // A Markdown table row's last cell (the measured column, e.g.
+        // "Returned bytes"), escaped or not.
+        if out.ends_with("| ") {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            if digits > 0
+                && (rest[digits..].starts_with(" |\\n") || rest[digits..].starts_with(" |\n"))
+            {
+                out.push_str("<MASKED>");
+                rest = &rest[digits..];
                 continue 'scan;
             }
         }

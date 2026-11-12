@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Every public CLI command has a test. Query and management commands run against a
-//! private headless service; Explorer commands run offline; installer-lifecycle commands
-//! name the native test or qualification script that exercises them. The table is checked
-//! against commands discovered from the actual native parser help, independently
-//! of generated docs/cli-reference.md. Another test keeps full documentation exact.
+//! Functional tests of the command workflows (through `airkctl`) and of the
+//! pre-split operations kept behind `airk __airk_role setup-interim` (U93).
+//! Parser coverage moved with the user CLI to `airkctl`'s help-catalog and
+//! CLI-reference drift tests (split Phase 4).
 use anyhow::{Context, Result, ensure};
 mod common;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeSet,
     fs,
     path::Path,
     process::{Command, Output, Stdio},
@@ -25,10 +23,6 @@ fn airk() -> Command {
         command.creation_flags(0x08000000);
     }
     command
-}
-
-fn run(args: &[&str]) -> Result<Output> {
-    Ok(airk().args(args).stdin(Stdio::null()).output()?)
 }
 
 /// An in-process `airkctl` run (split Phase 4) for a command `airkctl` serves.
@@ -359,6 +353,7 @@ fn standalone_uninstall_without_confirmation_preserves_the_explicit_installation
     let original = b"Unreviewed installation bytes must survive a declined uninstall.";
     fs::write(install.join("unknown.bin"), original)?;
     let output = airk()
+        .args(["__airk_role", "setup-interim"])
         .arg("--service-install-dir")
         .arg(&install)
         .arg("uninstall")
@@ -406,17 +401,21 @@ fn installed_init_acknowledges_only_existing_reviewed_mapping() -> Result<()> {
     let original = b"# Existing reviewed init source\n";
     fs::write(source.path().join("original.md"), original)?;
     let service = common::Service::reviewed(source.path(), data.path(), "init-existing");
-    let initialized = service
-        .installed_command(source.path(), data.path(), "init-existing")
-        .arg("init")
-        .output()?;
-    ensure!(
-        initialized.status.success(),
-        "existing init failed: {}{}",
-        String::from_utf8_lossy(&initialized.stdout),
-        String::from_utf8_lossy(&initialized.stderr)
-    );
-    let acknowledged: Value = serde_json::from_slice(&initialized.stdout)?;
+    // `init` is an airkctl command after the split (Phase 4); its library
+    // entry runs against the fixture's control root.
+    let airkctl::registration::Init::Registered(project) = airkctl::registration::init(
+        &service.control,
+        env!("CARGO_PKG_VERSION"),
+        source.path(),
+        data.path(),
+        "init-existing",
+        None,
+    )
+    .map_err(|line| anyhow::anyhow!("existing init failed: {}", line.message))?
+    else {
+        anyhow::bail!("existing init was not acknowledged");
+    };
+    let acknowledged = serde_json::to_value(&project)?;
     assert_eq!(
         acknowledged["registration"],
         serde_json::to_value(&service.project)?
@@ -439,12 +438,16 @@ fn installed_init_acknowledges_only_existing_reviewed_mapping() -> Result<()> {
     else {
         anyhow::bail!("missing service health before refused init");
     };
-    let rejected = service
-        .installed_command(unreviewed.path(), &absent_data, "init-unmapped")
-        .arg("init")
-        .output()?;
+    let rejected = airkctl::registration::init(
+        &service.control,
+        env!("CARGO_PKG_VERSION"),
+        unreviewed.path(),
+        &absent_data,
+        "init-unmapped",
+        None,
+    );
     ensure!(
-        !rejected.status.success(),
+        !matches!(rejected, Ok(airkctl::registration::Init::Registered(_))),
         "fresh unmapped root was registered by init"
     );
     assert!(!absent.path().join("not-created").exists());
@@ -935,7 +938,13 @@ fn legacy_runtime_commands_require_an_existing_owned_installation() -> Result<()
     ] {
         let mut command = airk();
         command
-            .args(["runtime", role, "--install-dir"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "runtime",
+                role,
+                "--install-dir",
+            ])
             .arg(&install)
             .args(["--expected-active", &expected]);
         if matches!(
@@ -1346,708 +1355,5 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
         .success()
     );
     ensure!(!Path::new(&out("handoff.json")).exists());
-    Ok(())
-}
-
-/// Commands whose effects need an installed runtime, login manager, legacy state or an
-/// editor are exercised elsewhere; each entry names that test so it cannot silently rot.
-const ELSEWHERE: &[(&str, &str, &str)] = &[
-    (
-        "runtime replace-installation",
-        "crates/airk-cli/src/runtime_install/replacement/tests.rs",
-        "fn replacement_removes_only_airk_locations_of_a_pre_1_9_installation",
-    ),
-    (
-        "runtime lookup-http-connection",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime inspect-legacy-launchers",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime retire-legacy-launchers",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime inspect-legacy-caches",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime prepare-legacy-caches",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime reprepare-legacy-caches",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime retire-legacy-caches",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime adopt-legacy-index",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime adopt-legacy-indexes",
-        "this file",
-        "legacy_runtime_commands_require_an_existing_owned_installation",
-    ),
-    (
-        "runtime source-scope",
-        "crates/airk-cli/src/runtime_install/commands.rs",
-        "source_scope_authenticates_digest_control_and_missing_state_without_creation",
-    ),
-    (
-        "runtime http-endpoint",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-connection",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-connection-info",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-revoke",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-trust",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-issuer-rotation",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-legacy-connection",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "runtime http-legacy-union-connection",
-        "this file",
-        "native_http_commands_preserve_private_selection_and_revocation",
-    ),
-    (
-        "bridge",
-        "crates/airk-cli/tests/service_runtime.rs",
-        "bridge",
-    ),
-    (
-        "host",
-        "crates/airk-cli/src/runtime_install/commands.rs",
-        "Host",
-    ),
-    (
-        "init",
-        "this file",
-        "installed_init_acknowledges_only_existing_reviewed_mapping",
-    ),
-    (
-        "mcp",
-        "crates/airk-cli/tests/service_runtime.rs",
-        "assert_retired_stdio_roles",
-    ),
-    (
-        "setup",
-        "crates/airk-cli/tests/configuration_native.rs",
-        "\"setup\"",
-    ),
-    (
-        "uninstall",
-        "this file",
-        "standalone_uninstall_without_confirmation_preserves_the_explicit_installation",
-    ),
-    (
-        "setup-model",
-        "scripts/check-service-clients.py",
-        "setup-model",
-    ),
-    ("search", "this file", "headless_workflow"),
-    (
-        "serve",
-        "crates/airk-cli/tests/service_runtime.rs",
-        "supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss",
-    ),
-    ("tools shell", "crates/airk-cli/tests/tools.rs", "shell"),
-    (
-        "usage calibrate",
-        "scripts/check-tokenizer-calibration.py",
-        "calibrate",
-    ),
-    ("usage import", "scripts/check-usage-inputs.py", "import"),
-    (
-        "service console",
-        "crates/airk-cli/tests/service_runtime.rs",
-        "console",
-    ),
-    (
-        "service record-error",
-        "packages/vscode/src/test/diagnosticLogs.test.ts",
-        "record-error",
-    ),
-    ("service rpc", "scripts/check-service-clients.py", "\"rpc\""),
-    (
-        "service prepare-storage",
-        "crates/airk-cli/tests/configuration_native.rs",
-        "prepare-storage",
-    ),
-    (
-        "service prepare-configuration",
-        "crates/airk-cli/tests/configuration_native.rs",
-        "prepare-configuration",
-    ),
-    (
-        "service requests prepare-configuration",
-        "crates/airk-cli/tests/configuration_native.rs",
-        "prepare-configuration",
-    ),
-    (
-        "service legacy derived-receipts",
-        "crates/airk-cli/tests/legacy_native.rs",
-        "derived-receipts",
-    ),
-    (
-        "service legacy forget",
-        "crates/airk-cli/src/legacy_startup/tests.rs",
-        ".forget(approval)",
-    ),
-    (
-        "service legacy forget-derived",
-        "crates/airk-cli/src/legacy_startup.rs",
-        "ForgetDerived",
-    ),
-    (
-        "service legacy list",
-        "crates/airk-cli/tests/legacy_native.rs",
-        "list",
-    ),
-    (
-        "service legacy preview-derived",
-        "crates/airk-cli/tests/legacy_native.rs",
-        "preview-derived",
-    ),
-    (
-        "service legacy remove-derived",
-        "crates/airk-cli/tests/legacy_native.rs",
-        "remove-derived",
-    ),
-    (
-        "service legacy remove-startup",
-        "packages/vscode/src/test/serviceBootstrap.test.ts",
-        "remove-startup",
-    ),
-    (
-        "service legacy review",
-        "crates/airk-cli/tests/legacy_native.rs",
-        "review",
-    ),
-    (
-        "service legacy show",
-        "crates/airk-cli/src/legacy_startup.rs",
-        "Show",
-    ),
-    (
-        "runtime abandon-lifecycle",
-        "crates/airk-cli/src/runtime_install/lifecycle.rs",
-        "abandon",
-    ),
-    (
-        "runtime abort-activation",
-        "scripts/check-runtime-activation.py",
-        "abort-activation",
-    ),
-    (
-        "runtime abort-launcher-repair",
-        "crates/airk-cli/src/runtime_install/launcher_repair.rs",
-        "abort",
-    ),
-    (
-        "runtime abort-layout",
-        "crates/airk-cli/src/runtime_install/layout/tests.rs",
-        "failed_or_abandoned_claim_preserves_foreign_state_and_permits_a_new_reviewed_location",
-    ),
-    (
-        "runtime abort-stage",
-        "crates/airk-cli/src/runtime_install/staging.rs",
-        "abort",
-    ),
-    (
-        "runtime activate",
-        "scripts/check-runtime-activation.py",
-        "activate",
-    ),
-    (
-        "runtime container-host",
-        "scripts/check-container.py",
-        "container",
-    ),
-    (
-        "runtime diagnose",
-        "scripts/check-service-install.py",
-        "diagnose",
-    ),
-    (
-        "runtime ensure",
-        "scripts/check-managed-runtime.py",
-        "ensure",
-    ),
-    (
-        "runtime foreground",
-        "crates/airk-cli/src/runtime_install/commands.rs",
-        "Foreground",
-    ),
-    (
-        "runtime inspect",
-        "scripts/check-service-install.py",
-        "inspect",
-    ),
-    (
-        "runtime inspect-candidate",
-        "packages/vscode/src/test/serviceBootstrap.test.ts",
-        "inspect-candidate",
-    ),
-    (
-        "runtime inventory",
-        "crates/airk-cli/src/runtime_install/inventory.rs",
-        "fn measurement_is_bounded",
-    ),
-    (
-        "runtime launch",
-        "crates/airk-cli/tests/service_runtime.rs",
-        "launch",
-    ),
-    (
-        "runtime legacy-retirement-candidates",
-        "crates/airk-cli/tests/catalog_upgrade.rs",
-        "\"legacy-retirement-candidates\",",
-    ),
-    (
-        "runtime legacy-retirement-review",
-        "crates/airk-cli/tests/catalog_upgrade.rs",
-        "\"legacy-retirement-review\",",
-    ),
-    (
-        "runtime legacy-retirement-authorize",
-        "crates/airk-cli/tests/catalog_upgrade.rs",
-        "\"legacy-retirement-authorize\",",
-    ),
-    (
-        "runtime legacy-retirement-receipt",
-        "crates/airk-cli/tests/catalog_upgrade.rs",
-        "\"legacy-retirement-receipt\",",
-    ),
-    (
-        "runtime legacy-retirement-resume",
-        "crates/airk-cli/tests/catalog_upgrade.rs",
-        "\"legacy-retirement-resume\",",
-    ),
-    (
-        "runtime lifecycle",
-        "crates/airk-cli/src/runtime_install/managed/tests.rs",
-        "lifecycle",
-    ),
-    (
-        "runtime location",
-        "packages/vscode/src/test/extensionUninstall.test.ts",
-        "location",
-    ),
-    (
-        "runtime login install",
-        "scripts/check-macos-direct-runtime.py",
-        "runtime(\"login\", \"--install-dir\", install, \"install\")",
-    ),
-    (
-        "runtime login plan",
-        "crates/airk-cli/src/runtime_install.rs",
-        "Plan",
-    ),
-    (
-        "runtime login start",
-        "scripts/check-macos-direct-runtime.py",
-        "runtime(\"login\", \"--install-dir\", install, \"start\")",
-    ),
-    (
-        "runtime login status",
-        "scripts/check-macos-direct-runtime.py",
-        "runtime(\"login\", \"--install-dir\", install, \"status\")",
-    ),
-    (
-        "runtime login stop",
-        "scripts/check-macos-direct-runtime.py",
-        "runtime(\"login\", \"--install-dir\", install, \"stop\")",
-    ),
-    (
-        "runtime login uninstall",
-        "scripts/check-macos-direct-runtime.py",
-        "runtime(\"login\", \"--install-dir\", install, \"uninstall\")",
-    ),
-    (
-        "runtime managed",
-        "crates/airk-cli/src/runtime_install/managed/tests.rs",
-        "managed",
-    ),
-    (
-        "runtime prepare-client",
-        "scripts/check-container.py",
-        "prepare-client",
-    ),
-    (
-        "runtime purge",
-        "crates/airk-cli/src/runtime_install/inventory.rs",
-        "fn purge_contents_keeps",
-    ),
-    (
-        "runtime remove",
-        "scripts/check-runtime-activation.py",
-        "remove",
-    ),
-    (
-        "runtime repair-launcher",
-        "scripts/check-service-install.py",
-        "repair-launcher",
-    ),
-    (
-        "runtime repair-payload",
-        "crates/airk-cli/src/runtime_install/payload_repair.rs",
-        "fn ",
-    ),
-    (
-        "runtime reset-startup",
-        "scripts/check-service-install.py",
-        "reset-startup",
-    ),
-    (
-        "runtime retire-previous",
-        "scripts/check-service-install.py",
-        "retire-previous",
-    ),
-    (
-        "runtime rollback",
-        "crates/airk-cli/src/runtime_install/activation.rs",
-        "rollback",
-    ),
-    (
-        "runtime self-test",
-        "crates/airk-cli/tests/bundled_model.rs",
-        "self-test",
-    ),
-    (
-        "runtime snapshot",
-        "crates/airk-cli/tests/service_runtime.rs",
-        "snapshot",
-    ),
-    (
-        "runtime stage",
-        "crates/airk-cli/src/runtime_install/staging/tests.rs",
-        "stage",
-    ),
-    ("runtime start", "scripts/check-service-install.py", "start"),
-    (
-        "runtime uninstall",
-        "packages/vscode/src/test/extensionUninstall.test.ts",
-        "uninstall",
-    ),
-];
-
-/// Commands exercised by the functional tests in this file.
-const HERE: &[&str] = &[
-    "changes",
-    "code-facts",
-    "configure",
-    "context",
-    "explorer draft-plan",
-    "explorer draft-search",
-    "explorer draft-strategy",
-    "explorer get-handoff",
-    "explorer get-template",
-    "explorer list-templates",
-    "explorer proposal-status",
-    "explorer suggest-view",
-    "explorer validate-draft",
-    "facts",
-    "files",
-    "imports",
-    "index",
-    "info",
-    "inspect",
-    "model-catalog",
-    "outline",
-    "parse",
-    "pause",
-    "projects",
-    "read",
-    "runtime http-credential",
-    "refs",
-    "relationships",
-    "resume",
-    "service health",
-    "service logs",
-    "service prepare-registration",
-    "service register",
-    "service session",
-    "service requests forget",
-    "service requests list",
-    "service requests prepare",
-    "service requests retry",
-    "service shutdown",
-    "settings",
-    "status",
-    "symbol",
-    "tools call",
-    "tools list",
-    "usage clear",
-    "usage configure",
-    "usage feedback",
-    "usage policy",
-    "usage report",
-    "watch",
-];
-
-/// One window's session: hello first, offline invokes answer exactly what the
-/// one-shot process prints, long-lived roles are refused, and stdin EOF ends
-/// the process. Every wait observes a frame or the exit under a deadline.
-#[test]
-fn service_session_matches_one_shot_output_and_exits_on_eof() -> Result<()> {
-    use sha2::{Digest, Sha256};
-    use std::io::{Read, Write};
-    const DEADLINE: Duration = Duration::from_secs(60);
-    let mut child = airk()
-        .args(["service", "session"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut input = child.stdin.take().context("session stdin")?;
-    let mut output = child.stdout.take().context("session stdout")?;
-    let (frames, responses) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        loop {
-            let mut prefix = [0u8; 4];
-            if output.read_exact(&mut prefix).is_err() {
-                break;
-            }
-            let mut body = vec![0; u32::from_be_bytes(prefix) as usize];
-            if output.read_exact(&mut body).is_err()
-                || frames.send(serde_json::from_slice::<Value>(&body)).is_err()
-            {
-                break;
-            }
-        }
-    });
-    let (exited, exit) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = exited.send(child.wait());
-    });
-    let mut send = |value: Value| -> Result<()> {
-        let body = serde_json::to_vec(&value)?;
-        input.write_all(&u32::try_from(body.len())?.to_be_bytes())?;
-        input.write_all(&body)?;
-        input.flush()?;
-        Ok(())
-    };
-    let next = || -> Result<Value> { Ok(responses.recv_timeout(DEADLINE)??) };
-    let id = |n: u8| format!("{n:02x}").repeat(16);
-
-    send(json!({"id":id(1),"request":{"hello":{"protocol":1}}}))?;
-    let image = format!(
-        "{:x}",
-        Sha256::digest(fs::read(env!("CARGO_BIN_EXE_airk"))?)
-    );
-    assert_eq!(
-        next()?,
-        json!({"id":id(1),"outcome":{"status":"hello","protocol":1,"version":env!("CARGO_PKG_VERSION"),"executable_sha256":image}})
-    );
-    let missing = tempfile::tempdir()?.path().join("missing-control");
-    let missing = missing.to_str().context("fixture path")?;
-    let cases: [&[&str]; 4] = [
-        &["--version"],
-        &["runtime", "bogus"],
-        &["runtime", "location", "--channel", "stable"],
-        &[
-            "service",
-            "logs",
-            "--runtime-dir",
-            missing,
-            "--format",
-            "text",
-        ],
-    ];
-    for (n, argv) in cases.iter().enumerate() {
-        let one_shot = run(argv)?;
-        let n = u8::try_from(n)? + 2;
-        send(json!({"id":id(n),"request":{"invoke":{"argv":argv,"deadline_ms":60000}}}))?;
-        assert_eq!(
-            next()?,
-            json!({"id":id(n),"outcome":{"status":"invoked","success":one_shot.status.success(),
-                "stdout":String::from_utf8(one_shot.stdout)?,"stderr":String::from_utf8(one_shot.stderr)?}}),
-            "{argv:?}"
-        );
-    }
-    send(
-        json!({"id":id(9),"request":{"invoke":{"argv":["serve","--runtime-dir",missing],"deadline_ms":60000}}}),
-    )?;
-    assert_eq!(
-        next()?,
-        json!({"id":id(9),"outcome":{"status":"failed","code":"session_command_refused","retryable":false}})
-    );
-    drop(input);
-    let status = exit
-        .recv_timeout(DEADLINE)
-        .context("session did not exit after stdin EOF")??;
-    ensure!(status.success(), "session exit: {status}");
-    Ok(())
-}
-
-fn reference_commands() -> Result<Vec<String>> {
-    let reference = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/cli-reference.md"),
-    )?;
-    Ok(reference
-        .lines()
-        .filter_map(|line| line.strip_prefix("## airk"))
-        .map(|rest| rest.trim().to_owned())
-        .collect())
-}
-
-/// Read only Clap's visible Commands table, ignoring wrapped descriptions and
-/// the generated help alias. Never use generated Markdown as command discovery.
-fn help_children(help: &str) -> Result<Vec<String>> {
-    let mut children = Vec::new();
-    let mut table = false;
-    for line in help.lines() {
-        if line == "Commands:" {
-            table = true;
-            continue;
-        }
-        if !table || line.trim().is_empty() {
-            continue;
-        }
-        if !line.starts_with("  ") {
-            break;
-        }
-        let Some(entry) = line
-            .strip_prefix("  ")
-            .filter(|rest| !rest.starts_with(' '))
-        else {
-            continue; // Wrapped description; it is not a command row.
-        };
-        let name = entry
-            .split_whitespace()
-            .next()
-            .context("empty command row")?;
-        ensure!(
-            name.bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
-            "Unexpected native help command row: {line}"
-        );
-        if name != "help" {
-            children.push(name.to_owned());
-        }
-    }
-    Ok(children)
-}
-
-fn parser_commands() -> Result<BTreeSet<String>> {
-    let mut pending = vec![String::new()];
-    let mut commands = BTreeSet::new();
-    while let Some(command) = pending.pop() {
-        ensure!(
-            commands.insert(command.clone()),
-            "Duplicate native command path: {command}"
-        );
-        let args: Vec<&str> = command.split_whitespace().chain(["--help"]).collect();
-        let output = run(&args)?;
-        ensure!(output.status.success(), "airk {command} --help failed");
-        let help = std::str::from_utf8(&output.stdout)?;
-        ensure!(help.contains("Usage:"), "airk {command} --help lacks usage");
-        for child in help_children(help)? {
-            pending.push(if command.is_empty() {
-                child
-            } else {
-                format!("{command} {child}")
-            });
-        }
-    }
-    Ok(commands)
-}
-
-#[test]
-fn every_public_command_has_a_test_and_prints_help() -> Result<()> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let groups = [
-        "",
-        "explorer",
-        "runtime",
-        "runtime login",
-        "service",
-        "service legacy",
-        "service requests",
-        "tools",
-        "usage",
-    ];
-    // Keep parser discovery independent of stale generated docs. Exercise the
-    // table reader's boundaries without starting any command beyond --help.
-    ensure!(
-        help_children(
-            "Usage: airk [COMMAND]\n\nCommands:\n  runtime  Runtime commands\n           wrapped description\n  help     Generated alias\n\nOptions:\n  --help  Help\n"
-        )? == vec!["runtime".to_owned()]
-    );
-    ensure!(help_children("Usage: airk read [OPTIONS]\n\nOptions:\n  --help  Help\n")?.is_empty());
-    let discovered = parser_commands()?;
-    let documented: BTreeSet<_> = reference_commands()?.into_iter().collect();
-    let mut missing = Vec::new();
-    for command in &discovered {
-        if groups.contains(&command.as_str()) || HERE.contains(&command.as_str()) {
-            continue;
-        }
-        match ELSEWHERE
-            .iter()
-            .find(|(name, _, _)| *name == command.as_str())
-        {
-            Some((_, "this file", needle)) => {
-                ensure!(
-                    include_str!("cli_commands.rs")
-                        .lines()
-                        .any(|line| line.trim_start().starts_with(&format!("fn {needle}"))),
-                    "{command}: local coverage function {needle} no longer exists"
-                );
-            }
-            Some((_, file, needle)) => {
-                let text = fs::read_to_string(root.join(file))
-                    .with_context(|| format!("{command}: {file}"))?;
-                ensure!(
-                    text.contains(needle),
-                    "{command}: {file} no longer contains {needle}"
-                );
-            }
-            None => missing.push(command),
-        }
-    }
-    ensure!(
-        missing.is_empty() && discovered == documented,
-        "commands without a test: {missing:?}; parser commands missing from generated docs: {:?}; stale documented commands: {:?}",
-        discovered.difference(&documented).collect::<Vec<_>>(),
-        documented.difference(&discovered).collect::<Vec<_>>()
-    );
     Ok(())
 }

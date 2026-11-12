@@ -111,7 +111,7 @@ fn cli_output(
     let stdout = owner.join(format!("command-{id}.stdout"));
     let stderr = owner.join(format!("command-{id}.stderr"));
     let mut cmd = command(executable, owner);
-    cmd.args(args)
+    cmd.args(super::interim(args))
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -855,6 +855,7 @@ impl FixtureForeground {
         let stdout = owner.join(format!("foreground-{id}.stdout"));
         let stderr = owner.join(format!("foreground-{id}.stderr"));
         let child = command(&executable, &owner)
+            .args(["__airk_role", "setup-interim"])
             .args([
                 "runtime",
                 "foreground",

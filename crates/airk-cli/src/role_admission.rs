@@ -22,10 +22,14 @@ use std::{
 
 /// The pre-parse selector for private roles.
 pub const SELECTOR: &str = "__airk_role";
+/// U93: the interim role that reaches the pre-split operations with Phase 7
+/// or developer owners; the `airk` binary parses its arguments.
+pub const INTERIM: &str = "setup-interim";
 /// Roles named by the contract, in the order of `fixtures/split/i4/role_admission.json`.
-pub const ROLES: [&str; 6] = [
+pub const ROLES: [&str; 7] = [
     "service-detached",
     "service-foreground",
+    "setup-interim",
     "service-login",
     "pdf-child",
     "record-error",
@@ -171,6 +175,8 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
                 operation: operation.context("role_admission_refused: --operation is required")?,
             })
         }
+        // The binary dispatches the interim role before role parsing.
+        INTERIM => bail!("role_admission_refused: {INTERIM} is dispatched by the airk binary"),
         name if ROLES.contains(&name) => bail!("role_not_available: {name}"),
         _ => bail!("role_admission_refused: unknown private role"),
     }

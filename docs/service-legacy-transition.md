@@ -1,5 +1,10 @@
 # Reviewed legacy transition
 
+> **Split Phase 4 (non-shippable interim, U93).** `airk` no longer has a user
+> command tree. Until the Phase 7 setup role and installer own predecessor
+> retirement, the `service legacy …` commands below are reachable only as
+> `airk __airk_role setup-interim service legacy …`.
+
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. This 1.4.0 source follow-up still needs installed-editor acceptance.
 
 Trusted VSIX installation and **Install or Repair CLI** now refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. This 1.4.0 source follow-up still needs installed-editor acceptance.
@@ -25,10 +30,10 @@ Removal requires the saved AIRK receipt, exact generated command/definition, unc
 The new CLI exposes the same explicit metadata-only workflow:
 
 ```console
-airk service legacy review --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection> --executable <old-airk>
-airk service legacy remove-startup --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection> --executable <old-airk> --approval <review-approval>
-airk service legacy list --runtime-dir <initialized-1.4-control>
-airk service legacy show --runtime-dir <initialized-1.4-control> --approval <review-approval>
+airk __airk_role setup-interim service legacy review --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection> --executable <old-airk>
+airk __airk_role setup-interim service legacy remove-startup --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection> --executable <old-airk> --approval <review-approval>
+airk __airk_role setup-interim service legacy list --runtime-dir <initialized-1.4-control>
+airk __airk_role setup-interim service legacy show --runtime-dir <initialized-1.4-control> --approval <review-approval>
 ```
 
 Accepted removal saves a checksummed, namespace-bound intent before OS effects. Explicit saved-receipt recovery resumes the captured phase after interruption; completed replay returns the original result without touching a later registration. Read-only review/list do not initialize retirement state. The journal retains at most sixteen 16 KiB intents; only completed receipts can be explicitly forgotten. Missing initialized metadata, corrupt phases, changed files, unknown links and reappearing definitions refuse further effects.
@@ -38,9 +43,9 @@ Accepted removal saves a checksummed, namespace-bound intent before OS effects. 
 Once 1.3 is no longer needed, use the new runtime's separate offline CLI operation. Stop the old startup/worker first. This operation never opens an old SQLite database, queries old evidence, converts an index or runs an old command. It accepts only the canonical format-126 ownership header from 1.3 in `collections-1.2`, with an exact source/collection match. Other formats remain untouched.
 
 ```console
-airk service legacy preview-derived --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection>
-airk service legacy remove-derived --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection> --approval <preview-approval>
-airk service legacy derived-receipts --runtime-dir <initialized-1.4-control>
+airk __airk_role setup-interim service legacy preview-derived --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection>
+airk __airk_role setup-interim service legacy remove-derived --runtime-dir <initialized-1.4-control> --root <old-source> --data-dir <old-data> --collection <old-collection> --approval <preview-approval>
+airk __airk_role setup-interim service legacy derived-receipts --runtime-dir <initialized-1.4-control>
 ```
 
 Review the reported paths, file count and logical bytes before running `remove-derived`. Each explicit call removes at most 4,096 captured files. Repeat the exact command/approval while `complete` is false. `derived-receipts` retains captured previews and completion state for recovery; it does not inspect or execute the old index. `forget-derived --runtime-dir <control> --approval <approval>` removes only a completed receipt.

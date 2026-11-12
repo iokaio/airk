@@ -1,5 +1,12 @@
 # One AIRK: executable, MCP endpoint and upgrade lifecycle
 
+> **Split Phase 4 (later change; the dated decisions below are unchanged).**
+> `airk` is now the service only and `airkctl` is the command-line client.
+> Commands this plan names as `airk …` are `airkctl …` where they survive;
+> `airk service session` is replaced by `airkctl session`, and `airk mcp`,
+> `bridge` and `service console` are retired. See the
+> [split plan](split/split-plan.md).
+
 > **User decisions, 10 November 2026: one resident process.** These replace
 > §1's "one executable is not a promise of one total OS process" paragraph and
 > the worker processes in the §2 diagram.

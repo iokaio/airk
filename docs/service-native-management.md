@@ -63,10 +63,10 @@ Imports bind the bytes shown in their structure preview to the submitted request
 The bounded [CLI journal](service-client-adapters.md) accepts enqueue and guarded configuration intents. Preparation needs an existing inspection and remains separate from submission:
 
 ```text
-airk service requests --runtime-dir <control> prepare-configuration --project <binding> --file <draft.json>
-airk service requests --runtime-dir <control> list
-airk service requests --runtime-dir <control> retry <nonce>
-airk service requests --runtime-dir <control> forget <nonce>
+airkctl service requests --runtime-dir <control> prepare-configuration --project <binding> --file <draft.json>
+airkctl service requests --runtime-dir <control> list
+airkctl service requests --runtime-dir <control> retry <nonce>
+airkctl service requests --runtime-dir <control> forget <nonce>
 ```
 
 Exact replay returns the original job: repeating an acknowledged clear cannot erase later observations. Forgetting does not cancel native work. Unknown outcomes retain caller, epoch, nonce, guards and file selectors.

@@ -28,6 +28,14 @@ const SCHEMA: &str = "airk.split.parity/1";
 const NOTE: &str = "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text";
 const MASK: &str = "<MASKED>";
 const CAPTURE: &str = "AIRK_PARITY_CAPTURE";
+/// Replay that applies the test's current masks to the stored cases and
+/// rewrites the fixture: the only way to add a mask once the pre-split CLI is
+/// gone. It never records new output; the old side still does not run.
+const REMASK: &str = "AIRK_PARITY_REMASK";
+
+fn remasking() -> bool {
+    std::env::var(REMASK).is_ok_and(|value| value == "1")
+}
 
 /// Clock and duration fields: every run observes its own values.
 pub const CLOCK_FIELDS: &[&str] = &[
@@ -466,8 +474,8 @@ impl Parity {
 
     fn mask_name(&mut self, name: String) {
         assert!(
-            self.capture || self.recorded_masks.contains(&name),
-            "{}: mask {name} is newer than the fixture; recapture with {CAPTURE}=1",
+            self.capture || remasking() || self.recorded_masks.contains(&name),
+            "{}: mask {name} is newer than the fixture; add it with {REMASK}=1",
             self.test
         );
         self.masked.insert(name);
@@ -540,7 +548,8 @@ impl Parity {
             self.cases.insert(case.to_owned(), stored.clone());
             stored
         } else {
-            self.cases
+            let stored = self
+                .cases
                 .get(case)
                 .unwrap_or_else(|| {
                     panic!(
@@ -548,7 +557,13 @@ impl Parity {
                         self.test
                     )
                 })
-                .clone()
+                .clone();
+            if remasking() {
+                let masked = stored.map(|text| self.mask(text));
+                self.cases.insert(case.to_owned(), masked.clone());
+                return masked;
+            }
+            stored
         }
     }
 
@@ -574,7 +589,7 @@ impl Parity {
     /// and the masks match the fixture's.
     pub fn finish(self) {
         let path = fixture_path(self.test);
-        if self.capture {
+        if self.capture || remasking() {
             let fixture = Fixture {
                 cases: self.cases,
                 masked: self.masked,

@@ -88,35 +88,11 @@ fn copied_main_exposes_catalog_and_reports_its_actual_embedded_inference_capabil
     let binary = owner.path().join(airk_cli::install_files::main_name());
     fs::create_dir_all(binary.parent().unwrap())?;
     fs::copy(env!("CARGO_BIN_EXE_airk"), &binary)?;
-    let report = Command::new(&binary)
-        .arg("--root")
-        .arg(root.path())
-        .arg("--data-dir")
-        .arg(&data)
-        .arg("model-catalog")
-        .env(
-            "AIRK_BUNDLED_MODEL_DIR",
-            root.path().join("missing-build-inputs"),
-        )
-        .output()?;
-    ensure!(
-        report.status.success(),
-        "{}",
-        String::from_utf8_lossy(&report.stderr)
-    );
-    let report: Value = serde_json::from_slice(&report.stdout)?;
-    let selected = airk_retrieval::model_catalog::selected_profile()?;
-    assert_eq!(report["selection"]["profile_id"], selected.id);
-    assert_eq!(
-        report["bundled_model"]["manifest"],
-        serde_json::to_value(selected.manifest)?
-    );
-    assert!(
-        !data.exists(),
-        "catalog reads must not install assets or create state"
-    );
+    // `model-catalog` is an airkctl command after the split (M10, covered by
+    // `airkctl_model_catalog_matches_airk`); the copied image's own claim is
+    // its embedded inference inventory, checked by the self-test below.
     let self_test = Command::new(&binary)
-        .args(["runtime", "self-test"])
+        .args(["__airk_role", "setup-interim", "runtime", "self-test"])
         .output()?;
     #[cfg(feature = "local-inference")]
     assert!(

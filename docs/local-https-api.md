@@ -11,12 +11,22 @@ indexing mutations or private management commands.
 
 ## Obtain a connection
 
-VS Code is optional. Guided standalone `airk setup` onboarding is implemented
-in the working tree, with validation and installed acceptance pending. Its service
+> **Command names after split Phase 4.** `airkctl` is the CLI. `runtime
+> http-connection` is now `airkctl agents connect`, `http-connection-info` is
+> `agents info`, `http-endpoint` is `agents endpoint`, `http-credential` is
+> `agents credential`, `http-revoke` is `agents revoke`, `http-trust` is
+> `airkctl service trust` and the issuer-rotation status read is
+> `airkctl service issuer-rotation status`. Pre-split `runtime …` operations
+> without an `airkctl` owner are reachable only as
+> `airk __airk_role setup-interim runtime …` until Phase 7.
+
+VS Code is optional. Since split Phase 4, guided standalone `setup` is reachable
+only through the interim setup role (`airk __airk_role setup-interim setup`)
+until Phase 7, with validation and installed acceptance pending. Its service
 discovery/start, index selection or creation, explicit scope review and native
 enrollment must complete before a first API connection
 can be used. See the [standalone onboarding status](agent-integration.md#standalone-onboarding-without-vs-code).
-The existing `runtime http-connection` interface below enrolls an already
+`airkctl agents connect` (formerly `runtime http-connection`) enrolls an already
 reviewed selection; it is not a first-use index setup wizard.
 Standalone Windows/macOS/Linux installer support is implemented in source for
 only the CLI/native server; the installers do not install or invoke a VS Code extension.
@@ -28,9 +38,9 @@ child-process launch and native uninstall.
 Use AIRK's reviewed connection setup to select existing authorized indexes or
 index sets. Native setup validates the grant and supplies a versioned connection
 description with `endpoint.url`, `connection_id`, exact `selection`,
-`ca_certificate_file` and `credential_file`. The native `runtime http-connection`
-command accepts an owner-private selection file, an explicit connection ID and
-client label. It returns file references, never the bearer secret itself.
+`ca_certificate_file` and `credential_file`. `airkctl agents connect`
+accepts an owner-private selection file and an explicit connection ID, and writes
+AIRK's entry for the chosen client. It never prints the bearer secret.
 
 The native credential owner creates the secret in an owner-protected file.
 Read it only into the connecting process's credential handling; project
@@ -44,8 +54,8 @@ An upgrade rebuild creates a new namespace. Preserved old credentials and
 configuration do not authorize it; explicitly review and enroll the successor
 selection before connecting again.
 
-For an already enrolled connection, `runtime http-connection-info` accepts the
-verified installation directory and connection ID. It checks the protected
+For an already enrolled connection, `airkctl agents info --connection-id <id>`
+reads the connection. It checks the protected
 credential, expiry, revocation and current native grant, then returns connection
 metadata without issuing a new credential or printing its secret. VS Code's
 generated local MCP configuration uses the AIRK extension's
@@ -157,11 +167,14 @@ VS Code host trust and actual platform rotation have separate qualification gate
 
 ### Explicit issuer rotation
 
-`runtime http-issuer-rotation --install-dir <verified-installation> --action status`
-returns the complete native transaction, its receipt digest, the current endpoint
+`airkctl service issuer-rotation status` (formerly `runtime http-issuer-rotation
+--action status`) returns the complete native transaction, its receipt digest, the current endpoint
 and the native-computed descriptor digest. A null transaction means no rotation
 has been prepared. These are read-only observations, not permission to activate.
 Never recompute a receipt digest from another language's JSON formatting.
+
+The other actions below belong to the pre-split `runtime http-issuer-rotation`
+command, reachable only through the interim setup role until Phase 7.
 
 | Action | Required review and effect |
 | --- | --- |

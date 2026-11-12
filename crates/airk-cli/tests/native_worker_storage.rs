@@ -45,7 +45,7 @@ impl Worker {
             command.creation_flags(0x08000000);
         }
         let mut child = command
-            .arg("project-worker")
+            .args(["__airk_role", "setup-interim", "project-worker"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(fs::File::create(&stderr)?)

@@ -9,8 +9,8 @@ No new extraction profile is introduced.
 Opt in on the existing file-information read:
 
 ```sh
-airk info src/example.rs --include-profile-families --verification off
-airk tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
+airkctl info src/example.rs --include-profile-families --verification off
+airkctl tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
 ```
 
 MCP uses `include_profile_families: true` on `airk_file_info` or its public

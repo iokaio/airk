@@ -119,11 +119,15 @@ A durable owner-bound intent and registry barrier precede removal. Original reti
 
 Cancellation/failure retains the intent and re-registration barrier. Preview returns the same resumable approval; retry can continue it. An interrupted running cleanup can recover under the existing three-attempt job bound. Success requires all selected old slots to be absent and a durable complete report. Capturing that report precedes the atomic successful-job/barrier-clear transaction; crash recovery completes both together. Explicit registration then starts with the preserved settings and requires fresh indexing. An older preview cannot select a later registration's index; retained successful receipts replay their original result.
 
-For CLI review, save `{"operation":"prepare_derived_cleanup"}` to a small JSON file and run `airk service requests --runtime-dir <control> prepare-configuration --project <binding> --file <draft.json>`. This persists an unsubmitted request. Submit the exact saved nonce with `airk service requests --runtime-dir <control> retry <nonce>`. Read job/configuration-result metadata through `airk service rpc --runtime-dir <control> --request-file <request.json>`. After reviewing the returned preview, separately prepare and submit `{"operation":"delete_derived","preview":"<guard>"}`. This never requires reconnecting to an inactive project's evidence endpoint. Unknown acknowledgment outcomes retain the saved request for exact recovery.
+For CLI review, save `{"operation":"prepare_derived_cleanup"}` to a small JSON file and run `airkctl service requests --runtime-dir <control> prepare-configuration --project <binding> --file <draft.json>`. This persists an unsubmitted request. Submit the exact saved nonce with `airkctl service requests --runtime-dir <control> retry <nonce>`. Read job/configuration-result metadata through `airkctl service rpc --runtime-dir <control> --request-file <request.json>`. After reviewing the returned preview, separately prepare and submit `{"operation":"delete_derived","preview":"<guard>"}`. This never requires reconnecting to an inactive project's evidence endpoint. Unknown acknowledgment outcomes retain the saved request for exact recovery.
 
 This operation owns only the selected 1.4 collection. [Explicit legacy 1.3 retirement](service-legacy-transition.md#explicit-old-derived-state-deletion) uses a separate offline CLI preview and captured removal intent. Neither operation adopts unknown directories or uses retired direct-store commands as a fallback.
 
 ## Reviewing all retained AIRK data (1.7.6)
+
+After split Phase 4, `runtime inventory` and `runtime purge` are not yet
+`airkctl` commands; until Phase 7 they are reachable only as
+`airk __airk_role setup-interim runtime inventory|purge …`.
 
 `airk runtime inventory --install-dir <dir>` is read-only. It lists AIRK-owned per-user locations with bounded, no-follow size measurements, every recorded active and inactive project index root, and what it cannot see (custom roots outside recorded projects, manual agent configurations, exports, backups, copies sent to providers, and temporary uninstall diagnostics). Partial results are marked `incomplete`.
 

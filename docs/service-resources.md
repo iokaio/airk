@@ -56,17 +56,17 @@ The selector contains exactly **4, 8, 16 (default), 32 and 64 channels**. Other 
 
 ### CLI access
 
-The same setting is available through `airk service rpc`; there is no separate CLI-only value or dedicated convenience flag. Read the current resource configuration and change only `query_concurrency`. For example, in PowerShell:
+The same setting is available through `airkctl service rpc`; there is no separate CLI-only value or dedicated convenience flag. Read the current resource configuration and change only `query_concurrency`. For example, in PowerShell:
 
 ```powershell
 $control = 'C:\path\to\AIRK\service-runtime'
-$response = '"resources"' | airk service rpc --runtime-dir $control --stdin | ConvertFrom-Json
+$response = '"resources"' | airkctl service rpc --runtime-dir $control --stdin | ConvertFrom-Json
 if ($response.status -ne 'resources') { throw 'Resource configuration is unavailable.' }
 $configuration = $response.observation.configuration
 $configuration.query_concurrency = 32
 @{ configure_resources = @{ configuration = $configuration } } |
     ConvertTo-Json -Depth 8 -Compress |
-    airk service rpc --runtime-dir $control --stdin
+    airkctl service rpc --runtime-dir $control --stdin
 ```
 
 Use the selected installation's native control directory for `$control`. A successful response has `status: resources` and reports the saved configuration. Native validation accepts only the five listed choices. Preserve other settings as shown; submitting a fresh default configuration would replace other overrides. Transport failure or a failure response is not confirmation that the change applied; inspect resources before deciding what to do next.

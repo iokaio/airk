@@ -276,13 +276,25 @@ fn in_place_upgrade_commands_are_refused_before_any_state_access() -> Result<()>
     let control_commands = |control: &Path, id: Incarnation| {
         let mut migrate = Command::new(&binary);
         migrate
-            .args(["runtime", "catalog-upgrade-migrate", "--control-root"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "runtime",
+                "catalog-upgrade-migrate",
+                "--control-root",
+            ])
             .arg(control)
             .arg("--upgrade-id")
             .arg(id.to_string());
         let mut probe = Command::new(&binary);
         probe
-            .args(["runtime", "catalog-upgrade-probe", "--control-root"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "runtime",
+                "catalog-upgrade-probe",
+                "--control-root",
+            ])
             .arg(control)
             .arg("--upgrade-id")
             .arg(id.to_string())
@@ -290,7 +302,13 @@ fn in_place_upgrade_commands_are_refused_before_any_state_access() -> Result<()>
             .arg(nonce.to_string());
         let mut authority = Command::new(&binary);
         authority
-            .args(["runtime", "catalog-authority-probe", "--control-root"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "runtime",
+                "catalog-authority-probe",
+                "--control-root",
+            ])
             .arg(control)
             .arg("--operation")
             .arg(id.to_string())
@@ -327,17 +345,12 @@ fn in_place_upgrade_commands_are_refused_before_any_state_access() -> Result<()>
             assert!(files(root.path())? == before, "{name} changed state");
         }
         if admitted {
-            // The Store admission fence remains authoritative for ordinary
-            // readers and service startup over a retained upgrade journal.
-            let ordinary = run(&requests(&binary, root.path(), false))?;
-            ensure!(
-                !ordinary.status.success()
-                    && String::from_utf8_lossy(&ordinary.stderr)
-                        .contains("catalog upgrade is pending"),
-                "ordinary reader crossed admission: {ordinary:?}"
-            );
+            // No client-side reader opens the store after the split (airkctl
+            // reaches only the service), so only service startup is checked.
             let mut service = Command::new(&binary);
-            service.args(["serve", "--runtime-dir"]).arg(root.path());
+            service
+                .args(["__airk_role", "service-foreground", "--runtime-dir"])
+                .arg(root.path());
             let output = run(&service)?;
             ensure!(
                 !output.status.success()
@@ -367,7 +380,13 @@ fn in_place_upgrade_commands_are_refused_before_any_state_access() -> Result<()>
     ] {
         let mut command = Command::new(&binary);
         command
-            .args(["runtime", action, "--install-dir"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "runtime",
+                action,
+                "--install-dir",
+            ])
             .arg(&missing)
             .args(extra);
         refused(&run(&command)?, action)?;
@@ -383,18 +402,6 @@ fn run(command: &Command) -> Result<Output> {
         command,
         Instant::now() + Duration::from_secs(30),
     )?)
-}
-fn requests(binary: &Path, root: &Path, write: bool) -> Command {
-    let mut command = Command::new(binary);
-    command
-        .args(["service", "requests", "--runtime-dir"])
-        .arg(root);
-    if write {
-        command.args(["forget", "11111111111111111111111111111111"]);
-    } else {
-        command.arg("list");
-    }
-    command
 }
 fn files(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     fn collect(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Vec<u8>>) -> Result<()> {
@@ -420,7 +427,7 @@ fn files(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     Ok(entries)
 }
 
-// Actual owned service, stdin CLI and trusted console all retain full canonical
+// Actual owned service and the airkctl metadata relay both retain full canonical
 // administrative results. This fixture does not qualify production activation.
 fn exercise_native_catalog_transports(
     control: &Path,
@@ -442,33 +449,9 @@ fn exercise_native_catalog_transports(
         );
         Ok(serde_json::from_slice(&output.stdout)?)
     };
-    let console = |method: ControlMethod| -> Result<ControlResponse> {
-        let mut child = Command::new(candidate())
-            .args(["service", "console", "--runtime-dir"])
-            .arg(control)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let id = Incarnation::from_bytes([90; 16]);
-        let mut input = child.stdin.take().context("missing console stdin")?;
-        airk_cli::service_ipc::write_frame(
-            &mut input,
-            &airk_cli::console_client::Request { id, method },
-        )?;
-        drop(input);
-        let output = child.wait_with_output()?;
-        ensure!(
-            output.status.success(),
-            "catalog console failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let response: airk_cli::console_client::Response =
-            airk_cli::service_ipc::read_frame(&mut output.stdout.as_slice())?
-                .context("missing console response")?;
-        ensure!(response.id == id, "console identity changed");
-        Ok(response.response)
-    };
+    // The trusted console is retired (split Phase 4); its relay filter is the
+    // one `airkctl service rpc` applies, so the relay comparison runs there.
+    let console = |method: ControlMethod| cli(&method);
     let equal = |a: ControlResponse, b: ControlResponse| -> Result<()> {
         ensure!(
             serde_json::to_value(a)? == serde_json::to_value(b)?,

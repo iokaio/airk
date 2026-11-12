@@ -75,7 +75,8 @@ def public_input_manifest(root):
             or len(set(manifest["files"])) != len(manifest["files"])
             or len(set(manifest["trees"])) != len(manifest["trees"])
             or len(manifest["files"]) > 16_384
-            or not set(manifest["trees"]).issubset({"crates", "third_party/models", "third_party/licenses"})):
+            or not set(manifest["trees"]).issubset({"crates", "third_party/models", "third_party/licenses",
+                                                       "fixtures/split/parity"})):
         raise ValueError("Container public input manifest differs from its reviewed schema")
     for name in manifest["files"]:
         path = Path(name)

@@ -174,7 +174,7 @@ selected native index ID:
 ```
 
 ```console
-airk service rpc --runtime-dir <private-control-directory> --request-file policy-status.json
+airkctl service rpc --runtime-dir <private-control-directory> --request-file policy-status.json
 ```
 
 The response preserves the complete policy snapshot and its job observation.

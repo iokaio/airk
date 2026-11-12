@@ -58,7 +58,7 @@ If using global configuration, assign unique names per collection and enable onl
 4. After source edits, update the same collection from a terminal:
 
 ~~~console
-airk --root "D:/work/project-a" --data-dir "D:/indexes/airk" --collection project-a index
+airkctl --root "D:/work/project-a" --data-dir "D:/indexes/airk" --collection project-a index
 ~~~
 
 MCP retrieval does not trigger indexing. An existing [watch worker](native-scheduler.md) can maintain the collection. If tools are absent, check client enablement, executable permissions and the command path. If results are empty or stale, verify the scope arguments and indexing result before changing configuration.

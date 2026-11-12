@@ -43,9 +43,9 @@ Use --root for the source workspace, --data-dir for the user-controlled index lo
 
 ~~~console
 airk --root /projects/a --data-dir /fast-disk/airk --collection project-a setup --client codex
-airk --root /projects/a --data-dir /fast-disk/airk --collection project-a index
+airkctl --root /projects/a --data-dir /fast-disk/airk --collection project-a index
 airk --root /projects/a --data-dir /fast-disk/airk --collection project-a coverage --refresh
-airk --root /projects/a --data-dir /fast-disk/airk --collection project-a usage report
+airkctl --root /projects/a --data-dir /fast-disk/airk --collection project-a usage report
 ~~~
 
 Windows accepts a path such as D:/indexes/airk. State is stored under <data-dir>/collections-1.2/<id>. Each collection binds to a canonical primary root and optional [source aliases](source-roots.md). Native setup prints actual absolute paths. Source and alias changes take effect through successful indexing; old evidence retains its published locations. Unchanged runs keep their current token and reuse extracted facts/chunks; they still scan and hash eligible files.
@@ -80,7 +80,7 @@ airk schedule status
 airk schedule pause
 airk schedule resume
 airk coverage --refresh
-airk usage report --format markdown
+airkctl usage report --format markdown
 ```
 
 Supply the same root/data-dir/collection options as the workspace. The [native scheduler](native-scheduler.md) persists revisions, full/manual requests, pause and blocked failures. Explicit indexing can run while automatic work is paused. A foreground watch worker consumes registered intents and periodically runs bounded coverage inventories for those registered roots, queueing saved changes without an editor. It never discovers arbitrary source trees. Paused/blocked collections are skipped; scan errors wait the five-minute reconciliation interval. The extension also supplies coalesced requests and periodically reconciles [coverage](index-coverage.md). Usage commands expose [content-free aggregates and signed estimates](usage-reporting.md); disabling/clearing usage does not delete the index.

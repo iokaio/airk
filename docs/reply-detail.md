@@ -46,10 +46,10 @@ CLI read aliases expose the same optional flag. Tools-call and shell use the
 same JSON input through canonical handlers:
 
 ```console
-airk symbol Queue --reply-detail rich
-airk code-facts --name Queue --reply-detail lean
-airk parse --reply-detail lean --execute "/symbols Queue"
-airk tools call airk_search --args '{"query":"retry budget","mode":"lexical","reply_detail":"lean"}'
+airkctl symbol Queue --reply-detail rich
+airkctl code-facts --name Queue --reply-detail lean
+airkctl parse --reply-detail lean --execute "/symbols Queue"
+airkctl tools call airk_search --args '{"query":"retry budget","mode":"lexical","reply_detail":"lean"}'
 ```
 
 In Workbench, choose **Reply detail** in a tool form or use a slash option such

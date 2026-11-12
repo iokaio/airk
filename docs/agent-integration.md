@@ -46,15 +46,18 @@ Claude Code's `headersHelper` and Codex's `mcp_servers.<id>.http_headers_helper`
 run this command:
 
 ```console
-airk runtime http-credential --install-dir <installation> --connection-id <id> --format header-json
+airkctl agents credential --connection-id <id> --format header-json
 ```
+
+Before split Phase 4 this was `airk runtime http-credential --install-dir …`;
+entries written by `airkctl agents connect` and `agents repair` name the
+installed `airkctl`.
 
 It prints `{"Authorization":"Bearer <token>"}` and exits. It reads only this
 installation's owner-private credential file for an existing, unrevoked
 connection. It never starts the service, enrolls, rotates or logs the token.
 Agents started outside VS Code therefore receive their token without a
-prepared environment variable. The command is refused inside the per-window
-`airk service session`, so a session never returns bearer tokens.
+prepared environment variable. The per-window session (`airkctl session`) never returns bearer tokens.
 
 The extension writes helper paths only when a client shell can pass them
 through unquoted. When the runtime changes, it refreshes the helper commands it
@@ -207,10 +210,19 @@ A host cannot reach a container's private loopback merely by copying its URL.
 
 ### Standalone onboarding without VS Code
 
+> **Split Phase 4 (non-shippable interim).** `airk` is now the service only and
+> `airkctl` is the CLI. Guided `setup` and `uninstall` below are reachable only
+> as `airk __airk_role setup-interim setup …` and `… setup-interim uninstall …`
+> until the Phase 7 setup role and installer replace them; the installers are
+> being reworked under the [split plan](split/split-plan.md) (Phases 6–7).
+> Client enrollment for a reviewed selection is `airkctl agents connect`, and
+> `airkctl agents launch` starts Claude Code, Codex or VS Code on an existing
+> connection.
+
 Standalone Windows, macOS and Linux installer support is implemented in source for the CLI and native
 MCP/HTTPS service only. They do not install a VSIX or VS Code extension, run Code
 actions, or require VS Code. The extension remains a separate optional
-distribution. The intended path is native installation, then guided `airk setup`
+distribution. The intended path is native installation, then guided `setup`
 and reviewed client enrollment. Installer signing, native installed journeys and
 GitHub release-asset verification remain pending; no published installer is
 claimed here. See [native signing](native-signing.md) and the
@@ -245,14 +257,14 @@ and no published installer or attestation is claimed. Retained actual-client
 acceptance in the matrix above keeps its original older debug identity.
 
 Guided setup is implemented in the working tree; validation and installed
-acceptance are pending. In a terminal, `airk setup` asks which supported client
+acceptance are pending. In a terminal, the interim `setup` asks which supported client
 (Claude Code or Codex) and index scope to use. It discovers/starts the native
 service, lists native indexes/index sets or offers explicit creation, reviews
 scope, then requests native grants and credential references. Opening a folder
 is not authorization to index it.
 
 Setup prints the exact approved installed executable as `cli_executable`, with
-setup/uninstall instructions. Native `airk setup` does not edit `PATH` or add an
+setup/uninstall instructions. Native `setup` does not edit `PATH` or add an
 MCP proxy. In the examples below, use that full path unless terminal integration
 is available. The standalone Windows Inno package separately adds its literal
 verified `{app}\runtime` directory to HKCU user `PATH` after native setup
@@ -267,10 +279,10 @@ On macOS, the printed executable is the installed copy, so the disk image can
 be ejected after successful installation without editing PATH.
 
 ```console
-airk setup
-airk setup --client codex --project <native-project-id> --yes --launch
-airk setup --client claude --create-root <source-folder> --storage <index-storage> --name <index-name> --yes --launch
-airk uninstall
+airk __airk_role setup-interim setup
+airk __airk_role setup-interim setup --client codex --project <native-project-id> --yes --launch
+airk __airk_role setup-interim setup --client claude --create-root <source-folder> --storage <index-storage> --name <index-name> --yes --launch
+airk __airk_role setup-interim uninstall
 ```
 
 Without a terminal, supply `--client`, explicit `--project` or `--index` IDs and
@@ -318,13 +330,16 @@ Use the exact reviewed native selector, not invented IDs or folder-derived scope
 The following is a template with values supplied by authenticated native setup:
 
 ```console
-airk --service-install-dir <installation> --catalog-session '<exact-reviewed-session-json>' setup --client codex
+airkctl agents connect --client codex --connection-id <new-id> --selection-file <reviewed-selection.json>
 ```
 
-`--combined-session` is the corresponding reviewed combined input. Native setup
-enrolls the existing selection and returns JSON containing configuration,
-protected connection references and host provisioning guidance. It does not
-print a bearer token, index sources or save client files. Root-only setup without
+The selection file is owner-private and holds the reviewed selection;
+`--user` writes the user-level file instead of the project's. Before split
+Phase 4 this was `airk … --catalog-session '<json>' setup --client codex`
+(`--combined-session` for a combined selection). `agents connect` enrolls the
+reviewed selection and writes only AIRK's entry in the client's configuration
+file, preserving other servers and settings. It does not print a bearer token
+or index sources. Root-only setup without
 genuine predecessor lineage requires review. Reuse a returned connection ID for
 an exact retry; an uncertain mutation does not authorize a new attempt identity.
 

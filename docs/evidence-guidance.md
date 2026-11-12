@@ -45,10 +45,10 @@ current tool catalog before constructing a request.
 
 | Action | Supported route |
 | --- | --- |
-| `inspect_capabilities` | Native `capabilities`; select an existing adapter ID to inspect its flags. CLI: `airk tools call airk_capabilities --args '{"adapter":"text"}'`. |
-| `inspect_file_info` | `file_info` for an already selected path; CLI `airk info <path>`. Preserve exact location/hash/revision metadata. |
-| `inspect_source_status` | Lightweight `status` / `airk status` when a new observation is needed. Respect typed retry and original age; do not repeatedly run diagnostics or inventories. |
-| `inspect_saved_policy` | Explicit read-only settings, such as `airk settings extraction_policy` or `airk settings vector_selection`. Changing policy/indexing remains a separate management action. |
+| `inspect_capabilities` | Native `capabilities`; select an existing adapter ID to inspect its flags. CLI: `airkctl tools call airk_capabilities --args '{"adapter":"text"}'`. |
+| `inspect_file_info` | `file_info` for an already selected path; CLI `airkctl info <path>`. Preserve exact location/hash/revision metadata. |
+| `inspect_source_status` | Lightweight `status` / `airkctl status` when a new observation is needed. Respect typed retry and original age; do not repeatedly run diagnostics or inventories. |
+| `inspect_saved_policy` | Explicit read-only settings, such as `airkctl settings extraction_policy` or `airkctl settings vector_selection`. Changing policy/indexing remains a separate management action. |
 | `request_rich` | Restart the selected discovery with `reply_detail: rich`. Clear a contradictory `compact` override; do not reuse a cursor from another representation. |
 | `continue_page` | Same tool and original filters/representation with its exact cursor. Respect `required_record_bytes`, scope/revision fences and total budgets. |
 | `read_selected_passage` | `read_file` or `context` at a returned citation, within original document-location and source-scope limits. |

@@ -6,7 +6,7 @@ AIRK reports successfully published indexed observations. A live edit is invisib
 
 ## Changes request
 
-The MCP tool `airk_changes` and CLI command `airk changes` use the same service. Launch scope fixes root, data directory and collection; requests cannot override them.
+The MCP tool `airk_changes` and CLI command `airkctl changes` use the same service. Launch scope fixes root, data directory and collection; requests cannot override them.
 
 | Field | Meaning and default |
 |---|---|
@@ -33,10 +33,10 @@ The schema also accepts `{"kind":"symbol","symbol_key":"..."}` and `{"kind":"doc
 CLI equivalents use repeatable `--path` or tagged JSON `--selector` arguments:
 
 ```powershell
-airk changes --path src/weather.py
-airk changes --selector '{"kind":"path","path":"src/weather.py"}'
-airk changes --since $savedToken --path-prefix src/ --limit 10 --max-bytes 8192
-airk changes --since $savedToken --path-prefix src/ --limit 10 --max-bytes 8192 --cursor $cursor
+airkctl changes --path src/weather.py
+airkctl changes --selector '{"kind":"path","path":"src/weather.py"}'
+airkctl changes --since $savedToken --path-prefix src/ --limit 10 --max-bytes 8192
+airkctl changes --since $savedToken --path-prefix src/ --limit 10 --max-bytes 8192 --cursor $cursor
 ```
 
 `--include-symbols` and `--include-documents` mirror the MCP flags. Global `--root`, `--data-dir` and `--collection` work as on other CLI commands.
@@ -63,12 +63,12 @@ MCP `airk_file_info`, `airk_read_file`, `airk_outline` and `airk_context`, and C
 Normal responses keep their existing fields and add `read` with `publication`, `status`, `requested_path`, `resolved_path`, `validator`, `basis` and `reason`. Matching `if_evidence` returns `not_modified` without retransmitting the ordinary payload, while still returning the served publication. Absent current evidence returns unknown. Storage corruption and invalid arguments remain errors.
 
 ```powershell
-airk info src/weather.py
-airk info src/weather.py --if-evidence $infoValidator
-airk read src/weather.py --start-line 1 --end-line 12 --if-evidence $readValidator
-airk context src/weather.py 8 --before 2 --after 2 --if-evidence $contextValidator
-airk outline src/weather.py --if-evidence $outlineValidator
-airk info old/weather.py --follow-moves --known-hash $rememberedSourceHash
+airkctl info src/weather.py
+airkctl info src/weather.py --if-evidence $infoValidator
+airkctl read src/weather.py --start-line 1 --end-line 12 --if-evidence $readValidator
+airkctl context src/weather.py 8 --before 2 --after 2 --if-evidence $contextValidator
+airkctl outline src/weather.py --if-evidence $outlineValidator
+airkctl info old/weather.py --follow-moves --known-hash $rememberedSourceHash
 ```
 
 Validators bind profile, payload, applicable evidence/provenance, root/path and representation options. They exclude administrative publication identity, so unchanged evidence can return a newer publication token. Equal source bytes alone cannot suppress changed extraction, OCR or mappings. A source hash is not an evidence validator, and changing the requested span requires a matching new validator.

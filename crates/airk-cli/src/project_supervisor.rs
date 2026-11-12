@@ -552,6 +552,7 @@ impl ChildWorker {
         let diagnostic_directory = crate::process_diagnostics::directory();
         let mut command = Command::new(executable);
         command
+            .args(["__airk_role", "setup-interim"])
             .arg(if derived {
                 "derived-worker"
             } else {

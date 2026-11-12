@@ -6,7 +6,7 @@ The trusted Service Console's **Project settings** action supports vectors, extr
 
 Source scan limits support an explicit JSON override and **Reset source scan limits**. Reset removes only the selected project's validated override and returns to the native automatic limits. It uses the ordinary incarnation/settings guard, requests a later native source pass, preserves retained evidence and sources, and needs no model/helper. Changing or resetting limits invalidates older prepared settings guards.
 
-`airk service prepare-configuration --runtime-dir <control> --project <binding>` reads one typed draft from stdin, bounded to 16 KiB. It reads the cached inspection and returns a request guarded by the exact index incarnation and desired-settings digest. File preparation canonicalizes explicit absolute paths and hashes bounded inputs. Model manifests are limited to 16 KiB, tokenizer definitions to 1 MiB, and each calibration sample to 256 KiB. Preparation does not enqueue work, start a project or change its sources/settings.
+`airkctl service prepare-configuration --runtime-dir <control> --project <binding>` reads one typed draft from stdin, bounded to 16 KiB. It reads the cached inspection and returns a request guarded by the exact index incarnation and desired-settings digest. File preparation canonicalizes explicit absolute paths and hashes bounded inputs. Model manifests are limited to 16 KiB, tokenizer definitions to 1 MiB, and each calibration sample to 256 KiB. Preparation does not enqueue work, start a project or change its sources/settings.
 
 ## Acceptance and execution
 

@@ -170,3 +170,56 @@ fn help_catalog_matches_the_embedded_airk_mcp_catalog() {
         "regenerate with AIRK_WRITE_CLI_HELP=1 cargo test -p airkctl --lib help_catalog"
     );
 }
+
+/// `docs/cli-reference.md` is generated from this parser (split Phase 4; it
+/// documented `airk` before the user CLI moved here).
+fn cli_reference() -> String {
+    let catalog = std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(help_catalog)
+        .unwrap()
+        .join()
+        .unwrap();
+    let title = |name: &str| {
+        if name.is_empty() {
+            "airkctl".to_owned()
+        } else {
+            format!("airkctl {name}")
+        }
+    };
+    let mut text = String::from(
+        "# AIRK CLI reference\n\n<!-- Generated from airkctl's parser by `cargo test -p airkctl --lib cli_reference`; do not edit. Set AIRK_WRITE_CLI_REFERENCE=1 to regenerate. -->\n\nEvery public `airkctl` command and subcommand, exactly as `airkctl <command> --help` prints it. `airk` itself is the service and takes no commands. For concepts and workflows, see [Running AIRK headless](headless-cli.md) and [the CLI guide](cli.md).\n\n## Contents\n\n",
+    );
+    for name in catalog.keys() {
+        let title = title(name);
+        text.push_str(&format!("- [`{title}`](#{})\n", title.replace(' ', "-")));
+    }
+    for (name, help) in &catalog {
+        text.push_str(&format!(
+            "\n## {}\n\n```text\n{}\n```\n",
+            title(name),
+            help.trim_end()
+        ));
+    }
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+#[test]
+fn cli_reference_documents_every_public_command() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/cli-reference.md");
+    let expected = cli_reference();
+    if std::env::var_os("AIRK_WRITE_CLI_REFERENCE").is_some() {
+        std::fs::write(&path, &expected).unwrap();
+    }
+    let saved = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    assert!(
+        saved == expected,
+        "regenerate with AIRK_WRITE_CLI_REFERENCE=1 cargo test -p airkctl --lib cli_reference"
+    );
+}

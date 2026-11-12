@@ -35,7 +35,7 @@ records defaults, legacy conflicts and per-step plan selection.
 
 
 
-Tool names are unique within this server; the client may add its own server namespace. Repeating `airk_` on every tool adds no distinction between reading evidence and proposing a form. Verbs and descriptions carry that distinction. Previously saved `airk_*` and `airk_explorer_*` calls remain callable compatibility aliases; they are omitted from discovery so agents see one catalog. Native `airk tools` exposes eighteen read-only aliases including `airk_parse`; Explorer retains its seventeen direct evidence operations.
+Tool names are unique within this server; the client may add its own server namespace. Repeating `airk_` on every tool adds no distinction between reading evidence and proposing a form. Verbs and descriptions carry that distinction. Previously saved `airk_*` and `airk_explorer_*` calls remain callable compatibility aliases; they are omitted from discovery so agents see one catalog. Native `airkctl tools` exposes eighteen read-only aliases including `airk_parse`; Explorer retains its seventeen direct evidence operations.
 
 
 

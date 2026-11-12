@@ -247,7 +247,13 @@ impl AuthorityV1ReadinessProducer for NativeProducer<'_> {
         let candidate = self.candidate()?;
         let mut probe = Command::new(&candidate);
         probe
-            .args(["runtime", "catalog-authority-probe", "--control-root"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "runtime",
+                "catalog-authority-probe",
+                "--control-root",
+            ])
             .arg(self.control())
             .arg("--nonce")
             .arg(expected.nonce.to_string());

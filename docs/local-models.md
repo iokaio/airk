@@ -43,10 +43,10 @@ On Windows, `Get-FileHash -Algorithm SHA256 vocabulary.json` prints the digest; 
 Tokenization splits on characters other than letters, numbers and underscores, then lowercases each token. Repeated words participate repeatedly in the mean. Unknown words are skipped. Semantic units with no recognized words or a zero mean receive no vector and retain lexical retrieval. A query with no recognized model evidence fails explicitly.
 
 ~~~console
-airk --data-dir /path/to/state --collection project-a index
-airk --data-dir /path/to/state --collection project-a status
-airk --data-dir /path/to/state --collection project-a search login --mode vector
-airk --data-dir /path/to/state --collection project-a search login --mode hybrid
+airkctl --data-dir /path/to/state --collection project-a index
+airkctl --data-dir /path/to/state --collection project-a status
+airkctl --data-dir /path/to/state --collection project-a search login --mode vector
+airkctl --data-dir /path/to/state --collection project-a search login --mode hybrid
 ~~~
 
 Ordinary indexing detects a model digest change, advances the revision and builds coherent components. Invalid/mismatched assets fail indexing while preserving the previous generation. Each publication references verified immutable model objects so a query cannot silently combine new embeddings with an old graph. Status reports `local_model_ready`, `indexed_vectors`, `lexical_backend` and `vector_backend`. Vector counts can differ from citation counts because semantic units combine or split citation partitions, or because a unit has no recognized model evidence. Compare coverage and no-vector counters rather than treating vector/chunk count equality as semantic completeness.

@@ -737,7 +737,7 @@ mechanism:
 - Regression tests compare complete results across paths (for example
   [`tests/combined_reads.rs`](../../crates/airk-cli/tests/combined_reads.rs)
   `assert_parity`, and `cli_tool_calls_keep_all_fields_and_share_mcp_capacity_observations`
-  in [`tools.rs`](../../crates/airk-cli/src/tools.rs)). Only documented transport
+  in [`tools.rs`](https://github.com/iokaio/airk/blob/5adb4677/crates/airk-cli/src/tools.rs)). Only documented transport
   identities and timing are excluded from the comparison, and unknown fields are
   never stripped to make results match.
 

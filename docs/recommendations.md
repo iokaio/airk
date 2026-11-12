@@ -59,7 +59,7 @@ does. Single-Project scopes can prefill that Project's defaults review. For a
 combined scope, use each Project's existing defaults form so another Project's
 index is never proposed as its default merely because it belongs to the union.
 
-CLI uses `airk --combined-session <reviewed-session-json> tools call
+CLI uses `airkctl --combined-session <reviewed-session-json> tools call
 airk_query_scope --args <arguments-json>`. MCP uses `query_scope`, or native
 `airk_query_scope` where advertised. Workbench Tool forms and explicit `parse`
 plans share that schema. Structured details and complete JSON/Markdown copies

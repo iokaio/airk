@@ -14,7 +14,7 @@ Extraction policy selects an existing native adapter for each eligible source fi
 airk collections extraction show
 airk collections extraction validate --file extraction-policy.json
 airk collections extraction set --file extraction-policy.json
-airk index
+airkctl index
 ```
 
 Global `--root`, `--data-dir` and `--collection` select the collection as on other commands. `show` observes current policy; `validate` checks a proposed policy without saving or indexing. `set` saves the policy under the collection writer lock. Its effect becomes visible only in the next successful index publication. Existing reads continue using their published profiles if indexing has not run or fails.
@@ -39,7 +39,7 @@ Essential Markdown, instruction Markdown and plain text collect heading spans wi
 
 Transient semantic seeds hold bounded written coordinates separately from retained facts. They produce the same complete semantic projection under all detail levels, including gaps and original native/mapped domains; they are not a second set of published facts. After selection, retained fact references and syntax-node references are normalized in separate namespaces before continuity generation. Complete selected-payload tests compare optimized paths with full-analysis references, including facts, identities, continuity, chunks and locations. Specialized fallbacks are kept until equivalent selected output is qualified.
 
-The current extraction identity is `native-facts/10`, native adapter versions include `/sizing-1/detail-2`, and chunk strategy remains 3. This is a rebuild boundary for older derived indexes: run `airk index --full` to rebuild from source while preserving saved collection configuration. Supporting extraction-policy versions 1–3 preserves configuration semantics; it does not make old index formats readable. Worker count is separate from policy and identity; see [bounded extraction workers](ingestion-limits.md#bounded-extraction-workers).
+The current extraction identity is `native-facts/10`, native adapter versions include `/sizing-1/detail-2`, and chunk strategy remains 3. This is a rebuild boundary for older derived indexes: run `airkctl index --full` to rebuild from source while preserving saved collection configuration. Supporting extraction-policy versions 1–3 preserves configuration semantics; it does not make old index formats readable. Worker count is separate from policy and identity; see [bounded extraction workers](ingestion-limits.md#bounded-extraction-workers).
 
 ## Rules and selection
 
@@ -102,7 +102,7 @@ All three commands return policy status:
 | `publication` | Current exact publication token, or null when unavailable |
 | `adapters` | Registered profiles, capability dimensions and limitations |
 
-Selection is recomputed before extraction reuse. Files whose effective profile remains unchanged can reuse extraction; changing a relevant profile invalidates that file's evidence without pretending its source bytes changed. Saving a policy does not rewrite existing citations or reinterpret a reader's pinned publication. `airk index --full` deliberately rebuilds extraction instead of relying on that reuse.
+Selection is recomputed before extraction reuse. Files whose effective profile remains unchanged can reuse extraction; changing a relevant profile invalidates that file's evidence without pretending its source bytes changed. Saving a policy does not rewrite existing citations or reinterpret a reader's pinned publication. `airkctl index --full` deliberately rebuilds extraction instead of relying on that reuse.
 
 ## VS Code
 

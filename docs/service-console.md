@@ -1,5 +1,13 @@
 # Trusted service console
 
+> **Split Phase 4.** `airk service console` is retired from `airk`; its
+> replacement is `airkctl session` plus `airkctl` one-shots. On this branch the
+> extension still opens the console until split Phase 6 moves it. Lifecycle
+> commands are now `airkctl service start`, `stop`, `restart`, `status` and
+> `abandon-lifecycle` (formerly `runtime start`, `runtime lifecycle`,
+> `runtime inspect|diagnose` and `runtime abandon-lifecycle`). The text below
+> describes the pre-split console.
+
 For current 1.8.14 qualification use the native HTTPS/service checks and actual
 installed-editor journey listed in [the implementation plan's acceptance
 owners](one-airk.md#91-file-and-test-sweep-required-before-removing-stdio-defaults).

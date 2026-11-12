@@ -1,5 +1,22 @@
 # AIRK: Local Search for Coding Agents
 
+**Split Phase 4: `airk` and `airkctl` (unpublished, non-shippable interim).**
+`airk` is now the service only. `airk` with no arguments starts the installed
+service in the background (through the `airkctl` installed beside it), or says
+that it is already running. With any other arguments it says that `airk` takes
+no commands and that `airkctl` is the CLI, and reports whether the service is
+running; it starts nothing. `airkctl` is the command-line client. It carries
+every surviving command with the same argument names and output, for example
+`airkctl status`, `airkctl search`, `airkctl tools call`, `airkctl index`,
+`airkctl service start|stop|status` and `airkctl agents connect`. Until the
+Phase 7 setup role and installer replace them, the pre-split `runtime …`,
+`setup`, `uninstall`, `host` and `service legacy …` operations are reachable
+only as `airk __airk_role setup-interim <arguments>`. The installer and the VS
+Code extension are being reworked under the [split plan](docs/split/split-plan.md)
+(Phases 6–7). Until then, the installation and extension text below describes
+the pre-split product; on this branch the extension still starts the retired
+`airk service session`.
+
 **Stopped source checkpoint (10 November 2026).** Manual installation of the
 1.8.23 candidate reported an HTTP cleanup refusal. The native eligibility fix
 is committed but untested. No installer was rebuilt for that fix. Installer
@@ -23,22 +40,22 @@ pending. Publication remains a separate action.
 
 **One resident process:** exactly one `airk.exe` stays resident per user and
 installation: the AIRK service. Indexing, cleanup and source watching run
-inside it. Each VS Code window adds one `airk service session`
-that exits with the window. Commands you type, installer steps, at most one
+inside it. Each VS Code window adds one window helper (`airkctl session`
+after the split) that exits with the window. Commands you type, installer steps, at most one
 PDF parser and a `tools shell` you open are the only other AIRK processes.
 Stable, preview and custom installations each have their own service. See
 [process ownership](docs/process-model.md).
 
 **Service lifecycle:** every installation and upgrade registers per-user login
 startup (Windows Task Scheduler or a Linux user systemd unit), unless you ran
-`airk runtime login uninstall`. The service never exits when idle, keeps
+`runtime login uninstall` (now reachable only through the interim setup role). The service never exits when idle, keeps
 running after VS Code closes and starts again after a reboot. If the operating
 system refuses the registration, AIRK starts on demand instead and reports why.
 
 **Agents connect directly over HTTPS:** agents use the service's
 `https://127.0.0.1:<port>/mcp` endpoint, and no AIRK process runs per agent.
 Claude Code and Codex get their token from a one-shot
-`airk runtime http-credential` helper. If an installation replaced an earlier
+`airkctl agents credential` helper. If an installation replaced an earlier
 one and left an agent entry broken, Explorer warns you (notification, banner,
 status bar and Management → Agents). **Reconnect** fixes the entry after one
 confirmation, using an existing index. Reconnect does not create indexes; use
@@ -73,9 +90,9 @@ ownership-checked cleanup. Older candidate evidence remains historical.
 [Standalone CLI onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code)
 is implemented on this branch for setup without VS Code: native service
 discovery, reviewed index scope and protected client launch. Scoped CLI tests
-pass; actual client launch and installed acceptance remain pending. Native
-`airk setup` itself does not edit `PATH`; use its printed installed executable
-path when no terminal integration is installed.
+pass; actual client launch and installed acceptance remain pending. After split
+Phase 4, `setup` is reachable only through the interim setup role and agent
+enrollment is `airkctl agents connect`; neither edits `PATH`.
 Standalone Windows/macOS/Linux installer source installs only the CLI/native
 server; the VS Code extension remains a separate optional distribution.
 Actual installer builds, signing and publication remain pending.
@@ -265,11 +282,11 @@ AIRK indexes local code and documents and serves bounded, cited evidence to codi
 
 A per-user service owns authenticated HTTPS ingress, registration, durable work and resource policy. It is the only resident AIRK process: project owners, cleanup owners and the source watcher run inside it, and an owner that does not drain by its deadline is quarantined (its project reports a stuck owner and the other projects keep running) until an explicit service restart. Its asynchronous adapter routes canonical evidence reads to those in-process project owners; source scanning and inference do not execute in the serialized metadata actor. The service owns shared in-process inference with bounded admission and truthful completion barriers.
 
-The modern approved payload contains one native `airk` executable with embedded MiniLM assets and static CPU ONNX Runtime. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one `airk service session` per VS Code window, CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of 1.8.23 remains pending. Earlier runtime-pair evidence retains its original version and scope.
+The modern approved payload contains one native `airk` executable with embedded MiniLM assets and static CPU ONNX Runtime. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one window helper per VS Code window (`airkctl session` after the split), CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of 1.8.23 remains pending. Earlier runtime-pair evidence retains its original version and scope.
 
 The modern Mac layout keeps that one main image inside its GUI-less signed app bundle, with a macOS 13.3 deployment target and direct managed service startup. Static inference and model license notices remain in the distribution. See the [current signing contract](docs/native-signing.md) and [native installation](docs/service-installation.md). Signing, lifecycle and installed-platform qualification remain separate from portable ownership/package checks.
 
-Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. In-process native owners handle indexing and source watching. Automatic watching explicitly continues after editor windows close. Login startup is registered on every installation and upgrade unless the user ran `airk runtime login uninstall`.
+Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. In-process native owners handle indexing and source watching. Automatic watching explicitly continues after editor windows close. Login startup is registered on every installation and upgrade unless the user ran `runtime login uninstall`.
 
 ## Historical 1.4 namespace transition
 
@@ -297,18 +314,19 @@ Approved managed payloads can remain read-only. In 1.8.14, clients use HTTPS and
 
 ## Native CLI
 
-Install/select an independently approved single-image runtime using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The interactive CLI and direct manager use the approved main; MCP clients use HTTPS. For manual CLI installation, use the exact executable path printed by setup or add its directory to `PATH`; native `airk setup` does not edit `PATH`. The standalone Windows installer and VSIX terminal integration handle their own PATH entries as described above. The commands below assume an already reviewed Index mapping; `init` does not create one from a folder. For guided first use, see [standalone onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code).
+Install/select an independently approved single-image runtime using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The interactive CLI and direct manager use the approved main; MCP clients use HTTPS. `airk` is the service; `airkctl`, installed beside it, is the CLI. Run `airk` with no arguments to start the service. `airkctl` finds the installation from its install record; neither executable edits `PATH`. The installer is being reworked under the split plan (Phase 7). The commands below assume an already reviewed Index mapping; `init` does not create one from a folder. For guided first use, see [standalone onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code).
 
 ```console
-airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a init
-airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a index
-airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a tools call airk_status
-airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a setup --client codex
+airk
+airkctl --root <source> --data-dir <data> --collection project-a init
+airkctl --root <source> --data-dir <data> --collection project-a index
+airkctl --root <source> --data-dir <data> --collection project-a tools call airk_status
+airkctl agents connect --client codex --connection-id <new-id> --selection-file <reviewed-selection.json>
 ```
 
 `init` acknowledges an existing reviewed Index mapping; it does not register an unreviewed folder or create storage. `index` reports durable job acceptance; completion and semantic readiness are separate. CLI requests save their exact key before submission and support explicit recovery after a lost acknowledgment. Read aliases and `tools shell` share native authority checks and canonical read handlers. A saved opaque binding supports retained reads when sources are unavailable. Missing or incompatible service state fails explicitly; there is no local-store fallback.
 
-The old window scheduler and public direct-store maintenance commands are retired. Full rebuilds require a guarded native preview and separate approval. Advanced native management is available through bounded typed metadata RPC and the service console. See [client adapters and request recovery](docs/service-client-adapters.md) and [project setup](docs/service-project-setup.md).
+The old window scheduler and public direct-store maintenance commands are retired. Full rebuilds require a guarded native preview and separate approval. Advanced native management is available through bounded typed metadata RPC (`airkctl service rpc`). See [client adapters and request recovery](docs/service-client-adapters.md) and [project setup](docs/service-project-setup.md).
 
 ## Indexed evidence and response size
 

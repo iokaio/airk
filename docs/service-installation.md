@@ -1,5 +1,17 @@
 # Offline service installation and lifecycle
 
+> **Split Phase 4 (non-shippable interim).** The installer and the extension's
+> management of the service are being reworked under the
+> [split plan](split/split-plan.md) (Phases 6–7); this page still describes the
+> pre-split installation. What is true now: `airk` is the service only and
+> `airkctl` is the CLI. `airk` with no arguments, or `airkctl service start`,
+> starts the installed service; `airkctl service stop`, `restart` and `status`
+> replace `runtime lifecycle` and `runtime inspect|diagnose`. Agent connection
+> commands moved to `airkctl agents …`, and `runtime http-trust` to
+> `airkctl service trust`. The other pre-split `runtime …`, `setup`,
+> `uninstall`, `host` and `service legacy …` commands on this page are
+> reachable only as `airk __airk_role setup-interim <arguments>` until Phase 7.
+
 **Current installer policy (10 November 2026):** installations through 1.9.0
 inclusive must fully uninstall the owned predecessor and start with an empty
 catalog. Installing the same build also requires full uninstall first. Source
@@ -464,7 +476,7 @@ project lease, and that project reports a typed stuck-owner status. Other
 projects keep running, and an explicit service restart recovers. The
 temporary processes are:
 
-- one `airk service session` per VS Code window;
+- one window helper per VS Code window (`airkctl session` after split Phase 6);
 - CLI and installer one-shots;
 - at most one PDF parser child;
 - a user-opened `tools shell`.
@@ -474,7 +486,7 @@ its own service. See [process ownership](process-model.md).
 
 MCP clients connect directly to the saved native HTTPS URL. They do not spawn an
 AIRK process, Node proxy or launcher for each connection/request. Claude Code
-and Codex credential helpers run the one-shot `airk runtime http-credential`,
+and Codex credential helpers run the one-shot `airkctl agents credential`,
 which prints the bearer header and exits. Verified setup,
 inspection and administrative CLI commands remain bounded one-shot operations.
 Interactive terminal tools execute the sealed main directly, retaining the exact

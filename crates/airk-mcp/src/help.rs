@@ -11,13 +11,7 @@ use std::{collections::BTreeMap, sync::OnceLock};
 
 mod topics;
 type CliCatalog = BTreeMap<String, String>;
-static CLI_FACTORY: OnceLock<fn() -> CliCatalog> = OnceLock::new();
 static CLI: OnceLock<CliCatalog> = OnceLock::new();
-
-/// The native executable supplies help generated from its own parser, without executing commands.
-pub fn install_cli_help(factory: fn() -> CliCatalog) {
-    let _ = CLI_FACTORY.set(factory);
-}
 
 /// `airkctl`'s command help (contracts C11a): generated from its parser by
 /// `AIRK_WRITE_CLI_HELP=1 cargo test -p airkctl --lib help_catalog` and
@@ -96,11 +90,7 @@ fn answer_with_catalog(
         .iter()
         .find(|entry| entry.id == topic)
         .ok_or("unknown_help_topic")?;
-    let catalog = Some(CLI.get_or_init(|| {
-        CLI_FACTORY
-            .get()
-            .map_or_else(embedded_cli_help, |factory| factory())
-    }));
+    let catalog = Some(CLI.get_or_init(embedded_cli_help));
     let content = if let Some(command) = &args.command {
         if args.topic.is_some() && !matches!(topic.as_str(), "cli" | "commands") {
             return Err("conflicting_help_selectors");

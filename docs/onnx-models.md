@@ -26,7 +26,7 @@ Both exports use `sentence-transformers/all-MiniLM-L6-v2`, revision
 
 The signed export is byte-identical to the pinned upstream ARM64 export. Native
 CPU detection selects the profile. Export names do not establish performance
-qualification. `airk model-catalog` reports observations, selection and hashes
+qualification. `airkctl model-catalog` reports observations, selection and hashes
 without opening an index. Both profiles ship in every platform installer.
 
 ## Offline build inputs

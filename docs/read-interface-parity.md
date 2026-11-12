@@ -79,29 +79,31 @@ overrides survive typed frontend observation, structured views and full/selected
 exports. New input catalogs/tool-help schemas grow intentionally; ordinary default
 evidence payloads gain no placeholder field or source/model/index work.
 
-Audit dated November 1, 2026, for the 1.8.7 candidate. Equivalent read requests must retain complete native data through each interface. Workbench wraps reads in bounded plans; `airk tools call airk_<operation>` returns the native MCP result envelope. The tools shell uses that same call path and pretty-prints its text content. Dedicated CLI aliases below are convenience argument builders; their documented defaults can differ. Use `tools help` and `tools call --args-file` for the complete native input schema.
+Audit dated November 1, 2026, for the 1.8.7 candidate. Equivalent read requests must retain complete native data through each interface. Workbench wraps reads in bounded plans; `airkctl tools call airk_<operation>` returns the native MCP result envelope. The tools shell uses that same call path and pretty-prints its text content. Dedicated CLI aliases below are convenience argument builders; their documented defaults can differ. Use `tools help` and `tools call --args-file` for the complete native input schema.
+
+Since split Phase 4 the CLI is `airkctl`; the aliases below keep their names and arguments.
 
 | Native operation | Workbench command | Dedicated CLI alias, where present |
 |---|---|---|
-| search | `/search` | `airk search` |
-| symbols | `/symbols` | `airk symbol` |
-| references | `/refs` | `airk refs` |
-| read_file | `/read` | `airk read` |
-| outline | `/outline` | `airk outline` |
-| list_files | `/files` | `airk files` |
-| file_info | `/info` | `airk info` |
-| imports | `/imports` | `airk imports` |
-| code_facts | `/code-facts` | `airk code-facts` |
-| document_facts | `/facts` | `airk facts` |
-| changes | `/changes` | `airk changes` |
-| context | `/context` | `airk context` |
-| relationships | `/relationships` | `airk relationships` |
-| status | `/status` | `airk status` |
-| diagnostics | `/diagnostics` | `airk tools call airk_diagnostics` |
-| capabilities | `/capabilities` | `airk tools call airk_capabilities` |
-| help | `/help` | `airk tools call airk_help` |
+| search | `/search` | `airkctl search` |
+| symbols | `/symbols` | `airkctl symbol` |
+| references | `/refs` | `airkctl refs` |
+| read_file | `/read` | `airkctl read` |
+| outline | `/outline` | `airkctl outline` |
+| list_files | `/files` | `airkctl files` |
+| file_info | `/info` | `airkctl info` |
+| imports | `/imports` | `airkctl imports` |
+| code_facts | `/code-facts` | `airkctl code-facts` |
+| document_facts | `/facts` | `airkctl facts` |
+| changes | `/changes` | `airkctl changes` |
+| context | `/context` | `airkctl context` |
+| relationships | `/relationships` | `airkctl relationships` |
+| status | `/status` | `airkctl status` |
+| diagnostics | `/diagnostics` | `airkctl tools call airk_diagnostics` |
+| capabilities | `/capabilities` | `airkctl tools call airk_capabilities` |
+| help | `/help` | `airkctl tools call airk_help` |
 
-`airk parse --execute '/status'` and Workbench execute the same native `airk_parse` handler. `airk tools call airk_parse --args-file request.json` accepts an explicit bounded plan. This is a read-only composition layer, not an agent or management runner.
+`airkctl parse --execute '/status'` and Workbench execute the same native `airk_parse` handler. `airkctl tools call airk_parse --args-file request.json` accepts an explicit bounded plan. This is a read-only composition layer, not an agent or management runner.
 
 ## Shared implementation and data
 

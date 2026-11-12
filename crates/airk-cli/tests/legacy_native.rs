@@ -46,7 +46,14 @@ fn explicit_old_derived_cleanup_uses_actual_cli_and_keeps_originals_and_settings
     let invoke = |action: &str, approval: Option<&str>| -> Result<serde_json::Value> {
         let mut command = common::native_command();
         command
-            .args(["service", "legacy", action, "--runtime-dir"])
+            .args([
+                "__airk_role",
+                "setup-interim",
+                "service",
+                "legacy",
+                action,
+                "--runtime-dir",
+            ])
             .arg(&service.control);
         if action != "derived-receipts" {
             command
@@ -128,7 +135,14 @@ fn legacy_review_never_executes_the_selected_old_binary_or_creates_project_state
         eprintln!("airk legacy fixture: review CLI invocation started");
     }
     let output = common::native_command()
-        .args(["service", "legacy", "review", "--runtime-dir"])
+        .args([
+            "__airk_role",
+            "setup-interim",
+            "service",
+            "legacy",
+            "review",
+            "--runtime-dir",
+        ])
         .arg(&service.control)
         .arg("--root")
         .arg(source.path())
@@ -163,7 +177,14 @@ fn legacy_review_never_executes_the_selected_old_binary_or_creates_project_state
     );
     assert_eq!(fs::read_dir(old_data)?.count(), 2);
     let list = common::native_command()
-        .args(["service", "legacy", "list", "--runtime-dir"])
+        .args([
+            "__airk_role",
+            "setup-interim",
+            "service",
+            "legacy",
+            "list",
+            "--runtime-dir",
+        ])
         .arg(&service.control)
         .output()?;
     ensure!(list.status.success(), "native legacy receipt list failed");

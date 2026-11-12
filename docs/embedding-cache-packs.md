@@ -2,7 +2,7 @@
 
 AIRK stores positive embedding results in collection-local immutable binary packs. Exact input keys still bind the complete embedding descriptor and input bytes; packing does not change the numerical pipeline or round float values. Successful no-vector results are reused only within the current build's bounded input registry.
 
-The current derived format requires a full index rebuild. There is no reader or converter for earlier per-vector JSON cache objects. `airk index --full` preserves source files and saved collection configuration while rebuilding managed derived state.
+The current derived format requires a full index rebuild. There is no reader or converter for earlier per-vector JSON cache objects. `airkctl index --full` preserves source files and saved collection configuration while rebuilding managed derived state.
 
 ## Integrity and publication
 

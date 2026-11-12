@@ -37,10 +37,10 @@ rejected before source checks. These limits are independent of ordinary result
 limits and snippet/output byte budgets.
 
 ```console
-airk info src/queue.rs
-airk info src/queue.rs --verification off
-airk read src/queue.rs --start-line 1 --end-line 40 --verification require
-airk tools call airk_file_info --args '{"path":"src/queue.rs","verification":"require"}'
+airkctl info src/queue.rs
+airkctl info src/queue.rs --verification off
+airkctl read src/queue.rs --start-line 1 --end-line 40 --verification require
+airkctl tools call airk_file_info --args '{"path":"src/queue.rs","verification":"require"}'
 ```
 
 For public MCP, call `file_info` with

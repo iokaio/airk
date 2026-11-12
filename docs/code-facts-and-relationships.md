@@ -17,9 +17,9 @@ Bundled `airk-framework-cues/1` rules recognize selected app/router route calls,
 ## Queries
 
 ~~~console
-airk code-facts --name "Auth::authenticate" --kind definition
-airk code-facts --kind route_registration --path-prefix src/
-airk relationships db.query --kind call --direction incoming
+airkctl code-facts --name "Auth::authenticate" --kind definition
+airkctl code-facts --kind route_registration --path-prefix src/
+airkctl relationships db.query --kind call --direction incoming
 ~~~
 
 Use actual `code.symbol_id` values returned by facts for identity lookup. Syntax call queries use exact written targets. Imported SCIP IDs have producer prefixes, and local identities include document paths. External targets remain identifiers and never authorize source reads outside the collection.
@@ -35,7 +35,7 @@ The adapter accepts supplied TypeScript/TSX/JavaScript, Rust and C# SCIP documen
 Capture a manifest **before** producing the index. Declare build files, lockfiles, generated inputs and a file containing effective compiler flags/target/environment fingerprints. A Git commit alone does not bind dirty files. Preparation requires indexed inventory to match current sources. Keep output outside indexed sources or inside the excluded AIRK data directory.
 
 ~~~console
-airk index
+airkctl index
 airk analysis prepare --producer scip-typescript --producer-version <actual-version> --build-input tsconfig.json --build-input package-lock.json
 # Save the returned manifest outside indexed sources BEFORE running the producer.
 # Run the chosen producer; set index_sha256 in that captured manifest to its output digest.

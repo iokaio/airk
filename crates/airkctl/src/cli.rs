@@ -127,7 +127,7 @@ enum Command {
     /// Acknowledge an existing reviewed index mapping and prepare its reserved storage.
     ///
     /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant.
-    /// Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airkctl service register --runtime-dir <control>` instead.
+    /// Authority-zero services retain their legacy registration behavior. For a service on an explicit control directory (the `service-foreground` role), use `airkctl service register --runtime-dir <control>` instead.
     Init,
     /// Print the offline model catalog and the CPU choice for this host.
     ModelCatalog,
@@ -193,7 +193,7 @@ enum Command {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
     },
-    /// The AIRK service: health and shutdown.
+    /// The AIRK service: start, stop, status, logs, requests, trust and management.
     Service {
         #[command(subcommand)]
         action: ServiceCommand,

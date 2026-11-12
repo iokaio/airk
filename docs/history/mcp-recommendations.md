@@ -80,7 +80,7 @@ Six unrelated Rust types share the name. Each is a short-lived handle around a c
 Related names that an exact-match lookup does not reach:
 
 - `pub trait RemoteSession` at [embedding_worker.rs:99](../../crates/airk-retrieval/src/embedding_worker.rs#L99), implemented by the two embedding sessions.
-- `struct RemoteSession` at [tools.rs:17](../../crates/airk-cli/src/tools.rs#L17), an unrelated wrapper over `airk_mcp::remote::RemoteTools` implementing `ToolSession`.
+- `struct RemoteSession` at [tools.rs:17](https://github.com/iokaio/airk/blob/5adb4677/crates/airk-cli/src/tools.rs#L17), an unrelated wrapper over `airk_mcp::remote::RemoteTools` implementing `ToolSession`.
 - `OwnerSession` and `NativeOwnerSession` in `airk-store` (found only by `rg`).
 - `ort::session::Session` used behind a mutex at [onnx.rs:30](../../crates/airk-retrieval/src/onnx.rs#L30).
 - TypeScript: `McpStdioSession` at [mcpStdioSession.ts:29](../../packages/vscode/src/mcpStdioSession.ts#L29) and the persisted `WorkbenchSession`/`WorkbenchSessionSummary` contracts at [workbenchContracts.ts:6](../../packages/vscode/src/workbenchContracts.ts#L6).

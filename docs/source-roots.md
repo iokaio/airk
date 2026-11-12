@@ -12,9 +12,9 @@ Use the same `--root`, `--data-dir` and `--collection` options for all commands:
 
 ```console
 airk --root /projects/app --data-dir /indexes --collection app collections roots add requirements /projects/specifications
-airk --root /projects/app --data-dir /indexes --collection app index
+airkctl --root /projects/app --data-dir /indexes --collection app index
 airk --root /projects/app --data-dir /indexes --collection app collections roots list
-airk --root /projects/app --data-dir /indexes --collection app search latency --path-prefix @requirements/
+airkctl --root /projects/app --data-dir /indexes --collection app search latency --path-prefix @requirements/
 airk --root /projects/app --data-dir /indexes --collection app collections roots locate @requirements/service.xlsx
 ```
 
@@ -32,7 +32,7 @@ Each published revision retains its own source map. An already indexed `@require
 
 ```console
 airk collections roots remove requirements
-airk index
+airkctl index
 ```
 
 Removing an alias retains the source folder and its files. The next successful index removes its evidence from the active revision; prior exact tokens expire and unreferenced objects become eligible for bounded cleanup. Rebinding requires an explicit remove followed by add. If a registered folder disappears or resolves to a different canonical directory, indexing fails while preserving the last published revision.

@@ -72,7 +72,7 @@ fn derived_worker_refuses_pending_helper_activation_before_opening_collection() 
     }
     let mut child = Owned(
         command
-            .arg("derived-worker")
+            .args(["__airk_role", "setup-interim", "derived-worker"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(fs::File::create(&stderr_path)?)

@@ -198,6 +198,8 @@ impl ServiceManager {
             &root,
             launcher,
             vec![
+                "__airk_role".into(),
+                "setup-interim".into(),
                 "runtime".into(),
                 "foreground".into(),
                 "--install-dir".into(),
@@ -354,6 +356,8 @@ impl ServiceManager {
 
     fn runtime_arguments(&self) -> Vec<String> {
         vec![
+            "__airk_role".into(),
+            "setup-interim".into(),
             "runtime".into(),
             "managed-serve".into(),
             "--install-dir".into(),

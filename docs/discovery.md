@@ -44,7 +44,7 @@ Current file/fact discovery selects one verified publication per request. A new 
 
 Exact `revision` options also require the current head. Superseded tokens fail; no historical cursor continuation or fallback to live source is provided. Old 1.1 collections are isolated in their previous namespace.
 
-Direct CLI discovery commands accept `--cursor`; `airk outline` also accepts `--compact`. The same options are available through `airk tools call` and the interactive tools console. Durable-key fact lookup is exclusive of cursor/textual filters; it is a lookup, not an inventory traversal.
+Direct CLI discovery commands accept `--cursor`; `airkctl outline` also accepts `--compact`. The same options are available through `airkctl tools call` and the interactive tools console. Durable-key fact lookup is exclusive of cursor/textual filters; it is a lookup, not an inventory traversal.
 
 CLI read aliases also accept `--reply-detail lean|rich`. A projection change
 invalidates a continuation; equivalent legacy flags preserve the same effective

@@ -11,18 +11,18 @@ The tracker measures AIRK's work and delivered context. Its hooks cannot observe
 Commands use the usual `--root`, `--data-dir` and `--collection` scope. Reusing a collection name cannot combine another root's history.
 
 ```console
-airk usage report --days 7
-airk usage report --days 30 --format csv
-airk usage report --days 30 --format markdown
-airk usage configure --mode disabled
-airk usage configure --mode aggregates-only
-airk usage configure --mode diagnostic-events
-airk usage feedback REQUEST_ID --usefulness useful
-airk usage import measurement.json
-airk usage calibrate --tokenizer tokenizer.json --baseline baseline.json --returned returned.json --generation 1 --content-kind code
-airk usage calibrate --tokenizer tokenizer.json --baseline baseline.json --returned returned.json --generation 1 --content-kind code --record
-airk usage report --price-scenario prices.json
-airk usage clear
+airkctl usage report --days 7
+airkctl usage report --days 30 --format csv
+airkctl usage report --days 30 --format markdown
+airkctl usage configure --mode disabled
+airkctl usage configure --mode aggregates-only
+airkctl usage configure --mode diagnostic-events
+airkctl usage feedback REQUEST_ID --usefulness useful
+airkctl usage import measurement.json
+airkctl usage calibrate --tokenizer tokenizer.json --baseline baseline.json --returned returned.json --generation 1 --content-kind code
+airkctl usage calibrate --tokenizer tokenizer.json --baseline baseline.json --returned returned.json --generation 1 --content-kind code --record
+airkctl usage report --price-scenario prices.json
+airkctl usage clear
 ```
 
 `report` writes JSON by default; CSV and Markdown are bounded exports to stdout. Shell redirection chooses an export destination. UTC whole-day windows range from 1 to 30 days and include today. Partial-day filtering is unavailable because default recording discards individual request measurements.

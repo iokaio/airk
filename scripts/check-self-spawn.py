@@ -78,6 +78,10 @@ STARTS = {
         "primitive: the bounded native command runner (no shell, output and time limits)",
     ("crates/airk-process/src/bounded_command.rs", "spawn"):
         "primitive: std spawn without error dialogs; callers build the command",
+    ("crates/airk-cli/src/manual_start.rs", "airkctl"):
+        "external: the airkctl installed beside airk, for `airk` with no or user-style "
+        "arguments (split plan §5.1, U94); airkctl verifies the installation and admits "
+        "the service-detached role",
     ("crates/airkctl/src/launch.rs", "launch"):
         "external: the user's Claude Code, Codex or VS Code client in the foreground "
         "(`airkctl agents launch`, U91); not an airk process",

@@ -38,9 +38,9 @@ When several rules match, the lexicographically smallest rule ID is the reported
 airk collections vectors selection show
 airk collections vectors selection validate --file /path/to/vector-selection.json
 airk collections vectors selection set --file /path/to/vector-selection.json
-airk index
+airkctl index
 airk collections vectors show
-airk info generated/example.js
+airkctl info generated/example.js
 ```
 
 `validate` checks a proposed policy without saving it. `set` saves it for the next successful index; it does not start indexing. Both accept exactly one `--file` or `--json` input, limited to 128 KiB. Invalid input leaves the saved policy unchanged. The usual `--root`, `--data-dir` and `--collection` options select the collection.
@@ -67,4 +67,4 @@ File information reports `vector_selection.eligible`, `vector_selection.excluded
 
 An excluded file remains available to lexical search, exact file reads and structural/document fact retrieval. Hybrid search can still return it through the lexical branch. Its semantic-only search contribution is removed on the next successful index.
 
-The saved enabled setting and exclusions survive `airk index --full`. Obsolete derived indexes require that explicit rebuild; their evidence is not read to configure the replacement. Source files are never rewritten by selection changes or rebuilding.
+The saved enabled setting and exclusions survive `airkctl index --full`. Obsolete derived indexes require that explicit rebuild; their evidence is not read to configure the replacement. Source files are never rewritten by selection changes or rebuilding.

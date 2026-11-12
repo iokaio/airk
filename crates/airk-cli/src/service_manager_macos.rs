@@ -149,6 +149,8 @@ impl<'a> Manager<'a> {
         let invocation = Invocation::new(
             main,
             &[
+                "__airk_role",
+                "setup-interim",
                 "runtime",
                 "mac-login",
                 "--install-dir",

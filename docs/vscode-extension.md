@@ -1,5 +1,14 @@
 # Native VS Code extension
 
+> **Split Phase 4 (non-shippable interim).** The extension and its management
+> of the service are being reworked under the [split plan](split/split-plan.md)
+> (Phase 6; the installer in Phase 7). This page describes the pre-split
+> extension. On this branch the extension source still starts `airk service
+> session` and `airk service console` and names pre-split `airk runtime …`
+> commands; after Phase 4 `airk` is the service only and no longer accepts
+> them as user commands. `airkctl` is the CLI: the window helper becomes
+> `airkctl session`, and credential helpers become `airkctl agents credential`.
+
 **1.8.16 source implementation; unpublished, with final native/installed-platform
 qualification pending.** The extension presents the native Artifact Indexing and
 Retrieval Kernel. Index contents, grants, jobs, process ownership and upgrades

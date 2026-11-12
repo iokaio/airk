@@ -29,7 +29,7 @@ DOCX tables add `table_row` and `table_cell` facts alongside searchable paragrap
 
 XLSX extraction follows workbook relationships and sheet order. It reads stored shared strings, inline rich text, numbers, booleans, errors, dates and formula text/results without Office. A row citation contains the original worksheet name and row number; `document.table.cells` includes original addresses such as `B14`. Hidden sheets/rows remain searchable and carry a hidden marker. Sparse coordinates and merged ranges are annotated without expanding missing cells. The first nonempty row supplies header candidates; named-table definitions and arbitrary multirow header inference are not implemented.
 
-Cell fact names retain their A1 addresses even when a header supplies the human-readable label. For example, `airk facts requirements.xlsx --kind table_cell --name B14` retrieves matching indexed cell facts; inspect the returned worksheet name to distinguish the same address on multiple sheets.
+Cell fact names retain their A1 addresses even when a header supplies the human-readable label. For example, `airkctl facts requirements.xlsx --kind table_cell --name B14` retrieves matching indexed cell facts; inspect the returned worksheet name to distinguish the same address on multiple sheets.
 
 The same requirement/date/quantity rules analyze each normalized row, with the header mapping attached. For example, `A14=REQ-9` and `B14=The API must respond in at most 200 ms` produce a requirement candidate retaining `REQ-9`, the `lte` quantity and both cell addresses. Cell boundaries stay explicit so separate numeric/unit cells are not accidentally joined into a fabricated constraint.
 
@@ -78,10 +78,10 @@ Facts are capped at 10,000 per file, statements at 1,024 UTF-8 bytes and date/qu
 Index with the updated helper, then retrieve only the category needed:
 
 ~~~console
-airk --root /projects/a --data-dir /indexes/airk --collection project-a index
-airk --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind requirement
-airk --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind date
-airk --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind architecture
+airkctl --root /projects/a --data-dir /indexes/airk --collection project-a index
+airkctl --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind requirement
+airkctl --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind date
+airkctl --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind architecture
 ~~~
 
 For MCP, use the existing read-only document tool within the unreleased sixteen-tool inventory:

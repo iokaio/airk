@@ -11,10 +11,18 @@ PORT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PORT)
 
 
+# Phase 4 deleted the pre-split command tree the port read; from then on the
+# committed crates/airkctl/src/evidence.rs is the owner and this drift check
+# has no source to compare against.
+SOURCE_PRESENT = "struct EvidenceOptions {" in PORT.SOURCE.read_text(encoding="utf-8")
+
+
 class EvidencePort(unittest.TestCase):
+    @unittest.skipUnless(SOURCE_PRESENT, "pre-split source removed in split Phase 4")
     def test_committed_port_is_the_script_output(self):
         self.assertEqual(PORT.main(["--check"]), 0)
 
+    @unittest.skipUnless(SOURCE_PRESENT, "pre-split source removed in split Phase 4")
     def test_every_reviewed_variant_and_mapping_is_ported(self):
         text = PORT.render(PORT.SOURCE.read_text(encoding="utf-8"))
         for name in PORT.VARIANTS:

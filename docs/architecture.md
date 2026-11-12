@@ -25,8 +25,8 @@ Release state and qualification evidence are in the
 | airk-kernel | Collection-scoped publication, retrieval and rank fusion, response budgets, coverage, scheduling, usage and maintenance services, and the Workbench plan runner | core, ingest, store, retrieval |
 | airk-mcp | MCP schemas, the official SDK transport, canonical read handlers and result conversion | core, kernel |
 | airk-ipc | Same-user local transport: owner-only endpoints and peer checks, the length-prefixed JSON frame codec and the I1 control request ([contract](../crates/airk-ipc/CONTRACT.md)) | core |
-| airk-cli | Commands, the native service and its workers, local HTTPS ingress, installation and lifecycle, and process adapters | core, process, ipc, kernel, mcp, store, retrieval |
-| airkctl | The split's command-line client ([split plan](split/split-plan.md) §6). It owns the I2 contract: exit classes, the error line, the version document and session protocol 2. So far it serves only `--version` and `version`; every other command answers `not_yet_served` (exit 5). It may depend only on core, process and airk-ipc (U27) | core |
+| airk-cli | The `airk` executable: the native service and its workers, local HTTPS ingress, installation and lifecycle, process adapters and the private roles (`service-foreground`, and the interim `setup-interim` until Phase 7). It has no user command tree | core, process, ipc, kernel, mcp, store, retrieval |
+| airkctl | The split's command-line client ([split plan](split/split-plan.md) §6). It carries every user command and owns the I2 contract: exit classes, the error line, the version document and session protocol 2. It reaches the service only over the local control endpoint, apart from the narrow exceptions in split plan §6.3. It may depend only on core, process and airk-ipc (U27) | core, process, ipc |
 
 Rules:
 
@@ -65,7 +65,8 @@ sealed main executable directly.
 Exactly one `airk` process stays resident per installation: the service. Project owners, cleanup owners and the source watcher run inside it.
 The temporary processes are:
 
-- one `airk service session` per VS Code window;
+- one window helper per VS Code window (`airkctl session` after the split;
+  the extension moves to it in split Phase 6);
 - CLI and installer one-shots;
 - at most one isolated PDF parser child;
 - a user-opened `tools shell`.
@@ -155,8 +156,9 @@ reads.
 - **Extension.** The extension hosts presentation, reviewed workspace
   selection and guarded request preparation. It never owns a running index
   job, and native service and index ownership is independent of extension
-  disposal. Each window reaches native code through one `airk service session`,
-  which exits with the window's extension host.
+  disposal. Each window reaches native code through one window helper
+  (`airkctl session` after split Phase 6), which exits with the window's
+  extension host.
 
 ## Compatibility boundary
 

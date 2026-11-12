@@ -2251,38 +2251,6 @@ fn actual_https_body_bound_and_malformed_requests_are_content_free() -> Result<(
     Ok(())
 }
 
-fn assert_retired_stdio_roles(
-    root: &Path,
-    project: airk_core::service::ProjectBinding,
-) -> Result<()> {
-    for role in ["mcp", "bridge"] {
-        let mut invocation = command();
-        invocation.arg(role);
-        if role == "bridge" {
-            invocation
-                .arg("--runtime-dir")
-                .arg(root)
-                .arg("--project")
-                .arg(project.to_string());
-        }
-        let output = invocation.stdin(Stdio::null()).output()?;
-        ensure!(
-            !output.status.success(),
-            "retired {role} accepted modern stdin"
-        );
-        ensure!(
-            output.stdout.is_empty(),
-            "retired {role} emitted protocol data"
-        );
-        let error = std::str::from_utf8(&output.stderr)?;
-        ensure!(
-            error.len() <= 4096 && error.contains("stdio_mcp_retired"),
-            "retired role did not give bounded reconnect guidance: {error}"
-        );
-    }
-    Ok(())
-}
-
 fn exercise_disappearing_stalled_and_malformed_clients(root: &Path) -> Result<()> {
     use airk_cli::local_ipc;
     use airk_core::service::{ControlMethod, ControlRequest, ControlResponse};
@@ -2649,7 +2617,6 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
                 && result.to_string().contains("cobalt harbor"),
             "direct response lost original citation"
         );
-        assert_retired_stdio_roles(&root, project.binding)?;
         let pinned = airk_cli::bundled_assets::bind_service_models(
             airk_kernel::Kernel::open_service_collection_for_diagnostics(
                 Path::new(&project.root),
@@ -2889,7 +2856,7 @@ fn late_child_with_buffered_initialization_cannot_open_collection_without_activa
         JobKind::Index,
     )?;
     let mut child = command()
-        .arg("project-worker")
+        .args(["__airk_role", "setup-interim", "project-worker"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2950,7 +2917,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
     let project = airk_kernel::service_projects::registration(&source, &data, "fixture")?;
     ServiceRegistry::open(&root, service)?.register(&project)?;
     let mut child = command()
-        .arg("project-worker")
+        .args(["__airk_role", "setup-interim", "project-worker"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -3522,7 +3489,13 @@ fn initialized_completed_reviewed_activation_replay_preserves_stopped_service_an
         "action":"stop","expected_instance":health.instance,"runtime":candidate,"force":false,
     });
     let mut stop = command()
-        .args(["runtime", "lifecycle", "--install-dir"])
+        .args([
+            "__airk_role",
+            "setup-interim",
+            "runtime",
+            "lifecycle",
+            "--install-dir",
+        ])
         .arg(&install)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -4232,8 +4205,7 @@ fn failed_project_start_circuit_requires_explicit_restart_and_preserves_unknown_
 }
 
 #[test]
-fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds() -> Result<()> {
-    use airk_cli::console_client::{Request, Response as ConsoleResponse};
+fn metadata_relay_and_stdin_rpc_preserve_closed_projects_and_frame_bounds() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
     let owner = tempfile::tempdir()?;
     let runtime = owner.path().join("runtime");
@@ -4253,69 +4225,44 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
                 project: project.clone(),
             },
         ))?;
-    let mut command = Command::new(env!("CARGO_BIN_EXE_airk"));
-    command
-        .args([
-            "--root",
-            "/console-must-not-open-source",
-            "service",
-            "console",
-            "--runtime-dir",
-        ])
-        .arg(&runtime)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut consoles = Children(vec![command.spawn()?]);
-    let mut input = consoles.0[0]
-        .stdin
-        .take()
-        .context("console input missing")?;
-    let mut output = consoles.0[0]
-        .stdout
-        .take()
-        .context("console output missing")?;
+    // The trusted console is retired (split Phase 4); its relay checks run
+    // through `airkctl service rpc`, which applies the same relay filter.
     {
-        let mut call = |method| -> Result<Response> {
-            let id = airk_kernel::service_broker::new_instance_id()?;
-            airk_cli::service_ipc::write_frame(&mut input, &Request { id, method })?;
-            let response: ConsoleResponse = airk_cli::service_ipc::read_frame(&mut output)?
-                .context("console closed before reply")?;
-            ensure!(response.id == id, "console crossed request identity");
-            Ok(response.response)
+        let call = |method: Method| -> Result<Response> {
+            let output = common::ctl::Ctl::new()
+                .args(["service", "rpc", "--runtime-dir"])
+                .arg(&runtime)
+                .arg("--stdin")
+                .input(serde_json::to_vec(&method)?)
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "relay request failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(serde_json::from_slice(&output.stdout)?)
         };
         ensure!(
             matches!(call(Method::Health)?, Response::Health { .. }),
             "console health unavailable"
         );
+        // An evidence connection is refused before relay, as `airk service
+        // rpc` refused it: no credential is ever relayed.
+        let refused = common::ctl::Ctl::new()
+            .args(["service", "rpc", "--runtime-dir"])
+            .arg(&runtime)
+            .arg("--stdin")
+            .input(serde_json::to_vec(&Method::Connect {
+                project: project.binding,
+            })?)
+            .output()?;
         ensure!(
-            matches!(call(Method::Connect {project:project.binding})?,Response::Failure {code} if code=="console_brokerage_forbidden"),
-            "console exposed an evidence credential"
+            !refused.status.success()
+                && refused.stdout.is_empty()
+                && String::from_utf8_lossy(&refused.stderr)
+                    .contains("metadata RPC cannot expose evidence credentials"),
+            "relay exposed an evidence credential"
         );
-        let mut pinned = command
-            .arg("--runtime-sha256")
-            .arg("f".repeat(64))
-            .spawn()?;
-        let mut pinned_input = pinned.stdin.take().unwrap();
-        let mut pinned_output = pinned.stdout.take().unwrap();
-        let pin_id = airk_kernel::service_broker::new_instance_id()?;
-        airk_cli::service_ipc::write_frame(
-            &mut pinned_input,
-            &Request {
-                id: pin_id,
-                method: Method::Health,
-            },
-        )?;
-        let mismatch: ConsoleResponse = airk_cli::service_ipc::read_frame(&mut pinned_output)?
-            .context("pinned console closed")?;
-        ensure!(
-            mismatch.id == pin_id
-                && matches!(mismatch.response,Response::Failure {code} if code=="service_rebind_required"),
-            "console ignored an approved payload identity mismatch"
-        );
-        drop(pinned_input);
-        drop(pinned_output);
-        ensure!(wait_exit(&mut pinned)?, "mismatched console did not drain");
         let Response::Console { page } = call(Method::Console {
             after: None,
             revision: None,
@@ -4411,12 +4358,6 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
             "down-service console invented live health"
         );
     }
-    drop(input);
-    drop(output);
-    ensure!(
-        wait_exit(&mut consoles.0[0])?,
-        "console did not exit at parent EOF"
-    );
     ensure!(
         fs::read_dir(&data)?.next().is_none(),
         "console failure opened project state"

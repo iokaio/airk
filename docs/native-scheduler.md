@@ -33,9 +33,9 @@ An installed worker uses the same queue, root bindings, aliases, quotas and lock
 ```console
 airk --root /projects/example --data-dir /indexes --collection example service plan
 airk --root /projects/example --data-dir /indexes --collection example service install
-airk --root /projects/example --data-dir /indexes --collection example service status
-airk --root /projects/example --data-dir /indexes --collection example service stop
-airk --root /projects/example --data-dir /indexes --collection example service start
+airkctl --root /projects/example --data-dir /indexes --collection example service status
+airkctl --root /projects/example --data-dir /indexes --collection example service stop
+airkctl --root /projects/example --data-dir /indexes --collection example service start
 airk --root /projects/example --data-dir /indexes --collection example service uninstall
 ```
 
@@ -79,7 +79,7 @@ Each new worker also holds a shared lease on `scheduler-1.2-worker.lock` through
 
 Collection writers also use stable advisory locks under `collections-1.2/.writer-locks/`. A versioned `writer.lock` marker records the active process and is normally removed at completion. Current-version markers left by a crash are recoverable after acquiring the advisory lock. Older unversioned markers still require the deliberate recovery procedure in [operations](operations.md). Do not unlink active advisory lock files: replacing their inode can break mutual exclusion.
 
-Direct `airk index` remains available and takes the collection writer lock; it does not participate in the durable scheduled queue. The extension uses scheduled indexing. Request-scoped read gates and collection writer locks remain authoritative for publication and current-object cleanup.
+Direct `airkctl index` remains available and takes the collection writer lock; it does not participate in the durable scheduled queue. The extension uses scheduled indexing. Request-scoped read gates and collection writer locks remain authoritative for publication and current-object cleanup.
 
 Coverage refresh and maintenance in another editor can briefly hold a collection writer lock outside the indexing queue. A scheduled index that encounters this live-lock contention returns `busy` and releases its running claim while preserving the queued revision, full/manual flags and pause policy. The waiting caller retries within its existing 240-second allowance. Contention does not mark the collection blocked; genuine indexing failures still do. Quota accounting also tolerates managed files or directories removed by another writer during its walk, while continuing to count outstanding growth reservations and rejecting links or other I/O failures.
 

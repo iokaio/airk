@@ -10,9 +10,9 @@ The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-The `airk` executable is the whole engine, not only a VS Code helper. This guide explains how the commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airk <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
+Since split Phase 4, `airk` is the service only and `airkctl` is the command-line client. `airk` with no arguments starts the installed service in the background (through the `airkctl` installed beside it) or says it is already running; with any other arguments it says that `airk` takes no commands and reports whether the service is running. This guide explains how the `airkctl` commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airkctl <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
 
-For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. In the unpublished 1.8.14 implementation, `airk tools list`, `tools help`, `tools call` and `tools shell` use the public HTTPS tool catalog and its shared alias and argument validation. Historical `airk_<operation>` aliases remain accepted. The selected native backend retains the same reviewed scope; public routing neither grants access nor attaches an unrelated Explorer window. Scoped diagnostics explicitly report unavailable process/work context where exposing project-wide information would exceed that scope. Native management commands provide their separately authorized lifecycle observations.
+For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. In the unpublished 1.8.14 implementation, `airkctl tools list`, `tools help`, `tools call` and `tools shell` use the public HTTPS tool catalog and its shared alias and argument validation. Historical `airk_<operation>` aliases remain accepted. The selected native backend retains the same reviewed scope; public routing neither grants access nor attaches an unrelated Explorer window. Scoped diagnostics explicitly report unavailable process/work context where exposing project-wide information would exceed that scope. Native management commands provide their separately authorized lifecycle observations.
 
 ## Complete read results in 1.8.7
 
@@ -22,9 +22,9 @@ JSON. This is independent of retained indexing detail. Omitting it preserves
 the inherited defaults described below; conflicts with legacy projection flags
 reject instead of choosing precedence.
 
-CLI tool calls, dedicated read commands and Workbench plans share the MCP read handlers. Full results retain provenance, publication, readiness, coverage, continuations and error/retry details. `airk tools call airk_status` returns its MCP envelope, while `airk parse --execute '/status'` places the complete status result under `steps[].result`, including `query_concurrency`. The shell pretty-prints the same tool content. Defaults can differ between convenience commands; use matching arguments and [the parity audit](read-interface-parity.md) when comparing results.
+CLI tool calls, dedicated read commands and Workbench plans share the MCP read handlers. Full results retain provenance, publication, readiness, coverage, continuations and error/retry details. `airkctl tools call airk_status` returns its MCP envelope, while `airkctl parse --execute '/status'` places the complete status result under `steps[].result`, including `query_concurrency`. The shell pretty-prints the same tool content. Defaults can differ between convenience commands; use matching arguments and [the parity audit](read-interface-parity.md) when comparing results.
 
-For explicit plans, put a JSON object in the `plan` field and pass the request through `airk tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.
+For explicit plans, put a JSON object in the `plan` field and pass the request through `airkctl tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.
 
 MCP-compatible status results can report `status_timeout` with `index_error.stage: setup`, unknown readiness and null evidence. Later polls preserve that explicit setup-deadline outcome after already accepted work drains. Apply the existing bounded read-retry contract with the same scope; genuine setup failures and ordinary session cancellation retain their failure handling. See the [status contract](mcp.md).
 
@@ -33,12 +33,12 @@ MCP-compatible status results can report `status_timeout` with `index_error.stag
 The unpublished **1.8.8 P11a working build** adds an explicit opt-in to FileInfo:
 
 ```sh
-airk info src/example.rs --include-profile-families --verification off
+airkctl info src/example.rs --include-profile-families --verification off
 
-airk tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
+airkctl tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
 ```
 
-Inside `airk tools shell`, enter the same JSON directly, without shell quoting:
+Inside `airkctl tools shell`, enter the same JSON directly, without shell quoting:
 
 ```text
 call airk_file_info {"path":"src/example.rs","include_profile_families":true,"verification":"off"}
@@ -67,7 +67,7 @@ P11a qualification and primary review passed. P11a is accepted for unpublished l
 
 ## Identifier navigation
 
-For a known type/function, use compact `airk symbol` first, scoped `airk refs` for textual uses, and `airk read`/`context` to inspect a selected location. `airk outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
+For a known type/function, use compact `airkctl symbol` first, scoped `airkctl refs` for textual uses, and `airkctl read`/`context` to inspect a selected location. `airkctl outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
 
 `symbol` and `code-facts` keep exact matching by default; `--name-match suffix|contains` explicitly expands simple/qualified names case-sensitively. `--include-count` requests a qualified count, whose total can remain unknown under bounded scanning. Search and refs accept indexed `--language`, `--evidence-kind code|document|configuration|unknown` and literal `--exclude-path-prefix`, applied before candidate ranking rather than to a tiny returned top-k.
 
@@ -75,10 +75,10 @@ References add `--order index|path|code_first`, `--include-files`, `--include-co
 
 ## Conventions
 
-- Ordinary one-shot commands print JSON on stdout. Help, text/CSV/Markdown exports and interactive `tools shell` have their own output formats. MCP stdio and persistent service console are protocol streams; foreground service/host commands retain ownership until stopped.
-- A failure exits non-zero and writes a message to stderr. Set `AIRK_ERROR_FORMAT=json` to get a structured error instead. Query commands can return a typed busy or retry refusal while workers start; repeat the same call after the reported delay.
+- Ordinary one-shot commands print JSON on stdout. Help, text/CSV/Markdown exports and interactive `tools shell` have their own output formats. `airkctl session` is a framed protocol stream for one editor window.
+- A failure exits non-zero and writes a message to stderr. Add `--output json` to get JSON results and a structured JSON error line instead. Query commands can return a typed busy or retry refusal while workers start; repeat the same call after the reported delay.
 - Source files are never modified. Commands that change AIRK state (registering, configuring, pausing, purging) say so in their help.
-- Agents can read the same help through MCP: `airk tools call airk_help --args '{"command":"search"}'`.
+- Agents can read the same help through MCP: `airkctl tools call airk_help --args '{"command":"search"}'`.
 
 ## Services, projects and scope
 
@@ -91,8 +91,8 @@ not interchangeable.
 
 There are two ways to reach a service:
 
-- **Installed runtime** (what the VS Code extension sets up). Commands find the per-user installation automatically; `--service-install-dir` selects another one. Select a project with `--root <folder>`, plus `--data-dir` and `--collection` when they are not the defaults.
-- **A service you start yourself** (headless, no installation). Run `airk serve --runtime-dir <control>`. Then add `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` to project commands.
+- **Installed service.** `airkctl` finds the installation from its install record. Start the service with `airk` (no arguments) or `airkctl service start`; `airkctl service status` and `airkctl service stop` report and stop it. Select a project with `--root <folder>`, plus `--data-dir` and `--collection` when they are not the defaults.
+- **A service you start yourself** (development, tests, external supervisors). The private role `airk __airk_role service-foreground --runtime-dir <control>` runs the service in the foreground; it replaces `airk serve --runtime-dir` and is not a user interface. Then add `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` to project commands.
 
 ## Reviewed index and Project setup in 1.8.8
 
@@ -106,7 +106,7 @@ Headless administration uses the same native methods as the editor. Save one
 method JSON value in a file and run:
 
 ```console
-airk service rpc --runtime-dir <control> --request-file <method.json>
+airkctl service rpc --runtime-dir <control> --request-file <method.json>
 ```
 
 For example, this read-only method lists a bounded first page of indexes:
@@ -169,28 +169,27 @@ and settings live in the data directory; the source folder is only read.
 
 ```text
 # A service you started:
-airk --root /path/to/folder --data-dir /path/to/index --collection mydocs service prepare-registration   # read-only: prints the binding
-airk --root /path/to/folder --data-dir /path/to/index --collection mydocs service register --runtime-dir <control>
-airk projects --runtime-dir <control>
+airkctl --root /path/to/folder --data-dir /path/to/index --collection mydocs service prepare-registration   # read-only: prints the binding
+airkctl --root /path/to/folder --data-dir /path/to/index --collection mydocs service register --runtime-dir <control>
+airkctl projects --runtime-dir <control>
 
-# The installed runtime (the default data directory is used when --data-dir is omitted):
-airk --root /path/to/folder init
-airk projects
+# The installed service (the default data directory is used when --data-dir is omitted):
+airkctl --root /path/to/folder init
+airkctl projects
 ```
 
-Then queue indexing with `airk <scope> index`. Run `airk <scope> watch on` to keep the index current, and check progress with `airk <scope> tools call airk_status --args '{}'`.
+Then queue indexing with `airkctl <scope> index`. Run `airkctl <scope> watch on` to keep the index current, and check progress with `airkctl <scope> tools call airk_status --args '{}'`.
 
-On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK creates new storage directories with mode 0700 and never changes the permissions of an existing one. If other accounts may be able to read a project's storage, `airk runtime inventory` reports a `storage_not_private` warning for it; registration is not refused. The source folder and the data directory must not contain each other. To remove a project's index and settings, leaving the sources untouched, run `airk <scope> configure --stdin` with `{"operation":"unregister"}`.
+On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK creates new storage directories with mode 0700 and never changes the permissions of an existing one. If other accounts may be able to read a project's storage, the pre-split `runtime inventory` reports a `storage_not_private` warning for it (reachable only through the interim setup role until its `airkctl` replacement); registration is not refused. The source folder and the data directory must not contain each other. To remove a project's index and settings, leaving the sources untouched, run `airkctl <scope> configure --stdin` with `{"operation":"unregister"}`.
 
 ## Command families
 
-Current MCP clients use the service's authenticated HTTPS endpoint. Native
-`setup` prints HTTPS configuration and protected credential/trust references for
-Codex, Claude Code and VS Code/Copilot Chat; it does not save client files or
-prove that a client connected. Supply the exact reviewed `--catalog-session` or
-`--combined-session`, as shown in [native agent setup](agent-integration.md#native-setup-output).
-The retained `mcp`/`bridge` stdio commands are predecessor compatibility paths and
-refuse modern single-image execution. They are not current MCP setup commands.
+Current MCP clients use the service's authenticated HTTPS endpoint.
+`airkctl agents connect` enrolls a reviewed selection and writes AIRK's entry for
+Codex, Claude Code or VS Code; `agents list`, `repair`, `remove` and `verify`
+classify, fix, remove and probe those entries. Writing an entry does not prove
+that a client connected. See [native agent setup](agent-integration.md#native-setup-output).
+The `mcp` and `bridge` stdio commands are retired.
 After complete known-client migration, current installation must finish native
 legacy-launcher cleanup and retire all approved superseded executable versions,
 including later modern-to-modern updates. Preserve the selected runtime and all
@@ -198,25 +197,27 @@ source/index state; blocked cleanup leaves a resumable incomplete transaction.
 
 | Family | Commands | Purpose |
 |---|---|---|
-| Service | `serve`, `service health`, `service shutdown`, `service register`, `service prepare-registration`, `service logs`, `service console`, `service rpc`, `service requests …`, `service legacy …` | Run and manage a service and its registry |
+| Service | `service start`, `stop`, `restart`, `status`, `health`, `shutdown`, `logs`, `trust`, `issuer-rotation`, `abandon-lifecycle`, `register`, `prepare-registration`, `prepare-configuration`, `prepare-storage`, `record-error`, `rpc`, `requests …` | Run and manage the service and its registry |
 | Projects | `projects`, `init`, `index`, `inspect`, `pause`, `resume`, `watch`, `setup-model`, `settings`, `configure`, `status` | Register, index and configure projects |
 | Evidence | `search`, `files`, `read`, `info`, `outline`, `symbol`, `imports`, `facts`, `refs`, `context`, `changes`, `code-facts`, `relationships`, `parse` | Read-only, cited queries; `parse` plans or runs multi-step requests |
 | MCP tools | `tools list`, `tools help`, `tools call`, `tools shell` | Canonical tool discovery and reads from the terminal; current agent transport is native HTTPS |
-| Explorer Assistance | `explorer draft-search`, `draft-strategy`, `draft-plan`, `suggest-view`, `validate-draft`, `list-templates`, `get-template`, `proposal-status`, `get-handoff` | Editor proposals produced offline into files (see below) |
-| Agents | `setup --client codex`, `claude`, `vscode` | Print HTTPS configuration for an exact reviewed native selection; other client adapters remain unverified |
+| Explorer Assistance | `explorer draft-search`, `draft-strategy`, `draft-plan`, `suggest-view`, `validate-draft`, `list-templates`, `get-template`, `proposal-status`, `get-handoff` | Editor proposals written into files (see below) |
+| Agents | `agents endpoint`, `info`, `list`, `connect`, `repair`, `remove`, `verify`, `credential`, `launch`, `revoke` | Agent connections and their configuration entries for Codex, Claude Code and VS Code |
+| Other | `version`, `model-catalog`, `session` | Version document, model catalog, and the per-window framed session |
 | Usage | `usage report`, `policy`, `configure`, `clear`, `feedback`, `import`, `calibrate` | Local usage reporting |
-| Runtime | `runtime location`, `inspect`, `ensure`, `start`, `login …`, `inventory`, `purge`, `uninstall`, and staging/repair commands | Installed-runtime lifecycle and data review |
+
+The pre-split `runtime …`, `setup`, `uninstall`, `host` and `service legacy …` operations are not `airkctl` commands. Until the Phase 7 setup role and installer replace them (U93, a non-shippable interim), they are reachable only as `airk __airk_role setup-interim <arguments>`. Some were renamed: `runtime http-*` became `airkctl agents …` and `airkctl service trust|issuer-rotation`, `setup` enrollment became `agents connect`, `runtime lifecycle` became `service stop|restart`, and `runtime inspect|diagnose` became `service status`. `mcp`, `bridge`, `service session`, `service console`, `explorer-assistance` and `runtime launch` are retired.
 
 ## Explorer Assistance from the CLI
 
-In VS Code these tools send proposals to an open Explorer window's Suggestions Inbox. The CLI versions never do that: every result goes to the file named by the required `--output`, which must not already exist and is created owner-only on Unix. `--args` takes the same JSON object as the MCP tool of the same name.
+In VS Code these tools send proposals to an open Explorer window's Suggestions Inbox. The CLI versions never do that: every result goes to the file named by the required `--output-file`, which must not already exist and is created owner-only on Unix. `--args` takes the same JSON object as the MCP tool of the same name.
 
 - `draft-search`, `draft-strategy`, `draft-plan` and `suggest-view` check the draft against the same generated schemas the MCP server embeds, then write it with `valid`, `errors`, `admitted: false` and `executed: false`. An invalid draft is still written, and the command exits non-zero. The editor's additional semantic and live checks are not run.
 - `validate-draft` writes the validation result only.
 - `list-templates` and `get-template` read the bundled strategy pack. It is generated from the extension source and checked for drift at build time.
 - `proposal-status --draft <file>` reports on a draft file written by the CLI. Such drafts are never admitted to an Inbox.
-- `get-handoff` reads a snapshot the user shared from a running Explorer window. Handoff tokens exist only in that window, so it needs that window's `--explorer-descriptor` (`…/iokaio.airk/explorer-assistance/launch-1.json` in VS Code's global storage). A missing descriptor fails without creating the output file.
+- `get-handoff --handoff-id <id>` writes a handoff that a VS Code window shared through its session.
 
 ## Tests
 
-`crates/airk-cli/tests/cli_commands.rs` runs `--help` for every public command. It also exercises the query, management and Explorer commands against a private headless service. For commands that need an installed runtime, a login manager, legacy state or an editor, it names the native test or qualification script that covers them, and it fails if any command in the reference has no listed test.
+`crates/airk-cli/tests/cli_commands.rs` exercises the query, management and Explorer commands through `airkctl` against a private service started with the `service-foreground` role. For commands that need an installed runtime, a login manager, legacy state or an editor, it names the native test or qualification script that covers them, and it fails if any command in the reference has no listed test.

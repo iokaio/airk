@@ -351,6 +351,7 @@ pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Re
                 // and can dispatch serve without another complete payload scan.
                 let mut command = Command::new(executable);
                 command
+                    .args(["__airk_role", "setup-interim"])
                     .arg("runtime")
                     .arg("foreground")
                     .arg("--install-dir")
@@ -362,7 +363,7 @@ pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Re
                 crate::process_roles::Role::Service,
             )?);
             command
-                .arg("serve")
+                .args(["__airk_role", "service-foreground"])
                 .arg("--runtime-dir")
                 .arg(layout::control(install_dir)?);
             return crate::native_process::forward_stdio(command);

@@ -24,10 +24,10 @@ Before creating that record, index and configuration preparation acquire the cur
 The private control directory contains a `client-requests` journal with at most 64 records, each at most 64 KiB: an additional bounded 4 MiB of client metadata, separate from the registry database. A short file lock serializes admission and file changes; it is released before network waits. Writes sync the prepared file and, on Unix, the containing directory before submission. Existing control/state source isolation protects this journal. Unknown/unfinished files, changed record bytes or scope, and exhausted capacity are explicit errors; they are preserved for inspection. No sample or source content is copied into these enqueue records.
 
 ```console
-airk service requests --runtime-dir <control> list
-airk service requests --runtime-dir <control> prepare --project <binding> --kind index
-airk service requests --runtime-dir <control> retry <saved-nonce>
-airk service requests --runtime-dir <control> forget <saved-nonce>
+airkctl service requests --runtime-dir <control> list
+airkctl service requests --runtime-dir <control> prepare --project <binding> --kind index
+airkctl service requests --runtime-dir <control> retry <saved-nonce>
+airkctl service requests --runtime-dir <control> forget <saved-nonce>
 ```
 
 `prepare` writes a durable request and reports `submitted: false`. `retry` submits those exact saved bytes/key. A complete matching native job receipt is printed before its local record is retired. Lost acknowledgment therefore leaves an explicit recovery path; native acceptance and job completion remain separate. Forgetting a local key never cancels native work or asserts its outcome. After a key expires natively, the CLI preserves that explicit failure instead of manufacturing another request.

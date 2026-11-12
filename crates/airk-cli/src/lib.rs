@@ -77,6 +77,7 @@ pub mod install_files;
 mod install_layout;
 mod legacy_processes;
 pub mod legacy_startup;
+pub mod manual_start;
 pub mod runtime_install;
 mod runtime_legacy_origin;
 pub mod service_manager;

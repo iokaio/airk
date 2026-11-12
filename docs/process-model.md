@@ -2,6 +2,15 @@
 
 ## Current process model (1.8.22)
 
+> **Split Phase 4 (non-shippable interim).** The one-resident-process rule is
+> unchanged. `airk` is now the service only: `airk` with no arguments, or
+> `airkctl service start`, starts it detached as a private role. `airkctl` is
+> the CLI, so typed commands and the Claude Code and Codex credential helpers
+> (`airkctl agents credential`) are `airkctl` one-shots. The per-window helper
+> becomes `airkctl session`; on this branch the extension still starts the
+> retired `airk service session` until split Phase 6. The table below keeps the
+> 1.8.22 names. See the [split plan](split/split-plan.md) §4.3 and §5.
+
 **Exactly one `airk.exe` stays resident per user and installation: the
 service.** This was decided by the user on 10 November 2026 (see the top of
 [one-airk.md](one-airk.md)). The implementation and its Windows evidence are
@@ -20,7 +29,7 @@ its own service, so a machine with two installations has two services.
 | `airk service session` | The window's native helper. It relays control requests and runs allowlisted CLI commands in-process, so a window starts one process instead of one per operation. | One per VS Code window. It exits when its window's extension host ends (see the exception below). |
 | `airk` CLI and installer one-shots | Commands that a user types, and installer steps. Claude Code and Codex credential helpers (`airk runtime http-credential … --format header-json`) are one-shots too. | Exit when the command finishes. |
 | PDF parser child | Isolated extraction of one PDF document. | At most one for the whole service, described below. |
-| `airk tools shell` | Interactive terminal tool. | Opened and closed by the user. |
+| `airkctl tools shell` | Interactive terminal tool. | Opened and closed by the user. |
 
 Project owners, cleanup owners and the source watcher run on service threads.
 Each project owner has its own runtime, lock and execution scope. The
