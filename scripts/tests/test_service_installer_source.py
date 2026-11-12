@@ -47,6 +47,17 @@ class ServiceInstallerSource(unittest.TestCase):
     def test_code_brace_comments_do_not_contain_braces(self):
         self.assertEqual(code_comment_problems(SCRIPT.read_text(encoding="utf-8")), [])
 
+    def test_setup_operations_and_image_live_in_the_owner_private_folder(self):
+        # {tmp} inherits the user's Temp ACL, which can grant other accounts
+        # access (a sandbox group did); setup refuses such an operation file.
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("Folder := SetupPrivateFolder + '\\airk-setup-' + Id;", text)
+        self.assertIn("Result := SetupPrivateFolder + '\\airk-setup.exe';", text)
+        self.assertNotIn("ExpandConstant('{tmp}\\airk-setup-'", text)
+        restrict = re.search(r"icacls\.exe'\), '\"' \+ PrivateFolder \+\s+'\" /inheritance:r /grant:r ", text)
+        self.assertIsNotNone(restrict)
+        self.assertIn("or (Code <> 0) then", text)
+
     def test_the_checks_catch_the_defects_they_name(self):
         self.assertEqual(code_comment_problems("[Code]\n{ below {tmp} and }\nbegin end;\n"), [2])
         self.assertEqual(code_comment_problems("[Code]\nx := '{'; { fine }\n// {a{b}\n"), [])

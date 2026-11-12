@@ -25,6 +25,16 @@ local Windows installer and VSIX build.
 - **Signature checks:** `airkctl` verifies both installed executables against
   the install record on every discovery; revocation is not fetched.
 
+**Installer rebuild (12 November 2026):** the first 1.8.24 installer stopped
+on the data-locations page with `setup_operation_refused` when the user's Temp
+folder granted another account access (here a Codex sandbox group): Inno's
+temporary folder inherits that ACL, and setup correctly refuses an operation
+file another account can change. The installer now keeps its operation folders
+and the setup image under one folder below its temporary folder whose
+inherited entries are removed (`icacls /inheritance:r`) and that grants only
+the user, SYSTEM and Administrators; the image is copied there and verified
+before it runs. Rebuilt at the same version (nothing had been installed).
+
 ## Not yet in this candidate
 
 Reads under a window or admin scope selection (W4/A2) answer

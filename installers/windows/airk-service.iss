@@ -80,6 +80,7 @@ var
   AcknowledgeBox: TNewCheckBox;
   NeedsAcknowledgement: Boolean;
   SetupOperation: String;
+  PrivateFolder: String;
 
 { ---------- Time, identity and canonical JSON (contracts section 5.5) ---------- }
 
@@ -144,8 +145,37 @@ begin
     ',"logs":' + JsonString(Cache + '\logs\service') + '}';
 end;
 
-// Write one airk-setup-operation/1 file into a fresh folder below the setup
-// temporary folder and return its path. Setup refuses anything but these
+// The setup temporary folder inherits the user's Temp ACL, which may grant
+// other accounts access (for example a sandbox group). Setup reads its
+// operation only from an owner-private file, so every operation folder and
+// the setup image live below one folder whose inherited entries are removed
+// and that grants only this user, SYSTEM and Administrators. Setup verifies
+// the result itself and fails closed.
+function SetupPrivateFolder: String;
+var
+  Code: Integer;
+  Account: String;
+begin
+  if PrivateFolder = '' then
+  begin
+    PrivateFolder := ExpandConstant('{tmp}\airk-private');
+    if not CreateDir(PrivateFolder) then
+      RaiseException('AIRK could not create its private setup folder ' + PrivateFolder);
+    Account := GetEnv('USERDOMAIN');
+    if Account <> '' then Account := Account + '\';
+    Account := Account + GetUserNameString;
+    if not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + PrivateFolder +
+      '" /inheritance:r /grant:r "' + Account + ':(OI)(CI)F" "*S-1-5-18:(OI)(CI)F"' +
+      ' "*S-1-5-32-544:(OI)(CI)F" /q', '', SW_HIDE, ewWaitUntilTerminated, Code)
+      or (Code <> 0) then
+      RaiseException('AIRK could not restrict its private setup folder ' + PrivateFolder +
+        ' to this account (icacls exit ' + IntToStr(Code) + ').');
+  end;
+  Result := PrivateFolder;
+end;
+
+// Write one airk-setup-operation/1 file into a fresh folder below the private
+// setup folder and return its path. Setup refuses anything but these
 // canonical bytes.
 function WriteOperation(const Kind, Locations, InventorySha, DeleteIndexes: String;
   Acknowledged, LoginStartup, Trust, Start: Boolean): String;
@@ -154,7 +184,7 @@ var
   Created: Int64;
 begin
   Id := NewOperationId;
-  Folder := ExpandConstant('{tmp}\airk-setup-' + Id);
+  Folder := SetupPrivateFolder + '\airk-setup-' + Id;
   if not CreateDir(Folder) then
     RaiseException('AIRK could not create its setup operation folder ' + Folder);
   Created := UnixMillis;
@@ -205,14 +235,18 @@ begin
 end;
 
 { Extract the setup image and its inventory for the steps that precede
-  placement; the image is verified before it runs. }
+  placement. The image is copied into the private setup folder and verified
+  there, so the bytes that run are the bytes checked. }
 function PreflightImage(const Operation: String): String;
 begin
-  Result := ExpandConstant('{tmp}\airk-setup.exe');
-  if not FileExists(Result) then
+  Result := SetupPrivateFolder + '\airk-setup.exe';
+  if not FileExists(ExpandConstant('{tmp}\airk-setup.exe')) then
     ExtractTemporaryFile('airk-setup.exe');
   if not FileExists(ExpandConstant('{tmp}\setup-payload-inventory.json')) then
     ExtractTemporaryFile('setup-payload-inventory.json');
+  if not FileExists(Result) then
+    if not FileCopy(ExpandConstant('{tmp}\airk-setup.exe'), Result, True) then
+      RaiseException('AIRK could not stage its setup image.');
   if CompareText(GetSHA256OfFile(Result), '{#AirkBinarySHA}') <> 0 then
     RaiseException('The packaged AIRK service image changed; download the installer again.');
   if not FileCopy(ExpandConstant('{tmp}\setup-payload-inventory.json'),
