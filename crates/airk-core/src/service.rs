@@ -465,6 +465,15 @@ pub enum ControlMethod {
     /// U87 (`service status`): the saved explicit Stop and the pending
     /// lifecycle record, read from the lifecycle ledger.
     LifecycleStatus,
+    /// M15a (split step 3e.2, `agents endpoint`): the local HTTPS endpoint,
+    /// checked against this installation's binding and health as `airk
+    /// runtime http-endpoint` checked it.
+    AgentEndpoint {},
+    /// M15 (`agents info`): an existing connection's verified references,
+    /// never its credential, as `airk runtime http-connection-info` read them.
+    AgentConnectionInfo {
+        connection_id: Incarnation,
+    },
     /// M20 (U80): mark a stuck lifecycle record abandoned in the ledger; a
     /// terminal record answers unchanged. A record this instance is draining
     /// is refused (`lifecycle_request_in_progress`).
@@ -1285,6 +1294,19 @@ pub enum ControlResponse {
         record: crate::service_lifecycle::LifecycleRecord,
         service_instance: Incarnation,
         process_id: u32,
+    },
+    /// M15a: the checked endpoint descriptor.
+    AgentEndpoint {
+        endpoint: Box<crate::service_http::EndpointDescriptor>,
+    },
+    /// M15: the connection's references (no token).
+    AgentConnectionInfo {
+        connection: Box<crate::service_http::HttpConnectionInfo>,
+    },
+    /// M15a/M15 refused. `message` is the full error chain bounded to 4,096
+    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    AgentRefused {
+        message: String,
     },
     /// M20: the record, abandoned (or already terminal).
     LifecycleAbandoned {

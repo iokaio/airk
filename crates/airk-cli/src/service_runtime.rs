@@ -592,6 +592,12 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
+            // M15a/M15 land their handlers in step 3e.2b; until then the typed refusal.
+            ControlMethod::AgentEndpoint {} | ControlMethod::AgentConnectionInfo { .. } => {
+                ControlResponse::Failure {
+                    code: "not_yet_served".into(),
+                }
+            }
             ControlMethod::AbandonLifecycle { id } => {
                 match lifecycle::abandon(&state.control_root, state.instance, id) {
                     Ok(record) => ControlResponse::LifecycleAbandoned { record },

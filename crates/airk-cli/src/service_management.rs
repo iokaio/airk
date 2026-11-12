@@ -1146,7 +1146,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::AssistanceDrain { .. }
         | ControlMethod::HandoffPublish { .. }
         | ControlMethod::ExplorerHandoff { .. }
-        | ControlMethod::AbandonLifecycle { .. } => {
+        | ControlMethod::AbandonLifecycle { .. }
+        | ControlMethod::AgentEndpoint {}
+        | ControlMethod::AgentConnectionInfo { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

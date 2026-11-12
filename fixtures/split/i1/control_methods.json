@@ -735,6 +735,54 @@
           "bytes": "{\"status\":\"lifecycle_abandoned\"}"
         }
       ]
+    },
+    {
+      "variant": "agent_connections",
+      "method": "M15a, M15",
+      "methods": [
+        {
+          "name": "endpoint",
+          "bytes": "{\"agent_endpoint\":{}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "connection_info",
+          "bytes": "{\"agent_connection_info\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "endpoint_unit_spelling",
+          "bytes": "\"agent_endpoint\""
+        },
+        {
+          "name": "info_without_id",
+          "bytes": "{\"agent_connection_info\":{}}"
+        },
+        {
+          "name": "info_with_token",
+          "bytes": "{\"agent_connection_info\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"token\":\"x\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "refused",
+          "bytes": "{\"status\":\"agent_refused\",\"message\":\"native HTTPS endpoint is not available\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "endpoint_missing",
+          "bytes": "{\"status\":\"agent_endpoint\"}"
+        },
+        {
+          "name": "refused_without_message",
+          "bytes": "{\"status\":\"agent_refused\"}"
+        }
+      ]
     }
   ]
 }
