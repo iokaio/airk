@@ -4,6 +4,7 @@ The 1.8.23 manual installation reported an HTTP cleanup refusal. Its subsequent
 native fix is an untested source checkpoint; no replacement installer was built.
 Repair and qualification stopped at the user's direction on 10 November 2026.
 
+- [1.8.29 split candidate](release-1.8.29.md): 1.8.27 plus setup taking over a pre-split retirement that stopped before moving anything, and a progress page while the installer checks data locations. Manifests synchronized at 1.8.29 (1.8.28 unused); installed and platform qualification pending.
 - [1.8.27 split candidate](release-1.8.27.md): 1.8.26 plus a version line on every Management tab that names the installed extension version even when no AIRK Service is found. Manifests synchronized at 1.8.27; installed and platform qualification pending.
 - [1.8.26 split candidate](release-1.8.26.md): 1.8.25 plus setup's refusal while a pre-split AIRK extension runs and a Windows process scan that no longer refuses upgrades. Manifests synchronized at 1.8.26; installed and platform qualification pending.
 - [1.8.25 split candidate](release-1.8.25.md): 1.8.24 plus the pre-split retirement fix and the installer's report of anything setup leaves behind. Manifests synchronized at 1.8.25; installed and platform qualification pending.
