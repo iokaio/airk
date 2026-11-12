@@ -433,17 +433,27 @@ class SplitPairBuildTests(unittest.TestCase):
 
     def test_cli_image_has_no_inference_dependency_import_or_code(self):
         builder = load_builder("split_cli_builder")
-        with mock.patch.object(builder.subprocess, "check_output", return_value="airkctl v1.8.24\nairk-core v1.8.24\nserde v1.0.0\n") as tree:
+        # `cargo tree --prefix depth`: a depth number before each package.
+        with mock.patch.object(builder.subprocess, "check_output", return_value="0airkctl v1.8.24\n1airk-core v1.8.24\n2serde v1.0.0\n") as tree:
             builder.check_lightweight_dependencies()
             self.assertEqual(tree.call_args.args[0][:5], ["cargo", "tree", "--locked", "-p", "airkctl"])
         for dependency in ("ort v2.0.0", "ort-sys v2.0.0", "tokenizers v0.21.0", "tract-onnx v0.21.0"):
             with self.subTest(dependency=dependency), mock.patch.object(
-                    builder.subprocess, "check_output", return_value=f"airkctl v1.8.24\n{dependency}\n"):
+                    builder.subprocess, "check_output", return_value=f"0airkctl v1.8.24\n1{dependency}\n"):
                 with self.assertRaisesRegex(RuntimeError, "inference dependencies"):
                     builder.check_lightweight_dependencies()
-        with mock.patch.object(builder.subprocess, "check_output", return_value="airk-cli v1.8.24\n"):
+        with mock.patch.object(builder.subprocess, "check_output", return_value="0airk-cli v1.8.24\n"):
             with self.assertRaisesRegex(RuntimeError, "did not report the airkctl package"):
                 builder.check_lightweight_dependencies()
+        # The paired build resolves both roots together; only airkctl's closure counts.
+        unified = "0airk-cli v1.8.24\n1ort v2.0.0\n\n0airkctl v1.8.24\n1airk-core v1.8.24\n"
+        with mock.patch.object(builder.subprocess, "check_output", return_value=unified) as tree:
+            builder.check_lightweight_dependencies(unified=True)
+            self.assertIn("airk-cli/local-inference", tree.call_args.args[0])
+        leaked = "0airk-cli v1.8.24\n1ort v2.0.0\n\n0airkctl v1.8.24\n1ort v2.0.0\n"
+        with mock.patch.object(builder.subprocess, "check_output", return_value=leaked):
+            with self.assertRaisesRegex(RuntimeError, "inference dependencies"):
+                builder.check_lightweight_dependencies(unified=True)
         with tempfile.TemporaryDirectory() as temporary:
             image = Path(temporary) / "airkctl"
             image.write_bytes(b"\0" * (1 << 20) + b"plain cli code")

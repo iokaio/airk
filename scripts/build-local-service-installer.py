@@ -214,9 +214,9 @@ def main():
             "admin-" + command[1], [admin._resolve(command[0]), *command[1:]], cwd=cwd))
         runtime = load_script("build-service-runtime")
         steps.call("static-ort-inputs", runtime.verify_static_inputs)
-        airk = steps.call("airk", lambda: runtime.cargo_binary("airk", "release", "local-inference"))
-        steps.call("airkctl-dependencies", runtime.check_lightweight_dependencies)
-        airkctl = steps.call("airkctl", lambda: runtime.cargo_binary("airkctl", "release", None, package="airkctl"))
+        # One Cargo invocation with the local profile (published releases are built in CI).
+        steps.call("airkctl-dependencies", lambda: runtime.check_lightweight_dependencies(unified=True))
+        airk, airkctl = steps.call("native", lambda: runtime.cargo_pair("release-local"))
         layout = run / "layout"
         signing = None
         signer = None

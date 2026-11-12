@@ -253,13 +253,13 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
                 calls.append("static-ort")
 
             @staticmethod
-            def cargo_binary(name, *args, **kwargs):
-                calls.append("cargo-" + name)
-                return Path("/fictional") / f"{name}.exe"
+            def cargo_pair(profile):
+                calls.append("cargo-pair-" + profile)
+                return Path("/fictional/airk.exe"), Path("/fictional/airkctl.exe")
 
             @staticmethod
-            def check_lightweight_dependencies():
-                calls.append("airkctl-proof")
+            def check_lightweight_dependencies(unified=False):
+                calls.append("airkctl-proof" + ("-unified" if unified else ""))
 
         class LocalSigning:
             @staticmethod

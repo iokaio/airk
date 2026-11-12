@@ -56,12 +56,22 @@ def verify_embedded_models(staging, operating_system, version="1.8.13"):
     return load_script("int8-policy").verify_embedded(report)
 
 
+def profile_arguments(profile):
+    """Cargo's profile selection: `debug`, `release` (CI and published builds) or `release-local`."""
+    if profile == "release":
+        return ["--release"]
+    if profile == "release-local":
+        return ["--profile", "release-local"]
+    if profile == "debug":
+        return []
+    raise ValueError(f"unknown build profile {profile!r}")
+
+
 def cargo_binary(name, profile, features, package="airk-cli"):
     """The one Cargo build owner: `airk` from airk-cli (shipping features), `airkctl` from its crate."""
     command = ["cargo", "build", "--locked", "-p", package, "--bin", name,
                "--no-default-features", "--message-format=json-render-diagnostics", "--timings"]
-    if profile == "release":
-        command.append("--release")
+    command += profile_arguments(profile)
     if features:
         command += ["--features", features]
     result = subprocess.run(command, cwd=ROOT, text=True, encoding="utf-8",
@@ -77,13 +87,58 @@ def cargo_binary(name, profile, features, package="airk-cli"):
     return executable
 
 
-def check_lightweight_dependencies():
-    """The CLI image's normal dependency closure has no inference crate (split plan §10.5.2)."""
+PAIR_FEATURES = "airk-cli/local-inference"
+
+
+def cargo_pair(profile):
+    """Local installer builds: `airk` (shipping features) and `airkctl` in one Cargo invocation, so
+    the crates both share compile once. Feature unification can change the features of crates already
+    in `airkctl`'s graph, never add a crate; `check_lightweight_dependencies(unified=True)` proves the
+    closure of this exact resolution."""
+    command = ["cargo", "build", "--locked", "-p", "airk-cli", "--bin", "airk", "-p", "airkctl",
+               "--bin", "airkctl", "--no-default-features", "--features", PAIR_FEATURES,
+               "--message-format=json-render-diagnostics", "--timings", *profile_arguments(profile)]
+    result = subprocess.run(command, cwd=ROOT, text=True, encoding="utf-8",
+                            stdout=subprocess.PIPE, check=True)
+    found = {}
+    for line in result.stdout.splitlines():
+        event = json.loads(line)
+        name = event.get("target", {}).get("name")
+        if event.get("reason") == "compiler-artifact" and name in ("airk", "airkctl") and event.get("executable"):
+            found[name] = Path(event["executable"])
+    for name in ("airk", "airkctl"):
+        if name not in found or not found[name].is_file():
+            raise RuntimeError(f"Cargo did not produce {name}")
+    return found["airk"], found["airkctl"]
+
+
+def airkctl_closure(tree_output):
+    """Package names under the `airkctl` root of `cargo tree --prefix depth` output."""
+    names, inside = set(), False
+    for line in tree_output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        digits = len(line) - len(line.lstrip("0123456789"))
+        if digits == 0:
+            continue
+        depth, package = int(line[:digits]), line[digits:].split()[0]
+        if depth == 0:
+            inside = package == "airkctl"
+        if inside:
+            names.add(package)
+    return names
+
+
+def check_lightweight_dependencies(unified=False):
+    """The CLI image's normal dependency closure has no inference crate (split plan §10.5.2).
+    `unified` checks the closure under the paired build's feature resolution (`cargo_pair`)."""
+    roots = ["-p", "airkctl"] + (["-p", "airk-cli", "--features", PAIR_FEATURES] if unified else [])
     result = subprocess.check_output([
-        "cargo", "tree", "--locked", "-p", "airkctl", "--no-default-features",
-        "--edges", "normal", "--prefix", "none", "--format", "{p}"],
+        "cargo", "tree", "--locked", *roots, "--no-default-features",
+        "--edges", "normal", "--prefix", "depth", "--format", "{p}"],
         cwd=ROOT, text=True, encoding="utf-8")
-    dependencies = {line.split()[0] for line in result.splitlines() if line.strip()}
+    dependencies = airkctl_closure(result)
     if "airkctl" not in dependencies:
         raise RuntimeError("Cargo tree did not report the airkctl package")
     forbidden = sorted(name for name in dependencies
@@ -563,7 +618,7 @@ def sign_development_macos_bundle(staging):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("--profile", choices=["debug", "release"], default="debug")
+    parser.add_argument("--profile", choices=["debug", "release", "release-local"], default="debug")
     parser.add_argument("--admin-inventory", type=Path, default=ROOT / "artifacts/admin/admin-assets.json",
                         help="Split versions: the inventory scripts/build-admin-assets.py wrote after its checks")
     args = parser.parse_args()

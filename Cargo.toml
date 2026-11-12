@@ -78,6 +78,14 @@ lto = "thin"
 strip = "symbols"
 codegen-units = 1
 
+# Local installer builds on a developer machine only
+# (`scripts/build-local-service-installer.py`). Published releases are built
+# in CI with `[profile.release]` above; this profile trades a little runtime
+# optimization for parallel code generation in the long serial crate chain.
+[profile.release-local]
+inherits = "release"
+codegen-units = 16
+
 # Integration fixtures authenticate full native images and model assets. Keep
 # their hashing representative of release builds without extending deadlines.
 [profile.dev.package.sha2]
