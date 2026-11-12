@@ -641,6 +641,66 @@
           "bytes": "{\"status\":\"model_catalog\"}"
         }
       ]
+    },
+    {
+      "variant": "explorer_offline",
+      "method": "M11",
+      "methods": [
+        {
+          "name": "draft_search",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"draft_search\",\"arguments\":{\"query\":\"recover\"}}}",
+          "request_frame_budget": 1114112,
+          "response_frame_budget": 1048576
+        },
+        {
+          "name": "draft_with_project",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"draft_plan\",\"arguments\":{},\"project\":\"abababababababababababababababababababababababababababababababab\"}}",
+          "request_frame_budget": 1114112,
+          "response_frame_budget": 1048576
+        },
+        {
+          "name": "list_templates",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"list_templates\",\"arguments\":{}}}",
+          "request_frame_budget": 1114112,
+          "response_frame_budget": 1048576
+        },
+        {
+          "name": "proposal_status",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"proposal_status\",\"arguments\":{},\"document\":{\"kind\":\"search\"}}}",
+          "request_frame_budget": 1114112,
+          "response_frame_budget": 1048576
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_operation",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"get_handoff\",\"arguments\":{}}}"
+        },
+        {
+          "name": "arguments_not_object",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"list_templates\",\"arguments\":[]}}"
+        },
+        {
+          "name": "extra_field",
+          "bytes": "{\"explorer_offline\":{\"operation\":\"list_templates\",\"arguments\":{},\"output\":\"/tmp/x\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "result",
+          "bytes": "{\"status\":\"explorer_offline\",\"result\":{\"ok\":true}}"
+        },
+        {
+          "name": "failed",
+          "bytes": "{\"status\":\"explorer_offline_failed\",\"message\":\"unknown template\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "result_missing",
+          "bytes": "{\"status\":\"explorer_offline\"}"
+        }
+      ]
     }
   ]
 }

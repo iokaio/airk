@@ -65,7 +65,8 @@ async fn handle(
         | ControlMethod::PrepareStorage { .. }
         | ControlMethod::PrepareConfiguration { .. }
         | ControlMethod::UsageDocument { .. }
-        | ControlMethod::ModelCatalog {} => {
+        | ControlMethod::ModelCatalog {}
+        | ControlMethod::ExplorerOffline { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

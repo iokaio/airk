@@ -529,6 +529,32 @@ pub enum ControlMethod {
     /// M10 (split step 3c.5d): the model catalog report `model-catalog`
     /// printed (the kernel's catalog inspection and the bundled manifest).
     ModelCatalog {},
+    /// M11 (split step 3d): one offline Explorer operation, as the CLI ran
+    /// it (drafts, validation, templates, proposal status). `document` is the
+    /// draft file `proposal-status` read (≤ 1 MiB); `project` the binding a
+    /// draft names when its arguments do not.
+    ExplorerOffline {
+        operation: ExplorerOperation,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        document: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<ProjectBinding>,
+    },
+}
+
+/// The offline Explorer operations (M11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerOperation {
+    DraftSearch,
+    DraftStrategy,
+    DraftPlan,
+    SuggestView,
+    ValidateDraft,
+    ListTemplates,
+    GetTemplate,
+    ProposalStatus,
 }
 
 /// What N1 reads, as `settings` and `usage report|policy` asked for it.
@@ -658,6 +684,11 @@ pub enum ToolsCatalogDetail {
 
 /// The largest M2 response frame (contracts §2.8): the catalog with schemas.
 pub const MAX_TOOLS_CATALOG_RESPONSE_BYTES: usize = 1024 * 1024;
+/// M11's request budget (contracts §2.8): a 1 MiB draft document plus
+/// the 64 KiB of arguments and framing.
+pub const MAX_EXPLORER_OFFLINE_REQUEST_BYTES: usize = 1024 * 1024 + 64 * 1024;
+/// M11's response budget: 1 MiB.
+pub const MAX_EXPLORER_OFFLINE_RESPONSE_BYTES: usize = 1024 * 1024;
 /// N1's response budget (contracts §2.8): the I1 framing ceiling (4 MiB, as
 /// M3). The CLI reassembled up to 8 MiB of records; a larger document is
 /// refused by the frame reader (recorded gap, split step 3c.5c).
@@ -684,6 +715,7 @@ impl ControlMethod {
             Self::ToolsCatalog { .. } => MAX_TOOLS_CATALOG_RESPONSE_BYTES,
             Self::ToolsCall { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
             Self::UsageDocument { .. } => MAX_USAGE_DOCUMENT_RESPONSE_BYTES,
+            Self::ExplorerOffline { .. } => MAX_EXPLORER_OFFLINE_RESPONSE_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -694,6 +726,7 @@ impl ControlMethod {
         match self {
             // JSON escaping can grow the 16 KiB input; M3's budget covers it.
             Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
+            Self::ExplorerOffline { .. } => MAX_EXPLORER_OFFLINE_REQUEST_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -1132,6 +1165,15 @@ pub enum ControlResponse {
     /// M4b: the reserved storage exists; the registry's registration.
     StoragePrepared {
         registration: ProjectRegistration,
+    },
+    /// M11: the operation's result, as the CLI wrote it to its output file.
+    ExplorerOffline {
+        result: serde_json::Value,
+    },
+    /// M11 failed. `message` is the full error chain bounded to 4,096
+    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    ExplorerOfflineFailed {
+        message: String,
     },
     /// M10: the model catalog report.
     ModelCatalog {

@@ -1134,7 +1134,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::PrepareStorage { .. }
         | ControlMethod::PrepareConfiguration { .. }
         | ControlMethod::UsageDocument { .. }
-        | ControlMethod::ModelCatalog {} => {
+        | ControlMethod::ModelCatalog {}
+        | ControlMethod::ExplorerOffline { .. } => {
             anyhow::bail!("not a registry method")
         }
     })
