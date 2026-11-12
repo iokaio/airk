@@ -118,6 +118,11 @@ enum Command {
     Init,
     /// Print the offline model catalog and the CPU choice for this host.
     ModelCatalog,
+    /// Local HTTPS connections for agents: endpoint, info and revoke.
+    Agents {
+        #[command(subcommand)]
+        action: AgentsCommand,
+    },
     /// Offline Explorer drafts, validation and templates; results go to a new --output-file.
     Explorer {
         #[command(subcommand)]
@@ -173,6 +178,33 @@ enum Command {
     },
     #[command(flatten)]
     Evidence(Box<EvidenceCommand>),
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
+enum AgentsCommand {
+    /// Read the owner-authenticated local HTTPS endpoint without enrolling a client.
+    Endpoint {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Read an existing connection's verified references without issuing credentials.
+    Info {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+    },
+    /// Revoke one local HTTPS connection while preserving its original receipt.
+    Revoke {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+    },
 }
 
 #[derive(clap::Args)]
@@ -2361,6 +2393,40 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Service { action } => service(cx, selection, action),
         Command::Init => init(cx, selection),
         Command::Explorer { action } => explorer_command(cx, selection, action),
+        Command::Agents { action } => {
+            let (runtime_dir, connection) = match &action {
+                AgentsCommand::Endpoint { runtime_dir } => (runtime_dir.clone(), None),
+                AgentsCommand::Info {
+                    runtime_dir,
+                    connection_id,
+                }
+                | AgentsCommand::Revoke {
+                    runtime_dir,
+                    connection_id,
+                } => (runtime_dir.clone(), Some(*connection_id)),
+            };
+            let control = match runtime_dir.or(selection.control.clone()) {
+                Some(control) => control,
+                None => match installed(cx) {
+                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
+                    Err(code) => return code,
+                },
+            };
+            let result = match (&action, connection) {
+                (AgentsCommand::Endpoint { .. }, _) => crate::agents::endpoint(&control, VERSION),
+                (AgentsCommand::Info { .. }, Some(id)) => {
+                    crate::agents::info(&control, VERSION, id)
+                }
+                (AgentsCommand::Revoke { .. }, Some(id)) => {
+                    crate::agents::revoke(&control, VERSION, id)
+                }
+                _ => return ExitClass::Internal.code(),
+            };
+            match result {
+                Ok(value) => json_line(cx, &value),
+                Err(line) => fail(cx, &line),
+            }
+        }
         Command::ModelCatalog => {
             let control = match selection.control.clone() {
                 Some(control) => control,

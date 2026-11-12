@@ -2894,7 +2894,7 @@ async fn activate_with_expected(
 }
 
 mod commands;
-mod http_commands;
+pub(crate) mod http_commands;
 pub use http_commands::existing_connection as existing_http_connection;
 pub use http_commands::setup as setup_http_connection;
 pub(crate) mod http_legacy;

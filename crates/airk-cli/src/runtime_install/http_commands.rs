@@ -36,7 +36,10 @@ async fn control(install: &Path) -> Result<(PathBuf, ServiceHealth)> {
         !state_contract::required(install)?,
         "clean_break_required: HTTP enrollment requires the initialized baseline"
     );
-    let control = installed_control(install).await?;
+    healthy(installed_control(install).await?).await
+}
+/// The service's own health at a known control root, accepting requests.
+async fn healthy(control: PathBuf) -> Result<(PathBuf, ServiceHealth)> {
     let response = service_runtime::request(&control, ControlMethod::Health).await?;
     let ControlResponse::Health { observation } = response else {
         return refused(response);
@@ -138,6 +141,14 @@ fn connection(
 }
 pub async fn endpoint(install: &Path) -> Result<serde_json::Value> {
     let (control, health) = control(install).await?;
+    checked_endpoint(control, health).await
+}
+/// M15a (split step 3e.2): the same read for the service's own control root.
+pub(crate) async fn endpoint_at(control: PathBuf) -> Result<serde_json::Value> {
+    let (control, health) = healthy(control).await?;
+    checked_endpoint(control, health).await
+}
+async fn checked_endpoint(control: PathBuf, health: ServiceHealth) -> Result<serde_json::Value> {
     let response = service_runtime::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
@@ -155,6 +166,21 @@ pub async fn endpoint(install: &Path) -> Result<serde_json::Value> {
 /// process; callers receive the same protected references as enrollment.
 pub async fn existing_connection(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
     let (control, health) = control(install).await?;
+    checked_connection(control, health, id).await
+}
+/// M15 (split step 3e.2): the same read for the service's own control root.
+pub(crate) async fn existing_connection_at(
+    control: PathBuf,
+    id: Incarnation,
+) -> Result<serde_json::Value> {
+    let (control, health) = healthy(control).await?;
+    checked_connection(control, health, id).await
+}
+async fn checked_connection(
+    control: PathBuf,
+    health: ServiceHealth,
+    id: Incarnation,
+) -> Result<serde_json::Value> {
     let response = service_runtime::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,

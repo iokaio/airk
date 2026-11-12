@@ -2007,3 +2007,134 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
     assert_eq!(read(&new_status)?, read(&old_status)?);
     Ok(())
 }
+
+/// `agents endpoint`, `agents info` and `agents revoke` (split step 3e.2):
+/// `airkctl` prints what `airk runtime http-endpoint`, `http-connection-info`
+/// and `http-revoke` printed for the same installed service and connection.
+#[test]
+fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let service = common::Service::reviewed(source.path(), data.path(), "ctl-agents");
+    let control = service.control.to_str().unwrap().to_owned();
+    let inputs = tempfile::tempdir()?;
+    let private = inputs.path().join("private");
+    airk_cli::local_ipc::prepare_root(&private)?;
+    let selection = private.join("selection.json");
+    fs::write(&selection, serde_json::to_vec(&service.http_selection())?)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&selection, fs::Permissions::from_mode(0o600))?;
+    }
+    let runtime = |role: &str, extra: &[&str]| -> anyhow::Result<std::process::Output> {
+        Ok(service
+            .installed_command(source.path(), data.path(), "ctl-agents")
+            .args(["runtime", role, "--install-dir"])
+            .arg(service.install_dir())
+            .args(extra)
+            .output()?)
+    };
+    let ctl = |arguments: &[&str]| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = [
+            "airkctl",
+            "--service-runtime-dir",
+            control.as_str(),
+            "agents",
+        ]
+        .into_iter()
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let same = |name: &str, old: std::process::Output, new: (u8, String, String)| {
+        assert_eq!(new.0 == 0, old.status.success(), "{name}: {}", new.2);
+        assert_eq!(new.1, String::from_utf8_lossy(&old.stdout), "{name}");
+        if new.0 != 0 {
+            assert_eq!(
+                new.2
+                    .lines()
+                    .last()
+                    .unwrap_or_default()
+                    .strip_prefix("airkctl: "),
+                String::from_utf8_lossy(&old.stderr)
+                    .lines()
+                    .last()
+                    .unwrap_or_default()
+                    .strip_prefix("Error: "),
+                "{name}"
+            );
+        }
+    };
+    same(
+        "endpoint",
+        runtime("http-endpoint", &[])?,
+        ctl(&["endpoint"]),
+    );
+    let id = airk_kernel::service_broker::new_instance_id()?.to_string();
+    let unknown = airk_kernel::service_broker::new_instance_id()?.to_string();
+    same(
+        "info of an unknown connection",
+        runtime("http-connection-info", &["--connection-id", &unknown])?,
+        ctl(&["info", "--connection-id", &unknown]),
+    );
+    let enrolled = runtime(
+        "http-connection",
+        &[
+            "--selection-file",
+            selection.to_str().unwrap(),
+            "--connection-id",
+            &id,
+            "--client",
+            "codex",
+        ],
+    )?;
+    assert!(
+        enrolled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&enrolled.stderr)
+    );
+    same(
+        "info",
+        runtime("http-connection-info", &["--connection-id", &id])?,
+        ctl(&["info", "--connection-id", &id]),
+    );
+    let (code, stdout, stderr) = ctl(&["info", "--connection-id", &id]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        serde_json::from_str::<Value>(&stdout)?
+            .get("token")
+            .is_none(),
+        "{stdout}"
+    );
+    // Revoke through airkctl, then airk sees the same revoked connection.
+    let (code, revoked, stderr) = ctl(&["revoke", "--connection-id", &id]);
+    assert_eq!(code, 0, "{stderr}");
+    let revoked: Value = serde_json::from_str(&revoked)?;
+    assert_eq!(revoked["status"], "http_revoked");
+    assert_eq!(revoked["connection_id"], id);
+    same(
+        "info after revoke",
+        runtime("http-connection-info", &["--connection-id", &id])?,
+        ctl(&["info", "--connection-id", &id]),
+    );
+    same(
+        "revoke again",
+        runtime("http-revoke", &["--connection-id", &id])?,
+        ctl(&["revoke", "--connection-id", &id]),
+    );
+    Ok(())
+}
