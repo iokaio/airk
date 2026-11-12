@@ -496,6 +496,32 @@ pub enum ControlMethod {
     ClientRequestForget {
         nonce: Incarnation,
     },
+    /// M4a (split step 3c.4): the canonical registration for a root, data
+    /// root and collection, as the CLI computed it before registering;
+    /// read-only. Paths are absolute.
+    PlanRegistration {
+        root: String,
+        data_root: String,
+        collection: String,
+        storage: RegistrationStorage,
+    },
+    /// M4b: create the storage the registry reserved for a registered
+    /// project. A failed creation leaves the reservation for an explicit retry.
+    PrepareStorage {
+        project: ProjectBinding,
+    },
+}
+
+/// Which registration rule M4a applies, as the pre-split CLI chose it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationStorage {
+    /// The storage may be missing; sources and storage must be disjoint
+    /// (`init`, `service prepare-registration`).
+    Planned,
+    /// The storage must exist and must not contain the sources
+    /// (`service register`).
+    Existing,
 }
 
 /// One journaled request (M6).
@@ -1045,6 +1071,19 @@ pub enum ControlResponse {
     /// M1: the registered project.
     Resolved {
         registration: ProjectRegistration,
+    },
+    /// M4a: the canonical registration.
+    RegistrationPlan {
+        registration: ProjectRegistration,
+    },
+    /// M4b: the reserved storage exists; the registry's registration.
+    StoragePrepared {
+        registration: ProjectRegistration,
+    },
+    /// M4a/M4b refused. `message` is the full error chain bounded to 4,096
+    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    RegistrationRefused {
+        message: String,
     },
     /// M14: the client error was appended. An empty record, not a unit
     /// variant, so unknown fields are refused.

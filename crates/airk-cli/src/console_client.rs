@@ -60,7 +60,9 @@ async fn handle(
         | ControlMethod::ClientRequestPrepare { .. }
         | ControlMethod::ClientRequestList {}
         | ControlMethod::ClientRequestSubmit { .. }
-        | ControlMethod::ClientRequestForget { .. } => {
+        | ControlMethod::ClientRequestForget { .. }
+        | ControlMethod::PlanRegistration { .. }
+        | ControlMethod::PrepareStorage { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

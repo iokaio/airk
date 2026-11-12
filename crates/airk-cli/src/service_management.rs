@@ -1129,7 +1129,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::ClientRequestPrepare { .. }
         | ControlMethod::ClientRequestList {}
         | ControlMethod::ClientRequestSubmit { .. }
-        | ControlMethod::ClientRequestForget { .. } => {
+        | ControlMethod::ClientRequestForget { .. }
+        | ControlMethod::PlanRegistration { .. }
+        | ControlMethod::PrepareStorage { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

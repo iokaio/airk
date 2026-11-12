@@ -485,6 +485,12 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::ClientRequestForget { nonce } => {
                 journal::forget(&state.control_root, nonce)
             }
+            // M4a/M4b land their handlers in step 3c.4b; until then the typed refusal.
+            ControlMethod::PlanRegistration { .. } | ControlMethod::PrepareStorage { .. } => {
+                ControlResponse::Failure {
+                    code: "not_yet_served".into(),
+                }
+            }
             ControlMethod::ResolveProject { target } => {
                 resolve::response(&state.control_root, target)
             }

@@ -375,6 +375,80 @@
           "bytes": "{\"status\":\"resolved\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\",\"watch\":true}}"
         }
       ]
+    },
+    {
+      "variant": "registration",
+      "method": "M4a, M4b",
+      "methods": [
+        {
+          "name": "plan_planned",
+          "bytes": "{\"plan_registration\":{\"root\":\"C:\\\\work\\\\repo\",\"data_root\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\data\",\"collection\":\"default\",\"storage\":\"planned\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "plan_existing",
+          "bytes": "{\"plan_registration\":{\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/data\",\"collection\":\"docs\",\"storage\":\"existing\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "prepare_storage",
+          "bytes": "{\"prepare_storage\":{\"project\":\"abababababababababababababababababababababababababababababababab\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "plan_without_data_root",
+          "bytes": "{\"plan_registration\":{\"root\":\"/r\",\"collection\":\"default\",\"storage\":\"planned\"}}"
+        },
+        {
+          "name": "plan_without_storage",
+          "bytes": "{\"plan_registration\":{\"root\":\"/r\",\"data_root\":\"/d\",\"collection\":\"default\"}}"
+        },
+        {
+          "name": "plan_unknown_storage",
+          "bytes": "{\"plan_registration\":{\"root\":\"/r\",\"data_root\":\"/d\",\"collection\":\"default\",\"storage\":\"created\"}}"
+        },
+        {
+          "name": "prepare_storage_by_registration",
+          "bytes": "{\"prepare_storage\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\"}}}"
+        },
+        {
+          "name": "prepare_storage_extra_field",
+          "bytes": "{\"prepare_storage\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"created\":true}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "plan",
+          "bytes": "{\"status\":\"registration_plan\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\"}}"
+        },
+        {
+          "name": "storage_prepared",
+          "bytes": "{\"status\":\"storage_prepared\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\"}}"
+        },
+        {
+          "name": "refused",
+          "bytes": "{\"status\":\"registration_refused\",\"message\":\"service sources and planned storage must be disjoint\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "plan_missing_registration",
+          "bytes": "{\"status\":\"registration_plan\"}"
+        },
+        {
+          "name": "storage_prepared_created_flag",
+          "bytes": "{\"status\":\"storage_prepared\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\"},\"created\":true}"
+        },
+        {
+          "name": "refused_without_message",
+          "bytes": "{\"status\":\"registration_refused\"}"
+        }
+      ]
     }
   ]
 }
