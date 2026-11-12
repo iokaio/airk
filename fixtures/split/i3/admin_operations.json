@@ -2,7 +2,7 @@
  "schema": "airk.split-fixture.i3-operations/1",
  "contract": "docs/split/contracts.md \u00a74, \u00a74.11; docs/split/security-review-i3.md; split plan \u00a77.3; contracts.md \u00a72.2",
  "generator": "fixtures/split/i3/admission_cases.py",
- "status": "Reviewed initial table (C5). Handlers land in Phase 5; every row is not yet served.",
+ "status": "Reviewed table (C5, amended by U98 on 12 November 2026). admin_plane/CONTRACT.md lists the rows the service serves and the rows it refuses.",
  "enumerations": {
   "plane": [
    "management",
@@ -40,6 +40,16 @@
    "P7",
    "P8",
    "P9"
+  ],
+  "key_mode": [
+   "generate",
+   "review"
+  ],
+  "confirmation": [
+   "catalog_target",
+   "split_original_index",
+   "plan_id",
+   "storage_target"
   ]
  },
  "operations": [
@@ -299,7 +309,12 @@
     "P3",
     "P5",
     "P8"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "request.caller",
+    "key": "request.key"
+   }
   },
   {
    "operation": "catalog.receipt",
@@ -320,7 +335,12 @@
     "P3",
     "P5",
     "P8"
-   ]
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "catalog.index_setup_draft",
@@ -341,7 +361,11 @@
     "P3",
     "P5",
     "P8"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "key": "selection.key"
+   }
   },
   {
    "operation": "catalog.index_setup_receipt",
@@ -362,7 +386,12 @@
     "P3",
     "P5",
     "P8"
-   ]
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "catalog.split_draft",
@@ -383,7 +412,11 @@
     "P3",
     "P5",
     "P8"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "key": "selection.key"
+   }
   },
   {
    "operation": "catalog.split_status",
@@ -456,6 +489,218 @@
     "pipe",
     "airkctl",
     "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.source_draft",
+   "method": "CatalogSourceMutationDraft",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ],
+   "request_key": {
+    "mode": "generate",
+    "key": "selection.key"
+   }
+  },
+  {
+   "operation": "catalog.source_observation",
+   "method": "CatalogSourceChangeObservation",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.pending_source",
+   "method": "CatalogPendingSourceChange",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.grant_draft",
+   "method": "CatalogGrantDraft",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ],
+   "request_key": {
+    "mode": "generate",
+    "key": "selection.key"
+   }
+  },
+  {
+   "operation": "catalog.split_source_state",
+   "method": "CatalogSplitSourceState",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.split_receipt",
+   "method": "CatalogSplitReceipt",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "caller",
+    "key": "key"
+   }
+  },
+  {
+   "operation": "catalog.split_recovery_receipt",
+   "method": "CatalogSplitRecoveryReceipt",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "caller",
+    "key": "key"
+   }
+  },
+  {
+   "operation": "catalog.policy_resume_receipt",
+   "method": "CatalogPolicyResumeReceipt",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "caller",
+    "key": "key"
+   }
+  },
+  {
+   "operation": "usage.document",
+   "method": "UsageDocument",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
     "admin"
    ],
    "authorization": [
@@ -982,7 +1227,12 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "indexes.watch",
@@ -1048,7 +1298,12 @@
     "P4",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "jobs.retry",
@@ -1072,7 +1327,12 @@
     "P4",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "jobs.cancel",
@@ -1115,7 +1375,12 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "requests.submit",
@@ -1181,7 +1446,13 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "request.caller",
+    "key": "request.key"
+   },
+   "confirmation": "catalog_target"
   },
   {
    "operation": "catalog.index_setup_apply",
@@ -1203,7 +1474,12 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "draft.request.caller",
+    "key": "draft.request.key"
+   }
   },
   {
    "operation": "catalog.split_apply",
@@ -1225,7 +1501,13 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "review",
+    "caller": "draft.request.caller",
+    "key": "draft.request.key"
+   },
+   "confirmation": "split_original_index"
   },
   {
    "operation": "catalog.policy_resume",
@@ -1248,6 +1530,60 @@
     "P3",
     "P5",
     "P9"
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
+  },
+  {
+   "operation": "catalog.split_recover",
+   "method": "CatalogSplitRecover",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "request.caller",
+    "key": "request.key"
+   }
+  },
+  {
+   "operation": "catalog.source_resolve",
+   "method": "CatalogSourceChangeResolve",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
    ]
   },
   {
@@ -1271,7 +1607,12 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "recovery.plan_execute",
@@ -1293,7 +1634,8 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "confirmation": "plan_id"
   },
   {
    "operation": "recovery.plan_pause",
@@ -1357,7 +1699,8 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "confirmation": "storage_target"
   },
   {
    "operation": "service.configure_resources",
@@ -1401,7 +1744,12 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "service.restart",
@@ -1424,7 +1772,12 @@
     "P3",
     "P5",
     "P9"
-   ]
+   ],
+   "request_key": {
+    "mode": "generate",
+    "caller": "caller",
+    "key": "key"
+   }
   },
   {
    "operation": "service.abandon_lifecycle",
@@ -1640,7 +1993,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     },
     {
      "operation": "service.stop",
@@ -1663,7 +2021,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1692,7 +2055,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1721,7 +2089,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1750,7 +2123,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1775,7 +2153,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1805,7 +2188,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1835,7 +2223,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1863,7 +2256,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1891,7 +2289,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1919,7 +2322,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -1976,7 +2384,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -2005,7 +2418,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -2060,7 +2478,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -2088,7 +2511,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -2173,7 +2601,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -2202,7 +2635,12 @@
       "P3",
       "P5",
       "P9"
-     ]
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
     }
    ]
   },
@@ -2231,7 +2669,243 @@
       "P3",
       "P5",
       "P9"
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     }
+    }
+   ]
+  },
+  {
+   "name": "key_path_uppercase",
+   "reason": "request_key_path",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "Key"
+     }
+    }
+   ]
+  },
+  {
+   "name": "key_path_empty_segment",
+   "reason": "request_key_path",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "request..caller",
+      "key": "key"
+     }
+    }
+   ]
+  },
+  {
+   "name": "key_path_too_deep",
+   "reason": "request_key_path",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "a.b.c.d.e"
+     }
+    }
+   ]
+  },
+  {
+   "name": "generate_on_digest_row",
+   "reason": "request_key_mode",
+   "rows": [
+    {
+     "operation": "catalog.index_setup_apply",
+     "method": "CatalogIndexSetupApply",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "operation_digest",
+     "conformance": [
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ],
+     "request_key": {
+      "mode": "generate",
+      "key": "draft.request.key"
+     }
+    }
+   ]
+  },
+  {
+   "name": "review_on_keyed_mutation",
+   "reason": "request_key_mode",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ],
+     "request_key": {
+      "mode": "review",
+      "caller": "caller",
+      "key": "key"
+     }
+    }
+   ]
+  },
+  {
+   "name": "destructive_without_confirmation",
+   "reason": "confirmation",
+   "rows": [
+    {
+     "operation": "storage.purge",
+     "method": "StoragePurge",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "destructive",
+     "idempotency": "operation_digest",
+     "conformance": [
+      "P2",
+      "P3",
+      "P5",
+      "P9"
      ]
+    }
+   ]
+  },
+  {
+   "name": "confirmation_on_mutation",
+   "reason": "confirmation",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ],
+     "request_key": {
+      "mode": "generate",
+      "caller": "caller",
+      "key": "key"
+     },
+     "confirmation": "plan_id"
     }
    ]
   }

@@ -140,6 +140,18 @@
    "class": "forbidden",
    "status": 403,
    "retryable": false
+  },
+  {
+   "code": "admin_review_unknown",
+   "class": "malformed",
+   "status": 400,
+   "retryable": false
+  },
+  {
+   "code": "admin_confirmation_mismatch",
+   "class": "malformed",
+   "status": 400,
+   "retryable": false
   }
  ],
  "valid": [
@@ -282,6 +294,18 @@
      "retryable": true,
      "retry_after_ms": 100
     }
+   }
+  },
+  {
+   "name": "review_token",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "catalog.index_setup_draft",
+    "result": {
+     "draft": "elided"
+    },
+    "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
    }
   }
  ],
@@ -465,6 +489,17 @@
      "retryable": false,
      "retry_after_ms": 10
     }
+   }
+  },
+  {
+   "name": "uppercase_review",
+   "reason": "envelope_review",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "catalog.preview",
+    "result": {},
+    "review": "5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F"
    }
   }
  ],

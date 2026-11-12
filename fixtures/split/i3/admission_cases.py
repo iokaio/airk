@@ -300,7 +300,8 @@ def admission_document():
                    "max_sessions": 16, "max_exchange_body_bytes": 1024, "max_request_body_bytes": 65_536,
                    "max_response_bytes": 33_554_432, "max_streams_per_session": 2, "max_streams": 16,
                    "stream_buffer_events": 256, "stream_buffer_bytes": 1_048_576, "stream_seconds": 120,
-                   "max_asset_name_bytes": 128, "max_operation_bytes": 64, "secret_text_chars": 43},
+                   "max_asset_name_bytes": 128, "max_operation_bytes": 64, "secret_text_chars": 43,
+                   "max_confirm_text_bytes": 256, "max_reviews_per_session": 32},
         "conventions": ["`session` is the lookup result for the single admin cookie, or null when unknown.",
                         "Cookie values are fixture placeholders, never real secrets."],
         "cases": list(admission_cases()),
@@ -430,15 +431,18 @@ CODES = [
     ("admin_internal", "internal", False), ("not_yet_served", "unavailable", False),
     ("service_draining", "unavailable", True), ("upgrade_in_progress", "unavailable", True),
     ("cookie_on_bearer_plane", "forbidden", False),
+    ("admin_review_unknown", "malformed", False), ("admin_confirmation_mismatch", "malformed", False),
 ]
 STATUS = {"malformed": 400, "unauthenticated": 401, "forbidden": 403, "not_found": 404, "method_not_allowed": 405,
           "refused": 409, "too_large": 413, "internal": 500, "unavailable": 503}
 
 
-def success(operation, result, request=None):
+def success(operation, result, request=None, review=None):
     value = {"schema": "airk-admin/1", "ok": True, "operation": operation, "result": result}
     if request is not None:
         value["request"] = request
+    if review is not None:
+        value["review"] = review
     return value
 
 
@@ -473,6 +477,9 @@ def envelopes_document():
             {"name": "native_refusal", "json": failure("key_conflict", "refused", False,
                                                        native={"status": "failure", "code": "key_conflict"})},
             {"name": "native_busy_refusal", "json": failure("registry_busy", "refused", True, retry_after_ms=100)},
+            # U98: a generate-mode draft names its review token; the request key stays in the session.
+            {"name": "review_token", "json": success("catalog.index_setup_draft", {"draft": "elided"},
+                                                     review="5f" * 16)},
         ],
         "invalid": [
             {"name": "success_unknown_field", "json": {**success("service.health", {}), "token": "x"}},
@@ -502,6 +509,8 @@ def envelopes_document():
              "json": failure("key_conflict", "internal", False)},
             {"name": "retry_after_not_retryable", "reason": "error_retry_after",
              "json": failure("key_conflict", "refused", False, retry_after_ms=10)},
+            {"name": "uppercase_review", "reason": "envelope_review",
+             "json": success("catalog.preview", {}, review=("5f" * 16).upper())},
         ],
         "stream_lines": [
             {"name": "event", "json": {"kind": "event", "cursor": "opaque-1", "event": {"kind": "job"}}},
@@ -528,9 +537,51 @@ def row(operation, method, plane, surfaces, effect, idempotency, conformance):
         authorization.append("owner_pipe")
     if "admin" in surfaces:
         authorization.append("admin_session_csrf")
-    return {"operation": operation, "method": method, "plane": plane, "surfaces": surfaces,
-            "authorization": authorization, "effect": effect, "idempotency": idempotency,
-            "conformance": conformance}
+    value = {"operation": operation, "method": method, "plane": plane, "surfaces": surfaces,
+             "authorization": authorization, "effect": effect, "idempotency": idempotency,
+             "conformance": conformance}
+    if operation in KEYS:
+        mode, caller, key = KEYS[operation]
+        value["request_key"] = {"mode": mode, **({"caller": caller} if caller else {}), "key": key}
+    if operation in CONFIRM:
+        value["confirmation"] = CONFIRM[operation]
+    return value
+
+
+# Request-identity placement (contracts §2.4, U98), read from the I1 method
+# definitions in crates/airk-core/src/service.rs and the catalog request types.
+# "generate": the service fills a fresh identity and returns a review token.
+# "review": the browser names that token; the service fills the identity back.
+KEYS = {
+    "indexes.configure": ("generate", "caller", "key"),
+    "jobs.enqueue": ("generate", "caller", "key"),
+    "jobs.retry": ("generate", "caller", "key"),
+    "requests.prepare": ("generate", "caller", "key"),
+    "recovery.plan_create": ("generate", "caller", "key"),
+    "catalog.policy_resume": ("generate", "caller", "key"),
+    "service.stop": ("generate", "caller", "key"),
+    "service.restart": ("generate", "caller", "key"),
+    "catalog.preview": ("generate", "request.caller", "request.key"),
+    "catalog.index_setup_draft": ("generate", None, "selection.key"),
+    "catalog.split_draft": ("generate", None, "selection.key"),
+    "catalog.grant_draft": ("generate", None, "selection.key"),
+    "catalog.source_draft": ("generate", None, "selection.key"),
+    "catalog.split_recover": ("generate", "request.caller", "request.key"),
+    "catalog.apply": ("review", "request.caller", "request.key"),
+    "catalog.index_setup_apply": ("review", "draft.request.caller", "draft.request.key"),
+    "catalog.split_apply": ("review", "draft.request.caller", "draft.request.key"),
+    "catalog.receipt": ("review", "caller", "key"),
+    "catalog.index_setup_receipt": ("review", "caller", "key"),
+    "catalog.split_receipt": ("review", "caller", "key"),
+    "catalog.split_recovery_receipt": ("review", "caller", "key"),
+    "catalog.policy_resume_receipt": ("review", "caller", "key"),
+}
+CONFIRM = {
+    "catalog.apply": "catalog_target",
+    "catalog.split_apply": "split_original_index",
+    "recovery.plan_execute": "plan_id",
+    "storage.purge": "storage_target",
+}
 
 
 def operations():
@@ -549,6 +600,16 @@ def operations():
         ("catalog.split_draft", "CatalogSplitDraft", MGMT), ("catalog.split_status", "CatalogSplitStatus", MGMT),
         ("catalog.retirement_evidence", "CatalogIndexRetirementEvidence", MGMT),
         ("catalog.policy_status", "CatalogPolicyStatus", MGMT), ("events.page", "Events", ALL4),
+        # Split completion (U97, U98): every catalog read the Index library uses.
+        ("catalog.source_draft", "CatalogSourceMutationDraft", MGMT),
+        ("catalog.source_observation", "CatalogSourceChangeObservation", MGMT),
+        ("catalog.pending_source", "CatalogPendingSourceChange", MGMT),
+        ("catalog.grant_draft", "CatalogGrantDraft", MGMT),
+        ("catalog.split_source_state", "CatalogSplitSourceState", MGMT),
+        ("catalog.split_receipt", "CatalogSplitReceipt", MGMT),
+        ("catalog.split_recovery_receipt", "CatalogSplitRecoveryReceipt", MGMT),
+        ("catalog.policy_resume_receipt", "CatalogPolicyResumeReceipt", MGMT),
+        ("usage.document", "UsageDocument", MGMT),
         ("jobs.get", "Job", ALL4), ("requests.list", "ClientRequestList", MGMT),
         ("requests.receipt", "RequestReceipt", MGMT), ("recovery.plan", "Plan", MGMT),
         ("recovery.plan_items", "PlanItems", MGMT), ("storage.inventory", "StorageInventory", MGMT),
@@ -583,6 +644,8 @@ def operations():
         ("catalog.index_setup_apply", "CatalogIndexSetupApply", MGMT, "mutation", "operation_digest", digest),
         ("catalog.split_apply", "CatalogSplitApply", MGMT, "destructive", "operation_digest", digest),
         ("catalog.policy_resume", "CatalogPolicyResume", MGMT, "mutation", "request_key", keyed),
+        ("catalog.split_recover", "CatalogSplitRecover", MGMT, "mutation", "request_key", keyed),
+        ("catalog.source_resolve", "CatalogSourceChangeResolve", MGMT, "mutation", "natural", natural),
         ("recovery.plan_create", "PlanCreate", MGMT, "mutation", "request_key", keyed),
         ("recovery.plan_execute", "PlanExecute", MGMT, "destructive", "operation_digest", digest),
         ("recovery.plan_pause", "PlanPause", MGMT, "mutation", "natural", natural),
@@ -659,6 +722,21 @@ def invalid_tables():
               {**good, "operation": "https.rotation_commit", "method": "HttpIssuerRotation.Commit"})
     yield bad("admin_action_of_never_method", "never_over_http",
               {**good, "operation": "agents.connect", "method": "Connect.Project"})
+    keyed_rule = {"mode": "generate", "caller": "caller", "key": "key"}
+    yield bad("key_path_uppercase", "request_key_path", {**good, "request_key": {**keyed_rule, "key": "Key"}})
+    yield bad("key_path_empty_segment", "request_key_path",
+              {**good, "request_key": {**keyed_rule, "caller": "request..caller"}})
+    yield bad("key_path_too_deep", "request_key_path", {**good, "request_key": {**keyed_rule, "key": "a.b.c.d.e"}})
+    digest_row = row("catalog.index_setup_apply", "CatalogIndexSetupApply", "management", MGMT, "mutation",
+                     "operation_digest", ["P2", "P3", "P5", "P9"])
+    yield bad("generate_on_digest_row", "request_key_mode",
+              {**digest_row, "request_key": {"mode": "generate", "key": "draft.request.key"}})
+    yield bad("review_on_keyed_mutation", "request_key_mode", {**good, "request_key": {**keyed_rule, "mode": "review"}})
+    destructive = row("storage.purge", "StoragePurge", "management", MGMT, "destructive", "operation_digest",
+                      ["P2", "P3", "P5", "P9"])
+    yield bad("destructive_without_confirmation", "confirmation",
+              {key: value for key, value in destructive.items() if key != "confirmation"})
+    yield bad("confirmation_on_mutation", "confirmation", {**good, "confirmation": "plan_id"})
 
 
 def operations_document():
@@ -666,12 +744,14 @@ def operations_document():
         "schema": "airk.split-fixture.i3-operations/1",
         "contract": CONTRACT + "; split plan §7.3; contracts.md §2.2",
         "generator": GENERATOR,
-        "status": "Reviewed initial table (C5). Handlers land in Phase 5; every row is not yet served.",
+        "status": "Reviewed table (C5, amended by U98 on 12 November 2026). admin_plane/CONTRACT.md lists the rows the service serves and the rows it refuses.",
         "enumerations": {"plane": ["management", "evidence"], "surface": ["pipe", "airkctl", "session", "admin"],
                          "authorization": ["owner_pipe", "window_lease", "admin_session_csrf"],
                          "effect": ["read", "mutation", "destructive"],
                          "idempotency": ["read", "request_key", "operation_digest", "natural"],
-                         "conformance": ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"]},
+                         "conformance": ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"],
+                         "key_mode": ["generate", "review"],
+                         "confirmation": ["catalog_target", "split_original_index", "plan_id", "storage_target"]},
         "operations": list(operations()),
         "never_over_http": NEVER,
         "invalid_tables": list(invalid_tables()),

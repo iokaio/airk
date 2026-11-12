@@ -41,8 +41,20 @@ handler [`admin_plane`](../admin_plane/CONTRACT.md).
 - **Envelopes** (`Envelope`, `SuccessEnvelope`, `FailureEnvelope`,
   `StreamLine`, `AdminCode`, `ErrorClass`): status by class; native refusals
   keep their code with class `refused`.
-- **Operation table** (`OperationRow`, `NeverOverHttp`, `validate_table`):
-  row schema and table rules; the reviewed initial table is the fixture.
+- **Operation table** (`OperationRow`, `RequestKeyRule`, `KeyMode`,
+  `Confirmation`, `NeverOverHttp`, `validate_table`): row schema and table
+  rules; the reviewed table is the fixture. Since U98 (contracts §4.3b) a row
+  may name where its request identity lives (`generate` or `review`), and
+  every destructive row names its confirmation target.
+  - Table rules: paths are 1–4 lowercase segments; `generate` is not allowed
+    on an `operation_digest` row; `review` is allowed only on `read` and
+    `operation_digest` rows; `confirmation` is present exactly on destructive
+    rows.
+- **Reviewed calls** (`ReviewedCall`, U98): the body of a review-mode or
+  destructive call, `{method, review?, confirm_text?}`. The success envelope's
+  optional `review` names the session-held identity; codes
+  `admin_review_unknown` and `admin_confirmation_mismatch` (400). Limits:
+  `MAX_CONFIRM_TEXT_BYTES` 256, `MAX_REVIEWS_PER_SESSION` 32.
 
 ## Invariants
 

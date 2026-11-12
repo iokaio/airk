@@ -96,10 +96,12 @@ fn contract_limits_match_the_fixture() {
         ("max_asset_name_bytes", MAX_ASSET_NAME_BYTES as u64),
         ("max_operation_bytes", MAX_OPERATION_BYTES as u64),
         ("secret_text_chars", SECRET_TEXT_CHARS as u64),
+        ("max_confirm_text_bytes", MAX_CONFIRM_TEXT_BYTES as u64),
+        ("max_reviews_per_session", MAX_REVIEWS_PER_SESSION as u64),
     ] {
         assert_eq!(limits[name], value, "{name}");
     }
-    assert_eq!(limits.as_object().unwrap().len(), 15);
+    assert_eq!(limits.as_object().unwrap().len(), 17);
 }
 
 #[test]
@@ -322,6 +324,8 @@ fn operation_table_follows_the_reviewed_rules() {
     assert_eq!(enumerations["effect"], serialized(Effect::ALL));
     assert_eq!(enumerations["idempotency"], serialized(Idempotency::ALL));
     assert_eq!(enumerations["conformance"], serialized(Conformance::ALL));
+    assert_eq!(enumerations["key_mode"], serialized(KeyMode::ALL));
+    assert_eq!(enumerations["confirmation"], serialized(Confirmation::ALL));
     let never: Vec<NeverOverHttp> = decode(&fixture["never_over_http"], &Value::Null);
     assert!(!never.is_empty());
     let rows: Vec<OperationRow> = decode(&fixture["operations"], &Value::Null);

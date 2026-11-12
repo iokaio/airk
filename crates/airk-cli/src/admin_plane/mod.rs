@@ -670,6 +670,7 @@ fn success_request(
         operation: operation.to_owned(),
         result,
         request,
+        review: None,
     };
     api(200, &envelope, set_cookie)
 }

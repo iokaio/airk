@@ -44,6 +44,10 @@ pub const STREAM_BUFFER_BYTES: usize = 1024 * 1024;
 pub const STREAM_SECONDS: u64 = 120;
 pub const MAX_ASSET_NAME_BYTES: usize = 128;
 pub const MAX_OPERATION_BYTES: usize = 64;
+/// U98: the typed confirmation text of a destructive call.
+pub const MAX_CONFIRM_TEXT_BYTES: usize = 256;
+/// Review tokens a session holds; the oldest is dropped first (§2.4, U98).
+pub const MAX_REVIEWS_PER_SESSION: usize = 32;
 
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
 img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; \
@@ -220,10 +224,17 @@ pub enum AdminCode {
     /// The exact admin cookie on `/mcp` or `/api/v1`, after their existing
     /// Host and `Origin` checks (L6; an I3 addition under U24).
     CookieOnBearerPlane,
+    /// A review-mode call named no review token, or one this session does
+    /// not hold (another session, logout, restart, eviction). Run the review
+    /// again (U98).
+    AdminReviewUnknown,
+    /// A destructive call's typed text does not equal the target's current
+    /// display name, or its digest does not match the review (U98).
+    AdminConfirmationMismatch,
 }
 
 impl AdminCode {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 23] = [
         Self::AdminHostRefused,
         Self::AdminOriginRefused,
         Self::AdminFetchMetadataRefused,
@@ -245,6 +256,8 @@ impl AdminCode {
         Self::ServiceDraining,
         Self::UpgradeInProgress,
         Self::CookieOnBearerPlane,
+        Self::AdminReviewUnknown,
+        Self::AdminConfirmationMismatch,
     ];
 
     pub const fn class(self) -> ErrorClass {
@@ -260,7 +273,10 @@ impl AdminCode {
             }
             Self::AdminNotFound | Self::AdminOperationUnknown => ErrorClass::NotFound,
             Self::AdminMethodNotAllowed => ErrorClass::MethodNotAllowed,
-            Self::AdminUpgradeRefused | Self::AdminMalformedRequest => ErrorClass::Malformed,
+            Self::AdminUpgradeRefused
+            | Self::AdminMalformedRequest
+            | Self::AdminReviewUnknown
+            | Self::AdminConfirmationMismatch => ErrorClass::Malformed,
             Self::AdminRequestTooLarge => ErrorClass::TooLarge,
             Self::AdminInternal => ErrorClass::Internal,
             Self::AdminStreamLimit
@@ -325,6 +341,27 @@ pub struct SuccessEnvelope {
     pub result: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<RequestProgress>,
+    /// The review token of a generate-mode row (§2.4, U98): the request
+    /// identity it names stays in the admin session and never reaches the
+    /// browser. A later review-mode call of the same session names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "schema::incarnation_option")]
+    pub review: Option<String>,
+}
+
+/// The body of a call to a row with a review-mode request key or a
+/// confirmation (U98). Every other row's body is the bare method object.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewedCall {
+    /// The `ControlMethod` object, without the row's request-key fields.
+    pub method: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "schema::incarnation_option")]
+    pub review: Option<String>,
+    /// Required on destructive rows; at most `MAX_CONFIRM_TEXT_BYTES`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_text: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -375,6 +412,13 @@ impl SuccessEnvelope {
             .is_some_and(|request| !is_incarnation(&request.nonce))
         {
             return Err("envelope_nonce");
+        }
+        if self
+            .review
+            .as_deref()
+            .is_some_and(|review| !is_incarnation(review))
+        {
+            return Err("envelope_review");
         }
         Ok(())
     }
@@ -1018,6 +1062,75 @@ pub struct OperationRow {
     pub effect: Effect,
     pub idempotency: Idempotency,
     pub conformance: Vec<Conformance>,
+    /// Where the method's request identity lives (§2.4, U98).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_key: Option<RequestKeyRule>,
+    /// The typed confirmation of a destructive row (U98).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmation: Option<Confirmation>,
+}
+
+/// Request-identity placement. Paths are dotted field names inside the
+/// method's own object (`{"<variant>": {..}}`), 1 to 4 lowercase segments.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RequestKeyRule {
+    pub mode: KeyMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller: Option<String>,
+    pub key: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyMode {
+    /// The browser omits the fields; the service fills a fresh caller and
+    /// key, keeps them under a new review token and removes the key (and the
+    /// caller beside it) from the native result.
+    Generate,
+    /// The browser omits the fields and names a review token in a
+    /// `ReviewedCall`; the service fills the identity that token holds.
+    Review,
+}
+
+/// How a destructive row's typed text is checked (U98). The service reads
+/// the target's current display name; the browser's text must equal it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Confirmation {
+    /// `CatalogApply`: the name of the operation's target index or index set
+    /// (a grant's id) at the request's expected revision. Operations that
+    /// create, rename or add need no text.
+    CatalogTarget,
+    /// `CatalogSplitApply`: the original index's name.
+    SplitOriginalIndex,
+    /// `PlanExecute`: the first 12 hexadecimal characters of the plan id.
+    PlanId,
+    /// `StoragePurge`: the purged location's path as the inventory lists it.
+    StorageTarget,
+}
+
+impl KeyMode {
+    pub const ALL: [Self; 2] = [Self::Generate, Self::Review];
+}
+impl Confirmation {
+    pub const ALL: [Self; 4] = [
+        Self::CatalogTarget,
+        Self::SplitOriginalIndex,
+        Self::PlanId,
+        Self::StorageTarget,
+    ];
+}
+
+fn is_key_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('.').collect();
+    (1..=4).contains(&segments.len())
+        && segments.iter().all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        })
 }
 
 /// An item that never has an HTTP route (§4.9 with review L4, L8). An admin
@@ -1080,6 +1193,29 @@ pub fn validate_table(rows: &[OperationRow], never: &[NeverOverHttp]) -> Result<
         };
         if !consistent {
             return Err("effect_idempotency");
+        }
+        if let Some(rule) = &row.request_key {
+            if !is_key_path(&rule.key)
+                || rule
+                    .caller
+                    .as_deref()
+                    .is_some_and(|path| !is_key_path(path))
+            {
+                return Err("request_key_path");
+            }
+            let allowed = match rule.mode {
+                KeyMode::Generate => row.idempotency != Idempotency::OperationDigest,
+                KeyMode::Review => matches!(
+                    row.idempotency,
+                    Idempotency::Read | Idempotency::OperationDigest
+                ),
+            };
+            if !allowed {
+                return Err("request_key_mode");
+            }
+        }
+        if (row.effect == Effect::Destructive) != row.confirmation.is_some() {
+            return Err("confirmation");
         }
         let read = row.effect == Effect::Read;
         let missing = !has(Conformance::P3)

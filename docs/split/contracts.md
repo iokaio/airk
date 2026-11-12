@@ -609,14 +609,72 @@ no `never_over_http` row has a route.
   `LifecycleAccepted` record; the service then exits, ending every admin
   session. A restart is completed by the client that starts the service; the
   result carries no added note.
-- **Destructive rows** answer `not_yet_served` until the typed confirmation's
-  wire form is specified.
+- **Destructive rows** answered `not_yet_served` until U98 (§4.3b) defined
+  the typed confirmation.
 - **Search** (`search.call`) accepts only the `unselected` (help) and `admin`
   selections from the browser; any other is 400.
 
+#### 4.3b Amendment (U98, 12 November 2026): request identities and typed confirmation
+
+Two optional columns, both in the reviewed fixture:
+
+| Column | Meaning |
+|---|---|
+| `request_key` | `{mode, caller?, key}`. Paths are dotted field names inside the method's own object, 1–4 lowercase segments. |
+| `confirmation` | Present exactly on `destructive` rows: `catalog_target`, `split_original_index`, `plan_id` or `storage_target`. |
+
+- **`generate`** (keyed mutations and the draft/preview reads:
+  `catalog.preview`, `catalog.index_setup_draft`, `catalog.split_draft`,
+  `catalog.grant_draft`, `catalog.source_draft`, `catalog.split_recover`).
+  - A body that names a field at a rule path is 400
+    `admin_malformed_request`.
+  - The service reads `RequestEpoch`, fills a fresh caller (where the row
+    names one) and key, and keeps them in the admin session under a new
+    review token. A session holds at most `MAX_REVIEWS_PER_SESSION` (32)
+    tokens; the oldest goes first.
+  - In the native result, every object whose `key` equals the generated key
+    loses that `key` and the `caller` beside it. The service keeps that
+    caller under the same token. These request identities are the only
+    fields removed: they are transport identities in the sense of the parity
+    rule.
+  - The success envelope carries `review: <token>`.
+- **`review`** (`catalog.apply`, `catalog.index_setup_apply`,
+  `catalog.split_apply` and the receipts).
+  - The body is a `ReviewedCall` `{method, review, confirm_text?}`. The method
+    omits the rule paths.
+  - The service fills the identity the token holds. An unknown token, or one
+    belonging to another session, is 400 `admin_review_unknown`: run the
+    review again.
+  - Tokens are not consumed. A repeated apply carries the same key, and the
+    native key idempotency answers it; receipts stay readable for the
+    session's life. Logout, expiry and restart drop them.
+- **Typed confirmation.**
+  - A destructive row needs `confirm_text` of at most 256 bytes, except a
+    `catalog.apply` whose operation creates, renames or adds.
+  - The service reads the target's current display name and compares it
+    exactly; a mismatch is 400 `admin_confirmation_mismatch` and nothing is
+    sent. Targets:
+    - `catalog_target`: the index or index set (`CatalogDetail` at the
+      request's expected revision) or the grant id;
+    - `split_original_index`: the original index's name;
+    - `plan_id`: the first 12 hexadecimal characters of the plan id;
+    - `storage_target`: the location path as the inventory lists it.
+  - The native digest check still decides whether the reviewed draft is
+    current.
+  - `airkctl` takes the same text as `--confirm <name>` and applies the same
+    comparison before it sends.
+- **New rows:**
+  - `catalog.source_draft`, `catalog.source_observation`,
+    `catalog.pending_source`, `catalog.source_resolve`;
+  - `catalog.grant_draft`;
+  - `catalog.split_source_state`, `catalog.split_receipt`,
+    `catalog.split_recover`, `catalog.split_recovery_receipt`;
+  - `catalog.policy_resume_receipt`;
+  - `usage.document`.
+
 ### 4.4 Envelopes [P]
 
-- Success: `{"schema":"airk-admin/1","ok":true,"operation":…,"result":<complete native result>,"request"?:{nonce,state}}`.
+- Success: `{"schema":"airk-admin/1","ok":true,"operation":…,"result":<complete native result>,"request"?:{nonce,state},"review"?:<token>}` (`review` per §4.3b).
 - Failure: `{"schema":"airk-admin/1","ok":false,"error":{"code","class","retryable","retry_after_ms"?,"native"?:<complete native response>}}`.
 - HTTP status: 200 ok; 409 native refusal; 400 malformed; 401 no or expired
   session; 403 host/origin/fetch-site/anti-forgery; 404 unknown route or
@@ -630,8 +688,14 @@ no `never_over_http` row has a route.
    **fragment**, so it never enters a request line, `Referer` or server log.
    Alternative for the review: `?code=` with an immediate 303 (simpler, but the
    code reaches the request line and history until replaced).
+   Since U97 the fragment may continue `&route=<encoded page route>`, a page
+   id and optional prefill query (`index-library?root=<folder>`,
+   `?index=<idx_…>`, `?set=<prj_…>`), built by `airkctl admin open|url --page
+   … [--for-folder …|--show-index …|--show-set …]`. A route only selects a
+   page and prefills fields; it never starts an action.
 2. The entry page (static; no session; `script-src 'self'`) reads
-   `location.hash`, calls `history.replaceState` to drop it, and POSTs
+   `location.hash`, calls `history.replaceState` to drop the code (keeping
+   only a validated page route, `/admin/#<route>`), and POSTs
    `{"code":…}` to `/admin/api/v1/session` with `credentials: same-origin`.
 3. The server requires exact Host, exact `Origin`, `Sec-Fetch-Site: same-origin`,
    `Content-Type: application/json`, body ≤ 1 KiB. It removes the code's hash

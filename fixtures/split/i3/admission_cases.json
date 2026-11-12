@@ -18,7 +18,9 @@
   "stream_seconds": 120,
   "max_asset_name_bytes": 128,
   "max_operation_bytes": 64,
-  "secret_text_chars": 43
+  "secret_text_chars": 43,
+  "max_confirm_text_bytes": 256,
+  "max_reviews_per_session": 32
  },
  "conventions": [
   "`session` is the lookup result for the single admin cookie, or null when unknown.",

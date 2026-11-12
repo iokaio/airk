@@ -7,7 +7,9 @@
 //! i3` renders the TypeScript types from it. Formats of identities and
 //! secrets, and constant fields, are written here by hand. Admission inputs
 //! and outcomes are server-side only and are not exported.
-use super::{AdminCode, Envelope, ExchangeRequest, ExchangeResponse, OperationRow, StreamLine};
+use super::{
+    AdminCode, Envelope, ExchangeRequest, ExchangeResponse, OperationRow, ReviewedCall, StreamLine,
+};
 use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings, json_schema};
 
 /// A canonical 16-byte identity: 32 lowercase hexadecimal characters.
@@ -18,6 +20,11 @@ pub(super) fn incarnation(_: &mut SchemaGenerator) -> Schema {
 /// A 256-bit secret as canonical unpadded base64url.
 pub(super) fn secret(_: &mut SchemaGenerator) -> Schema {
     json_schema!({"type": "string", "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"})
+}
+
+/// An optional canonical 16-byte identity.
+pub(super) fn incarnation_option(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({"type": ["string", "null"], "pattern": "^[0-9a-f]{32}$"})
 }
 
 pub(super) fn envelope_schema(_: &mut SchemaGenerator) -> Schema {
@@ -47,6 +54,7 @@ pub fn document() -> serde_json::Value {
     root::<ExchangeResponse>(&mut generator, &mut roots);
     root::<StreamLine>(&mut generator, &mut roots);
     root::<OperationRow>(&mut generator, &mut roots);
+    root::<ReviewedCall>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()
