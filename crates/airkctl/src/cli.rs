@@ -116,6 +116,8 @@ enum Command {
     /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant.
     /// Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airkctl service register --runtime-dir <control>` instead.
     Init,
+    /// Print the offline model catalog and the CPU choice for this host.
+    ModelCatalog,
     /// Read one project setting view; read-only.
     Settings {
         #[arg(value_parser = ["extraction_policy", "vector_selection", "vector_status", "roots", "scan_limits", "quota_policy", "quota_status"])]
@@ -2149,6 +2151,23 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
         Command::Init => init(cx, selection),
+        Command::ModelCatalog => {
+            let control = match selection.control.clone() {
+                Some(control) => control,
+                None => match installed(cx) {
+                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
+                    Err(code) => return code,
+                },
+            };
+            match crate::service::request(&control, ControlMethod::ModelCatalog {}, VERSION) {
+                Ok(ControlResponse::ModelCatalog { document }) => json_line(cx, &document),
+                Ok(ControlResponse::UsageReadFailed { message, .. }) => {
+                    fail(cx, &crate::registration::failed(&message))
+                }
+                Ok(other) => fail(cx, &crate::service::refusal(&other)),
+                Err(line) => fail(cx, &line),
+            }
+        }
         Command::Settings {
             view,
             validate_file,

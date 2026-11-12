@@ -1833,3 +1833,39 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// `model-catalog` (split step 3c.5d): `airkctl` prints the report `airk`
+/// printed, from the service (M10).
+#[test]
+fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-models");
+    let control = service.control.to_str().unwrap().to_owned();
+    let before = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .arg("model-catalog")
+        .output()?;
+    assert!(before.status.success());
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut io = airkctl::cli::Io {
+        stdin: &mut std::io::empty(),
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+        full_responses: false,
+    };
+    let line = [
+        "airkctl",
+        "--service-runtime-dir",
+        &control,
+        "model-catalog",
+    ]
+    .map(std::ffi::OsString::from)
+    .to_vec();
+    let code = airkctl::cli::run(line, &mut io);
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&stderr));
+    assert_eq!(
+        String::from_utf8(stdout)?,
+        String::from_utf8(before.stdout)?
+    );
+    Ok(())
+}

@@ -494,10 +494,21 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 collection,
                 storage,
             } => registration::plan(&root, &data_root, &collection, storage),
-            // M10 lands its handler in step 3c.5d-2; until then the typed refusal.
-            ControlMethod::ModelCatalog {} => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            // M10: the report `model-catalog` printed, unchanged.
+            ControlMethod::ModelCatalog {} => {
+                match airk_kernel::inspect_model_catalog().and_then(|catalog| {
+                    let mut document = serde_json::to_value(catalog)?;
+                    document["bundled_model"] =
+                        serde_json::json!({"manifest": crate::bundled_assets::manifest()?});
+                    Ok(document)
+                }) {
+                    Ok(document) => ControlResponse::ModelCatalog { document },
+                    Err(error) => ControlResponse::UsageReadFailed {
+                        message: tools_call::failure_message(&error),
+                        native: None,
+                    },
+                }
+            }
             ControlMethod::UsageDocument {
                 project,
                 catalog,
