@@ -193,6 +193,7 @@ impl Operation {
         );
         let path = receipt_path(install)?;
         let saved = read(&path)?;
+        let mut superseded = false;
         if let Some(saved) = &saved {
             digest(&saved.operation)?;
             digest(&saved.candidate)?;
@@ -229,11 +230,19 @@ impl Operation {
                         "replacement_successor_changed: the selected runtime differs from the completed installation"
                     );
                 }
-            } else if !saved.completed {
+            } else if !saved.completed
+                && !(operation == Some(saved.operation.as_str()) && candidate == saved.candidate)
+            {
+                // An attempt refused before its freeze changed no location, so
+                // a new, separately reviewed operation may take it over; its
+                // identity stays consumed. Anything later resumes only as itself.
                 ensure!(
-                    operation == Some(saved.operation.as_str()) && candidate == saved.candidate,
+                    operation
+                        .is_some_and(|id| !saved.consumed.iter().any(|(known, _)| known == id))
+                        && saved.unstarted(),
                     "replacement_in_progress: resume the original installation attempt before starting another"
                 );
+                superseded = true;
             }
         }
         let Some(id) = operation else {
@@ -248,7 +257,7 @@ impl Operation {
             .map(|saved| saved.consumed.clone())
             .unwrap_or_default();
         let replay = saved.filter(|saved| {
-            !saved.completed || saved.consumed.iter().any(|(known, _)| known == id)
+            !superseded && (!saved.completed || saved.consumed.iter().any(|(known, _)| known == id))
         });
         Ok(Some(Self {
             id: id.into(),
@@ -468,6 +477,22 @@ impl Operation {
 }
 
 impl Receipt {
+    /// Admitted but never frozen: no executable name was admitted for
+    /// retirement and every location is still at its original path with its
+    /// recorded directory identity and owner seals, so no folder moved.
+    fn unstarted(&self) -> bool {
+        !self.frozen
+            && !self.image_retirement_admitted
+            && self.images.is_empty()
+            && self.image_exclusions.is_empty()
+            && self.remaining().is_ok_and(|remaining| {
+                remaining.len() == self.locations.len()
+                    && remaining
+                        .iter()
+                        .all(|(original, actual)| original == actual)
+            })
+    }
+
     fn validate_images(&self) -> Result<()> {
         ensure!(
             self.images.len() <= 1024 && self.image_exclusions.len() <= self.images.len(),

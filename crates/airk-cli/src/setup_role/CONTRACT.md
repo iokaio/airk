@@ -117,6 +117,14 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   A pre-split shared-manager receipt names the pre-U93 command
   `runtime managed-serve --install-dir <root>`; `service_manager` accepts it
   (with the interim form) for ownership and removal only, never for launch.
+  Each setup operation has its own retirement identity, and the installer's
+  operation folder does not outlive the installer, so an earlier operation
+  cannot be resumed. A replacement journal (`.<root>.replacement-1`) left
+  incomplete before its freeze (nothing frozen, no executable admitted, every
+  location at its original path with its recorded identity and owner seals)
+  is taken over by the next operation, which plans afresh and keeps the
+  earlier identity consumed. A journal past its freeze resumes only under its
+  own operation and otherwise stays `replacement_in_progress`.
   On close, leftovers are written to `leftovers.txt` beside the operation
   (`leftover_notice`), which the Inno installer shows after placement.
 - `drain`: for the operation's and the existing record's control roots, a

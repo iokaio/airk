@@ -81,6 +81,8 @@ var
   DisclosurePage: TWizardPage;
   DisclosureMemo: TNewMemo;
   AcknowledgeBox: TNewCheckBox;
+  { Shown while setup --plan runs, so a slow check does not look like a hang. }
+  PlanProgressPage: TOutputMarqueeProgressWizardPage;
   NeedsAcknowledgement: Boolean;
   SetupOperation: String;
   PrivateFolder: String;
@@ -534,6 +536,9 @@ begin
   AcknowledgeBox.SetBounds(0, DisclosurePage.SurfaceHeight - ScaleY(30),
     DisclosurePage.SurfaceWidth, ScaleY(24));
   AcknowledgeBox.OnClick := @AcknowledgeClicked;
+
+  PlanProgressPage := CreateOutputMarqueeProgressPage('Checking AIRK data locations',
+    'Setup is checking the chosen folders and looking for earlier AIRK installations.');
 end;
 
 procedure RegisterPreviousData(PreviousDataKey: Integer);
@@ -549,7 +554,17 @@ begin
   Result := True;
   if CurPageID = DataPage.ID then begin
     try
-      if not LoadPlan(Text) then begin
+      { Exec waits while processing window messages, so the marquee keeps
+        moving during setup --plan. Hide runs before any message box. }
+      PlanProgressPage.SetText('This can take a minute. Setup has not stopped.', '');
+      PlanProgressPage.Show;
+      try
+        PlanProgressPage.Animate;
+        Result := LoadPlan(Text);
+      finally
+        PlanProgressPage.Hide;
+      end;
+      if not Result then begin
         MsgBox(Text + #13#10 + #13#10 + 'Resolve the items above (choose other folders on this page, or update or close VS Code), then click Next.',
           mbError, MB_OK);
         Result := False;

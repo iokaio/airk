@@ -593,6 +593,64 @@ fn a_failed_directory_removal_stays_pending_and_exact_retry_finishes_the_retired
     Ok(())
 }
 
+/// Manual install report (12 Nov): an attempt admitted its receipt, was refused
+/// before its freeze, and its setup operation was lost with the installer's
+/// temporary folder. Every later installer was refused forever.
+#[test]
+fn a_new_operation_takes_over_an_attempt_refused_before_its_freeze() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let (install, state) = installation(&base, "airk-install")?;
+    let (first_candidate, first) = ("a".repeat(64), "1".repeat(64));
+    let mut plan = plan_for_operation(&install, &first_candidate, CANDIDATE, Some(&first), None)?;
+    Operation::begin(&mut plan)?;
+    assert_eq!(
+        pending_operation(&install, &first_candidate)?,
+        Some(first.clone())
+    );
+    let (candidate, second) = ("b".repeat(64), "2".repeat(64));
+    let review = plan_for_operation(&install, &candidate, CANDIDATE, Some(&second), None)?;
+    assert!(review.required);
+    assert_ne!(review.reason, "resume_installation_replacement");
+    let result = apply(&install, &candidate, Some(&second), None)?;
+    assert_eq!(result["replaced"], true);
+    assert!(!install.exists() && !state.exists());
+    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(
+        base.join(".airk-install.replacement-1")
+            .join("receipt.json"),
+    )?)?;
+    assert_eq!(receipt["operation"], second.as_str());
+    assert_eq!(receipt["completed"], true);
+    assert_eq!(
+        receipt["consumed"],
+        serde_json::json!([[first, first_candidate], [second, candidate]])
+    );
+    Ok(())
+}
+
+#[test]
+fn a_new_operation_cannot_take_over_an_unfrozen_attempt_whose_owner_changed() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let (install, state) = installation(&base, "airk-install")?;
+    let candidate = "a".repeat(64);
+    let first = "3".repeat(64);
+    let mut plan = plan_for_operation(&install, &candidate, CANDIDATE, Some(&first), None)?;
+    Operation::begin(&mut plan)?;
+    fs::write(install.join("selected.json"), b"changed successor identity")?;
+    let error = apply(&install, &candidate, Some(&"8".repeat(64)), None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("replacement_in_progress:"), "{error}");
+    assert_eq!(
+        fs::read(install.join("selected.json"))?,
+        b"changed successor identity"
+    );
+    assert!(state.exists());
+    assert_eq!(pending_operation(&install, &candidate)?, Some(first));
+    Ok(())
+}
+
 #[test]
 fn interrupted_cleanup_refuses_a_changed_successor_at_an_original_location() -> Result<()> {
     let owner = tempfile::tempdir()?;
