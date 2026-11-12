@@ -135,7 +135,7 @@ class Signer:
         self.receipts = {}
 
     def sign(self, name, source, output):
-        document = self.adapter.sign(source, output, "windows-x64", self.commit, self.lock_sha256)
+        document = self.adapter.sign(source, output, TARGET, self.commit, self.lock_sha256)
         (self.folder / f"signing-{name}.json").write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
         self.receipts[name] = {"source_sha256": document["source_sha256"],
                                "binary_sha256": document["binary_sha256"], "identity": document["identity"]}

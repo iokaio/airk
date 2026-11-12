@@ -20,7 +20,7 @@ provenance. Nothing here installs, publishes or changes trust.
 
     python scripts/local_signing.py provision
     python scripts/local_signing.py sign --input airk.exe --output signed/airk.exe \
-        --target windows-x64 --commit <sha> --cargo-lock-sha256 <sha> --receipt r.json
+        --target x86_64-pc-windows-msvc --commit <sha> --cargo-lock-sha256 <sha> --receipt r.json
 """
 import argparse
 import hashlib
