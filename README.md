@@ -17,6 +17,8 @@ Code extension are being reworked under the [split plan](docs/split/split-plan.m
 the pre-split product; on this branch the extension still starts the retired
 `airk service session`.
 
+**1.8.30 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.30 for the rebuilt local Windows AIRK Service installer and VSIX (upgrades with VS Code open, setup's process scan, stdio agent-entry cleanup, downloads link); see the [1.8.30 record](docs/releases/release-1.8.30.md). The 1.8.29, 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
+
 **1.8.29 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.29 for the rebuilt local Windows AIRK Service installer and VSIX (stuck pre-split retirement taken over, installer progress page); see the [1.8.29 record](docs/releases/release-1.8.29.md). 1.8.28 was not used; the 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
 
 **1.8.27 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.27 for the rebuilt local Windows AIRK Service installer and VSIX (Management version line); see the [1.8.27 record](docs/releases/release-1.8.27.md). The 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
