@@ -91,6 +91,13 @@ def prerequisites(iscc):
         raise SystemExit("Missing prerequisites: " + ", ".join(missing))
 
 
+def default_iscc():
+    """Inno Setup 6's compiler: the machine-wide install, else the per-user one."""
+    machine = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6/ISCC.exe"
+    user = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Inno Setup 6/ISCC.exe"
+    return machine if machine.is_file() or not os.environ.get("LOCALAPPDATA") or not user.is_file() else user
+
+
 def stage(layout, airk, airkctl, version, signing):
     (layout / "bin").mkdir(parents=True)
     (layout / "service").mkdir()
@@ -187,8 +194,7 @@ def main():
                         help="Build from this checkout; completed artifacts are never reused")
     parser.add_argument("--unsigned", action="store_true",
                         help="Label the payload and installer unsigned instead of stopping without signing access")
-    parser.add_argument("--iscc", type=Path, default=Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)"))
-                        / "Inno Setup 6/ISCC.exe")
+    parser.add_argument("--iscc", type=Path, default=default_iscc())
     args = parser.parse_args()
     prerequisites(args.iscc)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
