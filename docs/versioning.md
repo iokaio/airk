@@ -4,7 +4,11 @@ Runtime installation and upgrades display a VS Code progress notification labele
 
 Historical 1.5.4–1.8.13 installation records the exact activation intent before stopping the verified optional manager and terminating approved predecessor processes, including older versions and Windows clients holding the stable launcher. Captured native process identities prevent PID reuse from redirecting termination. All captured processes share a five-second exit wait; verification, manager control, copying and startup are additional. Historical macOS installation uses authenticated graceful shutdown. The 1.8.14 migration retains version-specific predecessor retirement, rather than assuming those old processes implement the new checkpoint protocol. See [installation](service-installation.md) for ownership and platform limits.
 
-The next local candidate is **1.8.23**, prepared on 10 November 2026. It corrects
+The current local candidate is **1.8.24** (12 November 2026), the first split build: see the
+[1.8.24 record](releases/release-1.8.24.md). Manifests and lockfiles are synchronized at 1.8.24.
+The 1.8.23 paragraph below is dated history.
+
+The 1.8.23 candidate was prepared on 10 November 2026. It corrected
 the 1.8.22 manual-test failure with empty installation and Reconnect that cannot
 create an index. Source manifests and lockfiles are synchronized at 1.8.23 and
 the candidate build is in progress. No 1.8.23 native package or VSIX has been

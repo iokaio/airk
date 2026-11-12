@@ -17,6 +17,8 @@ Code extension are being reworked under the [split plan](docs/split/split-plan.m
 the pre-split product; on this branch the extension still starts the retired
 `airk service session`.
 
+**1.8.24 first split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.24 for the local Windows AIRK Service installer and UI-only VSIX of the split; see the [1.8.24 record](docs/releases/release-1.8.24.md). The 1.8.23 text below is dated history.
+
 **Stopped source checkpoint (10 November 2026).** Manual installation of the
 1.8.23 candidate reported an HTTP cleanup refusal. The native eligibility fix
 is committed but untested. No installer was rebuilt for that fix. Installer
