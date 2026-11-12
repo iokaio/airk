@@ -140,7 +140,7 @@ enum Command {
         #[arg(long)]
         owner_watch: bool,
     },
-    /// Local HTTPS connections for agents: endpoint, info, list, verify, credential, launch and revoke.
+    /// Agent connections and configuration: endpoint, info, list, connect, repair, remove, verify, credential, launch and revoke.
     Agents {
         #[command(subcommand)]
         action: AgentsCommand,
@@ -233,13 +233,78 @@ enum AgentsCommand {
         #[arg(long, value_parser = ["header-json"])]
         format: String,
     },
-    /// Whether this installation owns a connection id; read-only.
+    /// Classify AIRK's entries in agent configuration files; read-only.
+    ///
+    /// With --connection-id, report only whether this installation owns that connection.
     List {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
+        connection_id: Option<airk_core::identity::Incarnation>,
+        /// A project folder to check (repeatable; default: the current directory).
+        #[arg(long = "project")]
+        projects: Vec<PathBuf>,
+        /// Leave this user's agent configuration files out.
+        #[arg(long)]
+        no_user: bool,
+    },
+    /// Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection
+    /// (--selection-file with a new --connection-id) or reusing an existing connection.
+    Connect {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        client: crate::launch::Client,
+        #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
+        /// Owner-private reviewed selection to enroll as --connection-id.
+        #[arg(long)]
+        selection_file: Option<PathBuf>,
+        /// Write the user-level file instead of the project's.
+        #[arg(long)]
+        user: bool,
+        /// The project folder (default: the current directory).
+        #[arg(long)]
+        project: Option<PathBuf>,
+        #[arg(long, default_value = "airk")]
+        server_key: String,
+        /// The airkctl executable written credential helpers name (default: this airkctl).
+        #[arg(long)]
+        airkctl: Option<PathBuf>,
+    },
+    /// Rewrite AIRK entries whose endpoint or helper is stale; --connection-id replaces an
+    /// unknown connection.
+    Repair {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: Option<airk_core::identity::Incarnation>,
+        /// A project folder to check (repeatable; default: the current directory).
+        #[arg(long = "project")]
+        projects: Vec<PathBuf>,
+        /// Leave this user's agent configuration files out.
+        #[arg(long)]
+        no_user: bool,
+        /// The airkctl executable written credential helpers name (default: this airkctl).
+        #[arg(long)]
+        airkctl: Option<PathBuf>,
+    },
+    /// Remove AIRK's entries (only those naming --connection-id, when given).
+    Remove {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: Option<airk_core::identity::Incarnation>,
+        /// A project folder to check (repeatable; default: the current directory).
+        #[arg(long = "project")]
+        projects: Vec<PathBuf>,
+        /// Leave this user's agent configuration files out.
+        #[arg(long)]
+        no_user: bool,
     },
     /// Probe the service's own MCP endpoint with a connection's stored credential.
     Verify {
@@ -276,6 +341,18 @@ enum AgentsCommand {
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum TrustAction {
+    Inspect,
+    Install,
+    Remove,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum IssuerRotationAction {
+    Status,
 }
 
 #[derive(clap::Args)]
@@ -468,6 +545,27 @@ enum ServiceCommand {
         output_file: Option<PathBuf>,
         #[arg(long, default_value = "json", value_parser = ["json", "text"])]
         format: String,
+    },
+    /// This installation's HTTPS issuer in your OS trust store; works while the service is down.
+    ///
+    /// install and remove need --expected-ca-sha256, the reviewed issuer digest that inspect
+    /// prints; the OS may ask you to confirm.
+    Trust {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(value_enum)]
+        action: TrustAction,
+        #[arg(long)]
+        expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
+    },
+    /// The saved HTTPS issuer rotation and current endpoint (status only in this version).
+    IssuerRotation {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(value_enum)]
+        action: IssuerRotationAction,
     },
     /// Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged.
     AbandonLifecycle {
@@ -1603,6 +1701,197 @@ fn explorer_command(cx: &mut Context, selection: Selection, action: ExplorerComm
     printed
 }
 
+impl AgentsCommand {
+    fn runtime_dir(&self) -> Option<PathBuf> {
+        match self {
+            AgentsCommand::Endpoint { runtime_dir }
+            | AgentsCommand::Info { runtime_dir, .. }
+            | AgentsCommand::Revoke { runtime_dir, .. }
+            | AgentsCommand::Credential { runtime_dir, .. }
+            | AgentsCommand::List { runtime_dir, .. }
+            | AgentsCommand::Connect { runtime_dir, .. }
+            | AgentsCommand::Repair { runtime_dir, .. }
+            | AgentsCommand::Remove { runtime_dir, .. }
+            | AgentsCommand::Verify { runtime_dir, .. }
+            | AgentsCommand::Launch { runtime_dir, .. } => runtime_dir.clone(),
+        }
+    }
+}
+
+/// A canonical path without Windows' `\\?\` prefix when it names a plain
+/// drive path, so written entries and helpers carry the ordinary spelling.
+fn plain(path: PathBuf) -> PathBuf {
+    let simplified = path
+        .to_str()
+        .and_then(|text| text.strip_prefix(r"\\?\"))
+        .filter(|rest| {
+            rest.as_bytes().get(1) == Some(&b':')
+                && rest.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        })
+        .map(PathBuf::from);
+    simplified.unwrap_or(path)
+}
+
+/// Absolute project folders: the given ones, else the current directory.
+fn project_folders(projects: &[PathBuf]) -> Result<Vec<PathBuf>, ErrorLine> {
+    let given = if projects.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        projects.to_vec()
+    };
+    given
+        .iter()
+        .map(|folder| {
+            folder.canonicalize().map(plain).map_err(|error| {
+                crate::registration::failed(&format!("{}: {error}", folder.display()))
+            })
+        })
+        .collect()
+}
+
+/// The `airkctl` that written credential helpers name (U92): this executable.
+fn this_airkctl() -> Result<PathBuf, ErrorLine> {
+    std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map(plain)
+        .map_err(|error| crate::registration::failed(&error.to_string()))
+}
+
+/// `agents …` (split 3e).
+fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand) -> u8 {
+    use crate::agents::manage;
+    let control = match action.runtime_dir().or(selection.control.clone()) {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    let helper = match &action {
+        AgentsCommand::Connect { airkctl, .. } | AgentsCommand::Repair { airkctl, .. } => {
+            airkctl.clone()
+        }
+        _ => None,
+    };
+    let inputs =
+        |projects: &[PathBuf], user: bool| -> Result<(Vec<PathBuf>, PathBuf, bool), ErrorLine> {
+            let airkctl = match &helper {
+                Some(path) if path.is_absolute() => plain(path.clone()),
+                Some(_) => return Err(crate::registration::failed("--airkctl must be absolute")),
+                None => this_airkctl()?,
+            };
+            Ok((project_folders(projects)?, airkctl, user))
+        };
+    let result = match &action {
+        AgentsCommand::Launch {
+            client,
+            connection_id,
+            directory,
+            args,
+            ..
+        } => {
+            let directory = directory.clone().unwrap_or_else(|| PathBuf::from("."));
+            return match crate::launch::launch(
+                &control,
+                VERSION,
+                *client,
+                *connection_id,
+                &directory,
+                args,
+            ) {
+                Ok(code) => u8::try_from(code).unwrap_or(1),
+                Err(line) => fail(cx, &line),
+            };
+        }
+        AgentsCommand::Endpoint { .. } => crate::agents::endpoint(&control, VERSION),
+        AgentsCommand::Info { connection_id, .. } => {
+            crate::agents::info(&control, VERSION, *connection_id)
+        }
+        AgentsCommand::Revoke { connection_id, .. } => {
+            crate::agents::revoke(&control, VERSION, *connection_id)
+        }
+        AgentsCommand::Credential { connection_id, .. } => {
+            crate::agents::credential(&control, *connection_id)
+        }
+        AgentsCommand::Verify { connection_id, .. } => {
+            crate::agents::verify(&control, VERSION, *connection_id)
+        }
+        AgentsCommand::List {
+            connection_id: Some(id),
+            ..
+        } => crate::agents::ownership(&control, VERSION, *id),
+        AgentsCommand::List {
+            connection_id: None,
+            projects,
+            no_user,
+            ..
+        }
+        | AgentsCommand::Repair {
+            projects, no_user, ..
+        }
+        | AgentsCommand::Remove {
+            projects, no_user, ..
+        } => match inputs(projects, !no_user) {
+            Err(line) => Err(line),
+            Ok((projects, airkctl, user)) => {
+                let inputs = manage::Inputs {
+                    control: &control,
+                    version: VERSION,
+                    airkctl: &airkctl,
+                    projects,
+                    user,
+                };
+                match &action {
+                    AgentsCommand::Repair { connection_id, .. } => {
+                        manage::repair(&inputs, *connection_id)
+                    }
+                    AgentsCommand::Remove { connection_id, .. } => {
+                        manage::remove(&inputs, *connection_id)
+                    }
+                    _ => manage::list(&inputs),
+                }
+            }
+        },
+        AgentsCommand::Connect {
+            client,
+            connection_id,
+            selection_file,
+            user,
+            project,
+            server_key,
+            ..
+        } => match inputs(project.as_slice(), *user) {
+            Err(line) => Err(line),
+            Ok((projects, airkctl, _)) => {
+                let inputs = manage::Inputs {
+                    control: &control,
+                    version: VERSION,
+                    airkctl: &airkctl,
+                    projects,
+                    user: *user,
+                };
+                let source = match selection_file {
+                    Some(file) => manage::Source::Enroll {
+                        id: *connection_id,
+                        selection_file: file.clone(),
+                    },
+                    None => manage::Source::Existing(*connection_id),
+                };
+                let scope = if *user {
+                    crate::agents::config::Scope::User
+                } else {
+                    crate::agents::config::Scope::Project
+                };
+                manage::connect(&inputs, *client, source, scope, server_key)
+            }
+        },
+    };
+    match result {
+        Ok(value) => json_line(cx, &value),
+        Err(line) => fail(cx, &line),
+    }
+}
+
 /// `explorer get-handoff` (M12): the published handoff, written to a new file.
 fn explorer_handoff(
     cx: &mut Context,
@@ -2382,6 +2671,45 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
         } => {
             return record_error_service(cx, selection, runtime_dir, operation);
         }
+        ServiceCommand::Trust {
+            runtime_dir,
+            action,
+            expected_ca_sha256,
+        } => {
+            let control = match runtime_dir.or(selection.control.clone()) {
+                Some(control) => control,
+                None => match installed(cx) {
+                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
+                    Err(code) => return code,
+                },
+            };
+            use airk_process::cert_trust::Action;
+            let action = match action {
+                TrustAction::Inspect => Action::Inspect,
+                TrustAction::Install => Action::Install,
+                TrustAction::Remove => Action::Remove,
+            };
+            return match crate::trust::trust(&control, action, expected_ca_sha256) {
+                Ok(value) => json_line(cx, &value),
+                Err(line) => fail(cx, &line),
+            };
+        }
+        ServiceCommand::IssuerRotation {
+            runtime_dir,
+            action: IssuerRotationAction::Status,
+        } => {
+            let control = match runtime_dir.or(selection.control.clone()) {
+                Some(control) => control,
+                None => match installed(cx) {
+                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
+                    Err(code) => return code,
+                },
+            };
+            return match crate::rotation::status(&control, VERSION) {
+                Ok(value) => json_line(cx, &value),
+                Err(line) => fail(cx, &line),
+            };
+        }
         ServiceCommand::AbandonLifecycle {
             runtime_dir,
             request_id,
@@ -2521,88 +2849,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             options.full_responses = cx.io.full_responses;
             session::serve(options)
         }
-        Command::Agents { action } => {
-            let (runtime_dir, connection) = match &action {
-                AgentsCommand::Endpoint { runtime_dir } => (runtime_dir.clone(), None),
-                AgentsCommand::Info {
-                    runtime_dir,
-                    connection_id,
-                }
-                | AgentsCommand::Revoke {
-                    runtime_dir,
-                    connection_id,
-                }
-                | AgentsCommand::Credential {
-                    runtime_dir,
-                    connection_id,
-                    ..
-                }
-                | AgentsCommand::List {
-                    runtime_dir,
-                    connection_id,
-                }
-                | AgentsCommand::Verify {
-                    runtime_dir,
-                    connection_id,
-                }
-                | AgentsCommand::Launch {
-                    runtime_dir,
-                    connection_id,
-                    ..
-                } => (runtime_dir.clone(), Some(*connection_id)),
-            };
-            let control = match runtime_dir.or(selection.control.clone()) {
-                Some(control) => control,
-                None => match installed(cx) {
-                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
-                    Err(code) => return code,
-                },
-            };
-            if let AgentsCommand::Launch {
-                client,
-                connection_id,
-                directory,
-                args,
-                ..
-            } = &action
-            {
-                let directory = directory.clone().unwrap_or_else(|| PathBuf::from("."));
-                return match crate::launch::launch(
-                    &control,
-                    VERSION,
-                    *client,
-                    *connection_id,
-                    &directory,
-                    args,
-                ) {
-                    Ok(code) => u8::try_from(code).unwrap_or(1),
-                    Err(line) => fail(cx, &line),
-                };
-            }
-            let result = match (&action, connection) {
-                (AgentsCommand::Endpoint { .. }, _) => crate::agents::endpoint(&control, VERSION),
-                (AgentsCommand::Info { .. }, Some(id)) => {
-                    crate::agents::info(&control, VERSION, id)
-                }
-                (AgentsCommand::Revoke { .. }, Some(id)) => {
-                    crate::agents::revoke(&control, VERSION, id)
-                }
-                (AgentsCommand::Credential { .. }, Some(id)) => {
-                    crate::agents::credential(&control, id)
-                }
-                (AgentsCommand::List { .. }, Some(id)) => {
-                    crate::agents::ownership(&control, VERSION, id)
-                }
-                (AgentsCommand::Verify { .. }, Some(id)) => {
-                    crate::agents::verify(&control, VERSION, id)
-                }
-                _ => return ExitClass::Internal.code(),
-            };
-            match result {
-                Ok(value) => json_line(cx, &value),
-                Err(line) => fail(cx, &line),
-            }
-        }
+        Command::Agents { action } => agents_command(cx, selection, action),
         Command::ModelCatalog => {
             let control = match selection.control.clone() {
                 Some(control) => control,

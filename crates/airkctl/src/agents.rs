@@ -3,7 +3,11 @@
 //! the local HTTPS endpoint and connections, as `airk runtime http-endpoint`,
 //! `http-connection-info` and `http-revoke` printed them. None returns a
 //! credential except `agents credential` (3e.3), the offline header helper.
+//! `config` (3e.6) classifies and edits agent MCP configuration files.
 use crate::contract::{ErrorLine, ExitClass};
+
+pub(crate) mod config;
+pub(crate) mod manage;
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse},

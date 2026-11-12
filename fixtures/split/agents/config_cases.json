@@ -1,0 +1,1333 @@
+{
+  "schema": "airk.split.agents.config_cases/1",
+  "description": "Hand-reviewed agent MCP configuration cases (split plan §6.4, U12, U92). Each case names an agent (codex|claude|copilot|gemini|antigravity|cursor|roo|junie), a scope (project|user), a file path and the file's source text (null: the file is absent; only connect is exercised). 'observations' are the injected facts: endpointUrl (live endpoint or null), trustInstalled (true|false|null = unknown), connections (connection id -> {\"owned\": url} | \"not_owned\"; an unlisted id is unavailable), paths (path -> false = absent | null = unknown; an unlisted path exists) and verifiedLaunchers. 'findings' are the expected AgentConfigFinding objects in order (the free-text 'detail' is not compared); 'entries' are every recognized entry with its status (null = unclassified because an observation is unavailable). Optional 'connect' {serverKey, connectionId, url, airkctl}, 'repair' {containerPath, serverKey, connectionId, url, airkctl} and 'remove' {containerPath, serverKey} each carry 'expect': {\"text\": exact resulting file} | {\"unchanged\": true} | {\"refused\": true}. Consumers: crates/airkctl/src/agents/config/tests.rs and the extension's removal-only recognizer.",
+  "cases": [
+    {
+      "name": "claude: connect keeps comments and unrelated servers",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  // project servers\n  \"mcpServers\": {\n    \"docs\": { \"command\": \"npx\", \"args\": [\"docs-mcp\"] } // keep me\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\n  // project servers\n  \"mcpServers\": {\n    \"docs\": { \"command\": \"npx\", \"args\": [\"docs-mcp\"] }, // keep me\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    }\n  }\n}\n"
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "docs",
+        "expect": {
+          "refused": true
+        }
+      }
+    },
+    {
+      "name": "claude: connect creates the file",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": null,
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude: connect keeps CRLF line endings",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\r\n  \"mcpServers\": {}\r\n}\r\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\r\n  \"mcpServers\": {\r\n    \"airk\": {\r\n      \"type\": \"http\",\r\n      \"url\": \"https://127.0.0.1:4433/mcp\",\r\n      \"headers\": {\r\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\r\n        \"X-AIRK-Response-Mode\": \"terse\"\r\n      },\r\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\r\n    }\r\n  }\r\n}\r\n"
+        }
+      }
+    },
+    {
+      "name": "claude: connect refuses a key that is not airk",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  // project servers\n  \"mcpServers\": {\n    \"docs\": { \"command\": \"npx\", \"args\": [\"docs-mcp\"] } // keep me\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [],
+      "connect": {
+        "serverKey": "docs",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "refused": true
+        }
+      }
+    },
+    {
+      "name": "claude: U92 entry is ok and connect is idempotent",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "ok"
+        }
+      ],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "unchanged": true
+        }
+      }
+    },
+    {
+      "name": "claude: endpoint mismatch is repaired in place",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:5544/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_endpoint_mismatch"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "https_endpoint_mismatch"
+        }
+      ],
+      "repair": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:5544/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:5544/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude: unknown connection is repaired to a new one or removed",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_unknown_connection"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "https_unknown_connection"
+        }
+      ],
+      "repair": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "fedcba9876543210fedcba9876543210",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_FEDCBA9876543210FEDCBA9876543210}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id fedcba9876543210fedcba9876543210 --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n"
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude: helper missing is repaired to the installed airkctl",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {
+          "/opt/airk/bin/airkctl": false
+        },
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_helper_missing"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "https_helper_missing"
+        }
+      ],
+      "repair": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/usr/local/bin/airkctl",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/usr/local/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude: trust missing",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": false,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_trust_missing"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "https_trust_missing"
+        }
+      ]
+    },
+    {
+      "name": "claude: unknown trust is never ok",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": null
+        }
+      ]
+    },
+    {
+      "name": "claude: unknown helper presence is never ok",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {
+          "/opt/airk/bin/airkctl": null
+        },
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": null
+        }
+      ]
+    },
+    {
+      "name": "claude: unavailable service leaves the entry unclassified",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": null
+        }
+      ]
+    },
+    {
+      "name": "claude: pre-split helper and bare token entries are not AIRK-owned",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\" },\n      \"headersHelper\": \"/opt/airk/airk runtime http-credential --install-dir /opt/airk --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n    },\n    \"airk-old\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${env:AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\" } }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": "https://127.0.0.1:4433/mcp",
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "refused": true
+        }
+      },
+      "repair": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "refused": true
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "refused": true
+        }
+      }
+    },
+    {
+      "name": "claude: stdio AIRK entries are retired; an absent launcher is reported",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk-project-abc\": {\n      \"command\": \"/old/airk/airk-launcher\",\n      \"args\": [\"--root\", \"/work/proj\", \"--data-dir\", \"/work/data\", \"--collection\", \"project-abc\", \"mcp\"]\n    },\n    \"airk\": { \"command\": \"airk\", \"args\": [\"mcp\"] }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {
+          "/old/airk/airk-launcher": false
+        },
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "command": "airk",
+          "problem": "stdio_retired"
+        },
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk-project-abc",
+          "command": "/old/airk/airk-launcher",
+          "root": "/work/proj",
+          "collection": "project-abc",
+          "problem": "stdio_missing_command"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "stdio_retired"
+        },
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk-project-abc",
+          "status": "stdio_missing_command"
+        }
+      ],
+      "repair": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "refused": true
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk-project-abc",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"airk\": { \"command\": \"airk\", \"args\": [\"mcp\"] }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude: removing the last entry drops the preceding comma",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\n  \"mcpServers\": {\n    \"airk-project-abc\": {\n      \"command\": \"/old/airk/airk-launcher\",\n      \"args\": [\"--root\", \"/work/proj\", \"--data-dir\", \"/work/data\", \"--collection\", \"project-abc\", \"mcp\"]\n    },\n    \"airk\": { \"command\": \"airk\", \"args\": [\"mcp\"] }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "command": "airk",
+          "problem": "stdio_retired"
+        },
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "serverKey": "airk-project-abc",
+          "command": "/old/airk/airk-launcher",
+          "root": "/work/proj",
+          "collection": "project-abc",
+          "problem": "stdio_retired"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "stdio_retired"
+        },
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk-project-abc",
+          "status": "stdio_retired"
+        }
+      ],
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "{\n  \"mcpServers\": {\n    \"airk-project-abc\": {\n      \"command\": \"/old/airk/airk-launcher\",\n      \"args\": [\"--root\", \"/work/proj\", \"--data-dir\", \"/work/data\", \"--collection\", \"project-abc\", \"mcp\"]\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude: malformed file is unreadable",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{ \"mcpServers\": { \"airk\": ",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "problem": "unreadable"
+        }
+      ],
+      "entries": [],
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "refused": true
+        }
+      }
+    },
+    {
+      "name": "claude: duplicate keys are unreadable",
+      "agent": "claude",
+      "scope": "project",
+      "file": "/work/proj/.mcp.json",
+      "source": "{\"mcpServers\": {\"airk\": {}, \"airk\": {}}}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/work/proj/.mcp.json",
+          "scope": "project",
+          "problem": "unreadable"
+        }
+      ],
+      "entries": []
+    },
+    {
+      "name": "claude user: U92 entry in a project container counts; unverified stdio does not",
+      "agent": "claude",
+      "scope": "user",
+      "file": "/home/u/.claude.json",
+      "source": "{\n  \"numStartups\": 3,\n  \"projects\": {\n    \"/work/proj\": {\n      \"mcpServers\": {\n        \"airk\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\" }, \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\" }\n      }\n    }\n  },\n  \"mcpServers\": {\n    \"airk\": { \"command\": \"/opt/airk/airk-launcher\", \"args\": [\"--root\", \"/work/proj\", \"mcp\"] },\n    \"mine\": { \"command\": \"node\", \"args\": [\"m.js\"] }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": "https://127.0.0.1:5544/mcp",
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/home/u/.claude.json",
+          "scope": "user",
+          "serverKey": "airk",
+          "containerPath": [
+            "projects",
+            "/work/proj",
+            "mcpServers"
+          ],
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_unknown_connection"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "projects",
+            "/work/proj",
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "https_unknown_connection"
+        }
+      ],
+      "remove": {
+        "containerPath": [
+          "projects",
+          "/work/proj",
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "{\n  \"numStartups\": 3,\n  \"projects\": {\n    \"/work/proj\": {\n      \"mcpServers\": {}\n    }\n  },\n  \"mcpServers\": {\n    \"airk\": { \"command\": \"/opt/airk/airk-launcher\", \"args\": [\"--root\", \"/work/proj\", \"mcp\"] },\n    \"mine\": { \"command\": \"node\", \"args\": [\"m.js\"] }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "claude user: a verified launcher proves a stdio entry",
+      "agent": "claude",
+      "scope": "user",
+      "file": "/home/u/.claude.json",
+      "source": "{\n  \"numStartups\": 3,\n  \"projects\": {\n    \"/work/proj\": {\n      \"mcpServers\": {\n        \"airk\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF}\" }, \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\" }\n      }\n    }\n  },\n  \"mcpServers\": {\n    \"airk\": { \"command\": \"/opt/airk/airk-launcher\", \"args\": [\"--root\", \"/work/proj\", \"mcp\"] },\n    \"mine\": { \"command\": \"node\", \"args\": [\"m.js\"] }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": [
+          "/opt/airk/airk-launcher"
+        ]
+      },
+      "findings": [
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/home/u/.claude.json",
+          "scope": "user",
+          "serverKey": "airk",
+          "command": "/opt/airk/airk-launcher",
+          "root": "/work/proj",
+          "problem": "stdio_retired"
+        },
+        {
+          "agent": "claude",
+          "label": "Claude Code",
+          "file": "/home/u/.claude.json",
+          "scope": "user",
+          "serverKey": "airk",
+          "containerPath": [
+            "projects",
+            "/work/proj",
+            "mcpServers"
+          ],
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_unknown_connection"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "stdio_retired"
+        },
+        {
+          "containerPath": [
+            "projects",
+            "/work/proj",
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "https_unknown_connection"
+        }
+      ]
+    },
+    {
+      "name": "codex: U92 table, mismatch repaired, removal keeps comments",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:5544/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "codex",
+          "label": "Codex",
+          "file": "/work/proj/.codex/config.toml",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_endpoint_mismatch"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcp_servers"
+          ],
+          "serverKey": "airk",
+          "status": "https_endpoint_mismatch"
+        }
+      ],
+      "repair": {
+        "containerPath": [
+          "mcp_servers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:5544/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:5544/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcp_servers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n# policy\n"
+        }
+      }
+    },
+    {
+      "name": "codex: connect with the same key and a new connection repairs",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [
+        {
+          "containerPath": [
+            "mcp_servers"
+          ],
+          "serverKey": "airk",
+          "status": "ok"
+        }
+      ],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "fedcba9876543210fedcba9876543210",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id fedcba9876543210fedcba9876543210 --format header-json\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        }
+      }
+    },
+    {
+      "name": "codex: trust missing",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": false,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "codex",
+          "label": "Codex",
+          "file": "/work/proj/.codex/config.toml",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_trust_missing"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcp_servers"
+          ],
+          "serverKey": "airk",
+          "status": "https_trust_missing"
+        }
+      ]
+    },
+    {
+      "name": "codex: connect appends the table",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        }
+      }
+    },
+    {
+      "name": "codex: connect creates the file",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": null,
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        }
+      }
+    },
+    {
+      "name": "codex: pre-split bearer variable and helper are not AIRK-owned",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nbearer_token_env_var = \"AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF\"\n\n[mcp_servers.airk_helper]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/airk runtime http-credential --install-dir /opt/airk --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n",
+      "observations": {
+        "endpointUrl": "https://127.0.0.1:4433/mcp",
+        "trustInstalled": true,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "refused": true
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcp_servers"
+        ],
+        "serverKey": "airk_helper",
+        "expect": {
+          "refused": true
+        }
+      }
+    },
+    {
+      "name": "codex: malformed file is unreadable",
+      "agent": "codex",
+      "scope": "project",
+      "file": "/work/proj/.codex/config.toml",
+      "source": "[mcp_servers.airk\nurl = \"https://127.0.0.1:4433/mcp\"\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "codex",
+          "label": "Codex",
+          "file": "/work/proj/.codex/config.toml",
+          "scope": "project",
+          "problem": "unreadable"
+        }
+      ],
+      "entries": []
+    },
+    {
+      "name": "vscode: connect creates the server and its input",
+      "agent": "copilot",
+      "scope": "project",
+      "file": "/work/proj/.vscode/mcp.json",
+      "source": null,
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\n  \"servers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  },\n  \"inputs\": [\n    {\n      \"id\": \"airkToken_0123456789abcdef0123456789abcdef\",\n      \"type\": \"command\",\n      \"command\": \"airk.httpCredential\",\n      \"args\": {\n        \"connection_id\": \"0123456789abcdef0123456789abcdef\"\n      }\n    }\n  ]\n}\n"
+        }
+      }
+    },
+    {
+      "name": "vscode: input is removed with its server; repair moves it",
+      "agent": "copilot",
+      "scope": "project",
+      "file": "/work/proj/.vscode/mcp.json",
+      "source": "{\n  \"servers\": {\n    \"github\": { \"type\": \"http\", \"url\": \"https://api.example.com/mcp\", \"disabled\": true },\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  },\n  \"inputs\": [\n    { \"id\": \"github_pat\", \"type\": \"promptString\", \"password\": true },\n    {\n      \"id\": \"airkToken_0123456789abcdef0123456789abcdef\",\n      \"type\": \"command\",\n      \"command\": \"airk.httpCredential\",\n      \"args\": {\n        \"connection_id\": \"0123456789abcdef0123456789abcdef\"\n      }\n    }\n  ]\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "copilot",
+          "label": "VS Code / GitHub Copilot Chat",
+          "file": "/work/proj/.vscode/mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_unknown_connection"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "servers"
+          ],
+          "serverKey": "airk",
+          "status": "https_unknown_connection"
+        }
+      ],
+      "repair": {
+        "containerPath": [
+          "servers"
+        ],
+        "serverKey": "airk",
+        "connectionId": "fedcba9876543210fedcba9876543210",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "text": "{\n  \"servers\": {\n    \"github\": { \"type\": \"http\", \"url\": \"https://api.example.com/mcp\", \"disabled\": true },\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${input:airkToken_fedcba9876543210fedcba9876543210}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  },\n  \"inputs\": [\n    { \"id\": \"github_pat\", \"type\": \"promptString\", \"password\": true },\n    {\n      \"id\": \"airkToken_fedcba9876543210fedcba9876543210\",\n      \"type\": \"command\",\n      \"command\": \"airk.httpCredential\",\n      \"args\": {\n        \"connection_id\": \"fedcba9876543210fedcba9876543210\"\n      }\n    }\n  ]\n}\n"
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "servers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "{\n  \"servers\": {\n    \"github\": { \"type\": \"http\", \"url\": \"https://api.example.com/mcp\", \"disabled\": true }\n  },\n  \"inputs\": [\n    { \"id\": \"github_pat\", \"type\": \"promptString\", \"password\": true }\n  ]\n}\n"
+        }
+      }
+    },
+    {
+      "name": "vscode: VS Code entries need no trust observation",
+      "agent": "copilot",
+      "scope": "project",
+      "file": "/work/proj/.vscode/mcp.json",
+      "source": "{\n  \"servers\": {\n    \"github\": { \"type\": \"http\", \"url\": \"https://api.example.com/mcp\", \"disabled\": true },\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  },\n  \"inputs\": [\n    { \"id\": \"github_pat\", \"type\": \"promptString\", \"password\": true },\n    {\n      \"id\": \"airkToken_0123456789abcdef0123456789abcdef\",\n      \"type\": \"command\",\n      \"command\": \"airk.httpCredential\",\n      \"args\": {\n        \"connection_id\": \"0123456789abcdef0123456789abcdef\"\n      }\n    }\n  ]\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": {
+            "owned": "https://127.0.0.1:4433/mcp"
+          }
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": [
+        {
+          "containerPath": [
+            "servers"
+          ],
+          "serverKey": "airk",
+          "status": "ok"
+        }
+      ],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "unchanged": true
+        }
+      }
+    },
+    {
+      "name": "vscode: a conflicting input is never edited",
+      "agent": "copilot",
+      "scope": "project",
+      "file": "/work/proj/.vscode/mcp.json",
+      "source": "{\n  \"servers\": {\n    \"airk\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\" } }\n  },\n  \"inputs\": [\n    { \"id\": \"airkToken_0123456789abcdef0123456789abcdef\", \"type\": \"promptString\", \"password\": true }\n  ]\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "copilot",
+          "label": "VS Code / GitHub Copilot Chat",
+          "file": "/work/proj/.vscode/mcp.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_unknown_connection"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "servers"
+          ],
+          "serverKey": "airk",
+          "status": "https_unknown_connection"
+        }
+      ],
+      "remove": {
+        "containerPath": [
+          "servers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "refused": true
+        }
+      }
+    },
+    {
+      "name": "vscode user: an unconfirmed entry for another endpoint is not counted",
+      "agent": "copilot",
+      "scope": "user",
+      "file": "/home/u/.config/Code/User/mcp.json",
+      "source": "{\n  \"servers\": {\n    \"airk\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\" } }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": "https://127.0.0.1:5544/mcp",
+        "trustInstalled": null,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": []
+    },
+    {
+      "name": "vscode user: an unconfirmed entry naming the live endpoint is counted",
+      "agent": "copilot",
+      "scope": "user",
+      "file": "/home/u/.config/Code/User/mcp.json",
+      "source": "{\n  \"servers\": {\n    \"airk\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\" } }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": "https://127.0.0.1:4433/mcp",
+        "trustInstalled": null,
+        "connections": {
+          "0123456789abcdef0123456789abcdef": "not_owned"
+        },
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "copilot",
+          "label": "VS Code / GitHub Copilot Chat",
+          "file": "/home/u/.config/Code/User/mcp.json",
+          "scope": "user",
+          "serverKey": "airk",
+          "url": "https://127.0.0.1:4433/mcp",
+          "connectionId": "0123456789abcdef0123456789abcdef",
+          "problem": "https_unknown_connection"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "servers"
+          ],
+          "serverKey": "airk",
+          "status": "https_unknown_connection"
+        }
+      ],
+      "remove": {
+        "containerPath": [
+          "servers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "{\n  \"servers\": {}\n}\n"
+        }
+      }
+    },
+    {
+      "name": "vscode user: unavailable service with no proof is not counted",
+      "agent": "copilot",
+      "scope": "user",
+      "file": "/home/u/.config/Code/User/mcp.json",
+      "source": "{\n  \"servers\": {\n    \"airk\": { \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headers\": { \"Authorization\": \"Bearer ${input:airkToken_0123456789abcdef0123456789abcdef}\" } }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": "https://127.0.0.1:4433/mcp",
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [],
+      "entries": []
+    },
+    {
+      "name": "gemini: stdio entry is retired and removable; connect is unverified",
+      "agent": "gemini",
+      "scope": "project",
+      "file": "/work/proj/.gemini/settings.json",
+      "source": "{\n  \"theme\": \"dark\",\n  \"mcpServers\": {\n    \"airk\": { \"command\": \"airk\", \"args\": [\"--root\", \"/work/proj\", \"mcp\"] }\n  }\n}\n",
+      "observations": {
+        "endpointUrl": null,
+        "trustInstalled": null,
+        "connections": {},
+        "paths": {},
+        "verifiedLaunchers": []
+      },
+      "findings": [
+        {
+          "agent": "gemini",
+          "label": "Gemini CLI",
+          "file": "/work/proj/.gemini/settings.json",
+          "scope": "project",
+          "serverKey": "airk",
+          "command": "airk",
+          "root": "/work/proj",
+          "problem": "stdio_retired"
+        }
+      ],
+      "entries": [
+        {
+          "containerPath": [
+            "mcpServers"
+          ],
+          "serverKey": "airk",
+          "status": "stdio_retired"
+        }
+      ],
+      "connect": {
+        "serverKey": "airk",
+        "connectionId": "0123456789abcdef0123456789abcdef",
+        "url": "https://127.0.0.1:4433/mcp",
+        "airkctl": "/opt/airk/bin/airkctl",
+        "expect": {
+          "refused": true
+        }
+      },
+      "remove": {
+        "containerPath": [
+          "mcpServers"
+        ],
+        "serverKey": "airk",
+        "expect": {
+          "text": "{\n  \"theme\": \"dark\",\n  \"mcpServers\": {}\n}\n"
+        }
+      }
+    }
+  ]
+}

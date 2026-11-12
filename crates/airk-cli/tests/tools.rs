@@ -2211,6 +2211,241 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `service trust inspect` and `service issuer-rotation status` (split
+/// 3e.5) print what `airk runtime http-trust` and `http-issuer-rotation`
+/// print; install without the reviewed digest is refused by both.
+#[test]
+fn airkctl_trust_and_issuer_rotation_match_airk() -> anyhow::Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let service = common::Service::reviewed(source.path(), data.path(), "ctl-trust");
+    let control = service.control.to_str().unwrap().to_owned();
+    let runtime = |role: &str, extra: &[&str]| -> anyhow::Result<std::process::Output> {
+        Ok(service
+            .installed_command(source.path(), data.path(), "ctl-trust")
+            .args(["runtime", role, "--install-dir"])
+            .arg(service.install_dir())
+            .args(extra)
+            .output()?)
+    };
+    let ctl = |arguments: &[&str]| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = [
+            "airkctl",
+            "--service-runtime-dir",
+            control.as_str(),
+            "service",
+        ]
+        .into_iter()
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    for (name, old, new) in [
+        (
+            "trust inspect",
+            runtime("http-trust", &["--action", "inspect"])?,
+            ctl(&["trust", "inspect"]),
+        ),
+        (
+            "issuer-rotation status",
+            runtime("http-issuer-rotation", &["--action", "status"])?,
+            ctl(&["issuer-rotation", "status"]),
+        ),
+    ] {
+        assert!(
+            old.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&old.stderr)
+        );
+        assert_eq!(new.0, 0, "{name}: {}", new.2);
+        assert_eq!(
+            serde_json::from_str::<Value>(&new.1)?,
+            serde_json::from_slice::<Value>(&old.stdout)?,
+            "{name}"
+        );
+    }
+    let (code, _, stderr) = ctl(&["trust", "install"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("install/remove requires the reviewed issuer SHA256"),
+        "{stderr}"
+    );
+    assert!(
+        !runtime("http-trust", &["--action", "install"])?
+            .status
+            .success()
+    );
+    Ok(())
+}
+
+/// `agents connect/list/repair/remove` (split 3e.6–3e.8) on a live service:
+/// enroll a reviewed selection, write Claude Code and Codex project entries
+/// naming the U92 helper, classify them, repair a missing helper and remove
+/// them, keeping the other server.
+#[test]
+fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let service = common::Service::reviewed(source.path(), data.path(), "ctl-agentcfg");
+    let control = service.control.to_str().unwrap().to_owned();
+    let inputs = tempfile::tempdir()?;
+    let private = inputs.path().join("private");
+    airk_cli::local_ipc::prepare_root(&private)?;
+    let selection = private.join("selection.json");
+    fs::write(&selection, serde_json::to_vec(&service.http_selection())?)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&selection, fs::Permissions::from_mode(0o600))?;
+    }
+    let project = tempfile::tempdir()?;
+    let project = project.path().canonicalize()?;
+    fs::write(
+        project.join(".mcp.json"),
+        "{\n  \"mcpServers\": {\n    \"other\": {\"command\": \"node\", \"args\": [\"x\"]}\n  }\n}\n",
+    )?;
+    let tools = inputs.path().canonicalize()?.join("bin");
+    fs::create_dir(&tools)?;
+    let name = if cfg!(windows) {
+        "airkctl.exe"
+    } else {
+        "airkctl"
+    };
+    let helper = tools.join(name);
+    fs::write(&helper, b"fictional airkctl")?;
+    let ctl = |arguments: &[&str]| -> (u8, Value, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = [
+            "airkctl",
+            "--service-runtime-dir",
+            control.as_str(),
+            "agents",
+        ]
+        .into_iter()
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        let stdout = String::from_utf8(stdout).unwrap();
+        (
+            code,
+            serde_json::from_str(&stdout).unwrap_or(Value::Null),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let id = airk_kernel::service_broker::new_instance_id()?.to_string();
+    let folder = project.to_str().unwrap();
+    let (code, connected, stderr) = ctl(&[
+        "connect",
+        "--client",
+        "claude",
+        "--connection-id",
+        &id,
+        "--selection-file",
+        selection.to_str().unwrap(),
+        "--project",
+        folder,
+        "--airkctl",
+        helper.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(connected["changed"], true, "{connected}");
+    let claude = fs::read_to_string(project.join(".mcp.json"))?;
+    assert!(claude.contains("\"other\""), "{claude}");
+    assert!(
+        claude.contains(&format!(
+            "agents credential --connection-id {id} --format header-json"
+        )),
+        "{claude}"
+    );
+    assert!(!claude.contains("airk1."), "{claude}");
+    let (code, _, stderr) = ctl(&[
+        "connect",
+        "--client",
+        "codex",
+        "--connection-id",
+        &id,
+        "--project",
+        folder,
+        "--airkctl",
+        helper.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let list = || ctl(&["list", "--project", folder, "--no-user"]);
+    let (code, listed, stderr) = list();
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(listed["findings"], serde_json::json!([]), "{listed}");
+    let entries = listed["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{listed}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry["connectionId"] == id.as_str()),
+        "{listed}"
+    );
+    // The helper disappears: both entries report it, and repair rewrites them.
+    fs::remove_file(&helper)?;
+    let (_, listed, _) = list();
+    let problems: Vec<_> = listed["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| finding["problem"].clone())
+        .collect();
+    assert_eq!(problems, vec!["https_helper_missing"; 2], "{listed}");
+    let replacement = tools.join("new");
+    fs::create_dir(&replacement)?;
+    let moved = replacement.join(name);
+    fs::write(&moved, b"fictional airkctl")?;
+    let (code, repaired, stderr) = ctl(&[
+        "repair",
+        "--project",
+        folder,
+        "--no-user",
+        "--airkctl",
+        moved.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let actions = repaired["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 2, "{repaired}");
+    assert!(
+        actions.iter().all(|action| action["changed"] == true),
+        "{repaired}"
+    );
+    let (_, listed, _) = list();
+    assert_eq!(listed["findings"], serde_json::json!([]), "{listed}");
+    let (code, removed, stderr) = ctl(&["remove", "--project", folder, "--no-user"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(removed["actions"].as_array().unwrap().len(), 2, "{removed}");
+    let claude = fs::read_to_string(project.join(".mcp.json"))?;
+    assert!(
+        claude.contains("\"other\"") && !claude.contains("agents credential"),
+        "{claude}"
+    );
+    let (_, listed, _) = list();
+    assert_eq!(listed["entries"], serde_json::json!([]), "{listed}");
+    Ok(())
+}
+
 /// `airkctl explorer get-handoff` (M12): a handoff a window published is
 /// written to a new file; an unknown id is refused and writes nothing.
 #[test]

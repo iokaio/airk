@@ -22,14 +22,14 @@ mod io;
 mod jsonc;
 mod locations;
 mod recognize;
-mod toml;
 #[cfg(test)]
 mod tests;
+mod toml;
 
-pub(crate) use classify::{Classifier, Entry, FileReport, Transport};
+pub(crate) use classify::{Classifier, Entry, FileReport};
 pub(crate) use edit::{Connection, Target, connect, remove, repair};
 pub(crate) use io::{edit_file, expand_user_files, path_exists};
-pub(crate) use locations::{PROJECT_FILES, Platform, UserEnv, UserLocations, user_locations};
+pub(crate) use locations::{PROJECT_FILES, Platform, UserEnv, user_locations};
 
 /// The agents whose files AIRK reads (`agentMigration.ts` `locations`).
 /// Only Claude Code, Codex and VS Code (`copilot`) can be connected (U91).
@@ -231,7 +231,9 @@ pub(crate) fn list(
     let mut classifier = Classifier::new(observations);
     for root in project_roots {
         for (agent, parts) in PROJECT_FILES {
-            let file = parts.iter().fold(root.clone(), |path, part| path.join(part));
+            let file = parts
+                .iter()
+                .fold(root.clone(), |path, part| path.join(part));
             let shown = file.display().to_string();
             let source = match io::folder_state(root, &parts[..parts.len() - 1]) {
                 Ok(io::FolderState::Absent) => continue,

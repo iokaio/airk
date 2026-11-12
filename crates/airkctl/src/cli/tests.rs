@@ -127,3 +127,19 @@ fn parse_project_conflicts_are_refused_before_the_service() {
         (2, "airkctl: conflicting project selections\n")
     );
 }
+
+#[test]
+fn plain_drops_only_the_verbatim_drive_prefix() {
+    assert_eq!(
+        plain(PathBuf::from(r"\\?\D:\tools\airkctl.exe")),
+        PathBuf::from(r"D:\tools\airkctl.exe")
+    );
+    assert_eq!(
+        plain(PathBuf::from(r"\\?\UNC\server\share\airkctl.exe")),
+        PathBuf::from(r"\\?\UNC\server\share\airkctl.exe")
+    );
+    assert_eq!(
+        plain(PathBuf::from("/usr/local/bin/airkctl")),
+        PathBuf::from("/usr/local/bin/airkctl")
+    );
+}
