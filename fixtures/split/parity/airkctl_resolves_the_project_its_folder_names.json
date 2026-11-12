@@ -1,0 +1,36 @@
+{
+  "cases": {
+    "resolved files": {
+      "code": 1,
+      "stderr": "Error: MCP tool failed; see the result above\n",
+      "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"error\\\":{\\\"code\\\":\\\"scoped_read_unavailable\\\",\\\"retryable\\\":false,\\\"schema\\\":1}}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": true,\n  \"resultType\": \"complete\",\n  \"structuredContent\": {\n    \"error\": {\n      \"code\": \"scoped_read_unavailable\",\n      \"retryable\": false,\n      \"schema\": 1\n    }\n  }\n}\n",
+      "success": false
+    },
+    "resolved read notes.md --start-line 1 --end-line 3": {
+      "code": 1,
+      "stderr": "Error: MCP tool failed; see the result above\n",
+      "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"error\\\":{\\\"code\\\":\\\"scoped_read_unavailable\\\",\\\"retryable\\\":false,\\\"schema\\\":1}}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": true,\n  \"resultType\": \"complete\",\n  \"structuredContent\": {\n    \"error\": {\n      \"code\": \"scoped_read_unavailable\",\n      \"retryable\": false,\n      \"schema\": 1\n    }\n  }\n}\n",
+      "success": false
+    },
+    "resolved status": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"chunks\\\":null,\\\"files\\\":null,\\\"health\\\":\\\"unknown\\\",\\\"index_error\\\":{\\\"code\\\":\\\"index_worker_unavailable\\\",\\\"message\\\":\\\"No index query was submitted. Call diagnostics for service and queued-job diagnosis.\\\"},\\\"index_state\\\":\\\"unavailable\\\",\\\"project\\\":\\\"<BINDING>\\\",\\\"publication\\\":null,\\\"query_concurrency\\\":16,\\\"version\\\":\\\"<VERSION>\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": false,\n  \"structuredContent\": {\n    \"chunks\": null,\n    \"files\": null,\n    \"health\": \"unknown\",\n    \"index_error\": {\n      \"code\": \"index_worker_unavailable\",\n      \"message\": \"No index query was submitted. Call diagnostics for service and queued-job diagnosis.\"\n    },\n    \"index_state\": \"unavailable\",\n    \"project\": \"<BINDING>\",\n    \"publication\": null,\n    \"query_concurrency\": 16,\n    \"version\": \"<VERSION>\"\n  }\n}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<BINDING>",
+    "<VERSION>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_resolves_the_project_its_folder_names"
+}

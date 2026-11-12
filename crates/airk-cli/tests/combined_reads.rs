@@ -3363,6 +3363,39 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
             &conflicting,
         ],
     ];
+    // Recorded `airk` outcomes (split U95). A combined reply authenticates
+    // its own run-specific bytes, so the record is the outcome `ctl_outcome`
+    // derives after authenticating it, not the raw reply.
+    let mut parity = common::parity::Parity::new("airkctl_combined_reads_print_what_airk_printed");
+    parity.substitute_path(f.owner.path(), "<OWNER>");
+    parity.substitute_path(&f.control, "<CONTROL>");
+    parity.substitute_path(&f.candidate, "<CANDIDATE>");
+    for (index, registration) in f.registrations.iter().enumerate() {
+        parity.substitute_path(Path::new(&registration.root), &format!("<ROOT{index}>"));
+        parity.substitute_path(
+            Path::new(&registration.data_root),
+            &format!("<DATA{index}>"),
+        );
+        parity.substitute(registration.binding, &format!("<BINDING{index}>"));
+    }
+    for (index, project) in f.projects.iter().enumerate() {
+        let project = serde_json::to_value(project)?;
+        parity.substitute(
+            project.as_str().context("project id")?,
+            &format!("<PROJECT{index}>"),
+        );
+    }
+    for (number, index) in f.indexes.iter().enumerate() {
+        let index = serde_json::to_value(index)?;
+        parity.substitute(
+            index.as_str().context("index id")?,
+            &format!("<INDEX{number}>"),
+        );
+    }
+    parity.substitute_identifiers(&f.session, "SESSION");
+    parity.mask_json_fields(common::parity::CLOCK_FIELDS);
+    // A comparison cursor's checksum covers this run's identities.
+    parity.mask_json_fields(&["checksum"]);
     let mut failures = Vec::new();
     for line in &lines {
         let full: Vec<&str> = [
@@ -3376,16 +3409,27 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
         .collect();
         let mut command = Command::new(&f.candidate);
         command.args(&full).env("AIRK_MCP_RESPONSE_MODE", "full");
-        let old = tokio::task::spawn_blocking(move || command.output()).await??;
-        // The reviewed rename of the differential harness: guidance names the
-        // new program.
-        let renamed = String::from_utf8_lossy(&old.stdout).replace("airk tools ", "airkctl tools ");
-        let old = ctl_outcome(
-            old.status.code(),
-            renamed.as_bytes(),
-            &old.stderr,
-            "Error: ",
-        )?;
+        let case = parity.name(&line.join(" "));
+        let old = parity.old(&case, || {
+            let old = command.output().unwrap();
+            // The reviewed rename of the differential harness: guidance names
+            // the new program.
+            let renamed =
+                String::from_utf8_lossy(&old.stdout).replace("airk tools ", "airkctl tools ");
+            let outcome = ctl_outcome(
+                old.status.code(),
+                renamed.as_bytes(),
+                &old.stderr,
+                "Error: ",
+            )
+            .unwrap();
+            std::process::Output {
+                status: old.status,
+                stdout: serde_json::to_vec(&outcome).unwrap(),
+                stderr: Vec::new(),
+            }
+        });
+        let old: Value = serde_json::from_str(&old.stdout)?;
         let arguments: Vec<std::ffi::OsString> = std::iter::once("airkctl")
             .chain(full.iter().copied())
             .map(Into::into)
@@ -3403,6 +3447,7 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
         })
         .await?;
         let new = ctl_outcome(Some(i32::from(new.0)), &new.1, &new.2, "airkctl: ")?;
+        let new: Value = serde_json::from_str(&parity.canonical(&serde_json::to_string(&new)?))?;
         assert!(
             new == old,
             "combined {line:?}: first difference {:?}",
@@ -3428,5 +3473,6 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
         failures[2].ends_with("\"conflicting project_ids selections\""),
         "{failures:#?}"
     );
+    parity.finish();
     f.assert_sources_unchanged()
 }

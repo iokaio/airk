@@ -1,0 +1,69 @@
+{
+  "cases": {
+    "init reviewed": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"registration\":{\"binding\":\"<BINDING>\",\"root\":\"<SOURCE_CANONICAL:json>\",\"data_root\":\"<DATA_CANONICAL:json>\",\"collection\":\"ctl-init\"},\"fencing_generation\":1,\"paused\":false}\n",
+      "success": true
+    },
+    "init unmapped": {
+      "code": 1,
+      "stderr": "Error: native request refused: invalid_registry_request\n",
+      "stdout": "{\"status\":\"failure\",\"code\":\"invalid_registry_request\"}\n",
+      "success": false
+    },
+    "prepare-registration default": {
+      "code": 1,
+      "stderr": "Error: registration preparation requires explicit --data-dir\n",
+      "stdout": "",
+      "success": false
+    },
+    "prepare-registration inner": {
+      "code": 1,
+      "stderr": "Error: service sources and planned storage must be disjoint\n",
+      "stdout": "",
+      "success": false
+    },
+    "prepare-registration planned": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"binding\":\"<H1>\",\"root\":\"<FRESH_CANONICAL:json>\",\"data_root\":\"<FRESH_PARENT_CANONICAL:json>\\\\planned\",\"collection\":\"ctl-plan\"}\n",
+      "success": true
+    },
+    "prepare-storage planned": {
+      "code": 1,
+      "stderr": "Error: service project is not registered: Query returned no rows\n",
+      "stdout": "",
+      "success": false
+    },
+    "prepare-storage reviewed": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"binding\":\"<BINDING>\",\"root\":\"<SOURCE_CANONICAL:json>\",\"data_root\":\"<DATA_CANONICAL:json>\",\"collection\":\"ctl-init\"}\n",
+      "success": true
+    },
+    "register": {
+      "code": 1,
+      "stderr": "Error: native request refused: invalid_registry_request\n",
+      "stdout": "{\"status\":\"failure\",\"code\":\"invalid_registry_request\"}\n",
+      "success": false
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<BINDING>",
+    "<DATA_CANONICAL:json>",
+    "<FRESH_CANONICAL:json>",
+    "<FRESH_PARENT_CANONICAL:json>",
+    "<SOURCE_CANONICAL:json>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_registration_matches_airk"
+}

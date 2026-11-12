@@ -1,0 +1,42 @@
+{
+  "cases": {
+    "issuer-rotation status": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"current_descriptor_sha256\":\"<H1>\",\"current_endpoint\":{\"ca_sha256\":\"<ENDPOINT.ca_sha256>\",\"certificate_sha256\":\"<ENDPOINT.certificate_sha256>\",\"executable_sha256\":\"<ENDPOINT.executable_sha256>\",\"generation\":1,\"installation\":\"<ENDPOINT.installation>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"predecessor_digest\":null,\"schema\":1,\"service_instance\":\"<ENDPOINT.service_instance>\",\"state\":\"ready\",\"url\":\"<ENDPOINT.url>/mcp\",\"user\":\"<MASKED>\"},\"finalize_overdue\":false,\"guidance\":\"Issuer replacement requires explicit client trust enrollment and reconnect. The overlap deadline does not remove OS trust automatically. Finalize only removes exact owned trust; unknown outcomes require review.\",\"receipt_sha256\":null,\"rotation\":null,\"schema\":1,\"trust_result\":null}\n",
+      "success": true
+    },
+    "trust inspect": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ca_sha256\":\"<ENDPOINT.ca_sha256>\",\"guidance\":\"Normal TLS validation is required. Verify the actual MCP host connection; an already running host may retain cached trust. Retry its connection after installing the reviewed issuer.\",\"outcome\":\"not_trusted\",\"owned\":false,\"platform\":\"windows\",\"present\":false,\"schema\":1,\"store\":\"CurrentUser/Root\",\"trusted\":false}\n",
+      "success": true
+    },
+    "trust install": {
+      "code": 2,
+      "stderr": "error: the following required arguments were not provided:\n  --expected-ca-sha256 <EXPECTED_CA_SHA256>\n\nUsage: airk.exe runtime http-trust --install-dir <INSTALL_DIR> --action <ACTION> --expected-ca-sha256 <EXPECTED_CA_SHA256>\n\nFor more information, try '--help'.\n",
+      "stdout": "",
+      "success": false
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms",
+    "user"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<ENDPOINT.ca_sha256>",
+    "<ENDPOINT.certificate_sha256>",
+    "<ENDPOINT.executable_sha256>",
+    "<ENDPOINT.installation>",
+    "<ENDPOINT.service_instance>",
+    "<ENDPOINT.url>",
+    "<SELECTION.selection.namespace>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_trust_and_issuer_rotation_match_airk"
+}

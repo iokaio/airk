@@ -1,0 +1,50 @@
+{
+  "cases": {
+    "pause": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"status\":\"registered\",\"project\":{\"registration\":{\"binding\":\"<BINDING>\",\"root\":\"<ROOT_CANONICAL:json>\",\"data_root\":\"<STATE_CANONICAL:json>\",\"collection\":\"ctl-admin\"},\"fencing_generation\":1,\"paused\":true}}\n",
+      "success": true
+    },
+    "projects --runtime-dir <CONTROL>": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"default_project\":\"<BINDING>\",\"projects\":[{\"collection\":\"ctl-admin\",\"data_root\":\"<STATE_CANONICAL:json>\",\"name\":\"<ROOT_NAME>\",\"project\":\"<BINDING>\",\"root\":\"<ROOT_CANONICAL:json>\"}]}\n",
+      "success": true
+    },
+    "resume": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"status\":\"registered\",\"project\":{\"registration\":{\"binding\":\"<BINDING>\",\"root\":\"<ROOT_CANONICAL:json>\",\"data_root\":\"<STATE_CANONICAL:json>\",\"collection\":\"ctl-admin\"},\"fencing_generation\":1,\"paused\":false}}\n",
+      "success": true
+    },
+    "watch off": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"status\":\"watch\",\"project\":\"<BINDING>\",\"observation\":{\"enabled\":false,\"requested_revision\":0,\"completed_revision\":0,\"automatic_retries_exhausted\":false,\"automatic_retry_canceled\":false,\"configuration_observed\":true,\"configured_roots\":1,\"native_roots\":0,\"backend\":\"disabled\",\"failure\":null,\"observed_unix_ms\":\"<MASKED>\",\"last_reconciled_unix_ms\":\"<MASKED>\"}}\n",
+      "success": true
+    },
+    "watch on": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"status\":\"watch\",\"project\":\"<BINDING>\",\"observation\":{\"enabled\":true,\"requested_revision\":1,\"completed_revision\":0,\"automatic_retries_exhausted\":false,\"automatic_retry_canceled\":false,\"configuration_observed\":true,\"configured_roots\":1,\"native_roots\":0,\"backend\":\"periodic_fallback\",\"failure\":null,\"observed_unix_ms\":\"<MASKED>\",\"last_reconciled_unix_ms\":\"<MASKED>\"}}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<BINDING>",
+    "<ROOT_CANONICAL:json>",
+    "<ROOT_NAME>",
+    "<STATE_CANONICAL:json>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_project_commands_print_what_airk_printed"
+}

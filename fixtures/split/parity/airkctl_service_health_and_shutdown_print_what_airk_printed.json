@@ -1,0 +1,35 @@
+{
+  "cases": {
+    "health": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"status\":\"health\",\"observation\":{\"storage_formats\":{\"index\":1,\"service_state\":1,\"logs\":1,\"query_projection_records\":4},\"build\":null,\"build_error\":\"build_receipt_missing_or_unverified\",\"logs\":{\"available\":true,\"dropped_records\":0,\"write_failures\":0},\"version\":\"<VERSION>\",\"protocol\":1,\"instance\":\"<HEALTH.observation.instance>\",\"process_id\":\"<MASKED>\",\"executable_sha256\":\"<HEALTH.observation.executable_sha256>\",\"runtime_sha256\":null,\"user\":\"<MASKED>\",\"uptime_ms\":\"<MASKED>\",\"policy\":{\"service\":\"<HEALTH.observation.instance>\",\"accepting\":true,\"projects\":0,\"draining_projects\":0,\"pending_connections\":0,\"allocated\":{\"concurrent_queries\":0,\"response_bytes\":0},\"active_queries\":0,\"reserved_response_bytes\":0}}}\n",
+      "success": true
+    },
+    "shutdown": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"status\":\"stopping\"}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "process_id",
+    "rustc",
+    "source_files",
+    "uptime_ms",
+    "user"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<HEALTH.observation.executable_sha256>",
+    "<HEALTH.observation.instance>",
+    "<VERSION>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_service_health_and_shutdown_print_what_airk_printed"
+}

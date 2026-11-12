@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 pub mod ctl;
 pub mod http;
+pub mod parity;
 pub mod read_retry;
 mod reviewed;
 use airk_core::service::{

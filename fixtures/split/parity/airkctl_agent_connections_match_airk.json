@@ -1,0 +1,96 @@
+{
+  "cases": {
+    "credential": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"Authorization\":\"<MASKED>\"}\n",
+      "success": true
+    },
+    "credential after revoke": {
+      "code": 1,
+      "stderr": "Error: HTTP credential rejected\n",
+      "stdout": "",
+      "success": false
+    },
+    "credential of an unknown connection": {
+      "code": 1,
+      "stderr": "Error: HTTP client credential unavailable\n",
+      "stdout": "",
+      "success": false
+    },
+    "endpoint": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ca_sha256\":\"<ENDPOINT.ca_sha256>\",\"certificate_sha256\":\"<ENDPOINT.certificate_sha256>\",\"executable_sha256\":\"<ENDPOINT.executable_sha256>\",\"generation\":1,\"installation\":\"<ENDPOINT.installation>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"predecessor_digest\":null,\"schema\":1,\"service_instance\":\"<ENDPOINT.service_instance>\",\"state\":\"ready\",\"url\":\"<ENDPOINT.url>/mcp\",\"user\":\"<MASKED>\"}\n",
+      "success": true
+    },
+    "enroll": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ca_certificate_file\":\"<CONTROL:json>\\\\http-1\\\\ca.pem\",\"connection_id\":\"<CONNECTION>\",\"credential_file\":\"<CONTROL:json>\\\\http-1\\\\credential-<CONNECTION>.token\",\"endpoint\":{\"ca_sha256\":\"<ENDPOINT.ca_sha256>\",\"certificate_sha256\":\"<ENDPOINT.certificate_sha256>\",\"executable_sha256\":\"<ENDPOINT.executable_sha256>\",\"generation\":1,\"installation\":\"<ENDPOINT.installation>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"predecessor_digest\":null,\"schema\":1,\"service_instance\":\"<ENDPOINT.service_instance>\",\"state\":\"ready\",\"url\":\"<ENDPOINT.url>/mcp\",\"user\":\"<MASKED>\"},\"schema\":1,\"selection\":{\"kind\":\"scoped\",\"selection\":{\"context_key\":\"<SELECTION.selection.context_key>\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_<H1>\",\"index_id\":\"idx_<H2>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"project_ids\":[\"prj_<H3>\"],\"schema\":1}}}\n",
+      "success": true
+    },
+    "info": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ca_certificate_file\":\"<CONTROL:json>\\\\http-1\\\\ca.pem\",\"connection_id\":\"<CONNECTION>\",\"credential_file\":\"<CONTROL:json>\\\\http-1\\\\credential-<CONNECTION>.token\",\"endpoint\":{\"ca_sha256\":\"<ENDPOINT.ca_sha256>\",\"certificate_sha256\":\"<ENDPOINT.certificate_sha256>\",\"executable_sha256\":\"<ENDPOINT.executable_sha256>\",\"generation\":1,\"installation\":\"<ENDPOINT.installation>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"predecessor_digest\":null,\"schema\":1,\"service_instance\":\"<ENDPOINT.service_instance>\",\"state\":\"ready\",\"url\":\"<ENDPOINT.url>/mcp\",\"user\":\"<MASKED>\"},\"schema\":1,\"selection\":{\"kind\":\"scoped\",\"selection\":{\"context_key\":\"<SELECTION.selection.context_key>\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_<H1>\",\"index_id\":\"idx_<H2>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"project_ids\":[\"prj_<H3>\"],\"schema\":1}}}\n",
+      "success": true
+    },
+    "info after revoke": {
+      "code": 1,
+      "stderr": "Error: HTTP credential rejected\n",
+      "stdout": "",
+      "success": false
+    },
+    "info of an unknown connection": {
+      "code": 1,
+      "stderr": "Error: HTTP client credential unavailable\n",
+      "stdout": "",
+      "success": false
+    },
+    "lookup not owned": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"active\":\"<ACTIVE>\",\"connection_id\":\"<UNKNOWN_CONNECTION>\",\"schema\":1,\"status\":\"not_owned\"}\n",
+      "success": true
+    },
+    "lookup owned": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"active\":\"<ACTIVE>\",\"connection\":{\"ca_certificate_file\":\"<CONTROL:json>\\\\http-1\\\\ca.pem\",\"connection_id\":\"<CONNECTION>\",\"credential_file\":\"<CONTROL:json>\\\\http-1\\\\credential-<CONNECTION>.token\",\"endpoint\":{\"ca_sha256\":\"<ENDPOINT.ca_sha256>\",\"certificate_sha256\":\"<ENDPOINT.certificate_sha256>\",\"executable_sha256\":\"<ENDPOINT.executable_sha256>\",\"generation\":1,\"installation\":\"<ENDPOINT.installation>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"predecessor_digest\":null,\"schema\":1,\"service_instance\":\"<ENDPOINT.service_instance>\",\"state\":\"ready\",\"url\":\"<ENDPOINT.url>/mcp\",\"user\":\"<MASKED>\"},\"schema\":1,\"selection\":{\"kind\":\"scoped\",\"selection\":{\"context_key\":\"<SELECTION.selection.context_key>\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_<H1>\",\"index_id\":\"idx_<H2>\",\"namespace\":\"<SELECTION.selection.namespace>\",\"project_ids\":[\"prj_<H3>\"],\"schema\":1}}},\"connection_id\":\"<CONNECTION>\",\"schema\":1,\"status\":\"owned\"}\n",
+      "success": true
+    },
+    "revoke again": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"connection_id\":\"<CONNECTION>\",\"status\":\"http_revoked\"}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "Authorization",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms",
+    "user"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<ACTIVE>",
+    "<CONNECTION>",
+    "<CONTROL:json>",
+    "<ENDPOINT.ca_sha256>",
+    "<ENDPOINT.certificate_sha256>",
+    "<ENDPOINT.executable_sha256>",
+    "<ENDPOINT.installation>",
+    "<ENDPOINT.service_instance>",
+    "<ENDPOINT.url>",
+    "<SELECTION.selection.context_key>",
+    "<SELECTION.selection.namespace>",
+    "<UNKNOWN_CONNECTION>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_agent_connections_match_airk"
+}

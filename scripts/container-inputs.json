@@ -3,7 +3,8 @@
   "trees": [
     "crates",
     "third_party/licenses",
-    "third_party/models"
+    "third_party/models",
+    "fixtures/split/parity"
   ],
   "files": [
     ".cargo/config.toml",

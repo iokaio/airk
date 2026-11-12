@@ -1,0 +1,102 @@
+{
+  "cases": {
+    "running logs (defaults)": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":153,\"malformed_records\":0,\"tail_truncated\":false}\n",
+      "success": true
+    },
+    "running logs --all": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":153,\"malformed_records\":0,\"tail_truncated\":false}\n",
+      "success": true
+    },
+    "running logs --format text": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "Cached AIRK process log; not index freshness.\nStored bytes: 153; malformed records: 0; tail limited/incomplete: false\n<MASKED> <HEALTH.observation.instance> ServiceStarted count=1\n\n",
+      "success": true
+    },
+    "running logs --limit 3": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":153,\"malformed_records\":0,\"tail_truncated\":false}\n",
+      "success": true
+    },
+    "running logs --raw": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "",
+      "success": true
+    },
+    "running logs output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"written_bytes\":241}\n",
+      "success": true
+    },
+    "running logs output file": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":153,\"malformed_records\":0,\"tail_truncated\":false}",
+      "success": true
+    },
+    "stopped logs (defaults)": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"shutdown_requested\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_stopped\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":462,\"malformed_records\":0,\"tail_truncated\":false}\n",
+      "success": true
+    },
+    "stopped logs --all": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"shutdown_requested\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_stopped\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":462,\"malformed_records\":0,\"tail_truncated\":false}\n",
+      "success": true
+    },
+    "stopped logs --format text": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "Cached AIRK process log; not index freshness.\nStored bytes: 462; malformed records: 0; tail limited/incomplete: false\n<MASKED> <HEALTH.observation.instance> ServiceStarted count=1\n<MASKED> <HEALTH.observation.instance> ShutdownRequested count=1\n<MASKED> <HEALTH.observation.instance> ServiceStopped count=1\n\n",
+      "success": true
+    },
+    "stopped logs --limit 3": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"shutdown_requested\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_stopped\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":462,\"malformed_records\":0,\"tail_truncated\":true}\n",
+      "success": true
+    },
+    "stopped logs --raw": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "",
+      "success": true
+    },
+    "stopped logs output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"written_bytes\":550}\n",
+      "success": true
+    },
+    "stopped logs output file": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"schema\":1,\"records\":[{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_started\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"shutdown_requested\",\"project\":null,\"job\":null,\"count\":1},{\"schema\":1,\"instance\":\"<HEALTH.observation.instance>\",\"observed_unix_ms\":\"<MASKED>\",\"kind\":\"service_stopped\",\"project\":null,\"job\":null,\"count\":1}],\"stored_bytes\":462,\"malformed_records\":0,\"tail_truncated\":false}",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "fn:log text times",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<HEALTH.observation.instance>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_service_logs_print_what_airk_printed"
+}

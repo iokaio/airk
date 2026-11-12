@@ -1,0 +1,53 @@
+{
+  "cases": {
+    "configure bogus": {
+      "code": 1,
+      "stderr": "Error: unknown variant `bogus`, expected one of `unregister`, `prepare_derived_cleanup`, `delete_derived`, `vectors`, `detail`, `retained_profile`, `vector_selection`, `add_root`, `remove_root`, `install_model`, `bundled_model`, `usage`, `clear_usage`, `usage_feedback`, `import_usage`, `extraction_policy`, `scan_limits`, `reset_scan_limits`, `quota_policy`, `calibrate` at line 1 column 20\n",
+      "stdout": "",
+      "success": false
+    },
+    "configure file": {
+      "code": 0,
+      "stderr": "Saved CLI configuration request <H1>; retry only with its saved key after uncertain outcomes.\n",
+      "stdout": "{\"status\":\"job\",\"job\":{\"id\":\"<H1>\",\"project\":\"<BINDING>\",\"kind\":\"configure\",\"state\":\"pending\",\"fencing_generation\":0,\"attempts\":0,\"outcome\":null}}\n",
+      "success": true
+    },
+    "prepare-configuration": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"incarnation\":\"<H1>\",\"settings\":\"<H2>\",\"configuration\":{\"operation\":\"vectors\",\"enabled\":false}}\n",
+      "success": true
+    },
+    "usage clear": {
+      "code": 0,
+      "stderr": "Saved CLI configuration request <H1>; retry only with its saved key after uncertain outcomes.\n",
+      "stdout": "{\"status\":\"job\",\"job\":{\"id\":\"<H1>\",\"project\":\"<BINDING>\",\"kind\":\"configure\",\"state\":\"pending\",\"fencing_generation\":0,\"attempts\":0,\"outcome\":null}}\n",
+      "success": true
+    },
+    "usage import preview": {
+      "code": 1,
+      "stderr": "Error: missing field `schema_version` at line 1 column 2\n",
+      "stdout": "",
+      "success": false
+    },
+    "usage set aggregates_only": {
+      "code": 0,
+      "stderr": "Saved CLI configuration request <H1>; retry only with its saved key after uncertain outcomes.\n",
+      "stdout": "{\"status\":\"job\",\"job\":{\"id\":\"<H1>\",\"project\":\"<BINDING>\",\"kind\":\"configure\",\"state\":\"pending\",\"fencing_generation\":0,\"attempts\":0,\"outcome\":null}}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<BINDING>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_configuration_matches_airk"
+}

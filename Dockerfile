@@ -102,6 +102,7 @@ COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
 COPY fixtures/split/i1/control_methods.json ./fixtures/split/i1/control_methods.json
 COPY fixtures/split/i1/window_plane.json ./fixtures/split/i1/window_plane.json
 COPY fixtures/split/agents/config_cases.json ./fixtures/split/agents/config_cases.json
+COPY fixtures/split/parity ./fixtures/split/parity
 COPY fixtures/split/i1/request_recovery.json ./fixtures/split/i1/request_recovery.json
 COPY fixtures/split/i4/role_admission.json ./fixtures/split/i4/role_admission.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json

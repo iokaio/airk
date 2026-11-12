@@ -31,6 +31,8 @@ fixtures/split/**
 fixtures/split/i1/**
 !fixtures/split/agents/
 fixtures/split/agents/**
+!fixtures/split/parity/
+fixtures/split/parity/**
 !fixtures/split/i2/
 fixtures/split/i2/**
 !fixtures/split/i3/
@@ -63,6 +65,7 @@ packages/vscode/src/test/fixtures/**
 !crates/**
 !third_party/licenses/**
 !third_party/models/**
+!fixtures/split/parity/**
 !.cargo/config.toml
 !.config/nextest.toml
 !.dockerignore

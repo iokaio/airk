@@ -1,0 +1,103 @@
+{
+  "cases": {
+    "0 list-templates": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ok\":true,\"written\":\"<OUT:json>\\\\old-0.json\"}\n",
+      "success": true
+    },
+    "0 list-templates output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\n  \"identity\": {\n    \"catalog_version\": 1,\n    \"extension_version\": \"<VERSION>\",\n    \"source\": \"airk CLI (offline)\"\n  },\n  \"next_offset\": 10,\n  \"templates\": [\n    {\n      \"category\": \"Development\",\n      \"runnable\": true,\n      \"summary\": \"Reproduce a failure, locate relevant code and tests, request a minimal fix.\",\n      \"template_id\": \"airk.core/bug\",\n      \"title\": \"Investigate & fix a bug\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"reason\": \"Runs after the feature template is reviewed against real projects.\",\n      \"runnable\": false,\n      \"summary\": \"Translate a scoped request into source-aware changes and tests.\",\n      \"template_id\": \"airk.core/feature\",\n      \"title\": \"Implement a feature\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"reason\": \"host.gitDiff: Git changes arrive with the Review workspace.\",\n      \"runnable\": false,\n      \"summary\": \"Assemble changed lines and nearby contracts.\",\n      \"template_id\": \"airk.core/review\",\n      \"title\": \"Review a pull request\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"reason\": \"Relationship expansion is candidate-only; this template is reviewed before it runs.\",\n      \"runnable\": false,\n      \"summary\": \"Map declarations and candidates before bounded refactoring.\",\n      \"template_id\": \"airk.core/refactor\",\n      \"title\": \"Refactor safely\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"runnable\": true,\n      \"summary\": \"Trace call sites, schemas and nearby documentation.\",\n      \"template_id\": \"airk.core/api\",\n      \"title\": \"Change an API contract\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"reason\": \"Shown for reference; not yet qualified to run.\",\n      \"runnable\": false,\n      \"summary\": \"Locate hot-path candidates and applicable measurements.\",\n      \"template_id\": \"airk.core/perf\",\n      \"title\": \"Investigate performance\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"runnable\": true,\n      \"summary\": \"Produce grounded context for code comprehension.\",\n      \"template_id\": \"airk.core/explain\",\n      \"title\": \"Explain a component\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Development\",\n      \"reason\": \"Shown for reference; not yet qualified to run.\",\n      \"runnable\": false,\n      \"summary\": \"Gather code paths and known behavior; ask for hypotheses and checks.\",\n      \"template_id\": \"airk.core/incident\",\n      \"title\": \"Analyze a production incident\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Testing\",\n      \"reason\": \"Shown for reference; not yet qualified to run.\",\n      \"runnable\": false,\n      \"summary\": \"Select units, branches and nearby test conventions.\",\n      \"template_id\": \"airk.core/test-unit\",\n      \"title\": \"Generate unit tests\",\n      \"version\": \"1.0.0\"\n    },\n    {\n      \"category\": \"Testing\",\n      \"reason\": \"host.gitDiff: Git changes arrive with the Review workspace.\",\n      \"runnable\": false,\n      \"summary\": \"Tie changed behavior to test scenarios and negative cases.\",\n      \"template_id\": \"airk.core/test-regression\",\n      \"title\": \"Design regression tests\",\n      \"version\": \"1.0.0\"\n    }\n  ],\n  \"total\": 25\n}\n",
+      "success": true
+    },
+    "1 get-template": {
+      "code": 1,
+      "stderr": "Error: get_template needs template_id (see list_templates)\n",
+      "stdout": "",
+      "success": false
+    },
+    "1 get-template output": {
+      "code": 1,
+      "stderr": "",
+      "stdout": "",
+      "success": false
+    },
+    "2 draft-search": {
+      "code": 1,
+      "stderr": "Error: result written to <OUT>\\old-2.json reports a problem\n",
+      "stdout": "{\"ok\":false,\"written\":\"<OUT:json>\\\\old-2.json\"}\n",
+      "success": false
+    },
+    "2 draft-search output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\n  \"admitted\": false,\n  \"checked\": \"schema\",\n  \"created_unix_ms\": \"<MASKED>\",\n  \"draft\": {\n    \"query\": \"recover a password\"\n  },\n  \"errors\": [\n    \"schema_version: is required\",\n    \"idempotency_key: is required\",\n    \"title: is required\",\n    \"draft: is required\",\n    \"query: is not allowed\"\n  ],\n  \"executed\": false,\n  \"identity\": {\n    \"catalog_version\": 1,\n    \"extension_version\": \"<VERSION>\",\n    \"source\": \"airk CLI (offline)\"\n  },\n  \"kind\": \"search\",\n  \"live_checked\": false,\n  \"note\": \"Written for review only. Nothing was sent to an Explorer Inbox or executed; the editor applies further semantic checks.\",\n  \"project\": null,\n  \"schema\": \"airk.explorer.draft-file/1\",\n  \"semantic_checked\": false,\n  \"tool\": \"draft_search\",\n  \"valid\": false\n}\n",
+      "success": true
+    },
+    "3 draft-search": {
+      "code": 1,
+      "stderr": "Error: result written to <OUT>\\old-3.json reports a problem\n",
+      "stdout": "{\"ok\":false,\"written\":\"<OUT:json>\\\\old-3.json\"}\n",
+      "success": false
+    },
+    "3 draft-search output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\n  \"admitted\": false,\n  \"checked\": \"schema\",\n  \"created_unix_ms\": \"<MASKED>\",\n  \"draft\": {\n    \"query\": 1\n  },\n  \"errors\": [\n    \"schema_version: is required\",\n    \"idempotency_key: is required\",\n    \"title: is required\",\n    \"draft: is required\",\n    \"query: is not allowed\"\n  ],\n  \"executed\": false,\n  \"identity\": {\n    \"catalog_version\": 1,\n    \"extension_version\": \"<VERSION>\",\n    \"source\": \"airk CLI (offline)\"\n  },\n  \"kind\": \"search\",\n  \"live_checked\": false,\n  \"note\": \"Written for review only. Nothing was sent to an Explorer Inbox or executed; the editor applies further semantic checks.\",\n  \"project\": null,\n  \"schema\": \"airk.explorer.draft-file/1\",\n  \"semantic_checked\": false,\n  \"tool\": \"draft_search\",\n  \"valid\": false\n}\n",
+      "success": true
+    },
+    "4 validate-draft": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ok\":true,\"written\":\"<OUT:json>\\\\old-4.json\"}\n",
+      "success": true
+    },
+    "4 validate-draft output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\n  \"admitted\": false,\n  \"checked\": \"schema\",\n  \"errors\": [\n    {\n      \"field\": \"schema_version\",\n      \"message\": \"schema_version: is required\"\n    },\n    {\n      \"field\": \"idempotency_key\",\n      \"message\": \"idempotency_key: is required\"\n    },\n    {\n      \"field\": \"title\",\n      \"message\": \"title: is required\"\n    },\n    {\n      \"field\": \"draft\",\n      \"message\": \"draft: is required\"\n    }\n  ],\n  \"executed\": false,\n  \"identity\": {\n    \"catalog_version\": 1,\n    \"extension_version\": \"<VERSION>\",\n    \"source\": \"airk CLI (offline)\"\n  },\n  \"kind\": \"search\",\n  \"live_checked\": false,\n  \"semantic_checked\": false,\n  \"valid\": false\n}\n",
+      "success": true
+    },
+    "5 draft-plan": {
+      "code": 1,
+      "stderr": "Error: --args must be one JSON object\n",
+      "stdout": "",
+      "success": false
+    },
+    "5 draft-plan output": {
+      "code": 1,
+      "stderr": "",
+      "stdout": "",
+      "success": false
+    },
+    "proposal-status": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"ok\":true,\"written\":\"<OUT:json>\\\\old-status.json\"}\n",
+      "success": true
+    },
+    "proposal-status output": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\n  \"admitted\": false,\n  \"created_unix_ms\": \"<MASKED>\",\n  \"executed\": false,\n  \"kind\": \"search\",\n  \"note\": \"CLI drafts live only in their file. Live proposal status exists only for drafts sent through an editor connection.\",\n  \"reviewed\": false,\n  \"state\": \"written\",\n  \"tool\": \"draft_search\",\n  \"valid\": false\n}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<OUT:json>",
+    "<OUT>",
+    "<VERSION>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_explorer_matches_airk"
+}

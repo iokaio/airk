@@ -1,0 +1,35 @@
+{
+  "cases": {
+    "raw records after airk record-error": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"failure\":{\"code\":\"setup_failed\",\"detail\":{\"chain\":\"download refused\",\"truncated\":false}},\"kind\":\"extension_error\",\"native_version\":\"<VERSION>\",\"observed_unix_ms\":\"<MASKED>\",\"operation\":\"service_setup\",\"schema\":1}\n",
+      "success": true
+    },
+    "record-error running": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"recorded\":true}\n",
+      "success": true
+    },
+    "record-error stopped": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "{\"recorded\":true}\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "elapsed_ms",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<VERSION>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_record_error_matches_airk_running_and_stopped"
+}

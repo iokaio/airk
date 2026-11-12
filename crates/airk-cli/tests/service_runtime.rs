@@ -3,6 +3,7 @@
 #[path = "common/mod.rs"]
 mod common;
 use anyhow::{Context, Result, ensure};
+use common::parity::{CLOCK_FIELDS, Parity};
 use common::read_retry;
 use read_retry::ReadRetry;
 use serde_json::Value;
@@ -4461,9 +4462,25 @@ fn airkctl_service_health_and_shutdown_print_what_airk_printed() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("runtime");
     let mut children = Children(vec![start(&root)?]);
-    wait_ready(&root)?;
+    let health = wait_ready(&root)?;
     let dir = root.to_str().context("runtime path")?;
-    let old = health_identity(control(&root, "health")?);
+    let mut parity = Parity::new("airkctl_service_health_and_shutdown_print_what_airk_printed");
+    parity.substitute_path(owner.path(), "<OWNER>");
+    parity.substitute_identifiers(&health, "HEALTH");
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // Process, account and build-environment facts of the run that answered.
+    parity.mask_json_fields(&["process_id", "user", "rustc", "source_files"]);
+    // The pre-split `airk service health|shutdown --runtime-dir` (as before
+    // split Phase 4.2 moved `control` to airkctl).
+    let old = parity.old("health", || {
+        command()
+            .args(["service", "health", "--runtime-dir"])
+            .arg(&root)
+            .output()
+            .unwrap()
+    });
+    ensure!(old.success, "service control failed: {}", old.stderr);
+    let old = health_identity(serde_json::from_str(&old.stdout)?);
     for line in [
         &["service", "health", "--runtime-dir", dir][..],
         &["--service-runtime-dir", dir, "service", "health"],
@@ -4471,9 +4488,33 @@ fn airkctl_service_health_and_shutdown_print_what_airk_printed() -> Result<()> {
         let (code, stdout, stderr) = airkctl(line);
         assert_eq!(code, 0, "{stderr}");
         assert_eq!(stdout.lines().count(), 1, "one compact line");
-        assert_eq!(health_identity(serde_json::from_str(&stdout)?), old);
+        assert_eq!(
+            health_identity(serde_json::from_str(&parity.canonical(&stdout))?),
+            old
+        );
     }
-    let stopping = control(&root, "shutdown")?;
+    let stopping = parity.old("shutdown", || {
+        command()
+            .args(["service", "shutdown", "--runtime-dir"])
+            .arg(&root)
+            .output()
+            .unwrap()
+    });
+    ensure!(
+        stopping.success,
+        "service control failed: {}",
+        stopping.stderr
+    );
+    let stopping: Value = serde_json::from_str(&stopping.stdout)?;
+    if !parity.capturing() {
+        // The recorded run stopped this service through `airk`; this run
+        // stops it through airkctl, which prints the same document.
+        let stopped = control(&root, "shutdown")?.to_string();
+        assert_eq!(
+            serde_json::from_str::<Value>(&parity.canonical(&stopped))?,
+            stopping
+        );
+    }
     assert_eq!(stopping, serde_json::json!({"status": "stopping"}));
     assert!(wait_exit(&mut children.0[0])?, "service exits cleanly");
     let (code, stdout, stderr) = airkctl(&["service", "health", "--runtime-dir", dir]);
@@ -4484,6 +4525,7 @@ fn airkctl_service_health_and_shutdown_print_what_airk_printed() -> Result<()> {
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(serde_json::from_str::<Value>(&stdout)?, stopping);
     assert!(wait_exit(&mut children.0[1])?, "service exits cleanly");
+    parity.finish();
     Ok(())
 }
 
@@ -4612,9 +4654,14 @@ fn airkctl_service_logs_print_what_airk_printed() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("runtime");
     let mut children = Children(vec![start(&root)?]);
-    wait_ready(&root)?;
+    let health = wait_ready(&root)?;
     let dir = root.to_str().context("runtime path")?.to_owned();
-    let compare = |phase: &str| -> Result<()> {
+    let mut parity = Parity::new("airkctl_service_logs_print_what_airk_printed");
+    parity.substitute_path(owner.path(), "<OWNER>");
+    parity.substitute_identifiers(&health, "HEALTH");
+    parity.mask_json_fields(CLOCK_FIELDS);
+    parity.mask_text("log text times", mask_log_text_times);
+    let compare = |parity: &mut Parity, phase: &str| -> Result<()> {
         for case in [
             &[][..],
             &["--format", "text"],
@@ -4622,45 +4669,50 @@ fn airkctl_service_logs_print_what_airk_printed() -> Result<()> {
             &["--all"],
             &["--raw"],
         ] {
-            let old = command()
-                .args(["service", "logs", "--runtime-dir", &dir])
-                .args(case)
-                .output()?;
-            ensure!(
-                old.status.success(),
-                "airk {case:?}: {}",
-                String::from_utf8_lossy(&old.stderr)
-            );
+            let options = if case.is_empty() {
+                "(defaults)".to_owned()
+            } else {
+                case.join(" ")
+            };
+            let old = parity.old(&format!("{phase} logs {options}"), || {
+                command()
+                    .args(["service", "logs", "--runtime-dir", &dir])
+                    .args(case)
+                    .output()
+                    .unwrap()
+            });
+            ensure!(old.success, "airk {case:?}: {}", old.stderr);
             let line: Vec<&str> = ["service", "logs", "--runtime-dir", &dir]
                 .into_iter()
                 .chain(case.iter().copied())
                 .collect();
             let (code, stdout, stderr) = airkctl(&line);
             ensure!(code == 0, "airkctl {case:?}: {stderr}");
+            let stdout = parity.canonical(&stdout);
             ensure!(
-                stdout.as_bytes() == old.stdout.as_slice(),
+                stdout == old.stdout,
                 "{phase} {case:?} differs:\n{}\n---\n{stdout}",
-                String::from_utf8_lossy(&old.stdout)
+                old.stdout
             );
         }
         let old_file = owner.path().join(format!("{phase}-airk.json"));
         let new_file = owner.path().join(format!("{phase}-airkctl.json"));
-        let old = command()
-            .args([
-                "service",
-                "logs",
-                "--runtime-dir",
-                &dir,
-                "--all",
-                "--output",
-            ])
-            .arg(&old_file)
-            .output()?;
-        ensure!(
-            old.status.success(),
-            "{}",
-            String::from_utf8_lossy(&old.stderr)
-        );
+        let old = parity.old(&format!("{phase} logs output"), || {
+            command()
+                .args([
+                    "service",
+                    "logs",
+                    "--runtime-dir",
+                    &dir,
+                    "--all",
+                    "--output",
+                ])
+                .arg(&old_file)
+                .output()
+                .unwrap()
+        });
+        ensure!(old.success, "{}", old.stderr);
+        let old_bytes = parity.old_file(&format!("{phase} logs output file"), &old_file);
         let new_path = new_file.to_str().context("capture path")?;
         let (code, stdout, stderr) = airkctl(&[
             "service",
@@ -4673,20 +4725,36 @@ fn airkctl_service_logs_print_what_airk_printed() -> Result<()> {
         ]);
         ensure!(code == 0, "{stderr}");
         ensure!(
-            stdout.as_bytes() == old.stdout.as_slice(),
+            parity.canonical(&stdout) == old.stdout,
             "{phase} capture line"
         );
         ensure!(
-            fs::read(&old_file)? == fs::read(&new_file)?,
+            old_bytes.success
+                && parity.canonical(&fs::read_to_string(&new_file)?) == old_bytes.stdout,
             "{phase} capture bytes"
         );
         Ok(())
     };
-    compare("running")?;
+    compare(&mut parity, "running")?;
     control(&root, "shutdown")?;
     ensure!(wait_exit(&mut children.0[0])?, "service exits cleanly");
-    compare("stopped")?;
+    compare(&mut parity, "stopped")?;
+    parity.finish();
     Ok(())
+}
+
+/// The text log page's leading record times (`<unix ms> <instance> …`).
+fn mask_log_text_times(text: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            if digits > 0 && line[digits..].starts_with(' ') {
+                format!("<MASKED>{}", &line[digits..])
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect()
 }
 
 /// `airkctl service status` reports a running service with its health, saved
@@ -4757,44 +4825,41 @@ fn airkctl_with_input(arguments: &[&str], input: &[u8]) -> (u8, String, String) 
     )
 }
 
-/// The raw job-error ring's records without their observation time.
-fn raw_records(dir: &str) -> Result<Vec<Value>> {
-    let output = command()
-        .args(["service", "logs", "--runtime-dir", dir, "--raw"])
-        .output()?;
-    ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)?
+/// The raw job-error ring's records, read through airkctl, in canonical
+/// space (observation time masked; the parity test's substitutions).
+fn raw_records(parity: &Parity, dir: &str) -> Result<Vec<Value>> {
+    let (code, stdout, stderr) = airkctl(&["service", "logs", "--runtime-dir", dir, "--raw"]);
+    ensure!(code == 0, "{stderr}");
+    parity
+        .canonical(&stdout)
         .lines()
-        .map(|line| {
-            let mut record: Value = serde_json::from_str(line)?;
-            record
-                .as_object_mut()
-                .context("raw record")?
-                .remove("observed_unix_ms")
-                .context("observation time")?;
-            Ok(record)
-        })
+        .map(|line| Ok(serde_json::from_str(line)?))
         .collect()
 }
 
 /// `airkctl service record-error` records what `airk service record-error`
 /// recorded, through M14 while the service runs and through the private
-/// `record-error` role while it is down (U75, split 3b.2).
+/// `record-error` role while it is down (U75, split 3b.2). The `airk` side is
+/// recorded (U95): its answers and the raw record it wrote; the ring is read
+/// through airkctl, which holds `airk`'s own records only while capturing.
 #[test]
 fn airkctl_record_error_matches_airk_running_and_stopped() -> Result<()> {
     use std::io::Write as _;
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("runtime");
     let mut children = Children(vec![start(&root)?]);
-    wait_ready(&root)?;
+    let health = wait_ready(&root)?;
     let dir = root.to_str().context("runtime path")?.to_owned();
+    let mut parity = Parity::new("airkctl_record_error_matches_airk_running_and_stopped");
+    parity.substitute_path(owner.path(), "<OWNER>");
+    parity.substitute_identifiers(&health, "HEALTH");
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // Records `airk` adds to the ring per phase: one while capturing, none in
+    // replay (it does not run).
+    let by_airk = usize::from(parity.capturing());
     let input =
         br#"{"code":"setup_failed","detail":{"chain":"download refused","truncated":false}}"#;
-    let old = || -> Result<Vec<u8>> {
+    let old = || -> std::process::Output {
         let mut child = command()
             .args([
                 "service",
@@ -4807,22 +4872,33 @@ fn airkctl_record_error_matches_airk_running_and_stopped() -> Result<()> {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
-        child.stdin.take().context("stdin")?.write_all(input)?;
-        let output = child.wait_with_output()?;
-        ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(output.stdout)
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        child.wait_with_output().unwrap()
     };
-    let recorded = old()?;
+    let recorded = parity.old("record-error running", old);
+    ensure!(recorded.success, "{}", recorded.stderr);
     ensure!(
-        recorded == b"{\"recorded\":true}\n",
+        recorded.stdout == "{\"recorded\":true}\n",
         "{}",
-        String::from_utf8_lossy(&recorded)
+        recorded.stdout
     );
+    // The record `airk` wrote, as `airk service logs --raw` printed it.
+    let expected = parity.old("raw records after airk record-error", || {
+        command()
+            .args(["service", "logs", "--runtime-dir", &dir, "--raw"])
+            .output()
+            .unwrap()
+    });
+    ensure!(expected.success, "{}", expected.stderr);
+    let expected = expected
+        .stdout
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<Value>, _>>()?;
+    ensure!(expected.len() == 1, "{expected:?}");
+    let expected = &expected[0];
     let (code, stdout, stderr) = airkctl_with_input(
         &[
             "service",
@@ -4835,15 +4911,20 @@ fn airkctl_record_error_matches_airk_running_and_stopped() -> Result<()> {
         input,
     );
     ensure!(code == 0, "{stderr}");
-    ensure!(stdout.as_bytes() == recorded.as_slice(), "{stdout}");
-    let running = raw_records(&dir)?;
+    ensure!(parity.canonical(&stdout) == recorded.stdout, "{stdout}");
+    let running = raw_records(&parity, &dir)?;
     ensure!(
-        running.len() == 2 && running[0] == running[1],
+        running.len() == 1 + by_airk && running.iter().all(|record| record == expected),
         "{running:?}"
     );
     control(&root, "shutdown")?;
     ensure!(wait_exit(&mut children.0[0])?, "service exits cleanly");
-    ensure!(old()? == recorded);
+    let stopped = parity.old("record-error stopped", old);
+    ensure!(
+        stopped.success && stopped.stdout == recorded.stdout,
+        "{}",
+        stopped.stderr
+    );
     ensure!(matches!(
         airkctl::record::by_service(&root, "service_setup", input, env!("CARGO_PKG_VERSION")),
         Ok(airkctl::record::Recorded::ServiceDown)
@@ -4855,9 +4936,10 @@ fn airkctl_record_error_matches_airk_running_and_stopped() -> Result<()> {
         input,
     )
     .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
-    let all = raw_records(&dir)?;
-    ensure!(all.len() == 4, "{all:?}");
-    ensure!(all.iter().all(|record| record == &running[0]), "{all:?}");
+    let all = raw_records(&parity, &dir)?;
+    ensure!(all.len() == 2 + 2 * by_airk, "{all:?}");
+    ensure!(all.iter().all(|record| record == expected), "{all:?}");
+    parity.finish();
     Ok(())
 }
 

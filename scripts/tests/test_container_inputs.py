@@ -84,7 +84,8 @@ def external_rust_inputs(root):
             if not relative.startswith("crates/"):
                 found.add(relative)
     table = (root / "crates/airk-cli/tests/cli_commands.rs").read_text(encoding="utf-8")
-    table = table.split("const ELSEWHERE:", 1)[1].split("\n];", 1)[0]
+    # The pre-split parser-coverage table leaves with the user CLI (split Phase 4).
+    table = table.split("const ELSEWHERE:", 1)[1].split("\n];", 1)[0] if "const ELSEWHERE:" in table else ""
     for row in re.finditer(r'\(\s*(' + STRING + r')\s*,\s*(' + STRING + r')\s*,\s*(' + STRING + r')\s*,?\s*\)', table):
         name = json.loads(row[2])
         if name != "this file" and not name.startswith("crates/"):
@@ -180,9 +181,14 @@ std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         manifest = json.loads((ROOT / "scripts/container-inputs.json").read_text())
         required = external_rust_inputs(ROOT)
         self.assertGreaterEqual(len(required), 24)
-        self.assertEqual(required - set(manifest["files"]), set())
+        # A test that reads named files from a fixture folder (U95 parity
+        # expectations) is admitted as a manifest tree.
+        self.assertEqual(required - set(manifest["files"]) - set(manifest["trees"]), set())
         for name in required:
-            self.assertTrue((ROOT / name).is_file(), name)
+            if name in manifest["trees"]:
+                self.assertTrue((ROOT / name).is_dir(), name)
+            else:
+                self.assertTrue((ROOT / name).is_file(), name)
 
 
 if __name__ == "__main__":

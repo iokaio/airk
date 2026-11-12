@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde_json::{Value, json};
 mod common;
+use common::parity::{CLOCK_FIELDS, Parity};
 use std::{
     fs,
     io::Write,
@@ -513,7 +514,9 @@ fn cli_outcome(output: Output) -> Outcome {
     Outcome::Envelope(comparable(serde_json::from_slice(&output.stdout).unwrap()))
 }
 
+/// The control answer in canonical space, as the recorded `airk` output.
 fn control_outcome(
+    parity: &Parity,
     control: &Path,
     tool: &str,
     arguments: &Value,
@@ -536,10 +539,12 @@ fn control_outcome(
         ))
         .unwrap();
     match response {
-        airk_core::service::ControlResponse::ToolResult { result } => {
-            Outcome::Envelope(comparable(result))
+        airk_core::service::ControlResponse::ToolResult { result } => Outcome::Envelope(
+            comparable(serde_json::from_str(&parity.canonical(&result.to_string())).unwrap()),
+        ),
+        airk_core::service::ControlResponse::ToolCallFailed { message } => {
+            Outcome::Failed(parity.canonical(&message))
         }
-        airk_core::service::ControlResponse::ToolCallFailed { message } => Outcome::Failed(message),
         other => panic!(
             "unexpected M3 response: {}",
             serde_json::to_string(&other).unwrap()
@@ -568,6 +573,11 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     else {
         panic!("the reviewed fixture selects one scoped index");
     };
+    let mut parity = Parity::new("control_tool_calls_answer_what_the_cli_printed");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
     let calls = [
         ("airk_read_file", json!({"path": "recovery.md"})),
         ("airk_file_info", json!({"path": "recovery.md"})),
@@ -583,11 +593,17 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     for (tool, arguments) in &calls {
         let arguments_text = arguments.to_string();
         let scoped = cli_outcome(
-            common::legacy_airk_scoped_command(root.path(), state.path(), "tools-call")
-                .args(["tools", "call", tool, "--args", &arguments_text])
-                .output()?,
+            parity
+                .old(&format!("catalog {tool}"), || {
+                    common::legacy_airk_scoped_command(root.path(), state.path(), "tools-call")
+                        .args(["tools", "call", tool, "--args", &arguments_text])
+                        .output()
+                        .unwrap()
+                })
+                .output(),
         );
         let control = control_outcome(
+            &parity,
             &service.control,
             tool,
             arguments,
@@ -598,11 +614,17 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
         assert_eq!(control, scoped, "catalog selection {tool}");
         envelopes += usize::from(matches!(control, Outcome::Envelope(_)));
         let project = cli_outcome(
-            common::legacy_airk_command(root.path(), state.path(), "tools-call")
-                .args(["tools", "call", tool, "--args", &arguments_text])
-                .output()?,
+            parity
+                .old(&format!("project {tool}"), || {
+                    common::legacy_airk_command(root.path(), state.path(), "tools-call")
+                        .args(["tools", "call", tool, "--args", &arguments_text])
+                        .output()
+                        .unwrap()
+                })
+                .output(),
         );
         let control = control_outcome(
+            &parity,
             &service.control,
             tool,
             arguments,
@@ -620,12 +642,18 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     ] {
         let text = arguments.to_string();
         let cli = cli_outcome(
-            Command::new(env!("CARGO_BIN_EXE_airk"))
-                .args(["tools", "call", "help", "--args", &text])
-                .env("AIRK_MCP_RESPONSE_MODE", "full")
-                .output()?,
+            parity
+                .old(&format!("unselected help {text}"), || {
+                    Command::new(env!("CARGO_BIN_EXE_airk"))
+                        .args(["tools", "call", "help", "--args", &text])
+                        .env("AIRK_MCP_RESPONSE_MODE", "full")
+                        .output()
+                        .unwrap()
+                })
+                .output(),
         );
         let control = control_outcome(
+            &parity,
             &service.control,
             "help",
             &arguments,
@@ -633,6 +661,7 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
         );
         assert_eq!(control, cli, "unselected help {text}");
     }
+    parity.finish();
     Ok(())
 }
 
@@ -656,19 +685,20 @@ fn line_outcome(
     (code, stdout, message)
 }
 
-fn airk_outcome(command: &mut Command) -> (Option<i32>, Option<Value>, String) {
-    let output = command.output().unwrap();
+/// The recorded `airk` run's outcome (split U95).
+fn airk_outcome(recorded: common::parity::Recorded) -> (Option<i32>, Option<Value>, String) {
     line_outcome(
-        output.status.code(),
-        &output.stdout,
-        &output.stderr,
+        recorded.code,
+        recorded.stdout.as_bytes(),
+        recorded.stderr.as_bytes(),
         "Error: ",
     )
 }
 
 /// The `airkctl` command line run in process (`airkctl::cli::run`, the code its
 /// `main` runs) with `AIRK_MCP_RESPONSE_MODE=full`, as the fixture commands set.
-fn airkctl_outcome(arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
+/// Its output is compared in canonical space, as the recorded `airk` output.
+fn airkctl_outcome(parity: &Parity, arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut io = airkctl::cli::Io {
@@ -682,7 +712,14 @@ fn airkctl_outcome(arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
         .map(std::ffi::OsString::from)
         .collect();
     let code = airkctl::cli::run(line, &mut io);
-    line_outcome(Some(i32::from(code)), &stdout, &stderr, "airkctl: ")
+    let stdout = parity.canonical(&String::from_utf8_lossy(&stdout));
+    let stderr = parity.canonical(&String::from_utf8_lossy(&stderr));
+    line_outcome(
+        Some(i32::from(code)),
+        stdout.as_bytes(),
+        stderr.as_bytes(),
+        "airkctl: ",
+    )
 }
 
 /// `airkctl` evidence reads and tool calls print what `airk` printed, for both
@@ -772,11 +809,21 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
     let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
     let control = service.control.to_str().unwrap().to_owned();
+    let mut parity = Parity::new("airkctl_reads_print_what_airk_printed");
+    parity.substitute_path(Path::new(&arguments_file), "<ARGS_FILE>");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
     let mut compared = 0;
     for read in &reads {
-        let old = airk_outcome(
-            common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-reads").args(read),
-        );
+        let name = parity.name(&read.join(" "));
+        let old = airk_outcome(parity.old(&format!("catalog {name}"), || {
+            common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-reads")
+                .args(read)
+                .output()
+                .unwrap()
+        }));
         let mut line = vec![
             "--service-runtime-dir",
             &control,
@@ -784,10 +831,17 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
             &catalog,
         ];
         line.extend(read.iter().copied());
-        assert_eq!(airkctl_outcome(&line), old, "catalog selection {read:?}");
-        let old = airk_outcome(
-            common::legacy_airk_command(root.path(), state.path(), "ctl-reads").args(read),
+        assert_eq!(
+            airkctl_outcome(&parity, &line),
+            old,
+            "catalog selection {read:?}"
         );
+        let old = airk_outcome(parity.old(&format!("project {name}"), || {
+            common::legacy_airk_command(root.path(), state.path(), "ctl-reads")
+                .args(read)
+                .output()
+                .unwrap()
+        }));
         let mut line = vec![
             "--service-runtime-dir",
             &control,
@@ -795,10 +849,15 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
             &binding,
         ];
         line.extend(read.iter().copied());
-        assert_eq!(airkctl_outcome(&line), old, "project selection {read:?}");
+        assert_eq!(
+            airkctl_outcome(&parity, &line),
+            old,
+            "project selection {read:?}"
+        );
         compared += 1;
     }
     assert_eq!(compared, reads.len());
+    parity.finish();
     Ok(())
 }
 
@@ -823,14 +882,22 @@ fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
     let control = service.control.to_str().unwrap().to_owned();
     let project_root = service.project.root.clone();
     let data_root = service.project.data_root.clone();
+    let mut parity = Parity::new("airkctl_resolves_the_project_its_folder_names");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
     for read in [
         vec!["status"],
         vec!["files"],
         vec!["read", "notes.md", "--start-line", "1", "--end-line", "3"],
     ] {
-        let old = airk_outcome(
-            common::legacy_airk_command(root.path(), state.path(), "ctl-resolve").args(&read),
-        );
+        let old = airk_outcome(parity.old(&format!("resolved {}", read.join(" ")), || {
+            common::legacy_airk_command(root.path(), state.path(), "ctl-resolve")
+                .args(&read)
+                .output()
+                .unwrap()
+        }));
         let mut line = vec![
             "--service-runtime-dir",
             &control,
@@ -842,26 +909,30 @@ fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
             "ctl-resolve",
         ];
         line.extend(read.iter().copied());
-        assert_eq!(airkctl_outcome(&line), old, "resolved {read:?}");
+        assert_eq!(airkctl_outcome(&parity, &line), old, "resolved {read:?}");
     }
     // An existing folder, disjoint from the data root, that is not registered
     // (a missing or overlapping folder is refused before the registry lookup).
     let elsewhere = tempfile::tempdir()?;
     let missing = elsewhere.path().to_str().unwrap();
-    let (code, _, message) = airkctl_outcome(&[
-        "--service-runtime-dir",
-        &control,
-        "--root",
-        missing,
-        "--data-dir",
-        &data_root,
-        "status",
-    ]);
+    let (code, _, message) = airkctl_outcome(
+        &parity,
+        &[
+            "--service-runtime-dir",
+            &control,
+            "--root",
+            missing,
+            "--data-dir",
+            &data_root,
+            "status",
+        ],
+    );
     assert_eq!(code, Some(1));
     assert!(
         message.starts_with("project is not registered"),
         "{message}"
     );
+    parity.finish();
     Ok(())
 }
 
@@ -880,6 +951,16 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
     )?;
     let control = service.control.to_str().unwrap().to_owned();
     let binding = service.project.binding.to_string();
+    let mut parity = Parity::new("airkctl_project_commands_print_what_airk_printed");
+    // The default project name is the folder's name.
+    parity.substitute(
+        root.path().file_name().unwrap().to_string_lossy(),
+        "<ROOT_NAME>",
+    );
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
     for command in [
         vec!["pause"],
         vec!["resume"],
@@ -887,9 +968,13 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
         vec!["watch", "on"],
         vec!["projects", "--runtime-dir", &control],
     ] {
-        let old = common::legacy_airk_command(root.path(), state.path(), "ctl-admin")
-            .args(&command)
-            .output()?;
+        let name = parity.name(&command.join(" "));
+        let old = parity.old(&name, || {
+            common::legacy_airk_command(root.path(), state.path(), "ctl-admin")
+                .args(&command)
+                .output()
+                .unwrap()
+        });
         let mut line = vec![
             "airkctl",
             "--service-runtime-dir",
@@ -907,12 +992,16 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
         };
         let code = airkctl::cli::run(line.into_iter().map(Into::into).collect(), &mut io);
         assert_eq!(
-            (Some(i32::from(code)), String::from_utf8(stdout)?),
-            (old.status.code(), String::from_utf8(old.stdout)?),
+            (
+                Some(i32::from(code)),
+                parity.canonical(&String::from_utf8(stdout)?)
+            ),
+            (old.code, old.stdout),
             "{command:?}: {}",
             String::from_utf8_lossy(&stderr)
         );
     }
+    parity.finish();
     Ok(())
 }
 
@@ -1093,16 +1182,22 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
             String::from_utf8(stderr).unwrap(),
         )
     };
-    let nonce = regex_free_nonce;
+    let mut parity = Parity::new("airkctl_jobs_and_requests_match_airk");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // A saved request's caller and key carry this run's journal namespace and
+    // epoch (the recorded run also spent epochs on its own `airk` jobs).
+    parity.mask_json_fields(&["caller", "namespace", "epoch"]);
     for command in ["inspect", "index"] {
-        let old = common::legacy_airk_command(root.path(), state.path(), "ctl-jobs")
-            .arg(command)
-            .output()?;
-        assert!(
-            old.status.success(),
-            "{}",
-            String::from_utf8_lossy(&old.stderr)
-        );
+        let old = parity.old(command, || {
+            common::legacy_airk_command(root.path(), state.path(), "ctl-jobs")
+                .arg(command)
+                .output()
+                .unwrap()
+        });
+        assert!(old.success, "{}", old.stderr);
         let (code, stdout, stderr) = ctl(&[
             "--service-runtime-dir",
             &control,
@@ -1111,23 +1206,23 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
             command,
         ]);
         assert_eq!(code, 0, "{stderr}");
-        let old_job: Value = serde_json::from_slice(&old.stdout)?;
-        let new_job: Value = serde_json::from_str(&stdout)?;
+        let old_job: Value = serde_json::from_str(&old.stdout)?;
+        let new_job: Value = serde_json::from_str(&parity.canonical(&stdout))?;
         assert_eq!(new_job["status"], "job");
         assert_eq!(
             (&new_job["job"]["project"], &new_job["job"]["kind"]),
             (&old_job["job"]["project"], &old_job["job"]["kind"]),
             "{command}"
         );
-        let old_line = nonce(
-            String::from_utf8_lossy(&old.stderr)
-                .lines()
-                .last()
-                .unwrap_or_default(),
-        )
-        .replace("'airk service", "'airkctl service");
+        // The request nonce is a renamed hex token in canonical space.
+        let old_line = old
+            .stderr
+            .lines()
+            .last()
+            .unwrap_or_default()
+            .replace("'airk service", "'airkctl service");
         assert_eq!(
-            nonce(stderr.lines().last().unwrap_or_default()),
+            parity.canonical(&stderr).lines().last().unwrap_or_default(),
             old_line,
             "{command}"
         );
@@ -1147,12 +1242,20 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
     let prepared: Value = serde_json::from_str(&prepared)?;
     assert_eq!(prepared["submitted"], false);
     let saved = prepared["prepared"].as_str().unwrap().to_owned();
-    let old_list = command_in(
-        &control,
-        &["service", "requests", "--runtime-dir", &control, "list"],
-    )?;
+    parity.substitute(&saved, "<PREPARED>");
+    let old_list = parity.old("requests list", || {
+        command_in(
+            &control,
+            &["service", "requests", "--runtime-dir", &control, "list"],
+        )
+    });
+    assert!(old_list.success, "{}", old_list.stderr);
+    let old_list = old_list.stdout;
     let (code, new_list, _) = ctl(&["service", "requests", "--runtime-dir", &control, "list"]);
-    assert_eq!((code, new_list.as_str()), (0, old_list.as_str()));
+    assert_eq!(
+        (code, parity.canonical(&new_list).as_str()),
+        (0, old_list.as_str())
+    );
     assert!(new_list.contains(&saved), "{new_list}");
     let (code, retried, stderr) = ctl(&[
         "service",
@@ -1182,33 +1285,16 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
     );
     let (_, emptied, _) = ctl(&["service", "requests", "--runtime-dir", &control, "list"]);
     assert_eq!(emptied.trim(), "[]");
+    parity.finish();
     Ok(())
 }
 
-/// A line with its 32-hex request nonce replaced by `<nonce>`.
-fn regex_free_nonce(line: &str) -> String {
-    let marker = "Saved CLI request ";
-    match line.find(marker) {
-        Some(start) => {
-            let begin = start + marker.len();
-            let end = (begin + 32).min(line.len());
-            format!("{}<nonce>{}", &line[..begin], &line[end..])
-        }
-        None => line.to_owned(),
-    }
-}
-
-/// `airk` with only these arguments, its stdout.
-fn command_in(_control: &str, arguments: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+/// `airk` with only these arguments.
+fn command_in(_control: &str, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_airk"))
         .args(arguments)
-        .output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(String::from_utf8(output.stdout)?)
+        .output()
+        .unwrap()
 }
 
 /// The last stderr line without its program prefix (`Error: ` for `airk`,
@@ -1253,18 +1339,35 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
         Command::new(env!("CARGO_BIN_EXE_airk"))
             .args(arguments)
             .output()
+            .unwrap()
     };
+    let unreviewed = tempfile::tempdir()?;
+    let absent = tempfile::tempdir()?;
+    let fresh = tempfile::tempdir()?;
+    let fresh_parent = tempfile::tempdir()?;
+    let other = tempfile::tempdir()?;
+    let other_data = tempfile::tempdir()?;
+    let mut parity = Parity::new("airkctl_registration_matches_airk");
+    parity.substitute_path(source.path(), "<SOURCE>");
+    parity.substitute_path(data.path(), "<DATA>");
+    parity.substitute_path(unreviewed.path(), "<UNREVIEWED>");
+    parity.substitute_path(absent.path(), "<ABSENT>");
+    parity.substitute_path(fresh.path(), "<FRESH>");
+    parity.substitute_path(fresh_parent.path(), "<FRESH_PARENT>");
+    parity.substitute_path(other.path(), "<OTHER>");
+    parity.substitute_path(other_data.path(), "<OTHER_DATA>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
 
     // init on the reviewed mapping: the same acknowledged project.
-    let initialized = service
-        .installed_command(source.path(), data.path(), "ctl-init")
-        .arg("init")
-        .output()?;
-    assert!(
-        initialized.status.success(),
-        "{}",
-        String::from_utf8_lossy(&initialized.stderr)
-    );
+    let initialized = parity.old("init reviewed", || {
+        service
+            .installed_command(source.path(), data.path(), "ctl-init")
+            .arg("init")
+            .output()
+            .unwrap()
+    });
+    assert!(initialized.success, "{}", initialized.stderr);
     let Init::Registered(project) = airkctl::registration::init(
         &service.control,
         version,
@@ -1278,21 +1381,22 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
         anyhow::bail!("airkctl init was not acknowledged");
     };
     assert_eq!(
-        serde_json::to_string(&project)? + "\n",
-        String::from_utf8(initialized.stdout)?
+        parity.canonical(&(serde_json::to_string(&project)? + "\n")),
+        initialized.stdout
     );
     assert_eq!(project.registration, service.project);
 
     // init on an unmapped folder: the same refusal; nothing is created.
-    let unreviewed = tempfile::tempdir()?;
-    let absent = tempfile::tempdir()?;
     let absent_data = absent.path().join("not-created/nested");
     fs::write(unreviewed.path().join("original.md"), b"# Unreviewed\n")?;
-    let rejected = service
-        .installed_command(unreviewed.path(), &absent_data, "ctl-unmapped")
-        .arg("init")
-        .output()?;
-    assert!(!rejected.status.success());
+    let rejected = parity.old("init unmapped", || {
+        service
+            .installed_command(unreviewed.path(), &absent_data, "ctl-unmapped")
+            .arg("init")
+            .output()
+            .unwrap()
+    });
+    assert!(!rejected.success);
     match airkctl::registration::init(
         &service.control,
         version,
@@ -1302,23 +1406,24 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
         None,
     ) {
         Ok(Init::NotAcknowledged(response)) => assert_eq!(
-            serde_json::to_string(&response)? + "\n",
-            String::from_utf8(rejected.stdout)?
+            parity.canonical(&(serde_json::to_string(&response)? + "\n")),
+            rejected.stdout
         ),
         Ok(Init::Registered(_)) => anyhow::bail!("airkctl init registered an unmapped folder"),
-        Err(line) => assert_eq!(line.message, refusal_message(&rejected.stderr, "Error: ")),
+        Err(line) => assert_eq!(
+            parity.canonical(&line.message),
+            refusal_message(rejected.stderr.as_bytes(), "Error: ")
+        ),
     }
     assert!(!absent.path().join("not-created").exists());
 
     // prepare-registration: offline in `airk`, M4a in `airkctl`.
-    let fresh = tempfile::tempdir()?;
-    let fresh_parent = tempfile::tempdir()?;
     let planned = fresh_parent.path().join("planned");
     let inner = fresh.path().join("inner");
-    for (data_dir, collection) in [
-        (Some(planned.to_str().unwrap()), "ctl-plan"),
-        (Some(inner.to_str().unwrap()), "ctl-plan"),
-        (None, "ctl-plan"),
+    for (case, data_dir, collection) in [
+        ("planned", Some(planned.to_str().unwrap()), "ctl-plan"),
+        ("inner", Some(inner.to_str().unwrap()), "ctl-plan"),
+        ("default", None, "ctl-plan"),
     ] {
         let mut arguments = vec!["--root", fresh.path().to_str().unwrap()];
         if let Some(data_dir) = data_dir {
@@ -1330,24 +1435,26 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
             "service",
             "prepare-registration",
         ]);
-        let before = old(&arguments)?;
+        let before = parity.old(&format!("prepare-registration {case}"), || old(&arguments));
         let (code, stdout, stderr) = ctl(&[
             &["--service-runtime-dir", control.as_str()][..],
             &arguments[..],
         ]
         .concat());
         assert_eq!(
-            (code == 0, stdout.as_str()),
-            (
-                before.status.success(),
-                String::from_utf8(before.stdout)?.as_str()
-            ),
+            (code == 0, parity.canonical(&stdout)),
+            (before.success, before.stdout),
             "{arguments:?}"
         );
         if code != 0 {
             assert_eq!(
-                refusal_message(&stderr, "airkctl: "),
-                refusal_message(&before.stderr, "Error: "),
+                refusal_message(
+                    parity
+                        .canonical(&String::from_utf8_lossy(&stderr))
+                        .as_bytes(),
+                    "airkctl: "
+                ),
+                refusal_message(before.stderr.as_bytes(), "Error: "),
                 "{arguments:?}"
             );
         }
@@ -1355,8 +1462,6 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
     assert!(!planned.exists());
 
     // register: storage must exist; the service's answer is printed alike.
-    let other = tempfile::tempdir()?;
-    let other_data = tempfile::tempdir()?;
     let register = [
         "--root",
         other.path().to_str().unwrap(),
@@ -1369,14 +1474,11 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
         "--runtime-dir",
         &control,
     ];
-    let before = old(&register)?;
+    let before = parity.old("register", || old(&register));
     let (code, stdout, stderr) = ctl(&register);
     assert_eq!(
-        (code == 0, stdout.as_str()),
-        (
-            before.status.success(),
-            String::from_utf8(before.stdout)?.as_str()
-        ),
+        (code == 0, parity.canonical(&stdout)),
+        (before.success, before.stdout),
         "{}",
         String::from_utf8_lossy(&stderr)
     );
@@ -1391,7 +1493,11 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
         airk_core::service::RegistrationStorage::Planned,
     )
     .map_err(|line| anyhow::anyhow!(line.message))?;
-    for binding in [service.project.binding, unknown.binding] {
+    parity.substitute(unknown.binding, "<PLANNED_BINDING>");
+    for (case, binding) in [
+        ("reviewed", service.project.binding),
+        ("planned", unknown.binding),
+    ] {
         let binding = binding.to_string();
         let arguments = [
             "service",
@@ -1401,26 +1507,29 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
             "--project",
             &binding,
         ];
-        let before = old(&arguments)?;
+        let before = parity.old(&format!("prepare-storage {case}"), || old(&arguments));
         let (code, stdout, stderr) = ctl(&arguments);
         assert_eq!(
-            (code == 0, stdout.as_str()),
-            (
-                before.status.success(),
-                String::from_utf8(before.stdout)?.as_str()
-            ),
+            (code == 0, parity.canonical(&stdout)),
+            (before.success, before.stdout),
             "{binding}"
         );
         if code != 0 {
             assert_eq!(
-                refusal_message(&stderr, "airkctl: "),
-                refusal_message(&before.stderr, "Error: "),
+                refusal_message(
+                    parity
+                        .canonical(&String::from_utf8_lossy(&stderr))
+                        .as_bytes(),
+                    "airkctl: "
+                ),
+                refusal_message(before.stderr.as_bytes(), "Error: "),
                 "{binding}"
             );
         }
     }
     assert!(!planned.exists());
     service.shutdown_reviewed()?;
+    parity.finish();
     Ok(())
 }
 
@@ -1501,22 +1610,21 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
             String::from_utf8(stderr).unwrap(),
         )
     };
-    let airk_shell = |mut command: Command| -> anyhow::Result<(bool, String, String)> {
+    let airk_shell = |mut command: Command| -> Output {
         let mut child = command
             .args(["tools", "shell"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
-        child.stdin.take().unwrap().write_all(script.as_bytes())?;
-        let output = child.wait_with_output()?;
-        // The documented program rename (`airk tools …` → `airkctl tools …`),
-        // as the golden comparison applies it.
-        Ok((
-            output.status.success(),
-            String::from_utf8(output.stdout)?.replace("airk tools ", "airkctl tools "),
-            String::from_utf8(output.stderr)?.replace("'airk tools list'", "'airkctl tools list'"),
-        ))
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
     };
     let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
     else {
@@ -1525,6 +1633,12 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
     let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
     let control = service.control.to_str().unwrap().to_owned();
+    let mut parity = Parity::new("airkctl_tools_shell_matches_airk");
+    parity.substitute_path(&arguments_file, "<ARGS_FILE>");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
     for (name, old, new) in [
         (
             "project",
@@ -1547,8 +1661,19 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
             ],
         ),
     ] {
-        let (succeeded, old_stdout, old_stderr) = airk_shell(old)?;
+        let recorded = parity.old(name, || airk_shell(old));
+        // The documented program rename (`airk tools …` → `airkctl tools …`),
+        // as the golden comparison applies it.
+        let (succeeded, old_stdout, old_stderr) = (
+            recorded.success,
+            recorded.stdout.replace("airk tools ", "airkctl tools "),
+            recorded
+                .stderr
+                .replace("'airk tools list'", "'airkctl tools list'"),
+        );
         let (code, new_stdout, new_stderr) = airkctl_shell(&new);
+        let (new_stdout, new_stderr) =
+            (parity.canonical(&new_stdout), parity.canonical(&new_stderr));
         assert!(succeeded, "{name}: {old_stderr}");
         assert_eq!(code, 0, "{name}: {new_stderr}");
         assert!(
@@ -1566,6 +1691,7 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
             "{name}: {new_stderr}"
         );
     }
+    parity.finish();
     Ok(())
 }
 
@@ -1578,6 +1704,14 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-config");
+    // Configuration requires the project's first inspection: wait for the
+    // fixture's initial Index work (observed, deadline-bounded) before the
+    // first prepare-configuration.
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
     let control = service.control.to_str().unwrap().to_owned();
     let binding = service.project.binding.to_string();
     let ctl = |arguments: &[&str], stdin: &str| -> (u8, String, String) {
@@ -1606,20 +1740,38 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
             String::from_utf8(stderr).unwrap(),
         )
     };
-    let old = |arguments: &[&str], stdin: &str| -> anyhow::Result<(bool, String, String)> {
-        let mut child = common::legacy_airk_command(root.path(), state.path(), "ctl-config")
-            .args(arguments)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        child.stdin.take().unwrap().write_all(stdin.as_bytes())?;
-        let output = child.wait_with_output()?;
-        Ok((
-            output.status.success(),
-            String::from_utf8(output.stdout)?,
-            String::from_utf8(output.stderr)?,
-        ))
+    let measurement = state.path().join("measurement.json");
+    let draft_file = state.path().join("draft.json");
+    let mut parity = Parity::new("airkctl_configuration_matches_airk");
+    parity.substitute_path(&measurement, "<MEASUREMENT>");
+    parity.substitute_path(&draft_file, "<DRAFT_FILE>");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // The recorded `airk` run (split U95): new output is masked alike.
+    let old = |parity: &mut Parity,
+               case: &str,
+               arguments: &[&str],
+               stdin: &str|
+     -> anyhow::Result<(bool, String, String)> {
+        let recorded = parity.old(case, || {
+            let mut child = common::legacy_airk_command(root.path(), state.path(), "ctl-config")
+                .args(arguments)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(stdin.as_bytes())
+                .unwrap();
+            child.wait_with_output().unwrap()
+        });
+        Ok((recorded.success, recorded.stdout, recorded.stderr))
     };
     let message = |stderr: &str, prefix: &str| {
         let line = stderr.lines().last().unwrap_or_default();
@@ -1636,47 +1788,60 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
         "--project",
         &binding,
     ];
-    let (succeeded, before, stderr) = old(&prepare, draft)?;
+    let (succeeded, before, stderr) = old(&mut parity, "prepare-configuration", &prepare, draft)?;
     assert!(succeeded, "{stderr}");
     let (code, after, stderr) = ctl(&prepare, draft);
-    assert_eq!((code, after.as_str()), (0, before.as_str()), "{stderr}");
+    assert_eq!(
+        (code, parity.canonical(&after).as_str()),
+        (0, before.as_str()),
+        "{stderr}"
+    );
 
     // Refusals print the same message: a malformed draft, an unknown mode
     // value, a measurement that does not parse.
-    let measurement = state.path().join("measurement.json");
     fs::write(&measurement, "{}")?;
     let measurement = measurement.to_str().unwrap().to_owned();
-    for (arguments, stdin) in [
-        (vec!["configure", "--stdin"], "{\"operation\":\"bogus\"}"),
-        (vec!["usage", "import", &measurement, "--preview"], ""),
+    for (case, arguments, stdin) in [
+        (
+            "configure bogus",
+            vec!["configure", "--stdin"],
+            "{\"operation\":\"bogus\"}",
+        ),
+        (
+            "usage import preview",
+            vec!["usage", "import", &measurement, "--preview"],
+            "",
+        ),
     ] {
-        let (succeeded, stdout, old_stderr) = old(&arguments, stdin)?;
+        let (succeeded, stdout, old_stderr) = old(&mut parity, case, &arguments, stdin)?;
         let (code, new_stdout, new_stderr) = ctl(&arguments, stdin);
         assert!(!succeeded && code != 0, "{arguments:?}");
-        assert_eq!(new_stdout, stdout, "{arguments:?}");
+        assert_eq!(parity.canonical(&new_stdout), stdout, "{arguments:?}");
         assert_eq!(
-            message(&new_stderr, "airkctl: "),
+            message(&parity.canonical(&new_stderr), "airkctl: "),
             message(&old_stderr, "Error: "),
             "{arguments:?}"
         );
     }
 
     // Mutations: the same job, and the same saved-request line.
-    let draft_file = state.path().join("draft.json");
     fs::write(&draft_file, draft)?;
     let draft_file = draft_file.to_str().unwrap().to_owned();
-    for arguments in [
-        vec!["configure", "--file", &draft_file],
-        vec!["usage", "clear"],
-        vec!["usage", "set", "--mode", "aggregates_only"],
+    for (case, arguments) in [
+        ("configure file", vec!["configure", "--file", &draft_file]),
+        ("usage clear", vec!["usage", "clear"]),
+        (
+            "usage set aggregates_only",
+            vec!["usage", "set", "--mode", "aggregates_only"],
+        ),
     ] {
-        let (succeeded, stdout, old_stderr) = old(&arguments, "")?;
+        let (succeeded, stdout, old_stderr) = old(&mut parity, case, &arguments, "")?;
         let (code, new_stdout, new_stderr) = ctl(&arguments, "");
         assert!(succeeded, "{arguments:?}: {old_stderr}");
         assert_eq!(code, 0, "{arguments:?}: {new_stderr}");
         let (before, after): (Value, Value) = (
             serde_json::from_str(&stdout)?,
-            serde_json::from_str(&new_stdout)?,
+            serde_json::from_str(&parity.canonical(&new_stdout))?,
         );
         assert_eq!(after["status"], "job", "{arguments:?}");
         assert_eq!(
@@ -1685,7 +1850,7 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
             "{arguments:?}"
         );
         assert_eq!(
-            regex_free_configuration_nonce(&new_stderr),
+            regex_free_configuration_nonce(&parity.canonical(&new_stderr)),
             regex_free_configuration_nonce(&old_stderr),
             "{arguments:?}"
         );
@@ -1728,6 +1893,7 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
         "",
     );
     assert_eq!(code, 0);
+    parity.finish();
     Ok(())
 }
 
@@ -1800,6 +1966,14 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
         vec!["usage", "report", "--format", "markdown"],
         vec!["usage", "report", "--days", "0"],
     ];
+    let mut parity = Parity::new("airkctl_usage_documents_match_airk");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // Measured resource figures (timings, memory, OS counters) vary per run.
+    parity.mask_json_fields(&["*_us", "peak_rss_bytes", "value"]);
+    parity.mask_text("measured_usage_text", mask_measured_usage_text);
     for read in &reads {
         for (name, old, selection) in [
             (
@@ -1824,26 +1998,26 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
             ),
         ] {
             let mut old = old;
-            let before = old.args(read).output()?;
+            let before = parity.old(&format!("{name} {}", read.join(" ")), || {
+                old.args(read).output().unwrap()
+            });
             let (code, stdout, stderr) = ctl(&selection, read);
+            assert_eq!(code == 0, before.success, "{name} {read:?}: {stderr}");
             assert_eq!(
-                code == 0,
-                before.status.success(),
-                "{name} {read:?}: {stderr}"
-            );
-            assert_eq!(
-                comparable_text(&stdout),
-                comparable_text(&String::from_utf8(before.stdout)?),
+                comparable_text(&parity.canonical(&stdout)),
+                comparable_text(&before.stdout),
                 "{name} {read:?}"
             );
             if code != 0 {
                 assert_eq!(
-                    stderr
+                    parity
+                        .canonical(&stderr)
                         .lines()
                         .last()
                         .unwrap_or_default()
                         .strip_prefix("airkctl: "),
-                    String::from_utf8(before.stderr)?
+                    before
+                        .stderr
                         .lines()
                         .last()
                         .unwrap_or_default()
@@ -1853,6 +2027,7 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
             }
         }
     }
+    parity.finish();
     Ok(())
 }
 
@@ -1864,10 +2039,17 @@ fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-models");
     let control = service.control.to_str().unwrap().to_owned();
-    let before = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("model-catalog")
-        .output()?;
-    assert!(before.status.success());
+    let mut parity = Parity::new("airkctl_model_catalog_matches_airk");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
+    let before = parity.old("model-catalog", || {
+        Command::new(env!("CARGO_BIN_EXE_airk"))
+            .arg("model-catalog")
+            .output()
+            .unwrap()
+    });
+    assert!(before.success);
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let mut io = airkctl::cli::Io {
         stdin: &mut std::io::empty(),
@@ -1885,10 +2067,8 @@ fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
     .to_vec();
     let code = airkctl::cli::run(line, &mut io);
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&stderr));
-    assert_eq!(
-        String::from_utf8(stdout)?,
-        String::from_utf8(before.stdout)?
-    );
+    assert_eq!(parity.canonical(&String::from_utf8(stdout)?), before.stdout);
+    parity.finish();
     Ok(())
 }
 
@@ -1934,11 +2114,12 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
             _ => {}
         }
     }
-    let read = |path: &std::path::Path| -> anyhow::Result<Value> {
-        let mut value: Value = serde_json::from_slice(&fs::read(path)?)?;
+    // A written result (canonical text) without its clock fields.
+    fn read(text: &str) -> anyhow::Result<Value> {
+        let mut value: Value = serde_json::from_str(text)?;
         timeless(&mut value);
         Ok(value)
-    };
+    }
     let cases: Vec<(&str, Vec<&str>)> = vec![
         ("list-templates", vec![]),
         (
@@ -1956,40 +2137,52 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
         ),
         ("draft-plan", vec!["--args", "[1]"]),
     ];
+    let mut parity = Parity::new("airkctl_explorer_matches_airk");
+    parity.mask_json_fields(CLOCK_FIELDS);
+    parity.substitute_path(out.path(), "<OUT>");
+    parity.substitute_path(root.path(), "<ROOT>");
+    parity.substitute_path(state.path(), "<STATE>");
+    parity.service(&service);
     for (index, (command, extra)) in cases.iter().enumerate() {
         let old_path = out.path().join(format!("old-{index}.json"));
         let new_path = out.path().join(format!("new-{index}.json"));
-        let before = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .args(["explorer", command])
-            .args(extra)
-            .arg("--output")
-            .arg(&old_path)
-            .output()?;
+        let before = parity.old(&format!("{index} {command}"), || {
+            Command::new(env!("CARGO_BIN_EXE_airk"))
+                .args(["explorer", command])
+                .args(extra)
+                .arg("--output")
+                .arg(&old_path)
+                .output()
+                .unwrap()
+        });
+        let written = parity.old_file(&format!("{index} {command} output"), &old_path);
         let mut line = vec!["explorer", command];
         line.extend(extra.iter().copied());
         line.extend(["--output-file", new_path.to_str().unwrap()]);
         let (code, stdout, stderr) = ctl(&line);
+        assert_eq!(code == 0, before.success, "{command} {extra:?}: {stderr}");
         assert_eq!(
-            code == 0,
-            before.status.success(),
-            "{command} {extra:?}: {stderr}"
-        );
-        assert_eq!(
-            stdout.replace(&format!("new-{index}"), &format!("old-{index}")),
-            String::from_utf8(before.stdout)?,
+            parity.canonical(&stdout.replace(&format!("new-{index}"), &format!("old-{index}"))),
+            before.stdout,
             "{command} {extra:?}"
         );
-        assert_eq!(old_path.exists(), new_path.exists(), "{command} {extra:?}");
+        assert_eq!(written.success, new_path.exists(), "{command} {extra:?}");
         if new_path.exists() {
-            assert_eq!(read(&new_path)?, read(&old_path)?, "{command} {extra:?}");
+            assert_eq!(
+                read(&parity.canonical(&fs::read_to_string(&new_path)?))?,
+                read(&written.stdout)?,
+                "{command} {extra:?}"
+            );
         } else {
             assert_eq!(
-                stderr
+                parity
+                    .canonical(&stderr)
                     .lines()
                     .last()
                     .unwrap_or_default()
                     .strip_prefix("airkctl: "),
-                String::from_utf8(before.stderr)?
+                before
+                    .stderr
                     .lines()
                     .last()
                     .unwrap_or_default()
@@ -1998,16 +2191,25 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
             );
         }
     }
-    // proposal-status reads a written draft.
-    let draft = out.path().join("old-2.json");
+    // proposal-status reads a written draft: the one `airk` wrote while
+    // capturing; in replay (no `airk` run) the one airkctl wrote.
+    let draft = out.path().join(if parity.capturing() {
+        "old-2.json"
+    } else {
+        "new-2.json"
+    });
     let old_status = out.path().join("old-status.json");
     let new_status = out.path().join("new-status.json");
-    let before = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .args(["explorer", "proposal-status", "--draft"])
-        .arg(&draft)
-        .arg("--output")
-        .arg(&old_status)
-        .output()?;
+    let before = parity.old("proposal-status", || {
+        Command::new(env!("CARGO_BIN_EXE_airk"))
+            .args(["explorer", "proposal-status", "--draft"])
+            .arg(&draft)
+            .arg("--output")
+            .arg(&old_status)
+            .output()
+            .unwrap()
+    });
+    let old_status = parity.old_file("proposal-status output", &old_status);
     let (code, _, stderr) = ctl(&[
         "explorer",
         "proposal-status",
@@ -2016,8 +2218,11 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
         "--output-file",
         new_status.to_str().unwrap(),
     ]);
-    assert_eq!(code == 0, before.status.success(), "{stderr}");
-    assert_eq!(read(&new_status)?, read(&old_status)?);
+    assert_eq!(code == 0, before.success, "{stderr}");
+    let status = |parity: &Parity| -> anyhow::Result<Value> {
+        read(&parity.canonical(&fs::read_to_string(&new_status)?))
+    };
+    assert_eq!(status(&parity)?, read(&old_status.stdout)?);
     // An existing output file is refused alike and left unchanged.
     let (code, _, _) = ctl(&[
         "explorer",
@@ -2026,7 +2231,8 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
         new_status.to_str().unwrap(),
     ]);
     assert_ne!(code, 0);
-    assert_eq!(read(&new_status)?, read(&old_status)?);
+    assert_eq!(status(&parity)?, read(&old_status.stdout)?);
+    parity.finish();
     Ok(())
 }
 
@@ -2082,58 +2288,80 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
             String::from_utf8(stderr).unwrap(),
         )
     };
-    let same = |name: &str, old: std::process::Output, new: (u8, String, String)| {
-        assert_eq!(new.0 == 0, old.status.success(), "{name}: {}", new.2);
-        assert_eq!(new.1, String::from_utf8_lossy(&old.stdout), "{name}");
-        if new.0 != 0 {
-            assert_eq!(
-                new.2
-                    .lines()
-                    .last()
-                    .unwrap_or_default()
-                    .strip_prefix("airkctl: "),
-                String::from_utf8_lossy(&old.stderr)
-                    .lines()
-                    .last()
-                    .unwrap_or_default()
-                    .strip_prefix("Error: "),
-                "{name}"
-            );
-        }
-    };
-    same(
-        "endpoint",
-        runtime("http-endpoint", &[])?,
-        ctl(&["endpoint"]),
-    );
+    let same =
+        |parity: &Parity, name: &str, old: common::parity::Recorded, new: (u8, String, String)| {
+            assert_eq!(new.0 == 0, old.success, "{name}: {}", new.2);
+            assert_eq!(parity.canonical(&new.1), old.stdout, "{name}");
+            if new.0 != 0 {
+                assert_eq!(
+                    parity
+                        .canonical(&new.2)
+                        .lines()
+                        .last()
+                        .unwrap_or_default()
+                        .strip_prefix("airkctl: "),
+                    old.stderr
+                        .lines()
+                        .last()
+                        .unwrap_or_default()
+                        .strip_prefix("Error: "),
+                    "{name}"
+                );
+            }
+        };
     let id = airk_kernel::service_broker::new_instance_id()?.to_string();
     let unknown = airk_kernel::service_broker::new_instance_id()?.to_string();
+    let mut parity = Parity::new("airkctl_agent_connections_match_airk");
+    parity.substitute(&id, "<CONNECTION>");
+    parity.substitute(&unknown, "<UNKNOWN_CONNECTION>");
+    parity.substitute_path(source.path(), "<SOURCE>");
+    parity.substitute_path(data.path(), "<DATA>");
+    parity.substitute_path(inputs.path(), "<INPUTS>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // The bearer token is a secret and differs per run; `user` names the
+    // account that captured the fixture.
+    parity.mask_json_fields(&["Authorization", "user"]);
+    // The endpoint's identities and loopback URL are this run's.
+    let endpoint = ctl(&["endpoint"]);
+    if let Ok(value) = serde_json::from_str::<Value>(&endpoint.1) {
+        parity.substitute_identifiers(&value, "ENDPOINT");
+    }
+    let old = parity.old("endpoint", || runtime("http-endpoint", &[]).unwrap());
+    same(&parity, "endpoint", old, endpoint);
+    let old = parity.old("info of an unknown connection", || {
+        runtime("http-connection-info", &["--connection-id", &unknown]).unwrap()
+    });
     same(
+        &parity,
         "info of an unknown connection",
-        runtime("http-connection-info", &["--connection-id", &unknown])?,
+        old,
         ctl(&["info", "--connection-id", &unknown]),
     );
-    let enrolled = runtime(
-        "http-connection",
-        &[
-            "--selection-file",
-            selection.to_str().unwrap(),
-            "--connection-id",
-            &id,
-            "--client",
-            "codex",
-        ],
-    )?;
-    assert!(
-        enrolled.status.success(),
-        "{}",
-        String::from_utf8_lossy(&enrolled.stderr)
-    );
-    same(
-        "info",
-        runtime("http-connection-info", &["--connection-id", &id])?,
-        ctl(&["info", "--connection-id", &id]),
-    );
+    let enrolled = parity.old("enroll", || {
+        runtime(
+            "http-connection",
+            &[
+                "--selection-file",
+                selection.to_str().unwrap(),
+                "--connection-id",
+                &id,
+                "--client",
+                "codex",
+            ],
+        )
+        .unwrap()
+    });
+    assert!(enrolled.success, "{}", enrolled.stderr);
+    if !parity.capturing() {
+        // The recorded run enrolled through `airk runtime http-connection`;
+        // this run makes the same enrollment through its control method.
+        enroll_codex_connection(&service, &id)?;
+    }
+    let old = parity.old("info", || {
+        runtime("http-connection-info", &["--connection-id", &id]).unwrap()
+    });
+    same(&parity, "info", old, ctl(&["info", "--connection-id", &id]));
     let (code, stdout, stderr) = ctl(&["info", "--connection-id", &id]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
@@ -2144,12 +2372,15 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     );
     // The offline header helper (3e.3): same header, and the same refusals
     // for an unknown connection and, below, a revoked one.
-    let credential = |id: &str| -> anyhow::Result<_> {
+    let credential = |parity: &mut Parity, case: &str, id: &str| -> anyhow::Result<_> {
         Ok((
-            runtime(
-                "http-credential",
-                &["--connection-id", id, "--format", "header-json"],
-            )?,
+            parity.old(case, || {
+                runtime(
+                    "http-credential",
+                    &["--connection-id", id, "--format", "header-json"],
+                )
+                .unwrap()
+            }),
             ctl(&[
                 "credential",
                 "--connection-id",
@@ -2159,15 +2390,15 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
             ]),
         ))
     };
-    let (old, new) = credential(&id)?;
+    let (old, new) = credential(&mut parity, "credential", &id)?;
     assert!(
         new.1.contains("\"Authorization\":\"Bearer airk1."),
         "{}",
         new.2
     );
-    same("credential", old, new);
-    let (old, new) = credential(&unknown)?;
-    same("credential of an unknown connection", old, new);
+    same(&parity, "credential", old, new);
+    let (old, new) = credential(&mut parity, "credential of an unknown connection", &unknown)?;
+    same(&parity, "credential of an unknown connection", old, new);
     // M16 (3e.4): `agents list --connection-id` answers what
     // `lookup-http-connection` answers, without its selected-runtime field.
     let airk_core::service::ControlResponse::Health {
@@ -2177,22 +2408,27 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
         anyhow::bail!("missing service health");
     };
     let active = health.runtime_sha256.clone().unwrap_or_default();
+    parity.substitute(&active, "<ACTIVE>");
     for (name, target) in [("owned", id.as_str()), ("not owned", unknown.as_str())] {
-        let old = runtime(
-            "lookup-http-connection",
-            &["--expected-active", &active, "--connection-id", target],
-        )?;
-        assert!(
-            old.status.success(),
-            "{}",
-            String::from_utf8_lossy(&old.stderr)
-        );
-        let mut old: Value = serde_json::from_slice(&old.stdout)?;
-        assert_eq!(old["active"], active.as_str());
+        let old = parity.old(&format!("lookup {name}"), || {
+            runtime(
+                "lookup-http-connection",
+                &["--expected-active", &active, "--connection-id", target],
+            )
+            .unwrap()
+        });
+        assert!(old.success, "{}", old.stderr);
+        let mut old: Value = serde_json::from_str(&old.stdout)?;
+        // The run's own active runtime digest, in canonical space.
+        assert_eq!(old["active"], parity.canonical(&active).as_str());
         old.as_object_mut().unwrap().remove("active");
         let (code, new, stderr) = ctl(&["list", "--connection-id", target]);
         assert_eq!(code, 0, "{name}: {stderr}");
-        assert_eq!(serde_json::from_str::<Value>(&new)?, old, "{name}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&parity.canonical(&new))?,
+            old,
+            "{name}"
+        );
     }
     // V1 (3e.9): the service verifies its own MCP endpoint with the stored
     // credential, and no token reaches the output.
@@ -2208,14 +2444,22 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     let revoked: Value = serde_json::from_str(&revoked)?;
     assert_eq!(revoked["status"], "http_revoked");
     assert_eq!(revoked["connection_id"], id);
+    let old = parity.old("info after revoke", || {
+        runtime("http-connection-info", &["--connection-id", &id]).unwrap()
+    });
     same(
+        &parity,
         "info after revoke",
-        runtime("http-connection-info", &["--connection-id", &id])?,
+        old,
         ctl(&["info", "--connection-id", &id]),
     );
+    let old = parity.old("revoke again", || {
+        runtime("http-revoke", &["--connection-id", &id]).unwrap()
+    });
     same(
+        &parity,
         "revoke again",
-        runtime("http-revoke", &["--connection-id", &id])?,
+        old,
         ctl(&["revoke", "--connection-id", &id]),
     );
     // A revoked connection is owned-but-unavailable and does not verify.
@@ -2227,9 +2471,40 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     );
     let (code, _, _) = ctl(&["verify", "--connection-id", &id]);
     assert_ne!(code, 0);
-    let (old, new) = credential(&id)?;
+    let (old, new) = credential(&mut parity, "credential after revoke", &id)?;
     assert_ne!(new.0, 0);
-    same("credential after revoke", old, new);
+    same(&parity, "credential after revoke", old, new);
+    parity.finish();
+    Ok(())
+}
+
+/// The enrollment `airk runtime http-connection --client codex` made, through
+/// the same control method (HttpEnroll at the live instance), for a run that
+/// replays the recorded `airk` outputs (split U95).
+fn enroll_codex_connection(service: &common::Service, id: &str) -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse};
+    let ControlResponse::Health { observation } = service.request(ControlMethod::Health) else {
+        anyhow::bail!("missing service health");
+    };
+    let response = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(airk_cli::service_runtime::request_for_instance(
+            &service.control,
+            ControlMethod::HttpEnroll {
+                connection_id: id.parse()?,
+                selection: Box::new(service.http_selection()),
+                client: airk_core::usage::ClientFamily::Codex,
+                explorer_descriptor: None,
+                reattach_connection_id: None,
+            },
+            observation.instance,
+        ))?;
+    anyhow::ensure!(
+        matches!(response, ControlResponse::HttpConnection { .. }),
+        "enrollment refused: {}",
+        serde_json::to_string(&response)?
+    );
     Ok(())
 }
 
@@ -2275,27 +2550,41 @@ fn airkctl_trust_and_issuer_rotation_match_airk() -> anyhow::Result<()> {
             String::from_utf8(stderr).unwrap(),
         )
     };
+    let mut parity = Parity::new("airkctl_trust_and_issuer_rotation_match_airk");
+    parity.substitute_path(source.path(), "<SOURCE>");
+    parity.substitute_path(data.path(), "<DATA>");
+    parity.service(&service);
+    parity.mask_json_fields(CLOCK_FIELDS);
+    // `user` names the account that captured the fixture.
+    parity.mask_json_fields(&["user"]);
+    // The endpoint's issuer and certificate identities are this run's.
+    if let airk_core::service::ControlResponse::HttpEndpoint {
+        endpoint: Some(endpoint),
+    } = service.request(airk_core::service::ControlMethod::HttpEndpoint)
+    {
+        parity.substitute_identifiers(&endpoint, "ENDPOINT");
+    }
     for (name, old, new) in [
         (
             "trust inspect",
-            runtime("http-trust", &["--action", "inspect"])?,
+            parity.old("trust inspect", || {
+                runtime("http-trust", &["--action", "inspect"]).unwrap()
+            }),
             ctl(&["trust", "inspect"]),
         ),
         (
             "issuer-rotation status",
-            runtime("http-issuer-rotation", &["--action", "status"])?,
+            parity.old("issuer-rotation status", || {
+                runtime("http-issuer-rotation", &["--action", "status"]).unwrap()
+            }),
             ctl(&["issuer-rotation", "status"]),
         ),
     ] {
-        assert!(
-            old.status.success(),
-            "{name}: {}",
-            String::from_utf8_lossy(&old.stderr)
-        );
+        assert!(old.success, "{name}: {}", old.stderr);
         assert_eq!(new.0, 0, "{name}: {}", new.2);
         assert_eq!(
-            serde_json::from_str::<Value>(&new.1)?,
-            serde_json::from_slice::<Value>(&old.stdout)?,
+            serde_json::from_str::<Value>(&parity.canonical(&new.1))?,
+            serde_json::from_str::<Value>(&old.stdout)?,
             "{name}"
         );
     }
@@ -2306,10 +2595,13 @@ fn airkctl_trust_and_issuer_rotation_match_airk() -> anyhow::Result<()> {
         "{stderr}"
     );
     assert!(
-        !runtime("http-trust", &["--action", "install"])?
-            .status
-            .success()
+        !parity
+            .old("trust install", || {
+                runtime("http-trust", &["--action", "install"]).unwrap()
+            })
+            .success
     );
+    parity.finish();
     Ok(())
 }
 
@@ -2630,4 +2922,46 @@ fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Re
     };
     assert!(windows.is_empty(), "{windows:?}");
     Ok(())
+}
+
+/// Usage-report text that varies per run: the root binding's digest bytes
+/// and measured figures (`…Us: n`, `…Bytes: n`, `RSS: Some(n)`), at any JSON
+/// escape level.
+fn mask_measured_usage_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    'scan: while !rest.is_empty() {
+        for (marker, close) in [
+            ("root_binding", Some(']')),
+            ("Us: ", None),
+            ("Bytes: ", None),
+            ("RSS: Some(", None),
+        ] {
+            if let Some(after) = rest.strip_prefix(marker) {
+                out.push_str(marker);
+                match close {
+                    Some(end) => {
+                        // Skip the quote/escape run and `:[`, then the array body.
+                        let open = after.find('[').map_or(0, |at| at + 1);
+                        let body = after[open..].find(end).map_or(after.len(), |at| open + at);
+                        out.push_str(&after[..open]);
+                        out.push_str("<MASKED>");
+                        rest = &after[body..];
+                    }
+                    None => {
+                        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+                        if digits > 0 {
+                            out.push_str("<MASKED>");
+                        }
+                        rest = &after[digits..];
+                    }
+                }
+                continue 'scan;
+            }
+        }
+        let next = rest.chars().next().unwrap();
+        out.push(next);
+        rest = &rest[next.len_utf8()..];
+    }
+    out
 }

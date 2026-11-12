@@ -1,0 +1,39 @@
+{
+  "cases": {
+    "index": {
+      "code": 0,
+      "stderr": "Saved CLI request <H1>; use 'airk service requests --runtime-dir <control> list/retry' for uncertain outcomes.\n",
+      "stdout": "{\"status\":\"job\",\"job\":{\"id\":\"<H1>\",\"project\":\"<BINDING>\",\"kind\":\"index\",\"state\":\"pending\",\"fencing_generation\":0,\"attempts\":0,\"outcome\":null}}\n",
+      "success": true
+    },
+    "inspect": {
+      "code": 0,
+      "stderr": "Saved CLI request <H1>; use 'airk service requests --runtime-dir <control> list/retry' for uncertain outcomes.\n",
+      "stdout": "{\"status\":\"job\",\"job\":{\"id\":\"<H1>\",\"project\":\"<BINDING>\",\"kind\":\"inspect\",\"state\":\"pending\",\"fencing_generation\":0,\"attempts\":0,\"outcome\":null}}\n",
+      "success": true
+    },
+    "requests list": {
+      "code": 0,
+      "stderr": "",
+      "stdout": "[{\"nonce\":\"<PREPARED>\",\"project\":\"<BINDING>\",\"kind\":\"inspect\"}]\n",
+      "success": true
+    }
+  },
+  "masked": [
+    "*_unix_ms",
+    "*_unix_secs",
+    "cache_age_ms",
+    "caller",
+    "elapsed_ms",
+    "epoch",
+    "namespace",
+    "uptime_ms"
+  ],
+  "note": "U95: pre-split airk outputs captured before the user CLI was deleted; canonical form: masked, run values substituted by placeholders, 32/64-digit hex tokens renamed <H{n}> per text",
+  "placeholders": [
+    "<BINDING>",
+    "<PREPARED>"
+  ],
+  "schema": "airk.split.parity/1",
+  "test": "airkctl_jobs_and_requests_match_airk"
+}
