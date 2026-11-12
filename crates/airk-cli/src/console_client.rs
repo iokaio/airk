@@ -81,7 +81,8 @@ async fn handle(
         | ControlMethod::AgentEndpoint {}
         | ControlMethod::AgentConnectionInfo { .. }
         | ControlMethod::AgentConnectionOwnership { .. }
-        | ControlMethod::AgentConnectionVerify { .. } => {
+        | ControlMethod::AgentConnectionVerify { .. }
+        | ControlMethod::HttpIssuerRotation { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

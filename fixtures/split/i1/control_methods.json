@@ -835,6 +835,56 @@
           "bytes": "{\"status\":\"agent_connection_verified\"}"
         }
       ]
+    },
+    {
+      "variant": "issuer_rotation",
+      "method": "M18",
+      "methods": [
+        {
+          "name": "status",
+          "bytes": "{\"http_issuer_rotation\":{\"action\":\"status\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "without_action",
+          "bytes": "{\"http_issuer_rotation\":{}}"
+        },
+        {
+          "name": "commit_is_not_served",
+          "bytes": "{\"http_issuer_rotation\":{\"action\":\"commit\"}}"
+        },
+        {
+          "name": "trust_new_is_local",
+          "bytes": "{\"http_issuer_rotation\":{\"action\":\"trust_new\"}}"
+        },
+        {
+          "name": "status_with_operation",
+          "bytes": "{\"http_issuer_rotation\":{\"action\":\"status\",\"operation_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "status_without_rotation",
+          "bytes": "{\"status\":\"http_issuer_rotation\",\"result\":{\"current_descriptor_sha256\":null,\"current_endpoint\":null,\"finalize_overdue\":false,\"guidance\":\"Issuer replacement requires explicit client trust enrollment and reconnect. The overlap deadline does not remove OS trust automatically. Finalize only removes exact owned trust; unknown outcomes require review.\",\"receipt_sha256\":null,\"rotation\":null,\"schema\":1,\"trust_result\":null}}"
+        },
+        {
+          "name": "refused",
+          "bytes": "{\"status\":\"http_issuer_rotation_refused\",\"message\":\"issuer rotation installation changed\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "status_without_result",
+          "bytes": "{\"status\":\"http_issuer_rotation\"}"
+        },
+        {
+          "name": "refused_without_message",
+          "bytes": "{\"status\":\"http_issuer_rotation_refused\"}"
+        }
+      ]
     }
   ]
 }

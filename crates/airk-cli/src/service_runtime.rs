@@ -24,6 +24,7 @@ mod journal;
 mod lifecycle;
 mod registration;
 mod resolve;
+mod rotation;
 mod tools_call;
 mod usage;
 mod window_plane;
@@ -602,6 +603,9 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             }
             ControlMethod::AgentConnectionVerify { connection_id } => {
                 agents::verify(&state.control_root, connection_id).await
+            }
+            ControlMethod::HttpIssuerRotation { action } => {
+                rotation::response(&state.control_root, action).await
             }
             ControlMethod::AbandonLifecycle { id } => {
                 match lifecycle::abandon(&state.control_root, state.instance, id) {
