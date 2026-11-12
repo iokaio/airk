@@ -16,6 +16,8 @@ is committed but untested. No installer was rebuilt for that fix. Installer
 repair, builds and qualification are stopped at the user's direction; retained
 artifact receipts describe their original inputs.
 
+**1.8.26 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.26 for the rebuilt local Windows AIRK Service installer and VSIX (old-extension guard, Windows upgrade process scan); see the [1.8.26 record](releases/release-1.8.26.md). The 1.8.25 and 1.8.24 text below is dated history.
+
 **1.8.25 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.25 for the rebuilt local Windows AIRK Service installer (pre-split retirement fix); see the [1.8.25 record](releases/release-1.8.25.md). The 1.8.24 text below is dated history.
 
 **1.8.24 first split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.24 for the local Windows AIRK Service installer and UI-only VSIX of the split; see the [1.8.24 record](releases/release-1.8.24.md). The 1.8.23 text below is dated history.
