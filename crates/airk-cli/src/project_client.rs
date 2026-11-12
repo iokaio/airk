@@ -355,8 +355,8 @@ impl Connection {
             scope.validate()?;
             ensure!(
                 scope.index_id == selection.index_id
-                    && scope.grant_id == selection.grant_id
-                    && scope.grant_revision == selection.expected_grant_revision,
+                    && scope.catalog_grant()
+                        == Some((selection.grant_id, selection.expected_grant_revision)),
                 "scoped connection differs from the selected reviewed grant"
             );
         }

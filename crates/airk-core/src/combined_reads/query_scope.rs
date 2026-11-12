@@ -222,20 +222,40 @@ pub fn installed_body(
             );
         }
     }
-    let reason = match observation.provenance {
-        crate::grant_provenance::GrantProvenanceKind::ImportedLegacySnapshot
-        | crate::grant_provenance::GrantProvenanceKind::ImportedStandaloneAdoption => {
+    use crate::{grant_provenance::GrantProvenanceKind, scoped_reads::SelectionOwnerKind};
+    let reason = match (&observation.provenance, &observation.selection) {
+        (
+            Some(
+                GrantProvenanceKind::ImportedLegacySnapshot
+                | GrantProvenanceKind::ImportedStandaloneAdoption,
+            ),
+            None,
+        ) => {
             "This imported legacy grant authorizes only the frozen selection shown here. Current catalog discovery and widening require an explicitly reviewed Project/index session."
         }
-        crate::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant => {
+        (Some(GrantProvenanceKind::UserReviewedProjectGrant), None) => {
             "This installed single-index grant authorizes only the frozen selection shown here. Current catalog discovery and widening require a reviewed Project/index discovery session."
         }
+        (None, Some(selection)) => match selection.owner {
+            SelectionOwnerKind::Window => {
+                "This window's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
+            }
+            SelectionOwnerKind::Admin => {
+                "This admin session's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
+            }
+        },
+        _ => return Err(ScopeReadRefused.into()),
     };
-    let body = json!({"schema":"airk.query-scope/1","mode":"frozen_single_index","status":"configuration_required",
+    let mut body = json!({"schema":"airk.query-scope/1","mode":"frozen_single_index","status":"configuration_required",
         "projects":[],"indexes":[],"sources":[],"truncated":false,"continuation":null,
         "grant":observation.grant,"scope_revision":null,"scope_observation":observation,
         "observed_selection":{"project_ids":projects,"index_ids":indexes},
         "catalog_discovery":"unavailable_on_this_connection","reason":reason});
+    // Selection bodies carry `"grant": null` and a `selection` key; the
+    // catalog-grant body keeps exactly its former keys.
+    if let Some(selection) = &observation.selection {
+        body["selection"] = json!(selection);
+    }
     crate::index_catalog::encoded_size(&body, args.max_bytes())?;
     Ok(body)
 }
@@ -253,11 +273,12 @@ mod installed_tests {
             schema: 1,
             qualifier: ScopeQualifier::SelectedSubset,
             fingerprint: Sha256Digest::from_bytes([1; 32]),
-            provenance: crate::grant_provenance::GrantProvenanceKind::ImportedLegacySnapshot,
-            grant: ScopeGrantObservation {
+            provenance: Some(crate::grant_provenance::GrantProvenanceKind::ImportedLegacySnapshot),
+            grant: Some(ScopeGrantObservation {
                 id: GrantId::from_identity(Incarnation::from_bytes([0x84; 16])),
                 revision: CatalogRevision::INITIAL,
-            },
+            }),
+            selection: None,
             members: vec![ScopeMemberObservation {
                 index_id: IndexId::from_identity(Incarnation::from_bytes([2; 16])),
                 memberships: vec![ScopeMembershipObservation {
@@ -297,6 +318,68 @@ mod installed_tests {
             assert!(body["projects"].as_array().unwrap().is_empty());
             assert!(body.get("publication").is_none());
         }
+        Ok(())
+    }
+    #[test]
+    fn selection_discovery_body_has_null_grant_and_the_public_selection() -> Result<()> {
+        let catalog = observation();
+        let args: QueryScopeArgs = serde_json::from_value(json!({"view":"projects"}))?;
+        let catalog_body = installed_body(&args, &catalog)?;
+        assert!(catalog_body.get("selection").is_none());
+        let mut selected = catalog.clone();
+        selected.provenance = None;
+        selected.grant = None;
+        selected.selection = Some(ScopeSelectionObservation {
+            owner: SelectionOwnerKind::Window,
+            scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
+            catalog_revision: CatalogRevision::try_from(5_u64)?,
+        });
+        selected.validate()?;
+        let body = installed_body(&args, &selected)?;
+        assert_eq!(body["mode"], "frozen_single_index");
+        assert_eq!(body["grant"], Value::Null);
+        assert_eq!(
+            body["selection"],
+            json!({"owner":"window","scope_identity":"0c".repeat(32),"catalog_revision":5})
+        );
+        assert_eq!(body["scope_observation"], json!(selected));
+        assert!(body["scope_observation"].get("grant").is_none());
+        assert!(
+            body["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("This window's")
+        );
+        let mut admin = selected.clone();
+        admin.selection.as_mut().unwrap().owner = SelectionOwnerKind::Admin;
+        let body = installed_body(&args, &admin)?;
+        assert!(
+            body["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("This admin session's")
+        );
+        let mut keys = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut catalog_keys = catalog_body
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        catalog_keys.push("selection".into());
+        keys.sort();
+        catalog_keys.sort();
+        assert_eq!(keys, catalog_keys);
+        let mut both = selected.clone();
+        both.grant = catalog.grant.clone();
+        both.provenance = catalog.provenance;
+        assert!(both.validate().is_err());
+        assert!(installed_body(&args, &both).is_err());
         Ok(())
     }
     #[test]

@@ -105,6 +105,7 @@ COPY fixtures/split/i1/admin_launch_code.json ./fixtures/split/i1/admin_launch_c
 COPY fixtures/split/agents/config_cases.json ./fixtures/split/agents/config_cases.json
 COPY fixtures/split/parity ./fixtures/split/parity
 COPY fixtures/split/i1/request_recovery.json ./fixtures/split/i1/request_recovery.json
+COPY fixtures/split/i1/selection_authority.json ./fixtures/split/i1/selection_authority.json
 COPY fixtures/split/i4/role_admission.json ./fixtures/split/i4/role_admission.json
 COPY fixtures/split/i4/interruptions.json ./fixtures/split/i4/interruptions.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json

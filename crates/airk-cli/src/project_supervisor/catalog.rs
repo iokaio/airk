@@ -1541,8 +1541,8 @@ mod tests {
             },
             expected_catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
             operation: airk_core::catalog_management::CatalogOperation::RevokeGrant {
-                id: scope.grant_id,
-                expected_revision: scope.grant_revision,
+                id: scope.grant_id.unwrap(),
+                expected_revision: scope.grant_revision.unwrap(),
             },
         };
         gate.close_request_admission(&request)?;

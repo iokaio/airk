@@ -186,6 +186,11 @@ impl FencePlan {
         let mut keys = Vec::new();
         for target in &self.targets {
             target.scope.validate()?;
+            // Selection scopes are revoked in memory and never persisted.
+            ensure!(
+                target.scope.catalog_grant().is_some(),
+                "a selection scope is never a durable catalog fence target"
+            );
             ensure!(
                 target.worker.service == self.service && target.worker.fencing_generation > 0,
                 "catalog fence worker identity mismatch"

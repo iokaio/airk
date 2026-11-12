@@ -275,7 +275,7 @@ async fn preserved_read_failure_retains_current_scope_fence_and_rejects_foreign_
     );
     let mut current = first.clone();
     current.fingerprint = Sha256Digest::from_bytes([98; 32]);
-    current.grant.revision = CatalogRevision::INITIAL.next()?;
+    current.grant.as_mut().unwrap().revision = CatalogRevision::INITIAL.next()?;
     let changed = same.context(airk_core::scoped_reads::ScopeErrorObservation {
         observation: current.clone(),
         message: "replacement native owner".into(),

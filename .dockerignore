@@ -132,6 +132,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i1/window_plane.json
 !fixtures/split/agents/config_cases.json
 !fixtures/split/i1/request_recovery.json
+!fixtures/split/i1/selection_authority.json
 !fixtures/split/i4/role_admission.json
 !fixtures/split/i4/interruptions.json
 !fixtures/wire/airkctl_session_frames.json

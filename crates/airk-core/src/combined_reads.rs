@@ -190,15 +190,30 @@ pub struct ResolvedSelection {
 /// Canonical public selection observation. The native owner retains the full
 /// frozen memberships and union predicates; their digest binds every scope and
 /// revision without serializing those predicates repeatedly in each read.
+/// Exactly one source: a catalog grant (`grant_id` and `grant_revision`) or an
+/// in-memory selection; catalog-grant bytes are unchanged.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelectedScopeObservation {
     pub project_ids: Vec<QueryProjectId>,
     pub index_ids: Vec<IndexId>,
-    pub grant_id: GrantId,
-    pub grant_revision: CatalogRevision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<GrantId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_revision: Option<CatalogRevision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<crate::scoped_reads::ScopeSelectionObservation>,
     pub member_availability: MemberAvailability,
     pub identity: Sha256Digest,
+}
+impl SelectedScopeObservation {
+    /// True only for exactly one authority source (grant pair xor selection).
+    pub fn has_one_source(&self) -> bool {
+        matches!(
+            (self.grant_id, self.grant_revision, self.selection),
+            (Some(_), Some(_), None) | (None, None, Some(_))
+        )
+    }
 }
 
 impl ResolvedSelection {
@@ -206,8 +221,9 @@ impl ResolvedSelection {
         Ok(SelectedScopeObservation {
             project_ids: self.project_ids.clone(),
             index_ids: self.members.iter().map(|member| member.index_id).collect(),
-            grant_id: self.grant_id,
-            grant_revision: self.grant_revision,
+            grant_id: Some(self.grant_id),
+            grant_revision: Some(self.grant_revision),
+            selection: None,
             member_availability: self.member_availability,
             identity: self.identity()?,
         })

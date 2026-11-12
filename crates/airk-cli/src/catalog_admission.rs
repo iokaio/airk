@@ -220,7 +220,7 @@ impl Installed {
     fn matches(&self, target: ScopeTarget) -> bool {
         match target {
             ScopeTarget::Index(id) => self.scope.index_id == id,
-            ScopeTarget::Grant(id) => self.scope.grant_id == id,
+            ScopeTarget::Grant(id) => self.scope.grant_id == Some(id),
             ScopeTarget::Membership {
                 project_id,
                 index_id,
@@ -629,12 +629,14 @@ impl NativeCatalogAdmission {
         previous: Option<ScopedReadRef>,
     ) -> Result<InstallTicket> {
         // Validate and measure immutable payload before taking the gate mutex.
+        let (grant_id, grant_revision) = (authority.grant.id, authority.grant.revision);
         let mut scope = ScopedReadRef {
             schema: 1,
             lease_generation: 0,
             index_id: authority.index_id,
-            grant_id: authority.grant.id,
-            grant_revision: authority.grant.revision,
+            grant_id: Some(grant_id),
+            grant_revision: Some(grant_revision),
+            selection: None,
             fingerprint: authority.fingerprint()?,
         };
         ensure!(
@@ -650,20 +652,15 @@ impl NativeCatalogAdmission {
             expires > now && expires.duration_since(now) <= MAX_LIFETIME,
             ScopeReadRefused
         );
-        let family = (worker.worker, scope.grant_id, scope.index_id);
+        let family = (worker.worker, grant_id, scope.index_id);
         ensure!(
             state
                 .highwater
                 .get(&family)
-                .is_none_or(|revision| scope.grant_revision >= *revision),
+                .is_none_or(|revision| grant_revision >= *revision),
             ScopeReadRefused
         );
-        let key = (
-            worker.worker,
-            scope.grant_id,
-            scope.index_id,
-            scope.fingerprint,
-        );
+        let key = (worker.worker, grant_id, scope.index_id, scope.fingerprint);
         if let Some(existing) = state.installed.get(&key).cloned() {
             ensure!(
                 existing.worker == worker
@@ -727,7 +724,7 @@ impl NativeCatalogAdmission {
         if state
             .highwater
             .get(&family)
-            .is_some_and(|revision| scope.grant_revision > *revision)
+            .is_some_and(|revision| grant_revision > *revision)
         {
             ensure!(
                 state
@@ -737,14 +734,14 @@ impl NativeCatalogAdmission {
                         entry.worker.worker,
                         entry.scope.grant_id,
                         entry.scope.index_id
-                    ) == family)
+                    ) == (family.0, Some(family.1), family.2))
                     .all(|entry| entry.phase == Phase::Revoked),
                 ScopeReadRefused
             );
         }
         let (nonce, generation) = state.reserve_numbers(worker.worker)?;
         scope.lease_generation = generation;
-        state.highwater.insert(family, scope.grant_revision);
+        state.highwater.insert(family, grant_revision);
         state.installed.insert(
             key,
             Installed {
@@ -780,14 +777,10 @@ impl NativeCatalogAdmission {
             worker == ticket.worker && scope == ticket.scope,
             ScopeReadRefused
         );
+        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = state
             .installed
-            .get_mut(&(
-                worker.worker,
-                scope.grant_id,
-                scope.index_id,
-                scope.fingerprint,
-            ))
+            .get_mut(&(worker.worker, grant_id, scope.index_id, scope.fingerprint))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -825,14 +818,10 @@ impl NativeCatalogAdmission {
         state.check_issue(ticket)?;
         state.worker(worker)?;
         scope.validate()?;
+        let (grant_id, grant_revision) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = state
             .installed
-            .get(&(
-                worker.worker,
-                scope.grant_id,
-                scope.index_id,
-                scope.fingerprint,
-            ))
+            .get(&(worker.worker, grant_id, scope.index_id, scope.fingerprint))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -840,8 +829,8 @@ impl NativeCatalogAdmission {
                 && entry.phase == Phase::Installed
                 && state
                     .highwater
-                    .get(&(worker.worker, scope.grant_id, scope.index_id))
-                    == Some(&scope.grant_revision)
+                    .get(&(worker.worker, grant_id, scope.index_id))
+                    == Some(&grant_revision)
                 && Instant::now() < entry.expires,
             ScopeReadRefused
         );
@@ -1657,14 +1646,10 @@ impl NativeCatalogAdmission {
             return Ok(());
         }
         state.worker(worker)?;
+        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = state
             .installed
-            .get_mut(&(
-                worker.worker,
-                scope.grant_id,
-                scope.index_id,
-                scope.fingerprint,
-            ))
+            .get_mut(&(worker.worker, grant_id, scope.index_id, scope.fingerprint))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -1919,17 +1904,16 @@ impl NativeCatalogAdmission {
             if let Some(previous) = workers.insert(target.worker.worker, target.worker) {
                 ensure!(previous == target.worker, ScopeReadRefused);
             }
-            let family = (
-                target.worker.worker,
-                target.scope.grant_id,
-                target.scope.index_id,
-            );
+            // Persisted targets are catalog grants only; a `None` is refused.
+            let (grant_id, grant_revision) =
+                target.scope.catalog_grant().ok_or(ScopeReadRefused)?;
+            let family = (target.worker.worker, grant_id, target.scope.index_id);
             highwater
                 .entry(family)
                 .and_modify(|revision: &mut CatalogRevision| {
-                    *revision = (*revision).max(target.scope.grant_revision)
+                    *revision = (*revision).max(grant_revision)
                 })
-                .or_insert(target.scope.grant_revision);
+                .or_insert(grant_revision);
             lease_highwater
                 .entry(target.worker.worker)
                 .and_modify(|generation: &mut u64| {
@@ -1938,7 +1922,7 @@ impl NativeCatalogAdmission {
                 .or_insert(target.scope.lease_generation);
             let key = (
                 target.worker.worker,
-                target.scope.grant_id,
+                grant_id,
                 target.scope.index_id,
                 target.scope.fingerprint,
             );

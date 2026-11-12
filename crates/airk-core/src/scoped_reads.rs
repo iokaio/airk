@@ -98,18 +98,77 @@ impl ScopedSourceProjection {
     }
 }
 
+/// The owner plane of an in-memory selection grant (W4 window or A2 admin).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionOwnerKind {
+    Window,
+    Admin,
+}
+
+/// In-memory selection grant identity. Never a bearer: it carries no lease,
+/// cookie or session id, and possession of it admits nothing. It is never
+/// carried by a client-visible frame. `Debug` prints `grant_nonce` redacted.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionScopeRef {
+    pub owner: SelectionOwnerKind,
+    /// Random identity drawn by the service when the grant is stored; a new
+    /// grant (re-select) gets a new nonce.
+    pub grant_nonce: crate::identity::Incarnation,
+    pub service_instance: crate::identity::Incarnation,
+    /// `scope_grant::decide`'s identity of the stored selection.
+    pub scope_identity: Sha256Digest,
+    pub catalog_revision: crate::index_catalog::CatalogRevision,
+}
+impl SelectionScopeRef {
+    /// The public part only: never the nonce or the service instance.
+    pub fn observation(&self) -> ScopeSelectionObservation {
+        ScopeSelectionObservation {
+            owner: self.owner,
+            scope_identity: self.scope_identity,
+            catalog_revision: self.catalog_revision,
+        }
+    }
+}
+impl std::fmt::Debug for SelectionScopeRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SelectionScopeRef")
+            .field("owner", &self.owner)
+            .field("grant_nonce", &"[REDACTED]")
+            .field("service_instance", &self.service_instance)
+            .field("scope_identity", &self.scope_identity)
+            .field("catalog_revision", &self.catalog_revision)
+            .finish()
+    }
+}
+
 /// Installed authorization identity only. This is not a freshness observation,
 /// a publication selector, a live grant check, or permission to widen a read.
+/// Exactly one source is present: a catalog grant (`provenance` and `grant`)
+/// or an in-memory selection (`selection`). Catalog-grant bytes are unchanged.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeObservation {
     pub schema: u32,
     pub qualifier: ScopeQualifier,
     pub fingerprint: Sha256Digest,
-    pub provenance: crate::grant_provenance::GrantProvenanceKind,
-    pub grant: ScopeGrantObservation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::grant_provenance::GrantProvenanceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<ScopeGrantObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<ScopeSelectionObservation>,
     /// P6f contains one member; the same contract admits up to 32 in P7.
     pub members: Vec<ScopeMemberObservation>,
+}
+/// Public selection identity; deliberately omits the nonce and service instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeSelectionObservation {
+    pub owner: SelectionOwnerKind,
+    pub scope_identity: Sha256Digest,
+    pub catalog_revision: crate::index_catalog::CatalogRevision,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -143,6 +202,13 @@ impl ScopeObservation {
         use crate::index_catalog::{MAX_SELECTION, MAX_SOURCE_ROOTS, unique_bounded};
         ensure!(
             self.schema == 1 && !self.members.is_empty(),
+            ScopeReadRefused
+        );
+        ensure!(
+            matches!(
+                (&self.provenance, &self.grant, &self.selection),
+                (Some(_), Some(_), None) | (None, None, Some(_))
+            ),
             ScopeReadRefused
         );
         unique_bounded(

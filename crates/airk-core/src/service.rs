@@ -1721,6 +1721,10 @@ impl std::fmt::Display for JobError {
 impl std::error::Error for JobError {}
 
 /// Frozen native scope identity. This metadata is never a bearer credential.
+/// Exactly one source: a catalog grant (`grant_id` and `grant_revision`) or an
+/// in-memory selection (`selection`). A present field serializes exactly as the
+/// former required field, so catalog-grant bytes are unchanged. A selection ref
+/// is never a durable fence target and never leaves the private host/worker path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopedReadRef {
@@ -1728,8 +1732,12 @@ pub struct ScopedReadRef {
     /// Native-reserved, worker-monotonic installation lease; never a bearer.
     pub lease_generation: u64,
     pub index_id: crate::index_catalog::IndexId,
-    pub grant_id: crate::index_catalog::GrantId,
-    pub grant_revision: crate::index_catalog::CatalogRevision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<crate::index_catalog::GrantId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_revision: Option<crate::index_catalog::CatalogRevision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<crate::scoped_reads::SelectionScopeRef>,
     pub fingerprint: Sha256Digest,
 }
 impl ScopedReadRef {
@@ -1738,7 +1746,26 @@ impl ScopedReadRef {
             self.schema == 1 && self.lease_generation > 0,
             "unsupported scoped read contract"
         );
+        ensure!(
+            matches!(
+                (self.grant_id, self.grant_revision, self.selection),
+                (Some(_), Some(_), None) | (None, None, Some(_))
+            ),
+            "scoped read ref must name exactly one authority source"
+        );
         Ok(())
+    }
+    /// The catalog grant pair, present only when this ref names a catalog grant.
+    pub fn catalog_grant(
+        &self,
+    ) -> Option<(
+        crate::index_catalog::GrantId,
+        crate::index_catalog::CatalogRevision,
+    )> {
+        match (self.grant_id, self.grant_revision, self.selection) {
+            (Some(id), Some(revision), None) => Some((id, revision)),
+            _ => None,
+        }
     }
 }
 

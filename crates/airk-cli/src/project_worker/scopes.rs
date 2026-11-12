@@ -144,27 +144,25 @@ impl Scopes {
             authority.backing == self.identity.project && expires > Instant::now(),
             ScopeReadRefused
         );
+        let (grant_id, grant_revision) = (authority.grant.id, authority.grant.revision);
         let reference = ScopedReadRef {
             schema: 1,
             lease_generation,
             index_id: authority.index_id,
-            grant_id: authority.grant.id,
-            grant_revision: authority.grant.revision,
+            grant_id: Some(grant_id),
+            grant_revision: Some(grant_revision),
+            selection: None,
             fingerprint: authority.fingerprint()?,
         };
         reference.validate()?;
-        let family = (reference.grant_id, reference.index_id);
+        let family = (grant_id, reference.index_id);
         ensure!(
             self.highwater
                 .get(&family)
-                .is_none_or(|revision| reference.grant_revision >= *revision),
+                .is_none_or(|revision| grant_revision >= *revision),
             ScopeReadRefused
         );
-        let key = (
-            reference.grant_id,
-            reference.index_id,
-            reference.fingerprint,
-        );
+        let key = (grant_id, reference.index_id, reference.fingerprint);
         if let Some(existing) = self.installed.get_mut(&key)
             && existing.reference == reference
         {
@@ -207,22 +205,21 @@ impl Scopes {
         if self
             .highwater
             .get(&family)
-            .is_some_and(|revision| reference.grant_revision > *revision)
+            .is_some_and(|revision| grant_revision > *revision)
         {
-            for entry in self
-                .installed
-                .values_mut()
-                .filter(|entry| (entry.reference.grant_id, entry.reference.index_id) == family)
-            {
+            let optional_family = (Some(family.0), family.1);
+            for entry in self.installed.values_mut().filter(|entry| {
+                (entry.reference.grant_id, entry.reference.index_id) == optional_family
+            }) {
                 entry.revoke();
             }
             self.pending.retain(|_, (grant, _)| {
                 grant
                     .scope
-                    .is_none_or(|scope| (scope.grant_id, scope.index_id) != family)
+                    .is_none_or(|scope| (scope.grant_id, scope.index_id) != optional_family)
             });
         }
-        self.highwater.insert(family, reference.grant_revision);
+        self.highwater.insert(family, grant_revision);
         self.last_lease_generation = lease_generation;
         self.installed.insert(
             key,
@@ -238,19 +235,14 @@ impl Scopes {
         Ok(reference)
     }
     fn entry(&self, reference: ScopedReadRef) -> Result<&Installed> {
+        let (grant_id, grant_revision) = reference.catalog_grant().ok_or(ScopeReadRefused)?;
         ensure!(
-            self.highwater
-                .get(&(reference.grant_id, reference.index_id))
-                == Some(&reference.grant_revision),
+            self.highwater.get(&(grant_id, reference.index_id)) == Some(&grant_revision),
             ScopeReadRefused
         );
         let entry = self
             .installed
-            .get(&(
-                reference.grant_id,
-                reference.index_id,
-                reference.fingerprint,
-            ))
+            .get(&(grant_id, reference.index_id, reference.fingerprint))
             .ok_or(ScopeReadRefused)?;
         entry.live(reference, Instant::now())?;
         Ok(entry)
@@ -328,9 +320,10 @@ impl Scopes {
             kernel.revoke_scoped_reads();
             return Err(ScopeReadRefused.into());
         }
+        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = self
             .installed
-            .get_mut(&(scope.grant_id, scope.index_id, scope.fingerprint))
+            .get_mut(&(grant_id, scope.index_id, scope.fingerprint))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.sessions.len() < MAX_SESSIONS && !entry.sessions.contains_key(&session),
@@ -341,9 +334,10 @@ impl Scopes {
     }
     pub fn detach(&mut self, scope: Option<ScopedReadRef>, session: Incarnation) {
         if let Some(scope) = scope
+            && let Some((grant_id, _)) = scope.catalog_grant()
             && let Some(entry) =
                 self.installed
-                    .get_mut(&(scope.grant_id, scope.index_id, scope.fingerprint))
+                    .get_mut(&(grant_id, scope.index_id, scope.fingerprint))
             && entry.reference == scope
             && let Some(kernel) = entry.sessions.remove(&session)
         {
@@ -353,9 +347,10 @@ impl Scopes {
     pub fn revoke(&mut self, identity: WorkerIdentity, scope: ScopedReadRef) -> Result<()> {
         ensure!(identity == self.identity, ScopeReadRefused);
         scope.validate()?;
+        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
         let entry = self
             .installed
-            .get_mut(&(scope.grant_id, scope.index_id, scope.fingerprint))
+            .get_mut(&(grant_id, scope.index_id, scope.fingerprint))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.reference == scope || entry.previous_lease == Some(scope),
@@ -636,7 +631,11 @@ mod tests {
         scopes.bind(&mut old_bearer, second)?;
         scopes
             .installed
-            .get_mut(&(second.grant_id, second.index_id, second.fingerprint))
+            .get_mut(&(
+                second.grant_id.unwrap(),
+                second.index_id,
+                second.fingerprint,
+            ))
             .unwrap()
             .expires = Instant::now() - Duration::from_secs(1);
         scopes.expire();

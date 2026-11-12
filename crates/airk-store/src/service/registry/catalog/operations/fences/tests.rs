@@ -64,8 +64,9 @@ fn plan(count: usize) -> Result<FencePlan> {
                         schema: 1,
                         lease_generation: 1,
                         index_id: IndexId::from_identity(id),
-                        grant_id: GrantId::from_identity(id),
-                        grant_revision: CatalogRevision::INITIAL,
+                        grant_id: Some(GrantId::from_identity(id)),
+                        grant_revision: Some(CatalogRevision::INITIAL),
+                        selection: None,
                         fingerprint: Sha256Digest::from_bytes([9; 32]),
                     },
                 }
@@ -309,8 +310,9 @@ fn worker_reap_and_scope_confirmation_are_independent_retirement_obligations() -
             schema: 1,
             lease_generation: 1,
             index_id: obligation.index_id,
-            grant_id: GrantId::from_identity(Incarnation::from_bytes([73; 16])),
-            grant_revision: CatalogRevision::INITIAL,
+            grant_id: Some(GrantId::from_identity(Incarnation::from_bytes([73; 16]))),
+            grant_revision: Some(CatalogRevision::INITIAL),
+            selection: None,
             fingerprint: Sha256Digest::from_bytes([74; 32]),
         },
     });

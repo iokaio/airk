@@ -359,12 +359,14 @@ mod tests {
                 schema: 1,
                 qualifier: ScopeQualifier::SelectedSubset,
                 fingerprint: Sha256Digest::from_bytes([1; 32]),
-                provenance:
+                provenance: Some(
                     airk_core::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant,
-                grant: ScopeGrantObservation {
+                ),
+                grant: Some(ScopeGrantObservation {
                     id: GrantId::from_identity(Incarnation::from_bytes([2; 16])),
                     revision: CatalogRevision::INITIAL,
-                },
+                }),
+                selection: None,
                 members: vec![ScopeMemberObservation {
                     index_id: IndexId::from_identity(Incarnation::from_bytes([3; 16])),
                     memberships: vec![ScopeMembershipObservation {

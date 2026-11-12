@@ -1,0 +1,154 @@
+{
+  "schema": "airk.split-fixture.i1-selection-authority/1",
+  "description": "Selection read authority Step C (docs/split/selection-authority-spec.md \u00a72.1-\u00a72.3, U99). Hand-reviewed literal bytes. Catalog-grant cases are the frozen pre-change encodings: the optional selection fields are absent and every other byte is unchanged. Rejected cases name the stage that refuses them: serde (decode) or validate (the xor rule). The selection fingerprint is framed_digest over the authority bytes, computed independently of the code under test.",
+  "scoped_read_refs": {
+    "accepted": [
+      {
+        "name": "catalog_grant_frozen",
+        "source": "catalog",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"grant_id\":\"grt_04040404040404040404040404040404\",\"grant_revision\":3,\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "selection_window",
+        "source": "selection",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"window\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "selection_admin",
+        "source": "selection",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"admin\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      }
+    ],
+    "rejected": [
+      {
+        "name": "both_sources",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"grant_id\":\"grt_04040404040404040404040404040404\",\"grant_revision\":3,\"selection\":{\"owner\":\"window\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "neither_source",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "grant_id_only",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"grant_id\":\"grt_04040404040404040404040404040404\",\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "grant_revision_only",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"grant_revision\":3,\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "grant_id_with_selection",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"grant_id\":\"grt_04040404040404040404040404040404\",\"selection\":{\"owner\":\"window\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "selection_unknown_field",
+        "stage": "serde",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"window\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5,\"lease\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "selection_unknown_owner",
+        "stage": "serde",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"agent\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      },
+      {
+        "name": "selection_missing_nonce",
+        "stage": "serde",
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"window\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+      }
+    ]
+  },
+  "scope_observations": {
+    "accepted": [
+      {
+        "name": "catalog_grant_frozen",
+        "source": "catalog",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"provenance\":\"user_reviewed_project_grant\",\"grant\":{\"id\":\"grt_04040404040404040404040404040404\",\"revision\":3},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "selection_window",
+        "source": "selection",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      }
+    ],
+    "rejected": [
+      {
+        "name": "both_sources",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"provenance\":\"user_reviewed_project_grant\",\"grant\":{\"id\":\"grt_04040404040404040404040404040404\",\"revision\":3},\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "neither_source",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "provenance_only",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"provenance\":\"user_reviewed_project_grant\",\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "grant_only",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"grant\":{\"id\":\"grt_04040404040404040404040404040404\",\"revision\":3},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "provenance_with_selection",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"provenance\":\"user_reviewed_project_grant\",\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "selection_with_nonce",
+        "stage": "serde",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5,\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\"},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "selection_with_service_instance",
+        "stage": "serde",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5,\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\"},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[{\"project_id\":\"prj_01010101010101010101010101010101\",\"membership_revision\":2}],\"source_root_ids\":[\"src_03030303030303030303030303030303\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      }
+    ]
+  },
+  "selected_scope_observations": {
+    "accepted": [
+      {
+        "name": "catalog_grant_frozen",
+        "source": "catalog",
+        "bytes": "{\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"grant_id\":\"grt_04040404040404040404040404040404\",\"grant_revision\":3,\"member_availability\":\"require\",\"identity\":\"0404040404040404040404040404040404040404040404040404040404040404\"}"
+      },
+      {
+        "name": "selection_window",
+        "source": "selection",
+        "bytes": "{\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"member_availability\":\"require\",\"identity\":\"0404040404040404040404040404040404040404040404040404040404040404\"}"
+      }
+    ],
+    "no_single_source": [
+      {
+        "name": "both_sources",
+        "bytes": "{\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"grant_id\":\"grt_04040404040404040404040404040404\",\"grant_revision\":3,\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"member_availability\":\"require\",\"identity\":\"0404040404040404040404040404040404040404040404040404040404040404\"}"
+      },
+      {
+        "name": "neither_source",
+        "bytes": "{\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"member_availability\":\"require\",\"identity\":\"0404040404040404040404040404040404040404040404040404040404040404\"}"
+      },
+      {
+        "name": "grant_id_only",
+        "bytes": "{\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"grant_id\":\"grt_04040404040404040404040404040404\",\"member_availability\":\"require\",\"identity\":\"0404040404040404040404040404040404040404040404040404040404040404\"}"
+      }
+    ]
+  },
+  "selection_scope_ref": {
+    "bytes": "{\"owner\":\"window\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5}",
+    "nonce": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+  },
+  "selection_fingerprint": {
+    "domain": "airk/scoped-read-authority/selection/1",
+    "authority": "{\"schema\":1,\"backing\":\"0606060606060606060606060606060606060606060606060606060606060606\",\"index_id\":\"idx_02020202020202020202020202020202\",\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"selection\":{\"owner\":\"window\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"atoms\":[[\"prj_01010101010101010101010101010101\",{\"source_root_id\":\"src_03030303030303030303030303030303\",\"kind\":\"subtree\",\"path\":\"\"}]],\"sources\":[{\"source_root_id\":\"src_03030303030303030303030303030303\",\"original_root\":\"/srv/airk/source\"}],\"membership_revisions\":[[\"prj_01010101010101010101010101010101\",2]],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}",
+    "fingerprint": "accb49736e14237239e18cf52291aef90504db977b2e5280c0e90bb2105d43aa",
+    "catalog_domain_digest": "741cfadf6910f74cad84ca21c137eb2baf8f353890b8125f3d12c3c3f49698d0"
+  }
+}
