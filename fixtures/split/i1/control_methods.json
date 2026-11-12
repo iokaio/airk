@@ -607,6 +607,40 @@
           "bytes": "{\"status\":\"usage_read_failed\"}"
         }
       ]
+    },
+    {
+      "variant": "model_catalog",
+      "method": "M10",
+      "methods": [
+        {
+          "name": "report",
+          "bytes": "{\"model_catalog\":{}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unit_spelling",
+          "bytes": "\"model_catalog\""
+        },
+        {
+          "name": "cpu_argument_not_taken",
+          "bytes": "{\"model_catalog\":{\"cpu\":\"x86_64\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "report",
+          "bytes": "{\"status\":\"model_catalog\",\"document\":{\"bundled_model\":{\"manifest\":{}},\"profiles\":[]}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "document_missing",
+          "bytes": "{\"status\":\"model_catalog\"}"
+        }
+      ]
     }
   ]
 }

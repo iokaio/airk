@@ -526,6 +526,9 @@ pub enum ControlMethod {
         catalog: Option<ScopedConnectRequest>,
         read: UsageDocumentRead,
     },
+    /// M10 (split step 3c.5d): the model catalog report `model-catalog`
+    /// printed (the kernel's catalog inspection and the bundled manifest).
+    ModelCatalog {},
 }
 
 /// What N1 reads, as `settings` and `usage report|policy` asked for it.
@@ -1129,6 +1132,10 @@ pub enum ControlResponse {
     /// M4b: the reserved storage exists; the registry's registration.
     StoragePrepared {
         registration: ProjectRegistration,
+    },
+    /// M10: the model catalog report.
+    ModelCatalog {
+        document: serde_json::Value,
     },
     /// N1: the complete document `airk` printed (a report in CSV or Markdown
     /// is a string).

@@ -494,6 +494,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 collection,
                 storage,
             } => registration::plan(&root, &data_root, &collection, storage),
+            // M10 lands its handler in step 3c.5d-2; until then the typed refusal.
+            ControlMethod::ModelCatalog {} => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::UsageDocument {
                 project,
                 catalog,
