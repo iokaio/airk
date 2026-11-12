@@ -29,7 +29,7 @@ fn response_mode(mode: ToolResponseMode) -> ResponseMode {
 
 /// The failure message: the full error chain, bounded as the CLI's error line
 /// bounded it.
-fn failure_message(error: &anyhow::Error) -> String {
+pub(super) fn failure_message(error: &anyhow::Error) -> String {
     format!("{error:#}")
         .chars()
         .take(MAX_MESSAGE_CHARS)

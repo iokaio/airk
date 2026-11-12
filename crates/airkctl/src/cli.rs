@@ -111,6 +111,11 @@ enum Command {
         #[command(subcommand)]
         action: ToolsCommand,
     },
+    /// Acknowledge an existing reviewed index mapping and prepare its reserved storage.
+    ///
+    /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant.
+    /// Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airkctl service register --runtime-dir <control>` instead.
+    Init,
     /// Queue indexing for the project (full rebuilds need a reviewed maintenance preview).
     Index {
         #[arg(long)]
@@ -221,6 +226,20 @@ enum ServiceCommand {
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
         operation: String,
+    },
+    /// Register --root/--data-dir/--collection with the service at --runtime-dir. The data directory must exist.
+    Register {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
+    /// Print the canonical registration for --root/--data-dir/--collection, including its binding. Read-only.
+    PrepareRegistration,
+    /// Create the reserved index storage for an already reserved project (owner-only on Unix).
+    PrepareStorage {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: ProjectBinding,
     },
     /// Saved client requests: list, prepare, retry or forget by nonce.
     Requests {
@@ -664,11 +683,40 @@ fn project_for(
             }
         }
     };
-    match crate::service::request(&control, ControlMethod::Health, VERSION) {
-        Ok(ControlResponse::Health { .. }) => {}
-        Ok(other) => return Err(fail(cx, &crate::service::refusal(&other))),
+    running(cx, &control, &mut verified)?;
+    match crate::service::request(&control, ControlMethod::ResolveProject { target }, VERSION) {
+        Ok(ControlResponse::Resolved { registration }) => Ok((control, registration)),
+        Ok(ControlResponse::Failure { code }) if code == "project_not_registered" => Err(fail(
+            cx,
+            &ErrorLine::new(
+                ExitClass::Refused,
+                &code,
+                false,
+                "project is not registered with this service; review registration before indexing or connecting",
+            ),
+        )),
+        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
+        Err(line) => Err(fail(cx, &line)),
+    }
+}
+
+/// The service at `control` answers `Health`, or the installed service is
+/// started automatically (contracts §3.2; pair-exact, a saved explicit Stop
+/// is honored). The installation is discovered only when a start is needed.
+fn running(
+    cx: &mut Context,
+    control: &Path,
+    verified: &mut Option<Box<crate::install::Verified>>,
+) -> Result<(), u8> {
+    match crate::service::request(control, ControlMethod::Health, VERSION) {
+        Ok(ControlResponse::Health { .. }) => Ok(()),
+        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
         Err(line) if line.class == ExitClass::ServiceMissing => {
-            discover(&mut verified);
+            if verified.is_none()
+                && let crate::install::Discovery::Verified(found) = crate::install::discover()
+            {
+                *verified = Some(found);
+            }
             let Some(found) = verified.as_ref() else {
                 return Err(fail(cx, &line));
             };
@@ -683,30 +731,154 @@ fn project_for(
                     ),
                 ));
             }
-            if let Err(line) = crate::start::start_with(
+            crate::start::start_with(
                 &found.airk,
-                &control,
+                control,
                 VERSION,
                 airk_core::install_record::StartMode::Automatic,
+            )
+            .map(|_| ())
+            .map_err(|line| fail(cx, &line))
+        }
+        Err(line) => Err(fail(cx, &line)),
+    }
+}
+
+/// `init` (step 3c.4b), as `airk init` ran it: only for the installed
+/// service (never `--service-runtime-dir`), with the record's data location
+/// by default (U39), the service started automatically, then M4a,
+/// `ReserveProject` and M4b; prints the acknowledged project.
+fn init(cx: &mut Context, selection: Selection) -> u8 {
+    if let Err(code) = administrative(cx, &selection) {
+        return code;
+    }
+    if selection.control.is_some() {
+        return fail(
+            cx,
+            &crate::registration::failed(
+                "raw service registration requires explicit service metadata commands",
+            ),
+        );
+    }
+    let verified = match installed(cx) {
+        Ok(verified) => verified,
+        Err(code) => return code,
+    };
+    let control = PathBuf::from(&verified.record.locations.state);
+    let data = selection
+        .data_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(&verified.record.locations.data));
+    let mut verified = Some(verified);
+    if let Err(code) = running(cx, &control, &mut verified) {
+        return code;
+    }
+    match crate::registration::init(
+        &control,
+        VERSION,
+        &selection.root,
+        &data,
+        &selection.collection,
+        selection.project,
+    ) {
+        Ok(crate::registration::Init::Registered(project)) => json_line(cx, &project),
+        Ok(crate::registration::Init::NotAcknowledged(response)) => {
+            let code = print_control(cx, &response);
+            if code != 0 {
+                return code;
+            }
+            fail(
+                cx,
+                &crate::registration::failed("registration was not acknowledged"),
+            )
+        }
+        Err(line) => fail(cx, &line),
+    }
+}
+
+/// One compact JSON line, as `airk`'s `print_json` wrote it.
+fn json_line(cx: &mut Context, value: &impl serde::Serialize) -> u8 {
+    match serde_json::to_string(value) {
+        Ok(text) => {
+            let result = writeln!(cx.io.stdout, "{text}");
+            written(cx, result)
+        }
+        Err(_) => ExitClass::Internal.code(),
+    }
+}
+
+/// `service register`, `prepare-registration` and `prepare-storage` (step
+/// 3c.4b), printing what `airk service …` printed. `--data-dir` is explicit,
+/// as it was; `prepare-registration` now asks the service (M4a), at
+/// `--service-runtime-dir` or the installation's.
+fn registration_command(cx: &mut Context, selection: Selection, action: ServiceCommand) -> u8 {
+    use airk_core::service::RegistrationStorage;
+    match action {
+        ServiceCommand::Register { runtime_dir } => {
+            let Some(data) = selection.data_dir.as_deref() else {
+                return fail(
+                    cx,
+                    &crate::registration::failed(
+                        "service registration requires explicit --data-dir",
+                    ),
+                );
+            };
+            let project = match crate::registration::plan(
+                &runtime_dir,
+                VERSION,
+                &selection.root,
+                data,
+                &selection.collection,
+                RegistrationStorage::Existing,
             ) {
-                return Err(fail(cx, &line));
+                Ok(project) => project,
+                Err(line) => return fail(cx, &line),
+            };
+            match crate::service::request(
+                &runtime_dir,
+                ControlMethod::Register { project },
+                VERSION,
+            ) {
+                Ok(response) => print_control(cx, &response),
+                Err(line) => fail(cx, &line),
             }
         }
-        Err(line) => return Err(fail(cx, &line)),
-    }
-    match crate::service::request(&control, ControlMethod::ResolveProject { target }, VERSION) {
-        Ok(ControlResponse::Resolved { registration }) => Ok((control, registration)),
-        Ok(ControlResponse::Failure { code }) if code == "project_not_registered" => Err(fail(
-            cx,
-            &ErrorLine::new(
-                ExitClass::Refused,
-                &code,
-                false,
-                "project is not registered with this service; review registration before indexing or connecting",
-            ),
-        )),
-        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
-        Err(line) => Err(fail(cx, &line)),
+        ServiceCommand::PrepareRegistration => {
+            let Some(data) = selection.data_dir.as_deref() else {
+                return fail(
+                    cx,
+                    &crate::registration::failed(
+                        "registration preparation requires explicit --data-dir",
+                    ),
+                );
+            };
+            let control = match selection.control.clone() {
+                Some(control) => control,
+                None => match installed(cx) {
+                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
+                    Err(code) => return code,
+                },
+            };
+            match crate::registration::plan(
+                &control,
+                VERSION,
+                &selection.root,
+                data,
+                &selection.collection,
+                RegistrationStorage::Planned,
+            ) {
+                Ok(registration) => json_line(cx, &registration),
+                Err(line) => fail(cx, &line),
+            }
+        }
+        ServiceCommand::PrepareStorage {
+            runtime_dir,
+            project,
+        } => match crate::registration::prepare_storage(&runtime_dir, VERSION, project) {
+            Ok(registration) => json_line(cx, &registration),
+            Err(line) => fail(cx, &line),
+        },
+        _ => ExitClass::Internal.code(),
     }
 }
 
@@ -733,7 +905,26 @@ fn print_control(cx: &mut Context, response: &ControlResponse) -> u8 {
     match response {
         ControlResponse::Failure { code } => {
             let mut line = crate::service::refusal(response);
-            line.message = format!("native request refused: {code}");
+            line.message = match crate::journal::refusal_guidance(code) {
+                Some(guidance) => format!("native request refused: {code}; {guidance}"),
+                None => format!("native request refused: {code}"),
+            };
+            fail(cx, &line)
+        }
+        ControlResponse::CatalogOutcomeUnknown { code, .. }
+        | ControlResponse::SourceChangeBusy { code, .. } => {
+            let class = if matches!(response, ControlResponse::CatalogOutcomeUnknown { .. }) {
+                ExitClass::OutcomeUnknown
+            } else {
+                ExitClass::Refused
+            };
+            let mut line = ErrorLine::new(
+                class,
+                code,
+                false,
+                &format!("native request refused: {code}"),
+            );
+            line.native = serde_json::to_value(response).ok();
             fail(cx, &line)
         }
         ControlResponse::Incompatible { .. } => {
@@ -1394,6 +1585,11 @@ fn record_error_service(
 
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        action @ (ServiceCommand::Register { .. }
+        | ServiceCommand::PrepareRegistration
+        | ServiceCommand::PrepareStorage { .. }) => {
+            return registration_command(cx, selection, action);
+        }
         ServiceCommand::Requests {
             runtime_dir,
             action,
@@ -1507,6 +1703,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
     match command {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
+        Command::Init => init(cx, selection),
         Command::Index { full: true } => usage(
             cx,
             "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC",

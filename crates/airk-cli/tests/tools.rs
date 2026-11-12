@@ -1188,3 +1188,216 @@ fn command_in(_control: &str, arguments: &[&str]) -> anyhow::Result<String> {
     );
     Ok(String::from_utf8(output.stdout)?)
 }
+
+/// The last stderr line without its program prefix (`Error: ` for `airk`,
+/// `airkctl: ` for `airkctl`): the message both print for a refusal.
+fn refusal_message(stderr: &[u8], prefix: &str) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let line = text.lines().last().unwrap_or_default();
+    line.strip_prefix(prefix).unwrap_or(line).to_owned()
+}
+
+/// `init`, `service register`, `service prepare-registration` and `service
+/// prepare-storage` (split step 3c.4b): `airkctl` prints what `airk` printed,
+/// through M4a/M4b and the existing `ReserveProject` and `Register`.
+#[test]
+fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
+    use airkctl::registration::Init;
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    fs::write(
+        source.path().join("original.md"),
+        b"# Registration parity\n",
+    )?;
+    let service = common::Service::reviewed(source.path(), data.path(), "ctl-init");
+    let control = service.control.to_str().unwrap().to_owned();
+    let version = env!("CARGO_PKG_VERSION");
+    let ctl = |arguments: &[&str]| -> (u8, String, Vec<u8>) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = std::iter::once("airkctl")
+            .chain(arguments.iter().copied())
+            .map(std::ffi::OsString::from)
+            .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (code, String::from_utf8(stdout).unwrap(), stderr)
+    };
+    let old = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_airk"))
+            .args(arguments)
+            .output()
+    };
+
+    // init on the reviewed mapping: the same acknowledged project.
+    let initialized = service
+        .installed_command(source.path(), data.path(), "ctl-init")
+        .arg("init")
+        .output()?;
+    assert!(
+        initialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&initialized.stderr)
+    );
+    let Init::Registered(project) = airkctl::registration::init(
+        &service.control,
+        version,
+        source.path(),
+        data.path(),
+        "ctl-init",
+        None,
+    )
+    .map_err(|line| anyhow::anyhow!(line.message))?
+    else {
+        anyhow::bail!("airkctl init was not acknowledged");
+    };
+    assert_eq!(
+        serde_json::to_string(&project)? + "\n",
+        String::from_utf8(initialized.stdout)?
+    );
+    assert_eq!(project.registration, service.project);
+
+    // init on an unmapped folder: the same refusal; nothing is created.
+    let unreviewed = tempfile::tempdir()?;
+    let absent = tempfile::tempdir()?;
+    let absent_data = absent.path().join("not-created/nested");
+    fs::write(unreviewed.path().join("original.md"), b"# Unreviewed\n")?;
+    let rejected = service
+        .installed_command(unreviewed.path(), &absent_data, "ctl-unmapped")
+        .arg("init")
+        .output()?;
+    assert!(!rejected.status.success());
+    match airkctl::registration::init(
+        &service.control,
+        version,
+        unreviewed.path(),
+        &absent_data,
+        "ctl-unmapped",
+        None,
+    ) {
+        Ok(Init::NotAcknowledged(response)) => assert_eq!(
+            serde_json::to_string(&response)? + "\n",
+            String::from_utf8(rejected.stdout)?
+        ),
+        Ok(Init::Registered(_)) => anyhow::bail!("airkctl init registered an unmapped folder"),
+        Err(line) => assert_eq!(line.message, refusal_message(&rejected.stderr, "Error: ")),
+    }
+    assert!(!absent.path().join("not-created").exists());
+
+    // prepare-registration: offline in `airk`, M4a in `airkctl`.
+    let fresh = tempfile::tempdir()?;
+    let fresh_parent = tempfile::tempdir()?;
+    let planned = fresh_parent.path().join("planned");
+    let inner = fresh.path().join("inner");
+    for (data_dir, collection) in [
+        (Some(planned.to_str().unwrap()), "ctl-plan"),
+        (Some(inner.to_str().unwrap()), "ctl-plan"),
+        (None, "ctl-plan"),
+    ] {
+        let mut arguments = vec!["--root", fresh.path().to_str().unwrap()];
+        if let Some(data_dir) = data_dir {
+            arguments.extend(["--data-dir", data_dir]);
+        }
+        arguments.extend([
+            "--collection",
+            collection,
+            "service",
+            "prepare-registration",
+        ]);
+        let before = old(&arguments)?;
+        let (code, stdout, stderr) = ctl(&[
+            &["--service-runtime-dir", control.as_str()][..],
+            &arguments[..],
+        ]
+        .concat());
+        assert_eq!(
+            (code == 0, stdout.as_str()),
+            (
+                before.status.success(),
+                String::from_utf8(before.stdout)?.as_str()
+            ),
+            "{arguments:?}"
+        );
+        if code != 0 {
+            assert_eq!(
+                refusal_message(&stderr, "airkctl: "),
+                refusal_message(&before.stderr, "Error: "),
+                "{arguments:?}"
+            );
+        }
+    }
+    assert!(!planned.exists());
+
+    // register: storage must exist; the service's answer is printed alike.
+    let other = tempfile::tempdir()?;
+    let other_data = tempfile::tempdir()?;
+    let register = [
+        "--root",
+        other.path().to_str().unwrap(),
+        "--data-dir",
+        other_data.path().to_str().unwrap(),
+        "--collection",
+        "ctl-register",
+        "service",
+        "register",
+        "--runtime-dir",
+        &control,
+    ];
+    let before = old(&register)?;
+    let (code, stdout, stderr) = ctl(&register);
+    assert_eq!(
+        (code == 0, stdout.as_str()),
+        (
+            before.status.success(),
+            String::from_utf8(before.stdout)?.as_str()
+        ),
+        "{}",
+        String::from_utf8_lossy(&stderr)
+    );
+
+    // prepare-storage: the registry's registration, or the same refusal.
+    let unknown = airkctl::registration::plan(
+        &service.control,
+        version,
+        fresh.path(),
+        &planned,
+        "ctl-plan",
+        airk_core::service::RegistrationStorage::Planned,
+    )
+    .map_err(|line| anyhow::anyhow!(line.message))?;
+    for binding in [service.project.binding, unknown.binding] {
+        let binding = binding.to_string();
+        let arguments = [
+            "service",
+            "prepare-storage",
+            "--runtime-dir",
+            &control,
+            "--project",
+            &binding,
+        ];
+        let before = old(&arguments)?;
+        let (code, stdout, stderr) = ctl(&arguments);
+        assert_eq!(
+            (code == 0, stdout.as_str()),
+            (
+                before.status.success(),
+                String::from_utf8(before.stdout)?.as_str()
+            ),
+            "{binding}"
+        );
+        if code != 0 {
+            assert_eq!(
+                refusal_message(&stderr, "airkctl: "),
+                refusal_message(&before.stderr, "Error: "),
+                "{binding}"
+            );
+        }
+    }
+    assert!(!planned.exists());
+    service.shutdown_reviewed()?;
+    Ok(())
+}

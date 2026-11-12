@@ -15,6 +15,13 @@ use std::{path::Path, time::Duration};
 /// How long an unknown epoch outcome is retried, as the CLI did.
 const EPOCH_BUDGET: Duration = Duration::from_secs(15);
 
+/// The guidance `airk` added to a source-change refusal, naming `airkctl`.
+pub fn refusal_guidance(code: &str) -> Option<&'static str> {
+    (code == "source_change_review_required").then_some(
+        "Review the Index's sources or retirement in Indexing, or prepare a CatalogSourceMutationDraft through 'airkctl service rpc'",
+    )
+}
+
 fn refused(code: &str, message: String) -> ErrorLine {
     ErrorLine::new(ExitClass::Refused, code, false, &message)
 }
@@ -100,15 +107,12 @@ pub fn submit(
     ) {
         Ok(response @ ControlResponse::Job { .. }) => Ok(response),
         Ok(ControlResponse::Failure { code }) => {
-            let guidance = (code == "source_change_review_required").then_some(
-                "; Review the Index's sources or retirement in Indexing, or prepare a CatalogSourceMutationDraft through 'airkctl service rpc'",
-            );
+            let guidance = refusal_guidance(&code)
+                .map(|guidance| format!("; {guidance}"))
+                .unwrap_or_default();
             Err(refused(
                 &code,
-                format!(
-                    "native request refused: {code}{}; saved key is preserved",
-                    guidance.unwrap_or_default()
-                ),
+                format!("native request refused: {code}{guidance}; saved key is preserved"),
             ))
         }
         Ok(_) => Err(ErrorLine::new(
