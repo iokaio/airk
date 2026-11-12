@@ -2403,8 +2403,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Init => init(cx, selection),
         Command::Explorer { action } => explorer_command(cx, selection, action),
         Command::Session { label, owner_watch } => {
-            let mut options =
-                crate::session::Options::new(VERSION, own_digest().unwrap_or_default());
+            let mut options = session::Options::new(VERSION, own_digest().unwrap_or_default());
             options.control_root = selection.control.clone();
             options.capabilities = CAPABILITIES.iter().map(|&name| name.into()).collect();
             if let Some(label) = label {
@@ -2412,7 +2411,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             }
             options.owner_watch = owner_watch;
             options.full_responses = cx.io.full_responses;
-            crate::session::serve(options)
+            session::serve(options)
         }
         Command::Agents { action } => {
             let (runtime_dir, connection) = match &action {
@@ -2585,6 +2584,7 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     dispatch(&mut cx, cli.command, selection)
 }
 
+pub mod session;
 mod shell;
 #[cfg(test)]
 mod tests;

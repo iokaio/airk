@@ -2175,10 +2175,11 @@ fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Re
     input.extend(frame(json!({"id": "02".repeat(16), "request": {"invoke": {
         "argv": ["projects"], "deadline_ms": 30000}}})));
     let output = Arc::new(Mutex::new(Vec::new()));
-    let mut options = airkctl::session::Options::new(env!("CARGO_PKG_VERSION"), "0".repeat(64));
+    let mut options =
+        airkctl::cli::session::Options::new(env!("CARGO_PKG_VERSION"), "0".repeat(64));
     options.control_root = Some(service.control.clone());
     options.label = "live window".into();
-    let code = airkctl::session::serve_streams(
+    let code = airkctl::cli::session::serve_streams(
         std::io::Cursor::new(input),
         Shared(output.clone()),
         options,

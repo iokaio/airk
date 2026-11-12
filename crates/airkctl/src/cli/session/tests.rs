@@ -8,8 +8,8 @@ use super::*;
 use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-const FRAMES: &str = include_str!("../../../../fixtures/wire/airkctl_session_frames.json");
-const PLANE: &str = include_str!("../../../../fixtures/split/i1/window_plane.json");
+const FRAMES: &str = include_str!("../../../../../fixtures/wire/airkctl_session_frames.json");
+const PLANE: &str = include_str!("../../../../../fixtures/split/i1/window_plane.json");
 /// Observation deadline for a frame or pipe call; never a sleep.
 const OBSERVE: Duration = Duration::from_secs(30);
 const E1: &str = "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1";
