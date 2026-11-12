@@ -82,7 +82,7 @@ impl Host {
     }
 }
 
-fn public_ca(root: &Path, expected: Sha256Digest) -> Result<Vec<u8>> {
+pub(crate) fn public_ca(root: &Path, expected: Sha256Digest) -> Result<Vec<u8>> {
     let pem =
         read_private(root, "ca.pem", 8192)?.context("native HTTPS issuer is not provisioned")?;
     ensure!(

@@ -2146,6 +2146,40 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     same("credential", old, new);
     let (old, new) = credential(&unknown)?;
     same("credential of an unknown connection", old, new);
+    // M16 (3e.4): `agents list --connection-id` answers what
+    // `lookup-http-connection` answers, without its selected-runtime field.
+    let airk_core::service::ControlResponse::Health {
+        observation: health,
+    } = service.request(airk_core::service::ControlMethod::Health)
+    else {
+        anyhow::bail!("missing service health");
+    };
+    let active = health.runtime_sha256.clone().unwrap_or_default();
+    for (name, target) in [("owned", id.as_str()), ("not owned", unknown.as_str())] {
+        let old = runtime(
+            "lookup-http-connection",
+            &["--expected-active", &active, "--connection-id", target],
+        )?;
+        assert!(
+            old.status.success(),
+            "{}",
+            String::from_utf8_lossy(&old.stderr)
+        );
+        let mut old: Value = serde_json::from_slice(&old.stdout)?;
+        assert_eq!(old["active"], active.as_str());
+        old.as_object_mut().unwrap().remove("active");
+        let (code, new, stderr) = ctl(&["list", "--connection-id", target]);
+        assert_eq!(code, 0, "{name}: {stderr}");
+        assert_eq!(serde_json::from_str::<Value>(&new)?, old, "{name}");
+    }
+    // V1 (3e.9): the service verifies its own MCP endpoint with the stored
+    // credential, and no token reaches the output.
+    let (code, verified, stderr) = ctl(&["verify", "--connection-id", &id]);
+    assert_eq!(code, 0, "{stderr}");
+    let verified: Value = serde_json::from_str(&verified)?;
+    assert_eq!(verified["verified"], true, "{verified}");
+    assert_eq!(verified["http_status"], 200);
+    assert!(!verified.to_string().contains("airk1."), "{verified}");
     // Revoke through airkctl, then airk sees the same revoked connection.
     let (code, revoked, stderr) = ctl(&["revoke", "--connection-id", &id]);
     assert_eq!(code, 0, "{stderr}");
@@ -2162,6 +2196,15 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
         runtime("http-revoke", &["--connection-id", &id])?,
         ctl(&["revoke", "--connection-id", &id]),
     );
+    // A revoked connection is owned-but-unavailable and does not verify.
+    let (code, after, stderr) = ctl(&["list", "--connection-id", &id]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&after)?["code"],
+        "owned_connection_revoked"
+    );
+    let (code, _, _) = ctl(&["verify", "--connection-id", &id]);
+    assert_ne!(code, 0);
     let (old, new) = credential(&id)?;
     assert_ne!(new.0, 0);
     same("credential after revoke", old, new);

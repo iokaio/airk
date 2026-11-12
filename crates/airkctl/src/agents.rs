@@ -33,6 +33,8 @@ fn answer(response: ControlResponse) -> Result<Value, ErrorLine> {
         ControlResponse::AgentConnectionInfo { connection } => {
             serde_json::to_value(connection).map_err(|error| refused(&error.to_string()))
         }
+        ControlResponse::AgentConnectionOwnership { result }
+        | ControlResponse::AgentConnectionVerified { result } => Ok(result),
         ControlResponse::AgentRefused { message } => Err(refused(&message)),
         other => Err(crate::service::refusal(&other)),
     }
@@ -52,6 +54,35 @@ pub fn info(control: &Path, version: &str, connection_id: Incarnation) -> Result
     answer(crate::service::request(
         control,
         ControlMethod::AgentConnectionInfo { connection_id },
+        version,
+    )?)
+}
+
+/// M16 (`agents list --connection-id`): whether this installation owns the
+/// connection, as `airk runtime lookup-http-connection` answered without its
+/// selected-runtime field `active`.
+pub fn ownership(
+    control: &Path,
+    version: &str,
+    connection_id: Incarnation,
+) -> Result<Value, ErrorLine> {
+    answer(crate::service::request(
+        control,
+        ControlMethod::AgentConnectionOwnership { connection_id },
+        version,
+    )?)
+}
+
+/// V1 (`agents verify`): the service probes its own `/mcp` with the stored
+/// credential; the token never reaches this process.
+pub fn verify(
+    control: &Path,
+    version: &str,
+    connection_id: Incarnation,
+) -> Result<Value, ErrorLine> {
+    answer(crate::service::request(
+        control,
+        ControlMethod::AgentConnectionVerify { connection_id },
         version,
     )?)
 }

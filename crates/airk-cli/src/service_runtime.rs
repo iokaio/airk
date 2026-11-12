@@ -597,11 +597,12 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::AgentConnectionInfo { connection_id } => {
                 agents::connection(&state.control_root, connection_id).await
             }
-            // M16/V1 land their handlers in the next step; until then the typed refusal.
-            ControlMethod::AgentConnectionOwnership { .. }
-            | ControlMethod::AgentConnectionVerify { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::AgentConnectionOwnership { connection_id } => {
+                agents::ownership(&state.control_root, connection_id).await
+            }
+            ControlMethod::AgentConnectionVerify { connection_id } => {
+                agents::verify(&state.control_root, connection_id).await
+            }
             ControlMethod::AbandonLifecycle { id } => {
                 match lifecycle::abandon(&state.control_root, state.instance, id) {
                     Ok(record) => ControlResponse::LifecycleAbandoned { record },

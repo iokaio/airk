@@ -127,7 +127,7 @@ enum Command {
         #[arg(long)]
         owner_watch: bool,
     },
-    /// Local HTTPS connections for agents: endpoint, info, credential and revoke.
+    /// Local HTTPS connections for agents: endpoint, info, list, verify, credential and revoke.
     Agents {
         #[command(subcommand)]
         action: AgentsCommand,
@@ -219,6 +219,22 @@ enum AgentsCommand {
         connection_id: airk_core::identity::Incarnation,
         #[arg(long, value_parser = ["header-json"])]
         format: String,
+    },
+    /// Whether this installation owns a connection id; read-only.
+    List {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+    },
+    /// Probe the service's own MCP endpoint with a connection's stored credential.
+    Verify {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
     },
     /// Revoke one local HTTPS connection while preserving its original receipt.
     Revoke {
@@ -2442,6 +2458,14 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                     runtime_dir,
                     connection_id,
                     ..
+                }
+                | AgentsCommand::List {
+                    runtime_dir,
+                    connection_id,
+                }
+                | AgentsCommand::Verify {
+                    runtime_dir,
+                    connection_id,
                 } => (runtime_dir.clone(), Some(*connection_id)),
             };
             let control = match runtime_dir.or(selection.control.clone()) {
@@ -2461,6 +2485,12 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                 }
                 (AgentsCommand::Credential { .. }, Some(id)) => {
                     crate::agents::credential(&control, id)
+                }
+                (AgentsCommand::List { .. }, Some(id)) => {
+                    crate::agents::ownership(&control, VERSION, id)
+                }
+                (AgentsCommand::Verify { .. }, Some(id)) => {
+                    crate::agents::verify(&control, VERSION, id)
                 }
                 _ => return ExitClass::Internal.code(),
             };

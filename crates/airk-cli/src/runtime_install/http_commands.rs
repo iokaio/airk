@@ -252,7 +252,6 @@ pub async fn lookup_connection(
     expected: &str,
     id: Incarnation,
 ) -> Result<serde_json::Value> {
-    use crate::http_endpoint::{ConnectionOwnership, CredentialStore};
     let _lock = existing_install_lock(install)?;
     ensure!(
         selection_record(install)?.active == expected,
@@ -274,6 +273,25 @@ pub async fn lookup_connection(
             && health.policy.accepting,
         "HTTP lookup native owner is unavailable or changed"
     );
+    let mut reply = ownership(control, *health, id).await?;
+    reply["active"] = expected.into();
+    Ok(reply)
+}
+/// M16 (split step 3e.4): the same ownership read at the service's own
+/// control root, without the selected-runtime and staged-selection checks.
+pub(crate) async fn lookup_connection_at(
+    control: PathBuf,
+    id: Incarnation,
+) -> Result<serde_json::Value> {
+    let (control, health) = healthy(control).await?;
+    ownership(control, health, id).await
+}
+async fn ownership(
+    control: PathBuf,
+    health: ServiceHealth,
+    id: Incarnation,
+) -> Result<serde_json::Value> {
+    use crate::http_endpoint::{ConnectionOwnership, CredentialStore};
     let response = service_runtime::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
@@ -299,7 +317,7 @@ pub async fn lookup_connection(
         ))
     })
     .await??;
-    let mut reply = serde_json::json!({"schema":1,"active":expected,"connection_id":id});
+    let mut reply = serde_json::json!({"schema":1,"connection_id":id});
     if let Some(proof) = attachment_retirement {
         reply["status"] = "unavailable".into();
         reply["code"] = "owned_connection_attachment_retired".into();
@@ -320,7 +338,7 @@ pub async fn lookup_connection(
             reply["guidance"] = "This installation owns the ID. Retain its configuration and review renewal or revocation explicitly; do not reenroll it during migration.".into();
         }
         ConnectionOwnership::Active => {
-            match resolved_existing_connection(control, *health, *endpoint, id).await {
+            match resolved_existing_connection(control, health, *endpoint, id).await {
                 Ok(connection) => {
                     reply["status"] = "owned".into();
                     reply["connection"] = connection;
@@ -335,6 +353,214 @@ pub async fn lookup_connection(
         }
     }
     Ok(reply)
+}
+/// V1 (split step 3e.9, `agents verify`): probe this service's own `/mcp`
+/// over HTTPS, pinned to the installation's public issuer, with the stored
+/// credential of an existing connection. The probe initializes one MCP
+/// session and deletes it. The token stays in this process and is never part
+/// of the result or an error.
+pub(crate) async fn verify_connection_at(
+    control: PathBuf,
+    id: Incarnation,
+) -> Result<serde_json::Value> {
+    let (control, health) = healthy(control).await?;
+    let response = service_runtime::request_for_instance(
+        &control,
+        ControlMethod::HttpEndpoint,
+        health.instance,
+    )
+    .await?;
+    let ControlResponse::HttpEndpoint { endpoint } = response else {
+        return refused(response);
+    };
+    let endpoint = endpoint.context("native HTTPS endpoint is not available")?;
+    check_endpoint(&control, &endpoint, &health)?;
+    let binding = crate::http_endpoint::installation_binding(&control, endpoint.namespace)?;
+    let private = control.join("http-1");
+    let ca_sha256 = endpoint.ca_sha256;
+    let (token, ca) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let token = crate::http_endpoint::read_client_token(&private, id)?;
+        let store = crate::http_endpoint::CredentialStore::read_existing(&private, binding)?;
+        let now: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+            .try_into()?;
+        let authenticated = store.authenticate(&token, now)?;
+        ensure!(
+            authenticated.connection_id == id,
+            "native HTTP connection identity changed"
+        );
+        Ok((
+            token,
+            crate::http_endpoint::trust::public_ca(&private, ca_sha256)?,
+        ))
+    })
+    .await??;
+    let url = endpoint.url;
+    let mut result = serde_json::json!({
+        "schema": 1,
+        "connection_id": id,
+        "url": url.to_string(),
+    });
+    let initialize = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "airkctl-verify", "version": env!("CARGO_PKG_VERSION")}
+        }
+    })
+    .to_string();
+    match mcp_probe(url.port(), &ca, &token, &initialize).await {
+        Ok((status, session, body)) => {
+            result["http_status"] = status.into();
+            let answer = body.as_ref().and_then(|body| body.get("result"));
+            result["verified"] = (status == 200 && answer.is_some()).into();
+            if let Some(answer) = answer {
+                result["protocol_version"] = answer["protocolVersion"].clone();
+                result["server"] = answer["serverInfo"].clone();
+            } else if let Some(error) = body.as_ref().and_then(|body| body.get("error")) {
+                result["detail"] = error.clone();
+            }
+            if let Some(session) = session {
+                // Best effort: the session would otherwise wait for idle expiry.
+                let _ = mcp_close(url.port(), &ca, &token, &session).await;
+            }
+        }
+        Err(error) => {
+            result["verified"] = false.into();
+            result["detail"] = format!("{error:#}").replace(&token, "<redacted>").into();
+        }
+    }
+    Ok(result)
+}
+
+const PROBE_LIMIT: usize = 1 << 20;
+
+async fn mcp_exchange(port: u16, ca: &[u8], request: String) -> Result<Vec<u8>> {
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(rustls::pki_types::CertificateDer::from(ca.to_vec()))?;
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let exchange = async {
+        let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
+        let mut tls = connector
+            .connect(
+                rustls::pki_types::ServerName::try_from("127.0.0.1")?,
+                socket,
+            )
+            .await?;
+        tls.write_all(request.as_bytes()).await?;
+        let mut bytes = Vec::new();
+        (&mut tls)
+            .take(PROBE_LIMIT as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await?;
+        ensure!(
+            bytes.len() <= PROBE_LIMIT,
+            "MCP probe response exceeds bound"
+        );
+        Ok::<_, anyhow::Error>(bytes)
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(15), exchange)
+        .await
+        .context("MCP probe timed out")?
+}
+
+/// The status, session id and JSON-RPC body of one `initialize`.
+async fn mcp_probe(
+    port: u16,
+    ca: &[u8],
+    token: &str,
+    body: &str,
+) -> Result<(u16, Option<String>, Option<serde_json::Value>)> {
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let bytes = mcp_exchange(port, ca, request).await?;
+    let split = bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .context("MCP probe response has no header end")?;
+    let head = std::str::from_utf8(&bytes[..split]).context("MCP probe header is not UTF-8")?;
+    let mut lines = head.split("\r\n");
+    let status: u16 = lines
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .and_then(|code| code.parse().ok())
+        .context("MCP probe status line is malformed")?;
+    let mut session = None;
+    let mut chunked = false;
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            let value = value.trim();
+            if name.eq_ignore_ascii_case("mcp-session-id") {
+                session = Some(value.to_owned());
+            } else if name.eq_ignore_ascii_case("transfer-encoding")
+                && value.eq_ignore_ascii_case("chunked")
+            {
+                chunked = true;
+            }
+        }
+    }
+    let mut payload = bytes[split + 4..].to_vec();
+    if chunked {
+        payload = dechunk(&payload)?;
+    }
+    let text = String::from_utf8_lossy(&payload);
+    // Streamable HTTP answers either one JSON body or `data:` events.
+    let body = serde_json::from_str::<serde_json::Value>(text.trim())
+        .ok()
+        .or_else(|| {
+            text.lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .find_map(|data| serde_json::from_str(data.trim()).ok())
+        });
+    Ok((status, session, body))
+}
+
+fn dechunk(mut bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    loop {
+        let end = bytes
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .context("MCP probe chunk is malformed")?;
+        let size = std::str::from_utf8(&bytes[..end])?
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        let size = usize::from_str_radix(size, 16).context("MCP probe chunk size is malformed")?;
+        if size == 0 {
+            return Ok(out);
+        }
+        let start = end + 2;
+        ensure!(bytes.len() >= start + size, "MCP probe chunk is truncated");
+        out.extend_from_slice(&bytes[start..start + size]);
+        bytes = bytes.get(start + size + 2..).unwrap_or_default();
+    }
+}
+
+async fn mcp_close(port: u16, ca: &[u8], token: &str, session: &str) -> Result<()> {
+    ensure!(
+        session.bytes().all(|byte| byte.is_ascii_graphic()),
+        "MCP session id is malformed"
+    );
+    let request = format!(
+        "DELETE /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nMcp-Session-Id: {session}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    mcp_exchange(port, ca, request).await.map(|_| ())
 }
 fn client(label: &str) -> Result<airk_core::usage::ClientFamily> {
     ensure!(
