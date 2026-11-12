@@ -541,6 +541,135 @@ pub enum ControlMethod {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<ProjectBinding>,
     },
+    /// W1 (contracts §2.5; split step 3f): the service mints a window for
+    /// one session. The lease is returned once and only on this pipe.
+    WindowOpen {
+        label: String,
+        owner_pid: u32,
+    },
+    /// W2: renew a window's lease before its TTL elapses.
+    WindowRenew {
+        window_id: Incarnation,
+        lease: WindowLease,
+    },
+    /// W3: close a window; drops its queue, handoffs and scope grant.
+    WindowClose {
+        window_id: Incarnation,
+        lease: WindowLease,
+    },
+    /// W4: grant the window an in-memory scope over existing indexes.
+    WindowScopeGrant {
+        window_id: Incarnation,
+        lease: WindowLease,
+        selection: WindowScopeSelection,
+    },
+    /// W4b: release the window's scope grant (idempotent).
+    WindowScopeRelease {
+        window_id: Incarnation,
+        lease: WindowLease,
+    },
+    /// W5: the windows accepting Explorer Assistance drafts.
+    AssistanceWindows {},
+    /// W6: queue one Assistance draft for a window.
+    AssistanceSubmit {
+        window_id: Incarnation,
+        kind: String,
+        draft: serde_json::Value,
+        submitter: crate::usage::ClientFamily,
+    },
+    /// W7: the oldest unacknowledged drafts (non-destructive); `ack_through`
+    /// removes drafts up to that sequence.
+    AssistanceDrain {
+        window_id: Incarnation,
+        lease: WindowLease,
+        ack_through: Option<u64>,
+        limit: usize,
+    },
+    /// W8: publish a handoff for the window, read by M12.
+    HandoffPublish {
+        window_id: Incarnation,
+        lease: WindowLease,
+        handoff: serde_json::Value,
+        ttl_ms: u64,
+    },
+    /// M12: read a published handoff (`explorer get-handoff`).
+    ExplorerHandoff {
+        handoff_id: Incarnation,
+    },
+}
+
+/// A window lease (contracts §2.5): 256 random bits as 64 lowercase hex,
+/// held only in the owning session's memory and on its pipe frames. `Debug`
+/// never shows it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct WindowLease(String);
+
+impl WindowLease {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for WindowLease {
+    type Error = String;
+    fn try_from(value: String) -> std::result::Result<Self, String> {
+        if value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            Ok(Self(value))
+        } else {
+            Err("invalid window lease".into())
+        }
+    }
+}
+
+impl From<WindowLease> for String {
+    fn from(lease: WindowLease) -> String {
+        lease.0
+    }
+}
+
+impl std::fmt::Debug for WindowLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("WindowLease(<redacted>)")
+    }
+}
+
+/// What a W4 grant selects: existing indexes of the current catalog
+/// (in memory, per U77; no catalog grant id).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowScopeSelection {
+    pub namespace: Incarnation,
+    pub expected_catalog_revision: crate::index_catalog::CatalogRevision,
+    pub index_ids: Vec<crate::index_catalog::IndexId>,
+    pub project_ids: Vec<crate::index_catalog::QueryProjectId>,
+}
+
+/// One window in the W5 listing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssistanceWindow {
+    pub window_id: Incarnation,
+    pub label: String,
+    pub accepting: bool,
+    pub queued: usize,
+}
+
+/// One queued draft in a W7 drain.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssistanceDraft {
+    pub sequence: u64,
+    pub draft_id: Incarnation,
+    pub kind: String,
+    pub draft: serde_json::Value,
 }
 
 /// The offline Explorer operations (M11).
@@ -634,6 +763,11 @@ pub enum ToolSelection {
     Project { binding: ProjectBinding },
     /// `--catalog-session <request>`: an exact reviewed catalog grant.
     Catalog { request: ScopedConnectRequest },
+    /// The window's W4 scope grant (split step 3f), named by the session.
+    Window {
+        window_id: Incarnation,
+        lease: WindowLease,
+    },
     /// `--combined-session <request>` with its narrowing defaults, which the
     /// service adds to the arguments (a conflicting argument is refused).
     Combined {
@@ -684,6 +818,12 @@ pub enum ToolsCatalogDetail {
 
 /// The largest M2 response frame (contracts §2.8): the catalog with schemas.
 pub const MAX_TOOLS_CATALOG_RESPONSE_BYTES: usize = 1024 * 1024;
+/// W6's request budget (contracts §2.8): a 256 KiB draft and its fields.
+pub const MAX_ASSISTANCE_SUBMIT_REQUEST_BYTES: usize = 320 * 1024;
+/// W7's response budget: at most eight 256 KiB drafts (the frame ceiling).
+pub const MAX_ASSISTANCE_DRAIN_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// W8's request and M12's response budget: a 64 KiB handoff and its fields.
+pub const MAX_HANDOFF_FRAME_BYTES: usize = 128 * 1024;
 /// M11's request budget (contracts §2.8): a 1 MiB draft document plus
 /// the 64 KiB of arguments and framing.
 pub const MAX_EXPLORER_OFFLINE_REQUEST_BYTES: usize = 1024 * 1024 + 64 * 1024;
@@ -716,6 +856,8 @@ impl ControlMethod {
             Self::ToolsCall { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
             Self::UsageDocument { .. } => MAX_USAGE_DOCUMENT_RESPONSE_BYTES,
             Self::ExplorerOffline { .. } => MAX_EXPLORER_OFFLINE_RESPONSE_BYTES,
+            Self::AssistanceDrain { .. } => MAX_ASSISTANCE_DRAIN_RESPONSE_BYTES,
+            Self::ExplorerHandoff { .. } => MAX_HANDOFF_FRAME_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -727,6 +869,8 @@ impl ControlMethod {
             // JSON escaping can grow the 16 KiB input; M3's budget covers it.
             Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             Self::ExplorerOffline { .. } => MAX_EXPLORER_OFFLINE_REQUEST_BYTES,
+            Self::AssistanceSubmit { .. } => MAX_ASSISTANCE_SUBMIT_REQUEST_BYTES,
+            Self::HandoffPublish { .. } => MAX_HANDOFF_FRAME_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -1165,6 +1309,50 @@ pub enum ControlResponse {
     /// M4b: the reserved storage exists; the registry's registration.
     StoragePrepared {
         registration: ProjectRegistration,
+    },
+    /// W1: the new window, its lease (this reply only) and TTL.
+    WindowOpened {
+        window_id: Incarnation,
+        lease: WindowLease,
+        ttl_ms: u64,
+        service_instance: Incarnation,
+    },
+    /// W2: the lease is renewed for `ttl_ms`.
+    WindowRenewed {
+        ttl_ms: u64,
+    },
+    /// W3: the window is closed. An empty record, so unknown fields are refused.
+    WindowClosed {},
+    /// W4: the grant's identity, catalog revision and expiry.
+    WindowScopeGranted {
+        scope_identity: Sha256Digest,
+        catalog_revision: crate::index_catalog::CatalogRevision,
+        expires_at_ms: u64,
+    },
+    /// W4b: the grant is released (or there was none).
+    WindowScopeReleased {},
+    /// W5: the windows and whether each accepts drafts.
+    AssistanceWindows {
+        windows: Vec<AssistanceWindow>,
+    },
+    /// W6: the draft is queued.
+    AssistanceQueued {
+        draft_id: Incarnation,
+        queued: usize,
+    },
+    /// W7: the oldest unacknowledged drafts and the first sequence not returned.
+    AssistanceDrained {
+        drafts: Vec<AssistanceDraft>,
+        next: Option<u64>,
+    },
+    /// W8: the handoff is published until `expires_at_ms`.
+    HandoffPublished {
+        handoff_id: Incarnation,
+        expires_at_ms: u64,
+    },
+    /// M12: the published handoff.
+    ExplorerHandoff {
+        handoff: serde_json::Value,
     },
     /// M11: the operation's result, as the CLI wrote it to its output file.
     ExplorerOffline {

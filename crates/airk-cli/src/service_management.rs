@@ -1135,7 +1135,17 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::PrepareConfiguration { .. }
         | ControlMethod::UsageDocument { .. }
         | ControlMethod::ModelCatalog {}
-        | ControlMethod::ExplorerOffline { .. } => {
+        | ControlMethod::ExplorerOffline { .. }
+        | ControlMethod::WindowOpen { .. }
+        | ControlMethod::WindowRenew { .. }
+        | ControlMethod::WindowClose { .. }
+        | ControlMethod::WindowScopeGrant { .. }
+        | ControlMethod::WindowScopeRelease { .. }
+        | ControlMethod::AssistanceWindows {}
+        | ControlMethod::AssistanceSubmit { .. }
+        | ControlMethod::AssistanceDrain { .. }
+        | ControlMethod::HandoffPublish { .. }
+        | ControlMethod::ExplorerHandoff { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

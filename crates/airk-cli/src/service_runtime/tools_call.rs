@@ -145,6 +145,8 @@ async fn run(
         ToolSelection::Unselected => {
             anyhow::bail!("project binding required")
         }
+        // A window's W4 scope grant is read in step 3f.2.
+        ToolSelection::Window { .. } => anyhow::bail!("window scope reads are not yet served"),
         ToolSelection::Project { binding } => {
             let project = crate::service_frontend::resolve_control(control, binding).await?;
             let registration = project.registration;

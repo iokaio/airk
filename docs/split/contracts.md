@@ -233,6 +233,8 @@ an injected clock.
 
 ### 2.5 Window plane: session identity, scope grant, Assistance, handoffs (C3)
 
+[contract landed 3f.1: `airk_core::service` W1–W8 and M12 variants, `WindowLease` (redacting `Debug`), `WindowScopeSelection`, `AssistanceWindow`, `AssistanceDraft`, `ToolSelection::Window`; every pipe frame of `window_plane.json` is checked by `wire_fixture_tests::window_plane_pipe_frames_are_exact_i1_frames`.]
+
 A window identity is owned by the service, not claimed by the extension. The
 lease is a secret held only in `airkctl session` memory; it never appears in a
 session frame, on stdout or in logs [P].
@@ -314,6 +316,8 @@ exchange body.
 | M11 | 1 MiB + 64 KiB | 1 MiB | `proposal-status` reads ≤ 1 MiB today [V commands.md E] |
 | M13 | — | — | Not added (U88): recent pages use `Logs`, full and raw exports stay local |
 | W6 | 320 KiB | 64 KiB | Draft ≤ 256 KiB |
+| W7 | 64 KiB | 4 MiB (the frame ceiling; 3f.1) | At most eight 256 KiB drafts per drain |
+| W8, M12 | 128 KiB / 64 KiB (W8 request), 64 KiB / 128 KiB (M12 response) (3f.1) | A 64 KiB handoff and its fields |
 
 ## 3. I2 — `airkctl` command contract
 

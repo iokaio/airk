@@ -412,3 +412,48 @@ fn request_recovery_frames_are_exact_i1_frames() {
     }
     assert!(frames > 40, "{frames}");
 }
+
+const WINDOW_PLANE: &str = include_str!("../../../fixtures/split/i1/window_plane.json");
+
+/// Every pipe frame of the reviewed window-plane transcripts (contracts
+/// §2.5) decodes as the I1 types and re-encodes to the same bytes; frames
+/// whose unrelated fields the fixture elides are skipped. A lease is never
+/// shown by `Debug`.
+#[test]
+fn window_plane_pipe_frames_are_exact_i1_frames() {
+    let fixture: Value = serde_json::from_str(WINDOW_PLANE).unwrap();
+    let mut frames = 0;
+    for case in fixture["cases"].as_array().unwrap() {
+        for step in case["transcript"].as_array().unwrap() {
+            if step["channel"] != "pipe" {
+                continue;
+            }
+            let (frame, request) = match (step.get("send"), step.get("reply")) {
+                (Some(frame), _) => (frame, true),
+                (_, Some(frame)) => (frame, false),
+                _ => continue,
+            };
+            let text = serde_json::to_string(frame).unwrap();
+            if text.contains("\"elided\"") {
+                continue;
+            }
+            let encoded = if request {
+                let request: ControlRequest = serde_json::from_str(&text)
+                    .unwrap_or_else(|error| panic!("{}: {error}: {text}", case["name"]));
+                serde_json::to_value(&request).unwrap()
+            } else {
+                let response: ControlResponse = serde_json::from_str(&text)
+                    .unwrap_or_else(|error| panic!("{}: {error}: {text}", case["name"]));
+                serde_json::to_value(&response).unwrap()
+            };
+            assert_eq!(encoded, *frame, "{}", case["name"]);
+            frames += 1;
+        }
+    }
+    assert!(frames > 30, "{frames}");
+    let lease = crate::service::WindowLease::try_from("1a".repeat(32)).unwrap();
+    assert_eq!(format!("{lease:?}"), "WindowLease(<redacted>)");
+    for lease in ["1A".repeat(32), "1a".repeat(31), "g".repeat(64)] {
+        assert!(serde_json::from_value::<crate::service::WindowLease>(Value::from(lease)).is_err());
+    }
+}

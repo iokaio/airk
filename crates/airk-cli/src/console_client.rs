@@ -66,7 +66,17 @@ async fn handle(
         | ControlMethod::PrepareConfiguration { .. }
         | ControlMethod::UsageDocument { .. }
         | ControlMethod::ModelCatalog {}
-        | ControlMethod::ExplorerOffline { .. } => {
+        | ControlMethod::ExplorerOffline { .. }
+        | ControlMethod::WindowOpen { .. }
+        | ControlMethod::WindowRenew { .. }
+        | ControlMethod::WindowClose { .. }
+        | ControlMethod::WindowScopeGrant { .. }
+        | ControlMethod::WindowScopeRelease { .. }
+        | ControlMethod::AssistanceWindows {}
+        | ControlMethod::AssistanceSubmit { .. }
+        | ControlMethod::AssistanceDrain { .. }
+        | ControlMethod::HandoffPublish { .. }
+        | ControlMethod::ExplorerHandoff { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

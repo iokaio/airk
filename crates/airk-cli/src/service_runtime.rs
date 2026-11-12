@@ -510,6 +510,20 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
+            // The window plane (W1-W8) and M12 land their handlers in step
+            // 3f.2; until then the typed refusal.
+            ControlMethod::WindowOpen { .. }
+            | ControlMethod::WindowRenew { .. }
+            | ControlMethod::WindowClose { .. }
+            | ControlMethod::WindowScopeGrant { .. }
+            | ControlMethod::WindowScopeRelease { .. }
+            | ControlMethod::AssistanceWindows {}
+            | ControlMethod::AssistanceSubmit { .. }
+            | ControlMethod::AssistanceDrain { .. }
+            | ControlMethod::HandoffPublish { .. }
+            | ControlMethod::ExplorerHandoff { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::ExplorerOffline {
                 operation,
                 arguments,
