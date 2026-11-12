@@ -25,6 +25,7 @@ mod registration;
 mod resolve;
 mod tools_call;
 mod usage;
+mod window_plane;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
     if error
@@ -105,6 +106,33 @@ struct State {
     native_caller: airk_core::identity::Incarnation,
     /// The M19 record this instance accepted; advanced after the drain.
     lifecycle: Mutex<Option<airk_core::service_lifecycle::LifecycleRecord>>,
+    /// W1-W8 and M12 (split step 3f.2): this instance's windows, in memory.
+    windows: Mutex<window_plane::WindowPlane>,
+}
+
+/// The window plane with the system clock (Unix milliseconds) and the OS
+/// random source for window, draft and handoff ids and 256-bit leases. W4
+/// scope grants are refused at dispatch until step 3f.4, so the validator
+/// is never reached before then.
+fn windows(instance: airk_core::identity::Incarnation) -> window_plane::WindowPlane {
+    let random = || new_instance_id().expect("the OS random source is available");
+    window_plane::WindowPlane::new(
+        instance,
+        Box::new(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+                .unwrap_or_default()
+        }),
+        Box::new(move |_| random()),
+        Box::new(move || {
+            let mut bytes = [0u8; 32];
+            bytes[..16].copy_from_slice(random().as_bytes());
+            bytes[16..].copy_from_slice(random().as_bytes());
+            airk_core::service::WindowLease::from_bytes(bytes)
+        }),
+        Box::new(|_| Err("not_yet_served".into())),
+    )
 }
 
 /// The real outer NativeRead seam. A fixture may supply the producer for race
@@ -510,19 +538,27 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
-            // The window plane (W1-W8) and M12 land their handlers in step
-            // 3f.2; until then the typed refusal.
-            ControlMethod::WindowOpen { .. }
+            // W4 grants land with their catalog check and the M3 window
+            // read in step 3f.4; until then the typed refusal.
+            ControlMethod::WindowScopeGrant { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
+            // W1-W3, W4b, W5-W8 and M12 (split step 3f.2): in memory.
+            method @ (ControlMethod::WindowOpen { .. }
             | ControlMethod::WindowRenew { .. }
             | ControlMethod::WindowClose { .. }
-            | ControlMethod::WindowScopeGrant { .. }
             | ControlMethod::WindowScopeRelease { .. }
             | ControlMethod::AssistanceWindows {}
             | ControlMethod::AssistanceSubmit { .. }
             | ControlMethod::AssistanceDrain { .. }
             | ControlMethod::HandoffPublish { .. }
-            | ControlMethod::ExplorerHandoff { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
+            | ControlMethod::ExplorerHandoff { .. }) => match state.windows.lock() {
+                Ok(mut windows) => windows.handle(&method).unwrap_or(ControlResponse::Failure {
+                    code: "window_plane_unavailable".into(),
+                }),
+                Err(_) => ControlResponse::Failure {
+                    code: "window_plane_unavailable".into(),
+                },
             },
             ControlMethod::ExplorerOffline {
                 operation,
@@ -842,6 +878,7 @@ async fn serve_with_admission(
         native_administrative: Default::default(),
         native_caller: local_ipc::caller_identity()?,
         lifecycle: Mutex::new(None),
+        windows: Mutex::new(windows(instance)),
     });
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
     {
