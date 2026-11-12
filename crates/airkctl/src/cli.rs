@@ -287,6 +287,8 @@ enum ToolsCommand {
         #[arg(long)]
         args_file: Option<PathBuf>,
     },
+    /// Open a connection-bound interactive console with help and examples.
+    Shell,
 }
 
 fn parse_catalog_session(value: &str) -> Result<ScopedConnectRequest, String> {
@@ -526,7 +528,9 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
             json,
         ),
         ToolsCommand::Help { tool, json } => (ToolsCatalogDetail::Help { tool }, json),
-        ToolsCommand::Call { .. } => unreachable!("calls are not catalog reads"),
+        ToolsCommand::Call { .. } | ToolsCommand::Shell => {
+            unreachable!("calls and the console are not catalog reads")
+        }
     };
     let control = match control(cx, selection) {
         Ok(control) => control,
@@ -1737,6 +1741,9 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             Ok(arguments) => call(cx, &selection, tool, arguments),
             Err(error) => usage(cx, &format!("{error:#}")),
         },
+        Command::Tools {
+            action: ToolsCommand::Shell,
+        } => shell::run(cx, &selection),
         Command::Tools { action } => catalog(cx, &selection, action),
         Command::Evidence(command) => evidence(cx, selection, *command),
     }
@@ -1815,5 +1822,6 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     dispatch(&mut cx, cli.command, selection)
 }
 
+mod shell;
 #[cfg(test)]
 mod tests;

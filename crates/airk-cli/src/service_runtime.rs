@@ -496,7 +496,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 registration::prepare_storage(&state.control_root, project)
             }
             ControlMethod::ResolveProject { target } => {
-                resolve::response(&state.control_root, target)
+                resolve::response(&state.control_root, target).await
             }
             ControlMethod::RecordClientError { operation, input } => {
                 match crate::service_logs::record_client_error(

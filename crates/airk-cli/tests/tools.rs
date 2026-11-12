@@ -1401,3 +1401,148 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
     service.shutdown_reviewed()?;
     Ok(())
 }
+
+/// A console transcript with the varying observation fields `stable` drops
+/// replaced in place (pretty JSON keeps one field per line).
+fn stable_transcript(text: &str) -> String {
+    const VARYING: [&str; 7] = [
+        "request_id",
+        "observed_unix_ms",
+        "observed_from_unix_ms",
+        "observed_to_unix_ms",
+        "cache_age_ms",
+        "cached",
+        "elapsed_ms",
+    ];
+    text.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            match VARYING
+                .iter()
+                .find(|key| trimmed.starts_with(&format!("\"{key}\":")))
+            {
+                Some(key) => format!(
+                    "{}\"{key}\": _{}",
+                    &line[..line.len() - trimmed.len()],
+                    if line.ends_with(',') { "," } else { "" }
+                ),
+                None => line.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `tools shell` (split step 3c.4c): the same console input through `airk`
+/// and `airkctl`, by project binding and by catalog session, prints the same
+/// banner, help, prompts, results and `Error:` lines.
+#[test]
+fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-shell");
+    fs::write(
+        root.path().join("recovery.md"),
+        "# Recovery\n\nRecover a forgotten password.\n",
+    )?;
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    let arguments_file = state.path().join("shell-args.json");
+    fs::write(&arguments_file, r#"{"query":"recover","limit":2}"#)?;
+    let script = format!(
+        "list\nhelp airk_search\nhelp nope\ncall airk_status\ncall airk_search {{\"query\":\"recover\",\"limit\":2}}\ncall airk_search --args-file \"{}\"\ncall airk_search [1]\ncall nope\nbogus\n\nhelp\nexit\ncall airk_status\n",
+        arguments_file.display()
+    );
+    let airkctl_shell = |arguments: &[&str]| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut stdin = script.as_bytes();
+        // `common::command` and `scoped_command` run `airk` with
+        // `AIRK_MCP_RESPONSE_MODE=full`; `airkctl` reads the same setting.
+        let mut io = airkctl::cli::Io {
+            stdin: &mut stdin,
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: true,
+        };
+        let line = std::iter::once("airkctl")
+            .chain(arguments.iter().copied())
+            .chain(["tools", "shell"])
+            .map(std::ffi::OsString::from)
+            .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let airk_shell = |mut command: Command| -> anyhow::Result<(bool, String, String)> {
+        let mut child = command
+            .args(["tools", "shell"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        child.stdin.take().unwrap().write_all(script.as_bytes())?;
+        let output = child.wait_with_output()?;
+        // The documented program rename (`airk tools …` → `airkctl tools …`),
+        // as the golden comparison applies it.
+        Ok((
+            output.status.success(),
+            String::from_utf8(output.stdout)?.replace("airk tools ", "airkctl tools "),
+            String::from_utf8(output.stderr)?.replace("'airk tools list'", "'airkctl tools list'"),
+        ))
+    };
+    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
+    else {
+        panic!("the reviewed fixture selects one scoped index");
+    };
+    let catalog = serde_json::to_string(&selection)?;
+    let binding = service.project.binding.to_string();
+    let control = service.control.to_str().unwrap().to_owned();
+    for (name, old, new) in [
+        (
+            "project",
+            common::command(root.path(), state.path(), "ctl-shell"),
+            vec![
+                "--service-runtime-dir",
+                &control,
+                "--service-project",
+                &binding,
+            ],
+        ),
+        (
+            "catalog",
+            common::scoped_command(root.path(), state.path(), "ctl-shell"),
+            vec![
+                "--service-runtime-dir",
+                &control,
+                "--catalog-session",
+                &catalog,
+            ],
+        ),
+    ] {
+        let (succeeded, old_stdout, old_stderr) = airk_shell(old)?;
+        let (code, new_stdout, new_stderr) = airkctl_shell(&new);
+        assert!(succeeded, "{name}: {old_stderr}");
+        assert_eq!(code, 0, "{name}: {new_stderr}");
+        assert!(
+            old_stdout.starts_with("AIRK Tools\n"),
+            "{name}: {old_stdout}"
+        );
+        assert_eq!(
+            stable_transcript(&new_stdout),
+            stable_transcript(&old_stdout),
+            "{name}"
+        );
+        assert_eq!(new_stderr, old_stderr, "{name}");
+        assert!(
+            new_stderr.contains("Error: Unknown command. Type help for instructions."),
+            "{name}: {new_stderr}"
+        );
+    }
+    Ok(())
+}
