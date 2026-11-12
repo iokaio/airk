@@ -44,9 +44,13 @@ export function scopeSelectionIdentity(input: CatalogSessionSelector, nativeFing
         session.expected_grant_revision,session.index_id,session.project_ids,nativeFingerprint??null])).digest('hex');
 }
 /** Bind a retained runtime observation only after matching its selected IDs.
- * This does not turn a captured observation into current authorization. */
+ * This does not turn a captured observation into current authorization. An
+ * observation from an in-memory selection grant carries no `grant`; it never
+ * matches a catalog session and is refused as crossed. */
 export function observedScopeSelectionIdentity(input:CatalogSessionSelector,observationInput:unknown):string {
-    const session=validateCatalogSession(input),observation=catalogObject(observationInput),grant=catalogObject(observation.grant);
+    const session=validateCatalogSession(input),observation=catalogObject(observationInput);
+    if(observation.grant===undefined||observation.grant===null||observation.selection!==undefined)throw new Error('crossed_scope_observation');
+    const grant=catalogObject(observation.grant);
     if(observation.schema!==1||observation.qualifier!=='selected_subset'||observation.provenance!=='user_reviewed_project_grant'
         ||grant.id!==session.grant_id||grant.revision!==session.expected_grant_revision
         ||!Array.isArray(observation.members)||observation.members.length!==1)throw new Error('crossed_scope_observation');

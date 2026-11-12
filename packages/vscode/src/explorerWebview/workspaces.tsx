@@ -8,7 +8,7 @@ import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { HelpScreen } from './help';
-import { ProjectsScreen } from './manage';
+import { AdminHandoffScreen } from './adminLinks';
 import { RecipesScreen, SearchScreen } from './search';
 import { PlannerScreen } from './planner';
 import { ReviewChangesScreen, ReviewImpactScreen, ReviewTestsScreen } from './review';
@@ -36,16 +36,16 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'indexing/window': IndexingScreen,
     'indexing/library': IndexingScreen,
     'indexing/projects': IndexingScreen,
-    'manage/overview': ProjectsScreen,
+    'manage/overview': AdminHandoffScreen,
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,
-    'manage/activity': ProjectsScreen,
-    'manage/repair': ProjectsScreen,
-    'manage/storage': ProjectsScreen,
-    'manage/service': ProjectsScreen,
-    'manage/agents': ProjectsScreen,
-    'manage/usage': ProjectsScreen,
-    'manage/logs': ProjectsScreen,
+    'manage/activity': AdminHandoffScreen,
+    'manage/repair': AdminHandoffScreen,
+    'manage/storage': AdminHandoffScreen,
+    'manage/service': AdminHandoffScreen,
+    'manage/agents': AdminHandoffScreen,
+    'manage/usage': AdminHandoffScreen,
+    'manage/logs': AdminHandoffScreen,
     'code/symbols': SymbolsScreen,
     'code/references': ReferencesScreen,
     'code/outline': OutlineScreen,

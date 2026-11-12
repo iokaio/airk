@@ -5,11 +5,8 @@ import * as path from 'node:path';
 import * as vm from 'node:vm';
 import test from 'node:test';
 import { buildSync } from 'esbuild';
-import type { ExplorerViewState } from '../explorerContracts';
 import { ROUTE_KEYS, parseRoute } from '../explorerRoutes';
 
-type Upgrade = NonNullable<ExplorerViewState['runtimeUpgrade']>;
-const upgrade: Upgrade = { fromVersion: '1.8.7', toVersion: '1.8.9', stage: 'activating', message: 'Native activation is running.', startedAt: Date.now() - 3000, updatedAt: Date.now() };
 const directory = path.resolve(__dirname, '../../src/explorerWebview');
 const bundles = new Map<string, string>();
 
@@ -50,78 +47,6 @@ function renderedText(node: any): string {
     if (typeof node !== 'object') { return String(node); }
     return renderedText(node.props?.children);
 }
-
-test('the actual App shares upgrade progress and persisted notice preferences on every Explorer screen', () => {
-    const state = { revision: 1, extensionVersion: '1.8.9', trusted: true, projects: [], features: {}, connection: 'ready', runtimeUpgrade: upgrade };
-    const dismissed = ['dismissed-update'];
-    for (const key of ROUTE_KEYS) {
-        const app = browserModule('app.tsx', { ...state, dismissedNotices: dismissed }, parseRoute(key)), tree = app.App();
-        const banners = children(tree).filter(node => node.type?.name === 'RuntimeUpgradeProgress');
-        assert.equal(banners.length, 1, key);
-        assert.equal(banners[0].props.upgrade, upgrade, key);
-        assert.equal(tree.props.value.dismissed, dismissed, key);
-    }
-    const app = browserModule('app.tsx', { ...state, runtimeUpgrade: undefined }, { workspace: 'indexing' });
-    assert.equal(children(app.App()).filter(node => node.type?.name === 'RuntimeUpgradeProgress').length, 0);
-});
-
-test('upgrade rendering reports observed stages and elapsed time without invented completion percentages', () => {
-    const ui = browserModule('runtimeUpgrade.tsx');
-    const pending = ui.RuntimeUpgradeProgress({ upgrade }), text = renderedText(pending);
-    assert.match(text, /Updating AIRK for your indexes/);
-    assert.match(text, /1\.8\.7 → 1\.8\.9/);
-    assert.match(text, /Activating the upgraded runtime/);
-    assert.match(text, /Native activation is running/);
-    assert.match(text, /Elapsed: \d+ seconds/);
-    assert.doesNotMatch(text, /\d+%|rebuild/i);
-    const progress = children(pending).find(node => node.type === 'progress');
-    assert.ok(progress); assert.equal(progress.props.value, undefined);
-    for (const stage of ['ready', 'failed']) {
-        const terminal = ui.RuntimeUpgradeProgress({ upgrade: { ...upgrade, stage } });
-        assert.equal(children(terminal).some(node => node.type === 'progress'), false);
-        assert.equal(terminal.props.role, stage === 'failed' ? 'alert' : 'status');
-        assert.match(renderedText(terminal), stage === 'failed' ? /upgrade has not completed/ : /runtime update finished/);
-    }
-});
-
-test('clean break rebuilding and cleanup do not claim old indexes are retained or installation complete',()=>{
-    const ui=browserModule('runtimeUpgrade.tsx');
-    for(const stage of ['rebuilding','cleaning']){
-        const tree=ui.RuntimeUpgradeProgress({upgrade:{...upgrade,stage,cleanBreak:true}}),text=renderedText(tree);
-        assert.match(text,/Original sources stay unchanged/);assert.match(text,/new reviewed connection/);
-        assert.doesNotMatch(text,/Existing index data.*retained|update complete/);
-        assert.equal(ui.upgradePending({...upgrade,stage,cleanBreak:true}),true);
-        assert.match(text,stage==='rebuilding'?/Building fresh indexes/:/Removing owned legacy installation artifacts/);
-    }
-});
-
-test('split text distinguishes a real upgrade from unconfirmed or unsupported capability', () => {
-    const ui = browserModule('runtimeUpgrade.tsx'), view = { generation: 1, busy: false };
-    const pending = renderedText(ui.SplitAvailability({ view, upgrade }));
-    assert.match(pending, /upgrading the runtime for this index to 1\.8\.9/);
-    assert.match(pending, /automatically/);
-    assert.match(pending, /Management → Service and the installation log/);
-    assert.doesNotMatch(pending, /details above|progress is shown/);
-    const unknown = renderedText(ui.SplitAvailability({ view }));
-    assert.match(unknown, /not yet been confirmed/); assert.doesNotMatch(unknown, /is upgrading/);
-    const unsupported = renderedText(ui.SplitAvailability({ view: { ...view, capabilities: { policy_contract: 1 } } }));
-    assert.match(unsupported, /does not support splitting/); assert.doesNotMatch(unsupported, /is upgrading/);
-    assert.equal(ui.upgradePending({ ...upgrade, stage: 'ready' }), false);
-    assert.equal(ui.upgradePending({ ...upgrade, stage: 'failed' }), true);
-});
-
-test('upgrade notice identity ignores progress churn but separates completion, failures and later versions', () => {
-    const ui = browserModule('runtimeUpgrade.tsx');
-    const key = (value: Upgrade) => ui.RuntimeUpgradeProgress({ upgrade: value }).props.noticeKey;
-    const active = key(upgrade);
-    assert.equal(key({ ...upgrade, stage: 'reconnecting', message: 'Checking the connection.', updatedAt: Date.now() + 60000 }), active);
-    const ready = key({ ...upgrade, stage: 'ready' });
-    assert.notEqual(ready, active);
-    assert.equal(key({ ...upgrade, stage: 'ready', startedAt: 1, updatedAt: 2, message: 'Connected again.' }), ready);
-    assert.notEqual(key({ ...upgrade, stage: 'failed', message: 'Activation failed.' }), active);
-    assert.notEqual(key({ ...upgrade, stage: 'failed', message: 'Activation failed.' }), key({ ...upgrade, stage: 'failed', message: 'Connection failed.' }));
-    assert.notEqual(key({ ...upgrade, stage: 'ready', toVersion: '1.8.12' }), ready);
-});
 
 test('global error and permission notices use the same keys on all screens and do not replace their content', () => {
     const state = { revision: 1, extensionVersion: '1.8.12', trusted: false, workspaceTrusted: true,

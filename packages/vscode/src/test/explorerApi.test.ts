@@ -27,7 +27,7 @@ test('lost reads release waiting state, explain recovery and discard late replie
     assert.deepEqual(await next, []); assert.equal(c.timers.size, 0);
 });
 test('lost action acknowledgments report uncertainty and never replay the action', async () => {
-    const c = client(), pending = c.api.request('manage.action', { action: 'pause' });
+    const c = client(), pending = c.api.request('manage.command', { command: 'airk.reconnectAgents' });
     const timer = [...c.timers.values()][0]; assert.equal(timer.delay, 900000); timer.fn();
     await assert.rejects(pending, (error: any) => error.error.code === 'REQUEST_OUTCOME_UNKNOWN' && error.message.includes('before retrying'));
     assert.equal(c.sent.length, 1); assert.equal(c.timers.size, 0);
@@ -47,14 +47,9 @@ test('new native and local writes keep outcome uncertainty after timeout or brid
     const c = client();
     const actions: Array<[string, Record<string, unknown>]> = [
         ['notice.dismiss', { key: 'runtime:1.8.11:1.8.12:ready' }],
-        ['indexing.setup.apply', { generation: 1 }], ['indexing.setup.resume', { id: 'a'.repeat(32), generation: 1 }],
-        ['indexing.source.resolve', { generation: 1 }], ['indexing.policy.resume', { generation: 1 }],
-        ['indexing.split.apply', { generation: 1 }], ['indexing.split.recover', { action: 'cancel', generation: 1 }],
-        ['indexing.retirement.stopTracking', { generation: 1 }],
-        ['indexing.grant.use', { generation: 1, choice: { grant_id: 'grt_' + 'a'.repeat(32), expected_grant_revision: 1, project_ids: ['prj_' + 'b'.repeat(32)] } }],
+        ['indexing.scope.apply', { generation: 1, selection: { index_ids: [], project_ids: [] } }],
         ['indexing.recommendations.use', {}], ['indexing.recommendations.copy', {}],
         ['strategy.run.export', { runId: 'a'.repeat(32), digest: 'b'.repeat(64), format: 'json' }],
-        ['indexing.apply', { generation: 1 }], ['indexing.export', { format: 'json' }],
         ['details.copy', { section: 'service' }], ['clipboard.write', { text: 'complete native observation' }],
     ];
     for (const [type, fields] of actions) {
@@ -75,12 +70,7 @@ test('new native and local writes keep outcome uncertainty after timeout or brid
 test('native draft and receipt reads retain read deadlines while actual pickers retain interactive deadlines', async () => {
     const c = client();
     const reads = [
-        'indexing.recommendations', 'indexing.recommendations.dismiss', 'indexing.page', 'indexing.detail',
-        'indexing.preview', 'indexing.create', 'indexing.reconcile', 'indexing.context.read',
-        'indexing.context.preview', 'indexing.context.delete', 'indexing.grant.draft', 'indexing.grant.revoke',
-        'indexing.setup.draft', 'indexing.source.draft', 'indexing.source.read', 'indexing.source.pending',
-        'indexing.split.open', 'indexing.split.sourceRead', 'indexing.split.draft', 'indexing.split.read',
-        'indexing.policy.read', 'indexing.retirement.read', 'agents.configHealth',
+        'indexing.recommendations', 'indexing.recommendations.dismiss', 'indexing.scope.read', 'library.read',
     ];
     for (const type of reads) {
         const before = c.sent.length, pending = c.api.request(type, {}), timer = [...c.timers.values()][0];
@@ -88,13 +78,13 @@ test('native draft and receipt reads retain read deadlines while actual pickers 
         await assert.rejects(pending, (error: any) => error.error.code === 'REQUEST_TIMEOUT' && error.message.includes('retry the read'), type);
         assert.equal(c.sent.length, before + 1, type); assert.equal(c.timers.size, 0);
     }
-    for (const type of ['workspace.manageTrust', 'source.choose', 'source.open', 'help.choose', 'instructions.open', 'planner.openDraft', 'planner.import', 'strategy.import', 'recipes.import']) {
+    for (const type of ['workspace.manageTrust', 'source.choose', 'source.open', 'help.choose', 'admin.open', 'planner.openDraft', 'planner.import', 'strategy.import', 'recipes.import']) {
         const pending = c.api.request(type, {}), timer = [...c.timers.values()][0];
         assert.equal(timer.delay, 900000, type); timer.fn();
         await assert.rejects(pending, (error: any) => error.error.code === 'REQUEST_TIMEOUT', type);
         assert.equal(c.timers.size, 0);
     }
-    const pending = c.api.request('indexing.split.read', {}); c.events.get('pagehide')!({});
+    const pending = c.api.request('library.read', {}); c.events.get('pagehide')!({});
     await assert.rejects(pending, (error: any) => error.error.code === 'HOST_UNAVAILABLE');
     assert.equal(c.timers.size, 0);
 });

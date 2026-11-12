@@ -50,7 +50,7 @@ test('authentication or publication failure stops without retrying through anoth
 
 test('invalid package inventory or channel cannot reach the publisher', () => {
     for (const paths of [null, [...packages, packages[0]], [packages[0], packages[0]], [1, 2, 3, 4]]) {
-        assert.throws(() => runPublisher(paths, 'preview'), /Expected at most four verified, unpublished platform packages/);
+        assert.throws(() => runPublisher(paths, 'preview'), /Expected at most four verified, unpublished packages/);
     }
     assert.throws(() => runPublisher(packages, 'other'), /Expected verified inventory and channel/);
 });

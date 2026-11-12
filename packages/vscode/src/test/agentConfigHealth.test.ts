@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test, type TestContext } from 'node:test';
-import { createRequire } from 'node:module';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import * as vm from 'node:vm';
-import { buildSync } from 'esbuild';
 import { agentConfigFindings, checkAgentConfigHealth } from '../agentConfigHealth';
 
 /** A fresh project root with the given project-relative files; removed after the test. */
@@ -127,86 +124,4 @@ test('a project without agent configuration files has no findings, and a failed 
     const root = await project(t, { '.mcp.json': JSON.stringify({ mcpServers: { airk: { command: path.join(os.tmpdir(), 'gone', 'airk') } } }) });
     let calls = 0;
     await assert.rejects(checkAgentConfigHealth(root, { exists: existing().exists, check: () => { if (++calls > 2) { throw new Error('selection superseded'); } } }), /selection superseded/);
-});
-
-// ---- Management > Agents rendering (actual component, minimal hook host).
-const managePath = path.resolve(__dirname, '../../src/explorerWebview/manage.tsx');
-let manageBundle: string | undefined;
-function nodes(node: any): any[] {
-    if (Array.isArray(node)) { return node.flatMap(nodes); }
-    return !node || typeof node !== 'object' ? [] : [node, ...nodes(node.props?.children)];
-}
-function text(node: any): string {
-    if (node === undefined || node === null || typeof node === 'boolean') { return ''; }
-    return Array.isArray(node) ? node.map(text).join('') : typeof node === 'object' ? text(node.props?.children) : String(node);
-}
-function agentsScreen(project: string, replies: unknown[]) {
-    manageBundle ??= buildSync({ entryPoints: [managePath], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', jsxImportSource: 'preact',
-        external: ['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help'] }).outputFiles[0].text;
-    const slots: any[] = [], effects: (() => unknown)[] = [], sent: any[] = [], events = new Map<string, (event: any) => void>();
-    let cursor = 0;
-    const hooks = {
-        useState(initial: any) {
-            const at = cursor++;
-            if (!(at in slots)) { slots[at] = typeof initial === 'function' ? initial() : initial; }
-            return [slots[at], (next: any) => { slots[at] = typeof next === 'function' ? next(slots[at]) : next; }];
-        },
-        useRef(initial: any) { const at = cursor++; return slots[at] ??= { current: initial }; },
-        useEffect(effect: () => unknown, dependencies?: unknown[]) {
-            const at = cursor++, prior = slots[at];
-            if (!prior || !dependencies || dependencies.some((value, i) => !Object.is(value, prior[i]))) { effects.push(effect); }
-            slots[at] = dependencies;
-        },
-        useMemo(get: () => unknown) { return get(); },
-        useContext() { return { dismissed: [] }; },
-    };
-    const module = { exports: {} as any }, nativeRequire = createRequire(managePath);
-    vm.runInNewContext(manageBundle, { module, exports: module.exports, TextEncoder,
-        require: (id: string) => id === 'preact/hooks' ? hooks : id === 'airk-explorer-help' ? { topics: [] } : nativeRequire(id),
-        setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
-        window: { addEventListener: (name: string, listener: (event: any) => void) => events.set(name, listener) },
-        acquireVsCodeApi: () => ({ getState() {}, setState() {}, postMessage(message: any) {
-            sent.push(message);
-            const data = message.type === 'agents.configHealth' ? replies.shift() : null;
-            queueMicrotask(() => events.get('message')?.({ data: { v: 1, type: 'result', requestId: message.requestId, ok: true, data } }));
-        } }),
-    });
-    const state: any = { trusted: true, selectedProject: project, projects: [],
-        management: { trusted: true, connected: true, busy: false, authority: 'fixture', checkedAt: 0, responseMode: 'terse', enabled: {} } };
-    return {
-        sent,
-        render() {
-            cursor = 0;
-            const screen = module.exports.AgentsScreen({ state, route: { workspace: 'manage', tab: 'agents' }, go() {}, publications: [] });
-            const element = nodes(screen).find(node => typeof node.type === 'function' && /^AgentConfigCheck\d*$/.test(node.type.name));
-            assert.ok(element, 'Management > Agents renders the agent configuration check');
-            assert.equal(element.props.project, project);
-            return element.type(element.props);
-        },
-        async flush() { while (effects.length) { effects.shift()!(); } await new Promise(resolve => setImmediate(resolve)); },
-    };
-}
-const button = (tree: any, label: RegExp) => nodes(tree).find(node => node.type === 'button' && label.test(text(node)));
-
-test('Management > Agents lists a broken AIRK entry with its repair and re-checks on request', async () => {
-    const project = 'ab'.repeat(32), launcher = 'C:\\Users\\fixture\\AppData\\Local\\AIRK\\launcher\\airk-launcher.exe';
-    const finding = { agent: 'claude', label: 'Claude Code', file: 'D:\\work\\.mcp.json', scope: 'project', serverKey: 'airk', command: launcher, root: 'D:\\work', problem: 'stdio_missing_command' };
-    const screen = agentsScreen(project, [{ project, checked: ['.mcp.json'], findings: [finding] }, { project, checked: ['.mcp.json'], findings: [] }]);
-    screen.render(); await screen.flush();
-    assert.deepEqual(screen.sent.map(message => [message.type, message.project]), [['agents.configHealth', project]]);
-    let tree = screen.render(), content = text(tree);
-    assert.match(content, /Agent configuration check/);
-    for (const expected of ['Claude Code', 'D:\\work\\.mcp.json', 'airk', `Missing command: ${launcher}`, 'Project folder: D:\\work',
-        'This entry starts an AIRK program that no longer exists (an earlier AIRK installation was replaced or removed). AIRK now connects agents over local HTTPS. Reconnect replaces this entry for Claude Code; other servers and settings are kept.']) {
-        assert.ok(content.includes(expected), expected);
-    }
-    button(tree, /^Reconnect…$/).props.onClick(); await screen.flush();
-    assert.deepEqual(screen.sent.at(-1).type, 'manage.command'); assert.equal(screen.sent.at(-1).command, 'airk.reconnectAgents');
-    button(tree, /^Connect a coding agent…$/).props.onClick(); await screen.flush();
-    assert.deepEqual(screen.sent.at(-1).type, 'manage.command'); assert.equal(screen.sent.at(-1).command, 'airk.setupAgent');
-    button(tree, /^Check again$/).props.onClick(); screen.render(); await screen.flush();
-    assert.equal(screen.sent.filter(message => message.type === 'agents.configHealth').length, 2);
-    tree = screen.render(); content = text(tree);
-    assert.ok(content.includes("No broken AIRK entries found in this project's agent configuration files."));
-    assert.equal(content.includes('Missing command'), false);
 });

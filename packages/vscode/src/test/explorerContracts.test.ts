@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { MANAGE_ACTIONS, MANAGE_COMMANDS, parseWebviewMessage, WEBVIEW_MESSAGES } from '../explorerContracts';
+import { ADMIN_PAGES, MANAGE_COMMANDS, parseWebviewMessage, WEBVIEW_MESSAGES } from '../explorerContracts';
 import { EXPLORER_ERRORS, explorerError } from '../explorerErrors';
 import { availability, FEATURES } from '../explorerFeatures';
 import { formatRoute, parseRoute, ROUTE_KEYS, routeKey, WORKSPACES } from '../explorerRoutes';
@@ -105,15 +105,12 @@ test('live help accepts bounded read-only selectors and About accepts fixed dest
     for (const destination of ['https://example.invalid', 'command:workbench.action.reloadWindow', 'file:///private']) { assert.equal(parseWebviewMessage({ v: 1, type: 'help.openExternal', requestId: 'l', destination }), undefined); }
 });
 
-test('Management actions are exactly the console allowlist, and commands are fixed AIRK commands', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const view = require('../serviceConsoleView') as typeof import('../serviceConsoleView');
-    const consoleActions = new Set([...view.CONSOLE_SIMPLE_ACTIONS, ...view.CONSOLE_PROJECT_ACTIONS, 'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent']);
-    assert.deepEqual(new Set(MANAGE_ACTIONS), consoleActions);
-    assert.deepEqual(WEBVIEW_MESSAGES['manage.action'].operation.values, view.CONSOLE_OPERATIONS);
+test('Explorer commands are fixed AIRK commands and management actions are not Explorer messages (U6, U97)', () => {
     for (const command of MANAGE_COMMANDS) { assert.match(command, /^airk\.[a-zA-Z]+$/); }
     assert.equal(parseWebviewMessage({ v: 1, type: 'manage.command', requestId: 'c', command: 'workbench.action.reloadWindow' }), undefined);
-    assert.equal(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'index', project: 'x' }), undefined);
-    assert.ok(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'retryJob', id: 'ab'.repeat(32) }));
-    assert.equal(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'retryJob', id: 'zz'.repeat(32) }), undefined);
+    assert.equal(Object.hasOwn(WEBVIEW_MESSAGES, 'manage.action'), false);
+    assert.equal(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'retryJob', id: 'ab'.repeat(32) }), undefined);
+    for (const page of ADMIN_PAGES) { assert.ok(parseWebviewMessage({ v: 1, type: 'admin.open', requestId: 'o', page }), page); }
+    assert.equal(parseWebviewMessage({ v: 1, type: 'admin.open', requestId: 'o', page: 'index-library', set: 'idx_' + 'ab'.repeat(16) }), undefined);
+    assert.equal(parseWebviewMessage({ v: 1, type: 'library.read', requestId: 'r', method: 'page', kind: 'indexes', after: [] }), undefined);
 });

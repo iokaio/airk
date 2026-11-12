@@ -8,24 +8,13 @@ related_airk_help: troubleshooting, privacy
 ---
 # Logs and diagnostics
 
-Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+Service logs are in AIRK Admin, Logs. The extension's own output is in the AIRK output channel (AIRK: Show Extension Output).
 
-Management › Logs opens recent native service events, builds a metadata-only diagnostic report and exports the retained service log ring.
+Management moved from the Explorer to the AIRK admin pages; this window reads indexes and evidence only. Its Management tabs open the matching admin page.
 
-From 1.5.9, a failed job observed by the service records `job_failed` with its project, job ID and failure code even when the worker stays alive. Indexing failures preserve their observed operation stage and recognized native cause, such as an OS or SQLite error number. Unrecognized causes remain unspecified; arbitrary error text and file contents are excluded. Older failures cannot be reconstructed from the new diagnostics.
-
-Recent events display readable timestamps and available job IDs and failure reasons. **Copy details** in Service preserves these fields as well. Ingestion-limit failures also explain the configured limit in the project's health message.
+Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
 
 ## Steps
 
-1. Choose **Generate report**. Paths and user or machine names are redacted unless you include them.
-2. Choose **Open report**, **Copy report** or **Save report…** to open, copy or save that exact captured report.
-3. For the full available native log history, choose **Save retained service logs…**. This exports the finite retained log ring separately from the report and recent-events display.
-
-## Limits
-
-Reports are never uploaded. They include the visible project page and up to 128 cached native events within a 256 KiB bound; omissions are explicit. Each native diagnostic stream is bounded by a 200 MB high-water mark. Crossing it purges oldest FIFO segments to at most 100 MB. Raw errors include setup, connection and polling/action failures as well as job failures. Open/Save does not wait behind status polling; an empty log opens explanatory text or can be saved as an empty file. Older rotated-away records are unavailable, and malformed records are counted and omitted.
-
-## Log views
-
-Recent service events appear in this tab, with observation status and explicit empty/disconnected states. **Refresh recent events** reloads the bounded service observation. **Open service logs** reads at most 32 native records and focuses the AIRK Service output channel. **Show extension output** focuses the separate AIRK output channel without reopening Explorer or requesting native service logs. Read failures retain diagnostic details in AIRK Service and report that channel as the next place to look.
+1. Choose **Open AIRK Admin**.
+2. In AIRK Admin, open **Logs** to read recent bounded logs or export the redacted diagnostic report.

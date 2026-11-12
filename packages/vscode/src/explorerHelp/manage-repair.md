@@ -8,19 +8,15 @@ related_airk_help: maintenance, request-recovery
 ---
 # Diagnose and repair
 
-Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+Diagnose problems and review repair plans, including verify and rebuild steps, in AIRK Admin, Recovery. Destructive steps ask you to type the reviewed target's name.
 
-Management › Advanced diagnostics and recovery creates a native repair plan, shows its preview page by page, and runs it only after you approve that exact preview.
+Management moved from the Explorer to the AIRK admin pages; this window reads indexes and evidence only. Its Management tabs open the matching admin page.
+
+Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
 
 ## Steps
 
-1. Choose an operation (automatic, verify, recover, reconcile, regenerate vectors or full rebuild) and a scope (one project, the projects selected in Projects, or all registered projects).
-2. Choose **Create repair preview**.
-3. Read every page with **More plan projects**. Approval stays disabled until all pages are read and the plan is ready.
-4. Choose **Approve this exact preview**, optionally approving an explicitly identified fallback.
-
-## Interrupted acknowledgements
-
-AIRK retains unacknowledged requests internally with their original keys and logs unresolved outcomes. Background receipt checks do not replay work. These records do not produce confirmation notices or retry/forget controls.
-
-In 1.5.8, the preview shows a plain-language project/action summary and Start repair above its technical details. An explicit fallback checkbox appears only when that plan requires one and resets for a new plan or digest. Approved submission gets an accepted/queued/running/finished distinction. Plan rows update automatically while work runs. This advanced reviewed workflow is separate from the native service's routine automatic recovery.
+1. Choose **Open AIRK Admin** (or **Choose where...** to pick In VS Code or In my browser).
+2. In AIRK Admin, open **Recovery** and review the repair plan and its items.
+3. To run a plan, type the first 12 characters of the plan id when asked; nothing runs until the typed text matches.
+4. Follow progress in **Activity**.

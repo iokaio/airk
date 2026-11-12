@@ -1,33 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
+// Indexing page (U97): the window search scope and Recommendations, and the
+// read-only index library with its AIRK Admin links. Each test executes the
+// actual webview module with a minimal hook host.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import * as vm from 'node:vm';
 import test from 'node:test';
 import { buildSync } from 'esbuild';
-import { splitFixture, splitSourceResponse } from './fixtures/split';
 
-const file = path.resolve(__dirname, '../../src/explorerWebview/indexing.tsx');
+const directory = path.resolve(__dirname, '../../src/explorerWebview');
 const bundles = new Map<string, string>();
-const namespace = 'ab'.repeat(16), indexId = 'idx_' + '12'.repeat(16), projectId = 'prj_' + '34'.repeat(16);
+const namespace = 'ab'.repeat(16), indexId = 'idx_' + '12'.repeat(16), secondId = 'idx_' + '56'.repeat(16), projectId = 'prj_' + '34'.repeat(16);
 const indexValue = { id: indexId, name: 'Application index', tombstone: false, definition_revision: 1, source_revision: 1, backing: { root: '/source' } };
+const secondValue = { id: secondId, name: 'Second index', tombstone: false, definition_revision: 1, source_revision: 1, backing: { root: '/docs' } };
 const projectValue = { id: projectId, name: 'Application Project', definition_revision: 1, scope_revision: 1, defaults_revision: 1, default_indexes: [] };
 const page = (kind: string, value: unknown) => ({ status: 'catalog_page', page: { namespace, revision: 1, items: [{ kind, value }], continuation: null } });
-const detail = (kind: string, value: unknown) => ({ status: 'catalog_detail', detail: { namespace, revision: 1, item: { kind, value } } });
 
-/** Execute the actual screen and its effects, retaining hook state between host snapshots. */
-function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extraState: any = {}, panelProps?: any, workspace=false) {
-    const entry = path.join(path.dirname(file), workspace?'workspaces.tsx':panelProps?'indexingSplit.tsx':'indexing.tsx');
+/** Execute one webview module and its effects, retaining hook state between renders. */
+function webview(name: string, state: any, renderWith: (exports: any) => any) {
+    const entry = path.join(directory, name);
     let bundle = bundles.get(entry);
     if (!bundle) {
         bundle = buildSync({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', jsxImportSource: 'preact', external: ['preact', 'preact/hooks', 'preact/jsx-runtime','airk-explorer-help'] }).outputFiles[0].text;
         bundles.set(entry, bundle);
     }
-    const state: any = { trusted: true, nativeExecutionEnabled: true, features:{'indexing/window':'implemented','indexing/library':'implemented','indexing/projects':'implemented'}, indexing: { generation: 1, busy: false, ...indexing }, ...extraState };
-    const props: any = { state, route: { workspace: 'indexing', tab }, go() {}, publications: [] };
     const slots: any[] = [], effects: (() => unknown)[] = [], sent: any[] = [];
     const events = new Map<string, (event: any) => void>();
-    let cursor = 0, fail = false, mounted=false, childKey:unknown;
+    let cursor = 0, fail = false;
     const hold=new Set<string>(),held:any[]=[];
     const hooks = {
         useState(initial: any) {
@@ -43,7 +43,7 @@ function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extr
         },
         useMemo(get: () => unknown) { return get(); },
     };
-    const module = { exports: {} as any }, nativeRequire = createRequire(file);
+    const module = { exports: {} as any }, nativeRequire = createRequire(entry);
     vm.runInNewContext(bundle, { module, exports: module.exports, TextEncoder,
         require: (id: string) => id === 'preact/hooks' ? hooks : id==='airk-explorer-help'?{topics:[]}:nativeRequire(id),
         setTimeout: () => 1, clearTimeout() {},
@@ -52,28 +52,41 @@ function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extr
             sent.push(message);
             if(hold.has(message.type)){held.push(message);return;}
             queueMicrotask(() => events.get('message')?.({ data: { v: 1, type: 'result', requestId: message.requestId,
-                ...(fail ? { ok: false, error: { code: 'HOST_UNAVAILABLE', message: 'Native catalog unavailable' } } : { ok: true, data: { generation: 1, ...(message.type==='indexing.apply'?{outcome:{status:'catalog_applied'}}:{}) } }) } }));
+                ...(fail ? { ok: false, error: { code: 'HOST_UNAVAILABLE', message: 'Native catalog unavailable' } } : { ok: true, data: { generation: 1 } }) } }));
         } }),
     });
     return {
-        sent, state, props,
+        sent, state, exports: module.exports, slots,
         hold(type:string){hold.add(type);},
         release(type:string,data:any={}){const at=held.findIndex(message=>message.type===type);assert.ok(at>=0,`Held ${type} request required`);const message=held.splice(at,1)[0];events.get('message')?.({data:{v:1,type:'result',requestId:message.requestId,ok:true,data}});},
         failure(value: boolean) { fail = value; },
-        render() {
-            cursor = 0;
-            if(workspace){
-                // Reconcile the child chosen by the real WorkspaceView. A changed
-                // key unmounts hook storage, just as Preact does in the editor.
-                const tree=module.exports.WorkspaceView(props),child=nodes(tree).find(node=>node.type===module.exports.SCREENS[`indexing/${props.route.tab}`]);assert.ok(child);
-                if(mounted&&child.key!==childKey){slots.length=0;effects.length=0;}
-                mounted=true;childKey=child.key;
-                return child.type(child.props);
-            }
-            return panelProps ? module.exports.IndexSplitPanel({ ...panelProps, view: state.indexing, disabled: false, run: async (work: () => Promise<unknown>) => work() }) : module.exports.IndexingScreen(props);
-        },
-        async flush() { while (effects.length) { effects.shift()!(); } for (let i = 0; i < 6; i++) { await Promise.resolve(); } },
+        render() { cursor = 0; return renderWith(module.exports); },
+        reset() { slots.length = 0; effects.length = 0; },
+        async flush() { while (effects.length) { effects.shift()!(); } for (let i = 0; i < 8; i++) { await Promise.resolve(); } },
     };
+}
+
+/** The Indexing screen, directly or through the real WorkspaceView (which keys its child as Preact does). */
+function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extraState: any = {}, workspace = false) {
+    const state: any = { trusted: true, nativeExecutionEnabled: true, connection: 'ready', projects: [], features:{'indexing/window':'implemented','indexing/library':'implemented','indexing/projects':'implemented'}, indexing: { generation: 1, busy: false, ...indexing }, ...extraState };
+    const props: any = { state, route: { workspace: 'indexing', tab }, go() {}, publications: [] };
+    let mounted = false, childKey: unknown;
+    const f = webview(workspace ? 'workspaces.tsx' : 'indexing.tsx', state, exports => {
+        if (!workspace) { return exports.IndexingScreen(props); }
+        // Reconcile the child chosen by the real WorkspaceView. A changed
+        // key unmounts hook storage, just as Preact does in the editor.
+        const tree = exports.WorkspaceView(props), child = nodes(tree).find(node => node.type === exports.SCREENS[`indexing/${props.route.tab}`]); assert.ok(child);
+        if (mounted && child.key !== childKey) { f.reset(); }
+        mounted = true; childKey = child.key;
+        return child.type(child.props);
+    });
+    return { ...f, props };
+}
+
+/** The read-only library view of one tab. */
+function library(tab: 'library' | 'projects', extraState: any = {}) {
+    const state: any = { trusted: true, nativeExecutionEnabled: true, connection: 'ready', projects: [{ project: 'cd'.repeat(32) }], projectsObservedAt: 1, features: {}, ...extraState };
+    return webview('libraryView.tsx', state, exports => exports.LibraryView({ tab, state }));
 }
 
 function nodes(node: any): any[] {
@@ -85,67 +98,117 @@ function text(node: any): string {
     return Array.isArray(node) ? node.map(text).join('') : typeof node === 'object' ? text(node.props?.children) : String(node);
 }
 function button(tree: any, label: RegExp) { return nodes(tree).find(node => node.type === 'button' && label.test(text(node))); }
-
-test('Indexing tabs lead with their own task and hide details belonging to another tab', () => {
-    for (const tab of ['window', 'library', 'projects'] as const) {
-        const f = screen(tab, { page: page('index', indexValue), pageKind: 'indexes', detail: detail('index', indexValue), canReviewSplit: true });
-        const tree = f.render(), heading = nodes(tree).find(node => node.type === 'h2');
-        assert.match(text(heading), tab === 'window' ? /Search scope/ : tab === 'library' ? /Index library/ : /Index sets/);
-        if (tab !== 'library') {
-            assert.equal(nodes(tree).some(node => node.type?.name === 'IndexSplitPanel' && !node.props.recoveryOnly), false, tab);
-            assert.equal(button(tree, /Preview rename/), undefined, tab);
-        }
-    }
-    const library = screen('library', { detail: detail('project', projectValue) }).render();
-    assert.equal(button(library, /Preview defaults|Delete index set|Preview membership/), undefined);
+const component = (tree: any, name: string) => nodes(tree).filter(node => node.type?.name === name);
+const fields = (message: any) => Object.fromEntries(Object.entries(message).filter(([key]) => key !== 'v' && key !== 'requestId'));
+const cursorOf = (after: string) => ({ kind: 'indexes', namespace, revision: 7, after, index_id: null, project_id: null });
+const reply = (items: unknown[], continuation: unknown = null, extra: Record<string, unknown> = {}) => ({
+    method: { catalog_page: { request: { kind: 'indexes' } } }, expected: 'catalog_page', observedAt: 1,
+    response: { status: 'catalog_page', page: { namespace, revision: 7, items, continuation }, capabilities: { future_native_capability: 'kept' }, ...extra },
 });
 
-test('library rows expose opening and splitting an index without requiring a hidden Inspect prerequisite', async () => {
-    const f = screen('library', { page: page('index', indexValue), pageKind: 'indexes', canReviewSplit: true });
-    const tree = f.render(), open = button(tree, /^Open index$/), split = button(tree, /^Split index$/);
-    assert.ok(open); assert.ok(split);
-    open.props.onClick(); await f.flush();
-    assert.equal(f.sent[0].type, 'indexing.detail'); assert.equal(f.sent[0].id, indexId);
-    split.props.onClick(); await f.flush();
-    const request = f.sent.find(message => message.type === 'indexing.split.open');
-    assert.ok(request); assert.equal(request.index, indexId); assert.equal(request.generation, 1);
-    assert.ok(f.sent.every(message => ['indexing.page', 'indexing.detail', 'indexing.split.open'].includes(message.type)));
-});
-
-test('opening a catalog tab reads metadata once and leaves failures for explicit retry', async () => {
+test('every Indexing tab offers Open AIRK Admin and the library tabs render the read-only library', async () => {
+    const window = screen('window', { searchScope: { indexes: [], projects: [], selectedIndexIds: [], selectedProjectIds: [] } });
+    let tree = window.render(); await window.flush();
+    assert.ok(component(tree, 'AdminButton').some(node => node.props.page === 'index-library'));
     for (const tab of ['library', 'projects'] as const) {
-        const f = screen(tab, { searchScope: { indexes: [], projects: [], selectedIndexIds: [], selectedProjectIds: [] } }); f.failure(true);
-        f.render(); await f.flush();
-        assert.equal(f.sent.length, 1, tab); assert.equal(f.sent[0].type, 'indexing.page');
-        assert.equal(f.sent[0].kind, tab === 'library' ? 'indexes' : 'projects');
-        for (let i = 0; i < 3; i++) { f.render(); await f.flush(); }
-        assert.equal(f.sent.length, 1, 'failed automatic read must not loop');
-        const retry = button(f.render(), /Refresh|Retry|Load indexes|Load index sets/);
-        assert.ok(retry); f.failure(false); retry.props.onClick(); await f.flush();
-        assert.equal(f.sent.length, 2); assert.equal(f.sent[1].type, 'indexing.page');
+        const f = screen(tab); tree = f.render(); await f.flush();
+        const view = component(tree, 'LibraryView'); assert.equal(view.length, 1, tab); assert.equal(view[0].props.tab, tab);
+        assert.equal(f.sent.length, 0, 'the screen itself sends no catalog request');
+        const lib = library(tab), inner = lib.render();
+        assert.ok(component(inner, 'AdminButton').some(node => node.props.page === 'index-library' && !node.props.index && !node.props.set), tab);
+        assert.equal(button(inner, /Delete|Split|Apply|Create index set|Save index set|Rename|Prepare/), undefined, `${tab} has no management action`);
     }
 });
 
-test('automatic catalog reads respect trust, native execution, active upgrades and in-flight work', async () => {
-    for (const extra of [{ trusted: false }, { nativeExecutionEnabled: false }, { runtimeUpgrade: { stage: 'activating' } }]) {
-        const f = screen('library', {}, extra); f.render(); await f.flush(); assert.equal(f.sent.length, 0);
-    }
-    const busy = screen('projects', { busy: true, searchScope: { indexes: [], projects: [], selectedIndexIds: [], selectedProjectIds: [] } }); busy.render(); await busy.flush(); assert.equal(busy.sent.length, 0);
-    busy.state.indexing.busy = false; busy.render(); await busy.flush(); assert.equal(busy.sent.length, 1);
-    const selected = screen('library', { detail: detail('index', indexValue) });
-    selected.render(); await selected.flush(); assert.equal(selected.sent.length, 0, 'opening a split must retain its selected detail');
+test('Search scope failures say the window search scope is not available yet and keep the native text in details', async () => {
+    const f = screen('window'); f.failure(true); f.render(); await f.flush();
+    assert.equal(f.sent.length, 1); assert.equal(f.sent[0].type, 'indexing.scope.read');
+    const tree = f.render(), notice = component(tree, 'Notice').find(node => node.props.role === 'alert'); assert.ok(notice);
+    assert.match(text(nodes(notice).find(node => node.type === 'p')), /window search scope is not available yet/);
+    assert.doesNotMatch(text(nodes(notice).find(node => node.type === 'p')), /HOST_UNAVAILABLE|Native catalog unavailable/);
+    assert.ok(nodes(notice).some(node => node.type === 'details'), 'the native failure remains available');
 });
 
-test('empty pages remain loaded for their own tab while a different catalog tab requests its own rows', async () => {
-    const empty = { status: 'catalog_page', page: { namespace, revision: 1, items: [], continuation: null } };
-    const f = screen('library', { page: empty, pageKind: 'indexes', searchScope: { indexes: [], projects: [], selectedIndexIds: [], selectedProjectIds: [] } });
-    let tree = f.render(); await f.flush();
-    assert.equal(f.sent.length, 0); assert.match(text(tree), /No indexes on this catalog page/);
-    f.props.route.tab = 'projects'; tree = f.render(); await f.flush();
-    assert.equal(f.sent.length, 1); assert.equal(f.sent[0].kind, 'projects');
-    assert.doesNotMatch(text(tree), /No Index sets on this catalog page/);
-    f.state.indexing = { ...f.state.indexing, page: empty, pageKind: 'projects' };
-    f.render(); await f.flush(); assert.equal(f.sent.length, 1, 'a successful empty page does not repeat its read');
+test('the read-only library reads pages through the session relay, continues with the native cursor and keeps every response', async () => {
+    const f = library('library'); f.hold('library.read');
+    f.render(); await f.flush();
+    assert.equal(f.sent.length, 1); assert.deepEqual(fields(f.sent[0]), { type: 'library.read', method: 'page', kind: 'indexes' });
+    f.release('library.read', reply([{ kind: 'index', value: indexValue }], cursorOf(indexId))); await f.flush();
+    let tree = f.render();
+    assert.match(text(tree), /Application index/); assert.match(text(tree), /\/source/);
+    const link = component(tree, 'AdminButton').find(node => node.props.index === indexId); assert.ok(link, 'each index row deep-links into AIRK Admin');
+    assert.equal(link.props.page, 'index-library');
+    button(tree, /^Load more indexes$/).props.onClick(); await f.flush();
+    assert.equal(f.sent.length, 2); assert.deepEqual(JSON.parse(JSON.stringify(f.sent[1].after)), cursorOf(indexId)); assert.equal(f.sent[1].revision, 7);
+    f.release('library.read', reply([{ kind: 'index', value: secondValue }], null, { future_native_field: 'second-page' })); await f.flush();
+    tree = f.render();
+    assert.match(text(tree), /Application index/); assert.match(text(tree), /Second index/);
+    assert.equal(button(tree, /^Load more/), undefined, 'a complete library offers no continuation');
+    const complete = component(tree, 'Complete').map(node => JSON.stringify(node.props.value)).join('\n');
+    assert.match(complete, /future_native_capability/); assert.match(complete, /second-page/);
+    assert.ok(f.sent.every(message => message.type === 'library.read'), 'the library only reads');
+    assert.equal(component(tree, 'CreateIndexForFolders').length, 0);
+});
+
+test('index set rows link to AIRK Admin and opening a row reads detail, memberships, sources and policy only', async () => {
+    const sets = library('projects'); sets.hold('library.read'); sets.render(); await sets.flush();
+    assert.equal(sets.sent[0].kind, 'projects');
+    sets.release('library.read', reply([{ kind: 'project', value: projectValue }])); await sets.flush();
+    assert.ok(component(sets.render(), 'AdminButton').some(node => node.props.set === projectId));
+    const f = library('library'); f.hold('library.read'); f.render(); await f.flush();
+    f.release('library.read', reply([{ kind: 'index', value: indexValue }])); await f.flush();
+    button(f.render(), /^Show index details$/).props.onClick(); await f.flush();
+    for (let i = 0; i < 4; i++) { f.release('library.read', i === 3 ? { method: {}, expected: 'catalog_policy_status', response: { status: 'catalog_policy_status', index_id: indexId, snapshot: null, job: null }, observedAt: 1 } : reply([])); await f.flush(); }
+    assert.deepEqual(f.sent.slice(1).map(fields), [
+        { type: 'library.read', method: 'detail', id: indexId }, { type: 'library.read', method: 'page', kind: 'memberships', id: indexId },
+        { type: 'library.read', method: 'page', kind: 'sources', id: indexId }, { type: 'library.read', method: 'policy', id: indexId },
+    ]);
+    assert.match(text(f.render()), /No policy recorded for this index/);
+});
+
+test('a failed library read shows its native code and is never an empty library', async () => {
+    const f = library('library'); f.hold('library.read'); f.render(); await f.flush();
+    f.release('library.read', { method: {}, expected: 'catalog_page', error: { code: 'scoped_read_unavailable', message: 'The catalog changed.', retryable: true }, observedAt: 1 }); await f.flush();
+    const tree = f.render(), errors = component(tree, 'ErrorLine').filter(node => node.props.error);
+    assert.equal(errors.length, 1); assert.equal(errors[0].props.error.code, 'scoped_read_unavailable');
+    assert.doesNotMatch(text(tree), /No indexes in the catalog/);
+    assert.equal(component(tree, 'CreateIndexForFolders').length, 0, 'a failure never offers creation as if the library were empty');
+    f.render(); await f.flush(); assert.equal(f.sent.length, 1, 'a failed read waits for Refresh');
+    button(f.render(), /^Refresh indexes$/).props.onClick(); await f.flush(); assert.equal(f.sent.length, 2);
+});
+
+test('the library reads only when ready and refreshes after Check again or window focus', async () => {
+    for (const extra of [{ trusted: false }, { nativeExecutionEnabled: false }, { connection: 'connecting' }]) {
+        const f = library('library', extra); f.render(); await f.flush(); assert.equal(f.sent.length, 0, JSON.stringify(extra));
+    }
+    const f = library('library'); f.render(); await f.flush(); assert.equal(f.sent.length, 1);
+    f.render(); await f.flush(); assert.equal(f.sent.length, 1, 'an unchanged observation does not reread');
+    f.state.projectsObservedAt = 2; f.render(); await f.flush();
+    assert.equal(f.sent.length, 2, 'a host project refresh (focus, Check again) rereads the first page');
+    assert.equal(f.sent[1].after, undefined);
+});
+
+test('with no index the library and its links offer Create an index for this folder', async () => {
+    const folders = ['C:\\work\\app', 'D:\\docs'];
+    const none = library('library', { projects: [], workspaceFolders: folders }); none.hold('library.read'); none.render(); await none.flush();
+    none.release('library.read', reply([])); await none.flush();
+    let create = component(none.render(), 'CreateIndexForFolders'); assert.equal(create.length, 1); assert.deepEqual(create[0].props.folders, folders);
+    const retired = library('library', { workspaceFolders: folders }); retired.hold('library.read'); retired.render(); await retired.flush();
+    retired.release('library.read', reply([{ kind: 'index', value: { ...indexValue, tombstone: true } }])); await retired.flush();
+    create = component(retired.render(), 'CreateIndexForFolders'); assert.equal(create.length, 1, 'a catalog with only retired indexes has no live index');
+    const partial = library('library', { workspaceFolders: folders }); partial.hold('library.read'); partial.render(); await partial.flush();
+    partial.release('library.read', reply([{ kind: 'index', value: { ...indexValue, tombstone: true } }], cursorOf(indexId))); await partial.flush();
+    assert.equal(component(partial.render(), 'CreateIndexForFolders').length, 0, 'an incomplete library is not proof of no index');
+
+    const links = webview('adminLinks.tsx', {}, exports => exports.CreateIndexForFolders({ folders }));
+    const buttons = component(links.render(), 'AdminButton');
+    assert.deepEqual(buttons.map(node => [node.props.page, node.props.folder, node.props.label]), folders.map(folder => ['index-library', folder, 'Create an index for this folder']));
+    const opener = webview('adminLinks.tsx', {}, exports => exports.AdminButton({ page: 'index-library', folder: folders[0], label: 'Create an index for this folder' }));
+    button(opener.render(), /^Create an index for this folder$/).props.onClick(); await opener.flush();
+    button(opener.render(), /^Choose where/).props.onClick(); await opener.flush();
+    assert.deepEqual(opener.sent.map(fields), [{ type: 'admin.open', page: 'index-library', folder: folders[0] }, { type: 'admin.open', page: 'index-library', folder: folders[0], choose: true }]);
+    const handoff = webview('adminLinks.tsx', {}, exports => exports.AdminHandoffScreen({ route: { workspace: 'manage', tab: 'repair' }, state: { trusted: true } }));
+    assert.equal(component(handoff.render(), 'AdminButton')[0].props.page, 'recovery', 'Management routes open the matching admin page');
 });
 
 test('Search scope loads local index and set choices once without an association prerequisite', async () => {
@@ -157,7 +220,7 @@ test('Search scope loads local index and set choices once without an association
 
 test('real WorkspaceView keeps scope Apply ownership across project and evidence-epoch changes',async()=>{
     const initial={indexes:[indexValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],active:false};
-    const f=screen('window',{searchScope:initial},{connection:'ready',selectedProject:'original',selectionEpoch:1},undefined,true);
+    const f=screen('window',{searchScope:initial},{connection:'ready',selectedProject:'original',selectionEpoch:1},true);
     f.hold('indexing.scope.apply');f.hold('indexing.scope.read');let tree=f.render();await f.flush();
     const projectChoice=nodes(tree).find(node=>node.type==='label'&&text(node).includes(projectValue.name));
     nodes(projectChoice).find(node=>node.type==='input').props.onChange({currentTarget:{checked:true}});tree=f.render();
@@ -178,92 +241,6 @@ test('real WorkspaceView keeps scope Apply ownership across project and evidence
     assert.equal(f.sent.filter(message=>message.type==='indexing.scope.read').length,1);
 });
 
-test('index-set save retains local ownership through choices, page and detail follow-up reads',async()=>{
-    const scope={indexes:[indexValue],projects:[],selectedIndexIds:[],selectedProjectIds:[],active:false};
-    const f=screen('projects',{revision:1,searchScope:scope,page:page('project',projectValue),pageKind:'projects'},{connection:'ready',selectionEpoch:1});
-    for(const type of ['indexing.set.save','indexing.scope.read','indexing.page','indexing.set.read'])f.hold(type);
-    let tree=f.render();await f.flush();
-    const name=nodes(tree).find(node=>node.type==='label'&&text(node).startsWith('Index set name'));
-    nodes(name).find(node=>node.type==='input').props.onInput({currentTarget:{value:'Chosen set'}});tree=f.render();
-    const form=nodes(tree).find(node=>node.type==='form'&&button(node,/^Create index set$/));assert.ok(form);
-    form.props.onSubmit({preventDefault(){}});await f.flush();
-    f.state.selectionEpoch=2;f.state.indexing={generation:3,busy:false};tree=f.render();await f.flush();
-    assert.equal(f.sent.length,1,'owner replacement cannot start automatic choice/page reads during save');
-    f.release('indexing.set.save',{status:'index_set_saved',id:projectId});await f.flush();
-    assert.equal(f.sent.at(-1).type,'indexing.scope.read');f.render();await f.flush();assert.equal(f.sent.length,2);
-    f.release('indexing.scope.read');await f.flush();assert.equal(f.sent.at(-1).type,'indexing.page');
-    f.render();await f.flush();assert.equal(f.sent.length,3);
-    f.release('indexing.page');await f.flush();assert.equal(f.sent.at(-1).type,'indexing.set.read');
-    f.state.indexing={generation:4,busy:false,searchScope:scope,page:page('project',projectValue),pageKind:'projects'};
-    f.release('indexing.set.read');await f.flush();tree=f.render();await f.flush();
-    assert.equal(f.sent.length,4);assert.equal(button(tree,/Refresh index sets/).props.disabled,false);
-});
-
-test('catalog loading waits for a ready connection and allows one fresh missing-page read after reconnect', async () => {
-    const f = screen('library', {}, { connection: 'connecting' }); f.failure(true);
-    f.render(); await f.flush(); assert.equal(f.sent.length, 0, 'connecting is not a catalog attempt');
-    f.state.connection = 'ready'; f.render(); await f.flush();
-    assert.equal(f.sent.length, 1); assert.equal(f.sent[0].type, 'indexing.page');
-    f.render(); await f.flush(); assert.equal(f.sent.length, 1, 'read failure alone cannot cause an automatic retry');
-    f.state.connection = 'disconnected'; f.render(); await f.flush(); assert.equal(f.sent.length, 1);
-    f.state.connection = 'ready'; f.failure(false); f.render(); await f.flush();
-    assert.equal(f.sent.length, 2, 'a reconnect can load a page that was never obtained');
-    f.state.indexing = { ...f.state.indexing, page: page('index', indexValue), pageKind: 'indexes' };
-    f.render(); await f.flush();
-    f.state.connection = 'disconnected'; f.render(); await f.flush();
-    f.state.connection = 'ready'; f.render(); await f.flush();
-    assert.equal(f.sent.length, 2, 'a retained matching page is not fetched again merely for reconnect');
-});
-
-test('a completed runtime upgrade can load the missing catalog without looping on read failure', async () => {
-    const f = screen('projects', { searchScope: { indexes: [], projects: [], selectedIndexIds: [], selectedProjectIds: [] } }, { connection: 'ready' }); f.failure(true);
-    f.render(); await f.flush(); assert.equal(f.sent.length, 1);
-    f.state.runtimeUpgrade = { toVersion: '1.8.9', stage: 'checking' };
-    f.render(); await f.flush(); assert.equal(f.sent.length, 1, 'runtime checking defers catalog reads');
-    f.state.runtimeUpgrade.stage = 'ready'; f.render(); await f.flush();
-    assert.equal(f.sent.length, 2); assert.equal(f.sent[1].kind, 'projects');
-    f.render(); await f.flush(); assert.equal(f.sent.length, 2, 'failure after upgrade still requires explicit retry');
-});
-
-test('complete native export remains available with fields from every retained result', () => {
-    const f = screen('library', { page: page('index', indexValue), pageKind: 'indexes', outcome: { future_native_observation: 'retain-me' } });
-    const tree = f.render();
-    assert.ok(button(tree, /Copy complete JSON/)); assert.ok(button(tree, /Export JSON/));
-    assert.ok(button(tree, /Copy complete Markdown/)); assert.ok(button(tree, /Export Markdown/));
-    assert.match(text(tree), /future_native_observation/); assert.match(text(tree), /retain-me/);
-});
-
-test('split review guides baseline, source selection and destination steps while retaining the complete native review', async () => {
-    const fixture = splitFixture(), f = screen('library', { canReviewSplit: true, revision: 1 }, {}, { index: { id: fixture.index, tombstone: false } });
-    let tree = f.render(); await f.flush();
-    assert.match(text(tree), /1\. Load the source folders/);
-    assert.doesNotMatch(text(tree), /2\. Choose what moves|Destination name/);
-    const baseline = button(tree, /Read complete native split baseline/); assert.ok(baseline);
-    baseline.props.onClick(); await f.flush(); assert.equal(f.sent[0].type, 'indexing.split.sourceRead');
-    f.state.indexing.splitSourceState = splitSourceResponse(fixture);
-    tree = f.render(); await f.flush();
-    assert.match(text(tree), /2\. Choose what moves to the new index/);
-    assert.match(text(tree), /3\. Choose the destination and review limits/);
-    const source = nodes(tree).find(node => node.type === 'select' && nodes(node).some(option => option.type === 'option' && option.props.value === fixture.source));
-    assert.ok(source, 'native source roots are selectable by their readable paths'); assert.match(text(source), /\/source/);
-    assert.ok(button(tree, /Prepare complete native split review/)); assert.equal(button(tree, /Apply reviewed split/), undefined);
-    f.state.indexing.splitReview = { response: { draft: fixture.draft }, draft: fixture.draft, selection: fixture.choice };
-    tree = f.render(); assert.ok(button(tree, /Apply reviewed split/)); assert.match(text(tree), /future_native_draft/);
-});
-
-test('the same keyed split form remains mounted when switching selected-index tasks', async () => {
-    const f = screen('library', { detail: detail('index', indexValue) });
-    const selectedPanel = (tree: any) => nodes(tree).find(node => node.type?.name === 'IndexSplitPanel' && !node.props.recoveryOnly);
-    const wrapper = (tree: any, panel: any) => nodes(tree).find(node => node.type === 'div' && nodes(node.props.children).includes(panel));
-    let tree = f.render(); await f.flush();
-    let panel = selectedPanel(tree); assert.ok(panel); assert.equal(panel.key, indexId); assert.equal(wrapper(tree, panel).props.hidden, true);
-    button(tree, /^Split index$/).props.onClick(); tree = f.render(); await f.flush();
-    panel = selectedPanel(tree); assert.equal(panel.key, indexId); assert.equal(wrapper(tree, panel).props.hidden, false);
-    button(tree, /^Sources and exclusions$/).props.onClick(); tree = f.render();
-    panel = selectedPanel(tree); assert.equal(panel.key, indexId); assert.equal(wrapper(tree, panel).props.hidden, true);
-});
-
-
 test('Search scope checkboxes apply explicit indexes and sets including an empty selection', async () => {
     const f=screen('window',{searchScope:{indexes:[indexValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],managedProjectIds:[]}});
     let tree=f.render();await f.flush();tree=f.render();
@@ -279,37 +256,6 @@ test('Search scope checkboxes apply explicit indexes and sets including an empty
     assert.equal(f.sent.some(message=>/grant|context/.test(message.type)),false);
 });
 
-test('library Delete index reads current detail before preparing native retirement and never applies implicitly', async () => {
-    const f=screen('library',{page:page('index',indexValue),pageKind:'indexes',canReviewSource:true});
-    button(f.render(),/^Delete index$/).props.onClick();await f.flush();
-    assert.deepEqual(f.sent.map(message=>message.type),['indexing.detail','indexing.source.draft']);
-    assert.equal(f.sent[0].id,indexId);assert.equal(f.sent[1].change.operation,'retire_index');
-    assert.equal(f.sent.some(message=>message.type==='indexing.apply'),false);
-});
-
-test('Delete index review explains source preservation and requires the explicit delete action', async () => {
-    const review={request:{operation:{operation:'retire_index',id:indexId}},response:{preview:{},future_native_field:'retained'}};
-    const f=screen('library',{page:page('index',indexValue),pageKind:'indexes',review});
-    const tree=f.render();assert.match(text(tree),/Original source files are preserved/);assert.match(text(tree),/new index storage folder/);
-    assert.match(text(tree),/future_native_field/);assert.ok(button(tree,/^Delete index and stop maintenance$/));
-    button(tree,/^Delete index and stop maintenance$/).props.onClick();await f.flush();
-    assert.ok(f.sent.some(message=>message.type==='indexing.apply'));assert.equal(f.sent.at(-1).type,'indexing.page');
-});
-
-
-test('index sets use readable index checkboxes instead of identifiers and revision forms', async () => {
-    const f=screen('projects',{page:page('project',projectValue),pageKind:'projects',detail:detail('project',projectValue),setEditor:{id:projectId,name:projectValue.name,indexIds:[indexId],complete:true,responses:[]},memberships:page('membership',{project_id:projectId,index_id:indexId,revision:1,scope:[]}),searchScope:{indexes:[indexValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],managedProjectIds:[]}});
-    f.render();await f.flush();let tree=f.render();
-    assert.ok(button(tree,/^Save index set$/));assert.equal(nodes(tree).some(node=>node.type==='input'&&node.props.placeholder==='idx_…'),false);
-    assert.doesNotMatch(text(tree),/Current membership revision|Source ID|Default index IDs/);
-    const form=nodes(tree).find(node=>node.type==='form'&&button(node,/^Save index set$/));assert.ok(form);
-    form.props.onSubmit({preventDefault(){}});await f.flush();
-    const saved=f.sent.find(message=>message.type==='indexing.set.save');
-    assert.equal(saved.selection.id,projectId);assert.equal(saved.selection.name,projectValue.name);
-    assert.deepEqual(JSON.parse(JSON.stringify(saved.selection.index_ids)),[indexId]);
-});
-
-
 test('Search scope hides internal support sets and marks edited choices as unapplied', async () => {
     const hidden='prj_'+'99'.repeat(16);
     const f=screen('window',{searchScope:{indexes:[indexValue],projects:[projectValue,{id:hidden,name:'internal'}],selectedIndexIds:[],selectedProjectIds:[],managedProjectIds:[hidden],active:true}});
@@ -317,19 +263,4 @@ test('Search scope hides internal support sets and marks edited choices as unapp
     assert.doesNotMatch(text(nodes(tree).filter(node=>node.type==='fieldset')),/internal/);assert.match(text(tree),/Selection active/);
     nodes(tree).find(node=>node.type==='input'&&node.props.type==='checkbox').props.onChange({currentTarget:{checked:true}});
     tree=f.render();assert.match(text(tree),/Changes not applied/);assert.doesNotMatch(text(tree),/Selection active/);
-});
-
-test('existing index sets cannot be saved until complete membership was read', () => {
-    const f=screen('projects',{detail:detail('project',projectValue),searchScope:{indexes:[indexValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[]}});
-    const tree=f.render();assert.equal(button(tree,/^Save index set$/).props.disabled,true);
-    assert.match(text(tree),/Complete index set membership/);
-});
-
-
-test('completed deletion reports logical success without inventing physical cleanup completion', () => {
-    const submittedReview={request:{operation:{operation:'retire_index',id:indexId}},response:{preview:{before:[{kind:'index',value:indexValue}]}}};
-    const tree=screen('library',{submittedReview,outcome:{status:'catalog_applied'}}).render();
-    assert.match(text(tree),/Application index was deleted from search and maintenance/);
-    assert.match(text(tree),/completion has not been observed here/);
-    assert.ok(nodes(tree).find(node=>node.type==='summary'&&text(node)==='Complete operation result'));
 });

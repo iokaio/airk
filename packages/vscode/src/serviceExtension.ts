@@ -12,6 +12,8 @@ import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState 
 import { systemVerifyHost } from './airkctl/verify';
 import { AirkctlToolSession } from './airkctl/tools';
 import { AirkctlExplorerHost, describe, projectRows } from './airkctl/features/explorerHost';
+import { ADMIN_OPEN_IN_SETTING, AdminOpener, type AdminOpenIn, type AdminTarget } from './airkctl/features/adminOpener';
+import { ADMIN_PAGES, type AdminPage } from './explorerContracts';
 import { ACTION_LABELS, guidance, type GuidanceAction } from './airkctl/status/guidance';
 import {
     connectAgent, connectionInfo, connectionUrl, credentialHeader, inputCredential, listAgents, removeAgents, repairAgents,
@@ -36,6 +38,7 @@ class SplitExtension implements vscode.Disposable {
     readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
     readonly airkctl: Airkctl;
     readonly host: AirkctlExplorerHost;
+    readonly admin: AdminOpener;
     readonly definitions = new vscode.EventEmitter<void>();
     private explorer?: Promise<ExplorerController>;
     private explorerLoaded?: ExplorerController;
@@ -57,7 +60,21 @@ class SplitExtension implements vscode.Disposable {
             session: { label: (vscode.workspace.name ?? 'VS Code window').slice(0, 128) },
             log: line => this.output.appendLine(line),
         });
-        this.host = new AirkctlExplorerHost(context, this.airkctl, this.output, this.status);
+        this.admin = new AdminOpener({
+            open: async args => { await this.airkctl.check(); return this.airkctl.openAdmin(args); },
+            url: async args => { await this.airkctl.check(); return this.airkctl.adminUrl(args); },
+            setting: () => vscode.workspace.getConfiguration('airk').get<string>(ADMIN_OPEN_IN_SETTING, 'external') === 'vscode' ? 'vscode' : 'external',
+            remember: choice => Promise.resolve(vscode.workspace.getConfiguration('airk').update(ADMIN_OPEN_IN_SETTING, choice, vscode.ConfigurationTarget.Global)),
+            choose: async current => (await vscode.window.showQuickPick([
+                { label: 'In my browser', description: current === 'external' ? 'current' : undefined, value: 'external' as AdminOpenIn },
+                { label: 'In VS Code', description: current === 'vscode' ? 'current' : 'Simple Browser', value: 'vscode' as AdminOpenIn },
+            ], { title: 'AIRK: Open AIRK Admin', placeHolder: 'Where should AIRK Admin open? (remembered in airk.admin.openIn)' }))?.value,
+            showInVsCode: async url => { await vscode.commands.executeCommand('simpleBrowser.show', url); },
+            offerBrowser: async message => (await vscode.window.showInformationMessage(`AIRK: ${message}`, 'Open in my browser')) === 'Open in my browser',
+            // Never receives the sign-in URL: the opener logs page and outcome only.
+            log: line => this.output.appendLine(line),
+        });
+        this.host = new AirkctlExplorerHost(context, this.airkctl, this.output, this.status, this.admin);
         this.status.command = 'airk.explorer.open';
         this.status.show();
         this.subscriptions.push(this.output, this.status, this.definitions, this.host,
@@ -179,7 +196,7 @@ class SplitExtension implements vscode.Disposable {
             { label: 'Create a connection in AIRK Admin…', id: '' },
         ], { title: 'AIRK: Choose an existing connection' });
         if (!picked) { return; }
-        if (!picked.id) { await this.openAdmin(); return; }
+        if (!picked.id) { await this.openAdmin({ page: 'agents' }); return; }
         const result = await connectAgent(this.airkctl, client.client, picked.id, folder);
         this.output.appendLine(`AIRK agents connect:\n${JSON.stringify(result, null, 2)}`);
         void vscode.window.showInformationMessage(`AIRK: ${client.label} is configured for this folder.`);
@@ -226,10 +243,9 @@ class SplitExtension implements vscode.Disposable {
             throw new Error(describe(state));
         }
     }
-    async openAdmin(): Promise<void> {
-        await this.airkctl.check();
-        const result = await this.airkctl.openAdmin();
-        if (result.class !== 'success') { throw new AirkctlCommandError(['admin', 'open'], result); }
+    /** Open AIRK Admin where `airk.admin.openIn` says; `choose` asks and remembers. */
+    async openAdmin(target: AdminTarget = { page: 'overview' }, choose = false): Promise<void> {
+        await this.admin.open(target, choose);
     }
     async startService(): Promise<void> {
         await this.airkctl.check();
@@ -290,7 +306,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
     };
     const commands: Record<string, (...args: unknown[]) => unknown> = {
         // Status and guidance (§8.1): these only guide; none installs.
-        openAdmin: () => extension.openAdmin(),
+        openAdmin: page => extension.openAdmin({ page: typeof page === 'string' && (ADMIN_PAGES as readonly string[]).includes(page) ? page as AdminPage : 'overview' }),
         serviceStart: () => extension.startService(),
         downloadService: () => vscode.env.openExternal(vscode.Uri.parse(DOWNLOAD_URL)),
         installationInstructions: () => vscode.env.openExternal(vscode.Uri.parse(DOWNLOAD_URL)),
@@ -330,6 +346,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
     }
     context.subscriptions.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => { void extension.start(); }),
+        // U97: the read-only index library and "Create an index for this folder"
+        // follow changes made in AIRK Admin when the window regains focus.
+        vscode.window.onDidChangeWindowState(state => { if (state.focused && extension.airkctl.state.kind === 'ready') { void extension.host.refresh(false); } }),
         vscode.workspace.onDidGrantWorkspaceTrust(() => { void extension.start(); }),
         vscode.workspace.onDidChangeConfiguration(event => {
             if (event.affectsConfiguration('airk.runtime.nativeExecution')) { void extension.start(); }

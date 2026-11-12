@@ -15,9 +15,9 @@ import { WorkspaceView } from './workspaces';
 import type { NavigationFilters } from '../explorerDrafts';
 import { friendlyError } from '../explorerErrors';
 import { acceptSearchSession, selectSearchProject } from './searchStore';
-import { RuntimeUpgradeProgress } from './runtimeUpgrade';
 import { Notice, NoticeContext, noticeKey } from './notices';
-import { AgentConfigAlert } from './manage';
+import { AgentConfigAlert } from './projectStatus';
+import { openAdmin } from './adminLinks';
 
 interface Persisted { route?: string; lens?: string; themed?: boolean }
 
@@ -67,7 +67,7 @@ export function App() {
     useEffect(() => { saveState({ ...savedState<Persisted>(), route: formatRoute(route) }); }, [route]);
     // Nested project views share this observer; child unmounts cannot turn it off.
     useEffect(() => {
-        const open = route.workspace === 'manage' || route.workspace === 'overview';
+        const open = route.workspace === 'overview';
         void request('manage.observe', { open }).catch(() => undefined);
         return () => { if (open) { void request('manage.observe', { open: false }).catch(() => undefined); } };
     }, [route.workspace]);
@@ -92,7 +92,7 @@ export function App() {
     if (!state) { return <main class="airk-explorer loading"><p>Connecting to the AIRK extension host…</p><button type="button" onClick={ready}>Retry connection</button>
         <p class="muted">If it remains unavailable, close and reopen Explorer after the extension host restarts.</p></main>; }
     const project = state.projects.find(entry => entry.project === state.selectedProject);
-    const managed = ['manage','overview'].includes(route.workspace) ? state.management?.projects.find(entry => entry.summary.project === state.selectedProject) : undefined;
+    const managed = route.workspace === 'overview' ? state.management?.projects.find(entry => entry.summary.project === state.selectedProject) : undefined;
     const fallback = headline(state.connection, state.status, state.projects.length);
     const status = state.extensionUpdate ? { word: 'Reload to finish update', severity: 'warn' }
         : managed && state.connection !== 'untrusted' && state.connection !== 'incompatible' ? { word: managed.health.title, severity: managed.health.severity } : fallback;
@@ -139,12 +139,11 @@ export function App() {
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
-                    {(route.workspace === 'overview' || route.workspace === 'manage') && <div class="project-context">
+                    {route.workspace === 'overview' && <div class="project-context">
                         <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} />
                     </div>}
-                    {state.runtimeUpgrade&&!state.extensionUpdate&&<RuntimeUpgradeProgress upgrade={state.runtimeUpgrade} />}
                     {state.startup&&!state.runtimeUpgrade&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
-                    {state.agentConfigAlerts&&!state.extensionUpdate&&<AgentConfigAlert alerts={state.agentConfigAlerts} showDetails={() => go({ workspace: 'manage', tab: 'agents' })} />}
+                    {state.agentConfigAlerts&&!state.extensionUpdate&&<AgentConfigAlert alerts={state.agentConfigAlerts} showDetails={() => { void openAdmin({ page: 'agents' }).catch(failure => setSourceError(failure instanceof Error ? failure.message : String(failure))); }} />}
                     {state.extensionUpdate && <Notice global noticeKey={noticeKey('extension-update', state.extensionUpdate.runningVersion, state.extensionUpdate.installedVersion)} class="card">
                         <h1>Reload to finish the AIRK update</h1>
                         <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>

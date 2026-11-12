@@ -222,8 +222,10 @@ export class Airkctl {
         await this.check();
         return result;
     }
-    /** `airkctl admin open`: the sign-in link opens in the browser; the code never reaches the extension. */
-    openAdmin(): Promise<InvokeResult> { return this.oneShot(['admin', 'open']); }
+    /** `airkctl admin open [--page … prefill]`: the sign-in link opens in the browser; the code never reaches the extension. */
+    openAdmin(args: readonly string[] = []): Promise<InvokeResult> { return this.oneShot(['admin', 'open', ...args]); }
+    /** `airkctl admin url [--page … prefill] --output json`: the single-use URL is in stdout; the caller never logs or keeps it. */
+    adminUrl(args: readonly string[] = []): Promise<InvokeResult> { return this.oneShot(['admin', 'url', ...args, '--output', 'json']); }
 
     dispose(): void {
         if (this.noticeTimer !== undefined) { clearInterval(this.noticeTimer); this.noticeTimer = undefined; }

@@ -13,7 +13,8 @@ import { SuggestionStore } from '../../explorerSuggestions';
 import type { LaunchSpec } from '../../model';
 import type { ConsolePage, RecordValue } from '../../serviceClient';
 import type { ConsoleObservation, ServiceConsoleState } from '../../serviceConsoleView';
-import type { Airkctl, AirkctlState } from '../index';
+import { AirkctlUnavailable, type Airkctl, type AirkctlState } from '../index';
+import type { AdminOpener, AdminTarget } from './adminOpener';
 
 /** One registered project as `airkctl projects --output json` lists it. */
 export interface ProjectRow { project: string; root: string; data_root: string; collection: string; name?: string }
@@ -100,7 +101,7 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     readonly workspaceState: Pick<vscode.Memento, 'get' | 'update'>;
 
     constructor(context: vscode.ExtensionContext, private readonly airkctl: Airkctl, private readonly output: vscode.OutputChannel,
-        private readonly status: vscode.StatusBarItem) {
+        private readonly status: vscode.StatusBarItem, private readonly admin?: AdminOpener) {
         this.extensionUri = context.extensionUri;
         this.version = String(context.extension?.packageJSON?.version ?? '0.0.0');
         this.workspaceState = context.workspaceState;
@@ -146,6 +147,17 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         check();
         const list = <T>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
         return { checked: list<string>(report.checked), findings: list(report.findings), entries: list(report.entries) };
+    }
+    /** Read-only index library (U97): one native catalog read through the session's I1 metadata relay. */
+    async catalogControl(method: Record<string, unknown>): Promise<Record<string, unknown>> {
+        const state = this.airkctl.state;
+        if (state.kind !== 'ready') { throw new AirkctlUnavailable(state.kind); }
+        return this.airkctl.session.control(method);
+    }
+    /** Open AIRK Admin on a page (U97, `airk.admin.openIn`). */
+    async openAdmin(target: AdminTarget, choose: boolean): Promise<void> {
+        if (!this.admin) { throw new AdminOnly('Open AIRK Admin'); }
+        await this.admin.open(target, choose);
     }
     log(line: string): void { this.output.appendLine(line); }
     setStatusBar(text: string, tooltip: string): void { this.status.text = text; this.status.tooltip = tooltip; }

@@ -306,7 +306,6 @@ test('native source draft preserves exact frozen inputs and rejects changed sele
     for(const [native,choice] of [['AddRoot',{operation:'add_root',alias:'extra',path:'/extra'}],['RemoveRoot',{operation:'remove_root',alias:'extra'}],['TrimPath',{operation:'trim_path',source_root_id:source,kind:'subtree',path:'private'}],['UnblockPath',{operation:'unblock_path',rule_id:'deny_'+'12'.repeat(16)}]] as const){
         const fields=new RegExp(`    ${native} \\{([\\s\\S]*?)^    \\}`, 'm').exec(core);assert.ok(fields);assert.deepEqual(Object.keys(validateSourceMutationSelection(choice)).filter(key=>key!=='operation').sort(),[...fields![1].matchAll(/^        ([a-z_]+):/gm)].map(value=>value[1]).sort());
     }
-    assert.ok(parseWebviewMessage({v:1,type:'indexing.source.draft',requestId:'source',generation:1,change:{operation:'retire_index'}}));
     assert.equal(parseWebviewMessage({v:1,type:'indexing.source.resolve',requestId:'resolve',generation:1,proof:{frontend:true}}),undefined);
     assert.equal(parseWebviewMessage({v:1,type:'indexing.setup.resume',requestId:'resume',generation:1,id:nonce,draft:f.response.draft}),undefined);
 });
@@ -456,7 +455,7 @@ test('explicit retirement can supersede only native-qualified same-index trackin
     f.control.catalogRetirementReview=async selected=>({id:selected,response:{status:'catalog_index_retirement_evidence',index_id:index,evidence:{future_native_proof:'retained'}}});
     f.control.catalogStopTracking=async(review,valid)=>{assert.ok(valid());stopped++;return {local_tracking:'stopped_after_native_retirement',native_retirement_evidence:review.response};};
     await f.value.retirementRead(id,f.value.snapshot().generation);assert.equal(stopped,0);assert.equal(JSON.parse(catalogExport(f.value.snapshot())).retirementReview.response.evidence.future_native_proof,'retained');await f.value.stopTracking(f.value.snapshot().generation);assert.equal(stopped,1);assert.equal(f.value.snapshot().outcome?.local_tracking,'stopped_after_native_retirement');
-    assert.ok(parseWebviewMessage({v:1,type:'indexing.retirement.read',requestId:'retire-read',id,generation:1}));assert.equal(parseWebviewMessage({v:1,type:'indexing.retirement.stopTracking',requestId:'retire-stop',generation:1,evidence:{}}),undefined);
+    assert.equal(parseWebviewMessage({v:1,type:'indexing.retirement.stopTracking',requestId:'retire-stop',generation:1,evidence:{}}),undefined);
 });
 function controller(initialDescriptor?:WindowContextDescriptor){
     let trusted=true,identity='owner';const calls:CatalogObject[]=[];
@@ -473,7 +472,6 @@ test('policy status is an explicit owner-fenced read retained completely in cata
     f.control.catalogPolicyStatus=async()=>{reads++;return status;};
     await f.value.detail('index',index);assert.equal(reads,0);await f.value.policyRead(f.value.snapshot().generation);assert.equal(reads,1);assert.equal(f.value.snapshot().policyStatus,status);assert.match(catalogExport(f.value.snapshot()),/future_native_status/);
     f.control.catalogPolicyStatus=()=>new Promise(done=>{resolve=done;});const late=f.value.policyRead(f.value.snapshot().generation);f.replace();resolve(status);await assert.rejects(late,/stale/);assert.equal(f.value.snapshot().policyStatus,undefined);
-    assert.ok(parseWebviewMessage({v:1,type:'indexing.policy.read',requestId:'policy',generation:1}));
     assert.equal(parseWebviewMessage({v:1,type:'indexing.policy.resume',requestId:'policy',generation:1,operation_id:nonce}),undefined,'frontend cannot inject its own resume proof');
 });
 test('catalog UI preserves complete native pages, details, preview and exports',async()=>{
@@ -619,7 +617,6 @@ test('UI operation subset and serialized field catalogs agree with native Core c
     for(const variant of ['CatalogPage','CatalogDetail','CatalogContext','CatalogPreview','CatalogApply','CatalogReceipt'])assert.match(service,new RegExp(`\\b${variant} \\{`));
     assert.deepEqual(parseRoute('#indexing/library'),{workspace:'indexing',tab:'library'});
     assert.deepEqual(parseRoute('#manage/projects'),{workspace:'manage',tab:'overview'});
-    assert.ok(parseWebviewMessage({v:1,type:'indexing.page',requestId:'x',kind:'sources',next:false,index}));
     assert.equal(parseWebviewMessage({v:1,type:'indexing.page',requestId:'x',kind:'sources',next:false,index:project}),undefined);
     const contextKinds=['folder','workspace','empty','untitled','legacy_pending'];
     const nativeCatalog=readFileSync(resolve(__dirname,'../../../..','crates/airk-core/src/index_catalog.rs'),'utf8');

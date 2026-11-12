@@ -22,14 +22,14 @@ import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
 import { LaunchSpec } from './model';
 import { saveStudioInWorkspace } from './explorerWorkspaceIO';
-import { openAgentInstructions } from './explorerWorkspaceIO';
-import { checkAgentConfigHealth, type AgentConfigHealth } from './agentConfigHealth';
-import type { AgentConfigAlerts, AgentConfigHealthView } from './explorerContracts';
+import type { AgentConfigHealth } from './agentConfigHealth';
+import type { AgentConfigAlerts } from './explorerContracts';
 import { validateStudio } from './explorerStrategies';
-import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
 import { IndexingCatalogController } from './indexingCatalogController';
-import { catalogExport, CatalogObject, WindowContextDescriptor, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
+import { CatalogObject, WindowContextDescriptor, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
+import { readLibrary } from './indexLibrary';
+import type { AdminTarget } from './airkctl/features/adminOpener';
 import { MANAGE_WORKSPACE_TRUST_COMMAND } from './explorerCommands';
 import { NativeExecutionDisabled } from './nativeGate';
 import type { AssistanceWindowStatus } from './explorerContracts';
@@ -85,6 +85,10 @@ export interface ExplorerHost {
     agentConfigHealth?(root: string, check: () => void): Promise<AgentConfigHealth>;
     /** Current proactive agent-configuration alert, when findings remain. */
     agentConfigAlerts?(): AgentConfigAlerts | undefined;
+    /** Read-only index library (U97): one native catalog `ControlMethod` through the window's metadata relay. */
+    catalogControl?(method: Record<string, unknown>): Promise<Record<string, unknown>>;
+    /** Open AIRK Admin on a page (U97); `choose` asks where and remembers it. */
+    openAdmin?(target: AdminTarget, choose: boolean): Promise<void>;
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
@@ -130,7 +134,6 @@ export class ExplorerController implements vscode.Disposable {
     private readonly sourceFiles = new Map<string, string>();
     private selectionEpoch = 0;
     private searchState?: SearchSessionView;
-    private usageSession?: { epoch: number; value: Promise<EmbeddedUsage> };
     private searchSequence = 0;
     private status?: StatusSummary;
     private statusFor?: string;
@@ -249,6 +252,7 @@ export class ExplorerController implements vscode.Disposable {
             ...(this.control.morePages() ? { moreProjects: true } : {}),
             ...(this.managementOpen && this.host.trusted() ? { management: managementView(this.control.state) } : {}),
             ...(this.host.trusted() ? { suggestions: suggestionsView(this.host.suggestions.list()) } : {}),
+            ...(this.host.trusted() ? { workspaceFolders: workspaceFolders() } : {}),
         };
     }
 
@@ -330,7 +334,7 @@ export class ExplorerController implements vscode.Disposable {
             this.evidence?.dispose(); this.evidence = undefined;
             this.selectionEpoch++; this.status = undefined; this.statusFor = undefined;
             this.indexing.clearEvidenceRecommendations();
-            this.retainedDetails=undefined;this.statusIdentity=undefined;this.usageSession?.value.then(value=>value.dispose(),()=>{});this.usageSession=undefined;
+            this.retainedDetails=undefined;this.statusIdentity=undefined;
             this.searchState = undefined;
             this.refs.clear(); this.facts.clear();
         }
@@ -581,8 +585,8 @@ export class ExplorerController implements vscode.Disposable {
             // exact reviewed inputs internally. Evidence discovery or selection
             // can change while those operations return their committed receipt.
             // Recommendation reads/actions still belong to the evidence epoch.
-            const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations');
-            const managementOrLocal=['manage.action','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload'].includes(message.type);
+            const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
+            const managementOrLocal=['admin.open','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -592,7 +596,7 @@ export class ExplorerController implements vscode.Disposable {
 
     protected async dispatch(message: WebviewMessage): Promise<unknown> {
         if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
-        if(message.type.startsWith('indexing.'))this.requireAuthorization(message.type!=='indexing.export');
+        if(message.type.startsWith('indexing.'))this.requireAuthorization(true);
         switch (message.type) {
             case 'notice.dismiss': return this.dismissNotice(message.key);
             case 'indexing.recommendations':{
@@ -629,86 +633,26 @@ export class ExplorerController implements vscode.Disposable {
                 if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 if(this.host.workspaceTrusted?.()!==false&&!this.host.trusted())throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 await vscode.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND);return;
-            case 'indexing.page': {
-                this.requireAuthorization(true);
-                // Establish the authenticated window owner before admitting a
-                // page that can seed a native review. The producer shares its
-                // in-flight read with automatic observation; this explicit read
-                // has no retry loop and creates no grant or indexing work. A
-                // saved explicit local choice can be revalidated on reconnect.
-                if(this.host.prepareWindowContext&&(!this.host.windowContext?.()||this.host.windowContextObservation?.()?.status!=='catalog_host_context')){
-                    const identity=this.control.observationIdentity,windowIdentity=this.host.windowContextIdentity?.();
-                    await this.host.prepareWindowContext();this.requireAuthorization(true);
-                    if(identity!==this.control.observationIdentity||windowIdentity!==this.host.windowContextIdentity?.())throw new ServiceError('window_context_changed');
-                    if(!this.host.windowContext?.()||this.host.windowContextObservation?.()?.status!=='catalog_host_context')throw new ServiceError('catalog_control_connection_unavailable');
-                }
-                return this.indexing.page(message.kind,message.next,message.index,message.project);
-            }
             case 'indexing.scope.read':
                 this.requireAuthorization(true);
                 if(this.host.prepareWindowContext)await this.host.prepareWindowContext();
                 this.requireAuthorization(true);return this.indexing.scopeRead(message.kind,message.next);
             case 'indexing.scope.apply':return this.indexing.scopeApply(message.selection,message.generation);
-            case 'indexing.set.read':return this.indexing.setRead(message.id);
-            case 'indexing.set.save':return this.indexing.scopeApply(message.selection,message.generation,true);
-            case 'indexing.detail': return this.indexing.detail(message.kind,message.id);
-            case 'indexing.preview': return this.indexing.preview(message.operation,message.generation);
-            case 'indexing.create': return this.indexing.create(message.name,message.generation);
-            case 'indexing.apply': return this.indexing.apply(message.generation);
-            case 'indexing.reconcile': return this.indexing.reconcile();
-            case 'indexing.context.read':
-                this.requireAuthorization();
-                if(this.host.prepareWindowContext){this.indexing.invalidate();this.publish();await this.host.prepareWindowContext();this.requireAuthorization();return this.indexing.adoptHostContext();}
-                return this.indexing.readContext();
-            case 'indexing.context.preview': return this.indexing.previewContext(message.selection,message.generation);
-            case 'indexing.context.delete': return this.indexing.previewContext({project_ids:[],index_ids:[]},message.generation,true);
-            case 'indexing.grant.draft': return this.indexing.grantDraft(message.selection,message.generation);
-            case 'indexing.grant.use': return this.indexing.useGrant(message.choice,message.generation);
-            case 'indexing.grant.revoke': return this.indexing.revokeGrant(message.generation);
-            case 'indexing.setup.draft': return this.indexing.setupDraft(message.selection,message.generation);
-            case 'indexing.setup.apply': return this.indexing.setupApply(message.generation);
-            case 'indexing.setup.resume':return this.indexing.setupResume(message.id,message.generation);
-            case 'indexing.source.draft':return this.indexing.sourceDraft(message.change,message.generation);
-            case 'indexing.source.read':return this.indexing.sourceRead(message.begin,message.generation);
-            case 'indexing.source.pending':return this.indexing.sourcePending(message.generation);
-            case 'indexing.split.open':return this.indexing.splitOpen(message.index,message.generation);
-            case 'indexing.split.sourceRead':return this.indexing.splitSourceRead(message.generation);
-            case 'indexing.split.draft':return this.indexing.splitDraft(message.selection,message.generation);
-            case 'indexing.split.apply':return this.indexing.splitApply(message.generation);
-            case 'indexing.split.read':return this.indexing.splitRead(message.operation,message.generation);
-            case 'indexing.split.recover':return this.indexing.splitRecover(message.action,message.generation);
-            case 'indexing.policy.read':return this.indexing.policyRead(message.generation);
-            case 'indexing.policy.resume':return this.indexing.policyResume(message.generation);
-            case 'indexing.retirement.read':return this.indexing.retirementRead(message.id,message.generation);
-            case 'indexing.retirement.stopTracking':return this.indexing.stopTracking(message.generation);
-            case 'indexing.source.resolve':return this.indexing.sourceResolve(message.generation);
-            case 'indexing.export': {
-                this.requireAuthorization();
-                const markdown=message.format==='copy_markdown'||message.format==='markdown',text=catalogExport(this.indexing.snapshot(),markdown);
-                if(message.format==='copy'||message.format==='copy_markdown'){await vscode.env.clipboard.writeText(text);return {copied:true};}
-                const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file(markdown?'airk-indexing.md':'airk-indexing.json'),filters:markdown?{Markdown:['md']}:{JSON:['json']}});
-                if(uri){await vscode.workspace.fs.writeFile(uri,new TextEncoder().encode(text));return {saved:true};}return {saved:false};
+            case 'library.read': {
+                this.requireAuthorization(true);
+                if(!this.host.catalogControl)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','The index library is not available in this window.'));
+                const {method,kind,id,after,revision,operation}=message;
+                // Complete native response or error; a failed read never becomes an empty library.
+                return readLibrary({method,...(kind?{kind}:{}),...(id?{id}:{}),...(after?{after}:{}),...(revision!==undefined?{revision}:{}),...(operation?{operation}:{})},
+                    value=>this.host.catalogControl!(value));
             }
-            case 'instructions.open': {
-                this.requireAuthorization();
-                if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
-                const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
-                if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
-                return openAgentInstructions(spec.root, message.agent, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
-            }
-            case 'agents.configHealth': {
-                this.requireAuthorization();
-                if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
-                const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
-                if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
-                // Read-only: the project's own agent files, rechecked for trust and selection around every read.
-                const check = () => {
-                    this.requireAuthorization();
-                    if (!vscode.workspace.isTrusted) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
-                    if (epoch !== this.selectionEpoch) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
-                };
-                const health = await (this.host.agentConfigHealth?.(displayPath(spec.root), check) ?? checkAgentConfigHealth(displayPath(spec.root), { check }));
-                return { project: message.project, checked: health.checked, findings: health.findings } satisfies AgentConfigHealthView;
+            case 'admin.open': {
+                this.requireAuthorization(true);
+                if(!this.host.openAdmin)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','AIRK Admin cannot be opened from this window.'));
+                // A prefilled folder must be one of this window's folders; the webview never names another path.
+                if(message.folder!==undefined&&!workspaceFolders().includes(message.folder))throw new EvidenceFailure(explorerError('INVALID_MESSAGE','Choose one of the folders open in this window.'));
+                await this.host.openAdmin({page:message.page,...(message.folder!==undefined?{forFolder:message.folder}:{}),...(message.index?{showIndex:message.index}:{}),...(message.set?{showSet:message.set}:{})},message.choose===true);
+                return {requested:true};
             }
             case 'details.copy': {
                 this.requireAuthorization();
@@ -781,26 +725,9 @@ export class ExplorerController implements vscode.Disposable {
                 this.select(typed.project); this.publish(); await this.loadStatus(); return;
             }
             case 'status.refresh': await Promise.all([this.loadStatus('details'), this.control.refresh()]); return;
-            case 'manage.refresh': await this.control.refresh(); return;
             case 'manage.observe': {
                 this.managementOpen = (message as WebviewMessageOf<'manage.observe'>).open;
                 this.publish(); return;
-            }
-            case 'manage.action': {
-                const { action, expectedPlan, expectedPreview, v: _v, type: _type, requestId: _id, ...rest } = message as WebviewMessageOf<'manage.action'>;
-                this.requireAuthorization();
-                if(action==='approvePlan'&&(!expectedPlan||!expectedPreview||this.control.state.plan?.value.id!==expectedPlan||this.control.state.plan?.value.preview_digest!==expectedPreview)){
-                    return {message:'Repair preview changed. Review the current proposed actions before starting repair.'};
-                }
-                const fields = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined));
-                const fingerprint=()=>JSON.stringify(managementView(this.control.state).projects.map(entry=>[entry.summary.project,entry.health,entry.jobId,entry.jobState,entry.pendingJobId,entry.work.phase,entry.work.captured,entry.work.extracted,entry.work.publications,entry.configuration]));
-                const before=action==='refresh'?fingerprint():undefined;
-                // The shared console validates the action, its fields and page membership again before acting.
-                await this.control.run(action, fields);
-                if(action==='refresh')return {message:this.control.state.connected
-                    ?`Status checked at ${new Date().toLocaleTimeString()}. ${before===fingerprint()?'No change in project work or settings.':'Project observations updated.'} This checks service observations; it does not restart or repair indexing.`
-                    :'Could not refresh the service connection. Retained observations are shown; current project progress is unconfirmed.'};
-                return { message: this.control.message() ?? null };
             }
             case 'manage.command': {
                 this.requireAuthorization();
@@ -966,23 +893,6 @@ export class ExplorerController implements vscode.Disposable {
                 return exportStrategy(checked.strategy);
             }
             case 'strategy.import': return (await importStrategy()) ?? null;
-            case 'usage.read': case 'usage.action': {
-                const project = this.requireProject(), epoch = this.selectionEpoch;
-                const spec = this.host.specs().find(entry => entry.service?.project === project);
-                if (!spec || !this.host.usage) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Usage is unavailable for this project.')); }
-                if (this.usageSession?.epoch !== epoch) {
-                    void this.usageSession?.value.then(session => session.dispose(), () => undefined);
-                    const value = this.host.usage(spec, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
-                    this.usageSession = { epoch, value };
-                    void value.catch(() => { if (this.usageSession?.value === value) { this.usageSession = undefined; } });
-                }
-                const session = await this.usageSession.value;
-                if (message.type === 'usage.read') { return session.view(); }
-                const typed = message as WebviewMessageOf<'usage.action'>;
-                const action = usageAction({ type: 'usage', action: typed.action, ...(typed.days !== undefined ? { days: typed.days } : {}) });
-                if (!action) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE')); }
-                return session.action(action);
-            }
             case 'studio.save': {
                 const typed = message as WebviewMessageOf<'studio.save'>, epoch = this.selectionEpoch;
                 const document = validateStudio(typed.document);
@@ -1130,7 +1040,6 @@ export class ExplorerController implements vscode.Disposable {
     /** Pending UI preferences finish before a replacement controller reads them. */
     async finishPendingNoticeWrites(): Promise<void> { this.dispose(); await this.noticeWrites; }
     dispose(): void {
-        void this.usageSession?.value.then(session => session.dispose(), () => undefined);
         if (this.disposed) { return; }
         this.disposed = true;
         this.clearContextObservationTimer(); this.contextObservation = undefined;
@@ -1169,6 +1078,11 @@ function textRecord(value: Record<string, unknown>, limit: number): Record<strin
 function dirtyFile(file: string): boolean {
     const fold = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
     return vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && fold(document.uri.fsPath) === fold(file) && document.isDirty);
+}
+
+/** This window's local folders, as `airkctl admin --for-folder` takes them. */
+function workspaceFolders(): string[] {
+    return (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath);
 }
 
 export function failure(error: unknown): ExplorerError {

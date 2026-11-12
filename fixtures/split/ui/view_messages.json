@@ -1,11 +1,11 @@
 {
   "schema": "airk.split-fixture.view-messages/1",
   "contract": "docs/split/contracts.md section 6 (C9)",
-  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden.",
+  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden. U97: the read-only index library read (library.read) and the AIRK Admin opener (admin.open) are editor-only; the Explorer's management messages were removed with their UI.",
   "counts": {
     "ui": 25,
     "editor": 34,
-    "admin": 42
+    "admin": 6
   },
   "messages": [
     {
@@ -144,11 +144,6 @@
       "capability": null
     },
     {
-      "type": "manage.refresh",
-      "side": "admin",
-      "capability": null
-    },
-    {
       "type": "indexing.recommendations",
       "side": "admin",
       "capability": null
@@ -169,36 +164,6 @@
       "capability": null
     },
     {
-      "type": "indexing.page",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.detail",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.preview",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.create",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.apply",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.reconcile",
-      "side": "admin",
-      "capability": null
-    },
-    {
       "type": "indexing.scope.read",
       "side": "ui",
       "capability": "scopeSelect"
@@ -207,141 +172,6 @@
       "type": "indexing.scope.apply",
       "side": "ui",
       "capability": "scopeSelect"
-    },
-    {
-      "type": "indexing.set.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.set.save",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.context.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.context.preview",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.context.delete",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.grant.draft",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.grant.use",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.grant.revoke",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.setup.draft",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.setup.apply",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.setup.resume",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.source.draft",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.source.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.source.pending",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.split.open",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.split.sourceRead",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.split.draft",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.split.apply",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.split.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.split.recover",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.policy.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.policy.resume",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.retirement.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.retirement.stopTracking",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.source.resolve",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "indexing.export",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "manage.action",
-      "side": "admin",
-      "capability": null
     },
     {
       "type": "manage.command",
@@ -379,29 +209,9 @@
       "capability": "planner"
     },
     {
-      "type": "usage.read",
-      "side": "admin",
-      "capability": null
-    },
-    {
-      "type": "usage.action",
-      "side": "admin",
-      "capability": null
-    },
-    {
       "type": "clipboard.write",
       "side": "ui",
       "capability": "copyToClipboard"
-    },
-    {
-      "type": "instructions.open",
-      "side": "editor",
-      "capability": "openSource"
-    },
-    {
-      "type": "agents.configHealth",
-      "side": "editor",
-      "capability": "agentConfigHealth"
     },
     {
       "type": "planner.openDraft",
@@ -512,6 +322,16 @@
       "type": "recipes.delete",
       "side": "editor",
       "capability": "planner"
+    },
+    {
+      "type": "library.read",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "admin.open",
+      "side": "editor",
+      "capability": null
     }
   ]
 }

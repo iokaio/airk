@@ -104,10 +104,10 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
 
 test('management actions and UI-local completions retain their outcomes across evidence changes',async t=>{
-    for(const type of ['manage.action','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload']){
+    for(const type of ['admin.open','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload']){
         const f=controller(),instance=f.explorer as any;
         const change=async()=>{instance.select(undefined);return {committed:type};};
-        if(type==='manage.action')f.host.control.run=async()=>{await change();};
+        if(type==='admin.open')(f.host as any).openAdmin=async()=>{await change();};
         if(type==='manage.command')t.mock.method(vscodeStub.commands,'executeCommand',change);
         if(type==='notice.dismiss')instance.dismissNotice=change;
         if(type==='details.copy')t.mock.method(vscodeStub.env.clipboard,'writeText',change);
@@ -115,50 +115,12 @@ test('management actions and UI-local completions retain their outcomes across e
         if(type==='extension.reload'){(f.host as any).extensionUpdate=()=>({version:'new'});(f.host as any).reloadUpdatedExtension=change;}
         try{
             f.explorer.open('#indexing/library');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();const epoch=f.explorer.snapshot().selectionEpoch;
-            await instance.handle({v:1,type,requestId:'committed',action:'refresh',command:'airk.httpIssuerRotationStatus',section:'service',key:'notice'});
+            await instance.handle({v:1,type,requestId:'committed',page:'overview',command:'airk.httpIssuerRotationStatus',section:'service',key:'notice'});
             assert.notEqual(f.explorer.snapshot().selectionEpoch,epoch,type);
             const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='committed');assert.equal(reply?.ok,true,type);
             if(type==='manage.command'||type==='notice.dismiss')assert.deepEqual(reply.data,{committed:type});
         }finally{f.explorer.dispose();t.mock.restoreAll();}
     }
-});
-
-for(const replacement of ['evidence selection','runtime/install owner','window/workspace owner','workspace trust'])test(`native setup completion during discovery retains only its current management owner (${replacement})`,async()=>{
-    const f=controller(),namespace='aa'.repeat(16),backing='bb'.repeat(32),index='idx_'+'cc'.repeat(16),reviewDigest='dd'.repeat(32);
-    const spec={command:'/approved/native',root:'/chosen/source-b',dataDir:'/chosen/storage-b',collection:'fixture-b',name:'Fixture B',service:{installDir:'/install',project:backing}};
-    let specs:typeof spec[]=[],applies=0,validAfterDiscovery=false,windowIdentity='original-window';f.host.specs=()=>specs;f.fireSpecs();(f.host as any).windowContextIdentity=()=>windowIdentity;
-    const native=f.host.control.controller as any;native.observationIdentity='same-runtime-installation';
-    const selection={name:'Fixture B',primary_root:spec.root,data_root:spec.dataDir,collection:spec.collection,additional_roots:[],setup_watch:false};
-    const request={caller:'ee'.repeat(16),key:{namespace,epoch:0,nonce:'ff'.repeat(16)},expected_catalog_revision:8,name:selection.name,registration:{binding:backing,root:spec.root,data_root:spec.dataDir,collection:spec.collection},sources:[{canonical_path:spec.root,aliases:[],owner:true}],setup_watch:false};
-    const draft={schema:1,request,storage_action:'create_missing_leaf',review_digest:reviewDigest},review={response:{status:'catalog_index_setup_draft',draft,request_digest:reviewDigest},draft,requestDigest:reviewDigest};
-    const outcome={status:'catalog_index_setup_applied',receipt:{schema:1,operation_id:'11'.repeat(16),request,request_digest:reviewDigest,index_id:index,source_ids:['src_'+'22'.repeat(16)],stage:'ready',catalog_revision:10,source_revision:2,preparation:{future_native_preparation:'retained'},completion:{future_native_completion:'retained'}},future_native_outcome:{retained:'complete'}};
-    Object.assign(native,{catalogRead:async()=>({status:'catalog_page',page:{namespace,revision:8,items:[],continuation:null}}),catalogPrepare:async()=>{throw Error('unexpected catalog preview');},catalogApply:async()=>{throw Error('unexpected catalog mutation');},catalogReconcile:async()=>[],catalogPending:()=>[],catalogIndexSetupDraft:async()=>review,
-        catalogIndexSetupApply:async(submitted:unknown,valid:()=>boolean)=>{
-            applies++;assert.equal(submitted,review);assert.equal(valid(),true);specs=[spec];f.fireSpecs();
-            if(replacement==='runtime/install owner')native.observationIdentity='replacement-runtime-installation';
-            else if(replacement==='window/workspace owner')windowIdentity='replacement-window';
-            else if(replacement==='workspace trust')f.host.trusted=()=>false;
-            if(replacement==='evidence selection'){
-                const indexing=(f.explorer as any).indexing,generation=indexing.snapshot().generation;indexing.dismissRecommendations();
-                assert.equal(indexing.snapshot().generation,generation,'Advice dismissal does not invalidate the active native review');assert.equal(indexing.snapshot().busy,true);
-            }
-            validAfterDiscovery=valid();return outcome;
-        }});
-    try{
-        f.explorer.open('#indexing/library');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'setup-ready'});await flush();
-        await (f.explorer as any).dispatch({type:'indexing.page',kind:'indexes'});
-        await (f.explorer as any).dispatch({type:'indexing.setup.draft',selection,generation:f.explorer.snapshot().indexing!.generation});
-        const epoch=f.explorer.snapshot().selectionEpoch;
-        await (f.explorer as any).handle({v:1,type:'indexing.setup.apply',requestId:'setup-with-discovery',generation:f.explorer.snapshot().indexing!.generation});
-        const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='setup-with-discovery');
-        assert.equal(applies,1,'The committed native setup is submitted once');assert.notEqual(f.explorer.snapshot().selectionEpoch,epoch,'The new registration changes only the evidence selection');
-        if(replacement==='evidence selection'){
-            assert.equal(validAfterDiscovery,true,'Unchanged native management ownership survives evidence discovery');assert.equal(reply?.ok,true);
-            assert.deepEqual(reply.data.outcome,outcome);assert.deepEqual(f.explorer.snapshot().indexing?.outcome,outcome);assert.deepEqual(f.explorer.snapshot().indexing?.submittedSetupReview,review);
-        }else{
-            assert.equal(validAfterDiscovery,false,'Actual native owner changes still fence the original review');assert.equal(reply?.ok,false);assert.equal(f.explorer.snapshot().indexing?.outcome,undefined);
-        }
-    }finally{f.explorer.dispose();}
 });
 
 test('clearing evidence selection rejects late advice before storage while retaining the native management generation',async()=>{
@@ -176,18 +138,44 @@ test('clearing evidence selection rejects late advice before storage while retai
 });
 
 test('explicit scope and index-set operations acknowledge their own selection change through the actual panel',async()=>{
-    for(const [type,adapter,status]of [['indexing.scope.apply','applySearchScope','search_scope_selected'],['indexing.set.save','saveIndexSet','index_set_saved']] as const){
+    for(const [type,adapter,status]of [['indexing.scope.apply','applySearchScope','search_scope_selected']] as const){
         const {explorer}=controller();
         try{
             explorer.open('#indexing/window');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
             const indexing=(explorer as any).indexing;
             indexing.host[adapter]=async()=>{(explorer as any).select(undefined);return {status};};
             const generation=indexing.snapshot().generation;
-            panel.send({v:1,type,requestId:'own-scope-change',generation,selection:type==='indexing.scope.apply'?{index_ids:[],project_ids:[]}:{name:'Chosen set',index_ids:[]}});await flush();
+            panel.send({v:1,type,requestId:'own-scope-change',generation,selection:{index_ids:[],project_ids:[]}});await flush();
             const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='own-scope-change');
             assert.equal(reply?.ok,true,type);assert.equal(reply.data.status,status);
         }finally{explorer.dispose();}
     }
+});
+
+test('read-only library and AIRK Admin requests relay complete native data and accept only this window folders',async()=>{
+    const f=controller(),instance=f.explorer as any,methods:unknown[]=[],opened:unknown[]=[],index='idx_'+'12'.repeat(16);
+    const response={status:'catalog_page',page:{namespace:'aa'.repeat(16),revision:3,items:[],continuation:null},capabilities:{future_native_capability:true}};
+    (f.host as any).catalogControl=async(method:unknown)=>{methods.push(method);return response;};
+    (f.host as any).openAdmin=async(target:unknown,choose:boolean)=>{opened.push([target,choose]);};
+    (vscodeStub.workspace as any).workspaceFolders=[{uri:{scheme:'file',fsPath:'/src/demo'}},{uri:{scheme:'untitled',fsPath:'/virtual'}}];
+    try{
+        const reply=await instance.dispatch({type:'library.read',method:'page',kind:'indexes'});
+        assert.deepEqual(methods,[{catalog_page:{request:{kind:'indexes',index_id:null,project_id:null,after:null,expected_catalog_revision:null,limit:32,max_bytes:49152}}}]);
+        assert.deepEqual(reply.response,response,'the complete native response reaches the page');assert.equal(reply.error,undefined);
+        (f.host as any).catalogControl=async()=>{throw Object.assign(new Error('scope gone'),{code:'scoped_read_unavailable',retryable:true});};
+        const failed=await instance.dispatch({type:'library.read',method:'detail',id:index});
+        assert.deepEqual(failed.error,{code:'scoped_read_unavailable',message:'scope gone',retryable:true});assert.equal(failed.response,undefined,'a failed read is not an empty library');
+        assert.deepEqual(f.explorer.snapshot().workspaceFolders,['/src/demo']);
+        await instance.dispatch({type:'admin.open',page:'index-library',folder:'/src/demo'});
+        await assert.rejects(instance.dispatch({type:'admin.open',page:'index-library',folder:'/elsewhere'}),/folders open in this window/);
+        await assert.rejects(instance.dispatch({type:'admin.open',page:'index-library',folder:'/virtual'}),/folders open in this window/);
+        await instance.dispatch({type:'admin.open',page:'index-library',index,choose:true});
+        assert.deepEqual(opened,[[{page:'index-library',forFolder:'/src/demo'},false],[{page:'index-library',showIndex:index},true]]);
+        assert.equal(parseWebviewMessage({v:1,type:'admin.open',requestId:'a',page:'index-library',url:'https://127.0.0.1/'}),undefined,'the webview cannot name a URL');
+        assert.equal(parseWebviewMessage({v:1,type:'library.read',requestId:'a',method:'page',kind:'grants'}),undefined,'grants and contexts are not part of the library');
+        delete (f.host as any).catalogControl;
+        await assert.rejects(instance.dispatch({type:'library.read',method:'page',kind:'indexes'}),/not available in this window/);
+    }finally{delete (vscodeStub.workspace as any).workspaceFolders;f.explorer.dispose();}
 });
 
 test('notice dismissal accepts only exact bounded UTF-8 keys', () => {
@@ -379,63 +367,9 @@ test('capability observation never retries unknown outcomes, terminal codes or l
 });
 
 
-test('initial native catalog page shares pending automatic context and retains the established owner for reviews',async()=>{
-    const f=automaticContextFixture();let requests=0,pages=0,release!:()=>void,inflight:Promise<void>|undefined;
-    const held=new Promise<void>(resolve=>{release=resolve;});
-    f.host.windowContext=()=>{const native=f.host.windowContextObservation()?.descriptor;return native?{host:native.host,key:native.key,kind:'folder',name:'Fixture'}:undefined;};
-    f.host.prepareWindowContext=()=>inflight??= (async()=>{requests++;const generation=f.generation();await held;if(generation!==f.generation())throw new ServiceError('window_context_changed');f.observe(generation);})();
-    f.host.control.controller.catalogRead=async()=>{pages++;return {status:'catalog_page',page:{namespace:'01'.padStart(32,'0'),revision:1,items:[],continuation:null},capabilities:{policy_contract:3}};};
-    try{
-        f.instance.observedControl();await contextMicrotasks();assert.equal(requests,1);
-        const pending=f.instance.dispatch({type:'indexing.page',kind:'indexes'});await contextMicrotasks();
-        assert.equal(requests,1,'explicit page shares the existing native producer request');assert.equal(pages,0,'no review-seeding page before authenticated window ownership');
-        release();await pending;assert.equal(pages,1);assert.ok(f.explorer.snapshot().indexing?.windowDescriptor);
-        const generation=f.explorer.snapshot().indexing?.generation;
-        f.instance.observedControl();await contextMicrotasks();assert.equal(f.explorer.snapshot().indexing?.generation,generation,'late automatic completion cannot introduce another owner');
-        await f.instance.dispatch({type:'indexing.page',kind:'indexes'});assert.equal(requests,1,'complete authenticated observation never refetches');assert.equal(pages,2);assert.deepEqual(f.runs,[]);
-    }finally{release();f.explorer.dispose();}
-});
-
-test('initial catalog page retains typed failure and refuses changed owners without submitting a page',async()=>{
-    for(const mode of ['failure','window','control','trust','native-off','missing'] as const){
-        const f=automaticContextFixture();let pages=0,release!:()=>void;
-        const held=new Promise<void>(resolve=>{release=resolve;}),failure=new ServiceError('registry_busy');
-        f.host.windowContext=()=>f.host.windowContextObservation()?{host:'22'.repeat(32),key:'33'.repeat(32),kind:'folder',name:'Fixture'}:undefined;
-        f.host.control.controller.catalogRead=async()=>{pages++;throw new Error('must not submit stale page');};
-        f.host.prepareWindowContext=async()=>{await held;if(mode==='failure')throw failure;if(mode!=='missing')f.observe(f.generation());};
-        try{
-            const pending=f.instance.dispatch({type:'indexing.page',kind:'indexes'});await contextMicrotasks();
-            if(mode==='window')f.nextWindow();else if(mode==='control')f.host.control.controller.observationIdentity='replacement';else if(mode==='trust')f.host.trusted=()=>false;else if(mode==='native-off')f.host.nativeExecutionEnabled=()=>false;
-            release();await assert.rejects(pending,error=>mode==='failure'?error===failure:/window_context_changed|authorized|untrusted|native execution|native_execution|catalog_control_connection_unavailable/i.test(String(error)));
-            assert.equal(pages,0,mode);assert.deepEqual(f.runs,[]);
-        }finally{release();f.explorer.dispose();}
-    }
-});
-
-
 function completeAutomaticWindow(f:ReturnType<typeof automaticContextFixture>){
     f.host.windowContext=()=>{const native=f.host.windowContextObservation()?.descriptor;return native?{host:native.host,key:native.key,kind:'folder',name:'Fixture'}:undefined;};
 }
-test('waiting automatic observation is satisfied by explicit page success without a later clock-catching read',async t=>{
-    t.mock.timers.enable({apis:['setTimeout','Date']});
-    const f=automaticContextFixture();completeAutomaticWindow(f);let reads=0,nativeRevision=7;
-    f.host.prepareWindowContext=async()=>{
-        reads++;if(reads===1)throw new ServiceError('catalog_control_connection_unavailable');
-        f.observe(f.generation());(f.host.windowContextObservation().descriptor as any).catalog_revision=nativeRevision;
-        f.instance.observeConnectedContext(); // actual producer's context-change event
-    };
-    f.host.control.controller.catalogRead=async()=>({status:'catalog_page',page:{namespace:f.generation().toString(16).padStart(32,'0'),revision:nativeRevision,items:[],continuation:null},capabilities:{policy_contract:3}});
-    try{
-        f.explorer.open();await contextMicrotasks();assert.equal(reads,1);assert.equal(f.instance.contextObservation.state,'waiting');
-        await f.instance.dispatch({type:'indexing.page',kind:'indexes'});assert.equal(reads,2);assert.ok(f.explorer.snapshot().indexing?.page);
-        // Native setup can advance the catalog after this explicit page. A
-        // leftover retry must not introduce that later clock into its owner.
-        nativeRevision=9;t.mock.timers.tick(250);await contextMicrotasks();
-        const current=f.explorer.snapshot().indexing;
-        assert.deepEqual({reads,page:!!current?.page,revision:current?.revision},{reads:2,page:true,revision:7});
-        t.mock.timers.tick(30000);await contextMicrotasks();assert.equal(reads,2);assert.deepEqual(f.runs,[]);
-    }finally{f.explorer.dispose();t.mock.timers.reset();}
-});
 
 test('already complete current native owner does not start an automatic capability read',async()=>{
     const f=automaticContextFixture();completeAutomaticWindow(f);let reads=0;
@@ -489,24 +423,6 @@ test('external missing malformed mismatched or unknown metadata cannot satisfy a
             }finally{f.explorer.dispose();}
         }
     }finally{t.mock.timers.reset();}
-});
-
-test('an open Explorer follows the replacement native catalog controller after automatic upgrade',async()=>{
-    const f=controller(),host=f.host as any,instance=f.explorer as any;
-    const namespace='34'.repeat(16),calls:string[]=[];
-    const catalog=(identity:string,contract:number)=>({...host.control.controller,observationIdentity:identity,
-        catalogRead:async()=>{calls.push(identity);return {status:'catalog_page',page:{namespace,revision:1,items:[],continuation:null},capabilities:{policy_contract:contract}};},
-        catalogPrepare:async()=>{throw new Error('no upgrade catalog mutation');},catalogApply:async()=>{throw new Error('no upgrade catalog mutation');},catalogReconcile:async()=>[],catalogPending:()=>[],
-        catalogSplitDraft:async()=>{throw new Error('no automatic split');},catalogSplitApply:async()=>{throw new Error('no automatic split');},catalogSplitSourceState:async()=>{throw new Error('no automatic split');}});
-    try{
-        const predecessor=catalog('predecessor',1);host.control.controller=predecessor;
-        await instance.dispatch({type:'indexing.page',kind:'indexes'});assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,false);
-        // ServiceConsole.reset replaces rather than reconnects its controller.
-        host.control.controller=catalog('replacement',3);predecessor.catalogRead=async()=>{throw new Error('disposed predecessor catalog controller');};
-        await instance.dispatch({type:'indexing.page',kind:'indexes'});
-        assert.deepEqual(calls,['predecessor','replacement']);assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,true);
-        assert.deepEqual(f.runs,[]);
-    }finally{f.explorer.dispose();}
 });
 
 test('Recommendations copy and temporary scope use revalidate native scope and never mutate catalog or configuration',async t=>{
@@ -570,15 +486,15 @@ test('actual Explorer distinguishes Restricted Mode, revoked authority and nativ
     const f=controller(false),instance=f.explorer as any;
     try{
         assert.equal(f.explorer.snapshot().workspaceTrusted,false);assert.equal(f.explorer.snapshot().connection,'untrusted');
-        await assert.rejects(instance.dispatch({type:'indexing.context.read'}),/Restricted Mode/);
+        await assert.rejects(instance.dispatch({type:'library.read',method:'page',kind:'indexes'}),/Restricted Mode/);
         const before=executedCommands.length;await instance.dispatch({type:'workspace.manageTrust'});
         assert.deepEqual(executedCommands.slice(before),['workbench.trust.manage']);assert.deepEqual(f.runs,[]);
         f.host.workspaceTrusted=()=>true;f.host.trusted=()=>false;
         assert.equal(f.explorer.snapshot().connection,'disconnected');
-        await assert.rejects(instance.dispatch({type:'indexing.context.read'}),/client is no longer authorized/);
+        await assert.rejects(instance.dispatch({type:'library.read',method:'page',kind:'indexes'}),/client is no longer authorized/);
         await assert.rejects(instance.dispatch({type:'workspace.manageTrust'}),/client is no longer authorized/);
         f.host.trusted=()=>true;(f.host as any).nativeExecutionEnabled=()=>false;
-        await assert.rejects(instance.dispatch({type:'indexing.context.read'}),/native_execution_disabled/);
+        await assert.rejects(instance.dispatch({type:'library.read',method:'page',kind:'indexes'}),/native_execution_disabled/);
         await instance.dispatch({type:'workspace.manageTrust'});assert.deepEqual(f.runs,[]);
         f.explorer.dispose();await assert.rejects(instance.dispatch({type:'workspace.manageTrust'}),/client is no longer authorized/);
     }finally{f.explorer.dispose();}
@@ -603,18 +519,6 @@ test('same-panel ready resends the complete retained catalog while scalar update
         assert.equal(panel.posted.filter((message:any)=>message.type==='indexing.session').length,initial+1);
         assert.deepEqual(panel.posted.filter((message:any)=>message.type==='indexing.session').at(-1).session.page,nativePage);
         assert.equal(reads,1,'ready and scalar updates do not replay a catalog read');
-    }finally{f.explorer.dispose();}
-});
-
-test('refresh confirms unchanged observations and reports disconnection instead of silent success',async()=>{
-    const f=controller();
-    try{
-        let result=await (f.explorer as any).dispatch({type:'manage.action',action:'refresh'});
-        assert.match(result.message,/Status checked at/);assert.match(result.message,/No change in project work or settings/);
-        assert.match(result.message,/does not restart or repair/);assert.equal(f.runs.length,1);
-        f.host.control.controller.state.connected=false;
-        result=await (f.explorer as any).dispatch({type:'manage.action',action:'refresh'});
-        assert.match(result.message,/Could not refresh/);assert.match(result.message,/Retained observations/);
     }finally{f.explorer.dispose();}
 });
 
@@ -650,37 +554,6 @@ test('visible Explorer observations refresh readiness even when the publication 
     instance.lastAutomaticStatusCheck=Date.now()-6000;instance.observedControl();assert.equal(reads,2);
     instance.retained=undefined;instance.lastAutomaticStatusCheck=0;instance.observedControl();assert.equal(reads,2);
     assert.equal(publishes,4);
-});
-
-test('repair approval uses the exact preview shown by the webview and never silently accepts a replacement',async()=>{
-    const f=controller(),id='de'.repeat(32),preview='ef'.repeat(32);
-    try{
-        f.host.control.controller.state.plan={value:{id,preview_digest:preview},items:[],after:null};
-        const stale=await (f.explorer as any).dispatch({type:'manage.action',action:'approvePlan',allowFallback:false,expectedPlan:id,expectedPreview:'ff'.repeat(32)});
-        assert.match(stale.message,/preview changed/);assert.equal(f.runs.length,0);
-        await (f.explorer as any).dispatch({type:'manage.action',action:'approvePlan',allowFallback:false,expectedPlan:id,expectedPreview:preview});
-        assert.deepEqual(f.runs,[['approvePlan',{allowFallback:false}]]);
-    }finally{f.explorer.dispose();}
-});
-
-test('embedded usage pins its project session and rejects invalid actions and obsolete bindings', async () => {
-    const { explorer, host } = controller(); let opens = 0, disposals = 0;
-    const guards: (() => boolean)[] = [], actions: unknown[] = [];
-    (host as any).usage = async (_spec: unknown, valid: () => boolean) => {
-        opens++; guards.push(valid);
-        return { view: () => ({ html: '<p>Scoped report</p>' }), action: async (message: unknown) => { assert.ok(valid()); actions.push(message); return { html: '<p>Updated</p>' }; }, dispose: () => { disposals++; } };
-    };
-    try {
-        assert.deepEqual(await (explorer as any).dispatch({ type: 'usage.read' }), { html: '<p>Scoped report</p>' });
-        await (explorer as any).dispatch({ type: 'usage.read' }); assert.equal(opens, 1);
-        await assert.rejects((explorer as any).dispatch({ type: 'usage.action', action: 'days', days: 8 }));
-        assert.equal(actions.length, 0);
-        await (explorer as any).dispatch({ type: 'usage.action', action: 'days', days: 7 });
-        assert.deepEqual(actions, [{ type: 'usage', action: 'days', days: 7 }]);
-        (explorer as any).select(undefined); assert.equal(guards[0](), false);
-        (explorer as any).select(project); await (explorer as any).dispatch({ type: 'usage.read' });
-        assert.equal(opens, 2); await flush(); assert.equal(disposals, 1);
-    } finally { explorer.dispose(); }
 });
 
 test('search results, drafts and page survive closing Explorer without workspace writes', async () => {
@@ -935,7 +808,6 @@ test('the controller publishes state, loads published status and rejects invalid
     panel.send({ v: 1, type: 'source.open', requestId: 'o1', ref: 'h404' });
     panel.send({ v: 1, type: 'search.run', requestId: 's2', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false, pathPrefix: '../secret' });
     panel.send({ v: 1, type: 'manage.action', requestId: 'm1', action: 'index', project });
-    panel.send({ v: 1, type: 'manage.action', requestId: 'm2', action: 'shell', project });
     panel.send({ v: 1, type: 'shell.exec', requestId: 'x1', command: 'rm -rf /' });
     await flush();
     const results = Object.fromEntries(panel.posted.filter((message: any) => message.type === 'result').map((message: any) => [message.requestId, message]));
@@ -947,9 +819,8 @@ test('the controller publishes state, loads published status and rejects invalid
     assert.equal(completedSearch.ordering, 'index_identity');
     assert.equal(results.o1.ok, false); assert.equal(results.o1.error.code, 'UNKNOWN_REFERENCE');
     assert.equal(results.s2.ok, false); assert.equal(results.s2.error.code, 'INVALID_MESSAGE');
-    assert.equal(results.m1.ok, true, JSON.stringify(results.m1));
-    assert.equal(results.m2.error.code, 'INVALID_MESSAGE', 'unknown console actions are refused without dispatch');
-    assert.deepEqual(runs, [['index', { project }]], 'index runs only through the shared console for a project on its page');
+    assert.equal(results.m1.error.code, 'INVALID_MESSAGE', 'management actions left the Explorer (U6, U97) and are refused without dispatch');
+    assert.deepEqual(runs, [], 'no console action runs from the Explorer');
     assert.equal(results.x1.error.code, 'INVALID_MESSAGE', 'unrecognized messages receive a bounded refusal before dispatch');
     explorer.dispose();
     assert.equal(panel.disposed, true);

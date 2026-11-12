@@ -213,6 +213,8 @@ export interface ExplorerViewState {
     /** Present while a Management tab is open; built from the shared console state. */
     readonly management?: ManagementView;
     readonly indexing?: CatalogView;
+    /** This window's local folders (file scheme), for "Create an index for this folder" (U97). */
+    readonly workspaceFolders?: readonly string[];
     /** Agent drafts waiting in this window's Suggestions Inbox (summaries only; bodies are fetched on review). */
     readonly suggestions?: SuggestionsView;
 }
@@ -676,6 +678,12 @@ type FieldSpec =
     | { readonly kind: 'json'; readonly max: number; readonly optional?: boolean };
 
 const PROJECT = { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } as const;
+/** AIRK Admin pages a route may open (`airkctl admin open|url --page`, crates/airkctl/src/admin.rs PAGES). */
+export const ADMIN_PAGES = ['overview', 'index-library', 'activity', 'agents', 'storage', 'recovery', 'service', 'logs', 'usage', 'search', 'help'] as const;
+export type AdminPage = typeof ADMIN_PAGES[number];
+/** Native catalog reads the read-only index library issues (ControlMethod catalog_page|catalog_detail|catalog_policy_status|catalog_split_status). */
+export const LIBRARY_METHODS = ['page', 'detail', 'policy', 'split'] as const;
+export const LIBRARY_KINDS = ['indexes', 'projects', 'memberships', 'sources'] as const;
 const REF = { kind: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_-]+$/ } as const;
 
 export const WEBVIEW_MESSAGES = {
@@ -724,73 +732,38 @@ export const WEBVIEW_MESSAGES = {
         kind: { kind: 'enum', values: ['any', 'requirement', 'decision', 'design', 'architecture', 'feature', 'acceptance', 'date', 'section', 'table_row', 'table_cell'] },
         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
     },
-    'manage.refresh': {},
     'indexing.recommendations': { arguments: {kind:'json',max:8192} },
     'indexing.recommendations.dismiss': {},
     'indexing.recommendations.copy': {},
     'indexing.recommendations.use': {},
-    'indexing.page': { kind: { kind: 'enum', values: ['projects', 'indexes', 'memberships', 'sources', 'grants'] }, next: { kind: 'bool' },
-        index: { kind: 'string', min: 36, max: 36, pattern: /^idx_[0-9a-f]{32}$/, optional: true },
-        project: { kind: 'string', min: 36, max: 36, pattern: /^prj_[0-9a-f]{32}$/, optional: true } },
-    'indexing.detail': { kind: { kind: 'enum', values: ['project', 'index', 'grant'] }, id: { kind: 'string', min: 36, max: 36, pattern: /^(?:idx_|prj_|grt_)[0-9a-f]{32}$/ } },
-    'indexing.preview': { operation: { kind: 'json', max: 49152 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
-    'indexing.create': { name: { kind: 'string', min: 1, max: 256 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
-    'indexing.apply': { generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
-    'indexing.reconcile': {},
     'indexing.scope.read': { kind:{kind:'enum',values:['indexes','projects'],optional:true},next:{kind:'bool',optional:true} },
     'indexing.scope.apply': { selection:{kind:'json',max:4096},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.set.read': { id:{kind:'string',max:36} },
-    'indexing.set.save': { selection:{kind:'json',max:8192},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.context.read': {},
-    'indexing.context.preview': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.context.delete': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.grant.draft': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.grant.use': { choice: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.grant.revoke': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.setup.draft': { selection: { kind:'json', max:16384 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.setup.apply': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.setup.resume': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.source.draft': { change:{kind:'json',max:16384},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.source.read': { begin:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.source.pending': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.split.open': { index:{kind:'string',min:36,max:36,pattern:/^idx_[0-9a-f]{32}$/},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.split.sourceRead': { generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.split.draft': { selection:{kind:'json',max:16384},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.split.apply': { generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.split.read': { operation:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.split.recover': { action:{kind:'enum',values:['resume','cancel']},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.policy.read': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.policy.resume': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.retirement.read': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.retirement.stopTracking': { generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
-    'indexing.source.resolve': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
-    'indexing.export': { format: { kind: 'enum', values: ['copy', 'json', 'copy_markdown', 'markdown'] } },
-    'manage.action': {
-        action: { kind: 'enum', values: MANAGE_ACTIONS },
-        project: { ...PROJECT, optional: true },
-        id: { kind: 'string', min: 32, max: 64, pattern: /^[0-9a-f]{32}(?:[0-9a-f]{32})?$/, optional: true },
-        scope: { kind: 'enum', values: ['one', 'selected', 'all'], optional: true },
-        operation: { kind: 'enum', values: ['auto', 'verify', 'recover', 'reconcile', 'vectors', 'rebuild'], optional: true },
-        selected: { kind: 'bool', optional: true },
-        includePaths: { kind: 'bool', optional: true },
-        allowFallback: { kind: 'bool', optional: true },
-        expectedPlan: { ...PROJECT, optional: true },
-        expectedPreview: { ...PROJECT, optional: true },
-    },
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
+    /** Read-only index library (U97): one native catalog read through the window's airkctl session. */
+    'library.read': {
+        method: { kind: 'enum', values: LIBRARY_METHODS },
+        kind: { kind: 'enum', values: LIBRARY_KINDS, optional: true },
+        id: { kind: 'string', min: 36, max: 36, pattern: /^(?:idx|prj)_[0-9a-f]{32}$/, optional: true },
+        after: { kind: 'json', max: 8192, optional: true },
+        revision: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER, optional: true },
+        operation: { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32}$/, optional: true },
+    },
+    /** Open AIRK Admin (U97) on a page, optionally prefilled; the host checks a folder against this window's folders. */
+    'admin.open': {
+        page: { kind: 'enum', values: ADMIN_PAGES },
+        folder: { kind: 'string', min: 1, max: 4096, optional: true },
+        index: { kind: 'string', min: 36, max: 36, pattern: /^idx_[0-9a-f]{32}$/, optional: true },
+        set: { kind: 'string', min: 36, max: 36, pattern: /^prj_[0-9a-f]{32}$/, optional: true },
+        choose: { kind: 'bool', optional: true },
+    },
     'strategy.run': { strategy: { kind: 'json', max: 32768 }, params: { kind: 'json', max: 8192 }, scope: { kind: 'json', max: 2048 } },
     'strategy.run.export':{runId:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},digest:{kind:'string',min:64,max:64,pattern:/^[0-9a-f]{64}$/},format:{kind:'enum',values:['copy','json']}},
     'strategy.export': { strategy: { kind: 'json', max: 32768 } },
     'studio.save': { document: { kind: 'json', max: 393216 }, name: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/ },
         revision: { kind: 'int', min: 0, max: 1_000_000_000 }, expectedHash: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'strategy.import': {},
-    'usage.read': {},
-    'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback','openIndexAdministration'] },
-        days: { kind: 'int', min: 7, max: 30, optional: true } },
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
-    'instructions.open': { agent: { kind: 'enum', values: ['claude', 'codex', 'copilot'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } },
-    'agents.configHealth': { project: PROJECT },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
     'planner.import': {},
     'source.choose': {},
@@ -832,19 +805,16 @@ export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;
  * Draft/preview and receipt reads stay reads even when they retain observations. */
 const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
     'notice.dismiss',
-    'indexing.apply', 'indexing.export', 'indexing.grant.use', 'indexing.scope.apply', 'indexing.set.save',
-    'indexing.setup.apply', 'indexing.setup.resume', 'indexing.source.resolve',
-    'indexing.policy.resume', 'indexing.split.apply', 'indexing.split.recover',
-    'indexing.retirement.stopTracking', 'indexing.recommendations.use', 'indexing.recommendations.copy',
+    'indexing.scope.apply', 'indexing.recommendations.use', 'indexing.recommendations.copy',
     'strategy.run.export', 'details.copy', 'clipboard.write',
-    'manage.action', 'manage.command', 'planner.saveInWorkspace', 'planner.exportJSON',
-    'strategy.export', 'studio.save', 'usage.action', 'suggestions.resolve',
+    'manage.command', 'planner.saveInWorkspace', 'planner.exportJSON',
+    'strategy.export', 'studio.save', 'suggestions.resolve',
     'suggestions.applied', 'suggestions.discardAll', 'handoff.share',
     'recipes.save', 'recipes.delete', 'recipes.export',
 ]);
 const INTERACTIVE_READ_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
     'planner.import', 'strategy.import', 'recipes.import', 'source.open', 'source.choose',
-    'help.choose', 'workspace.manageTrust', 'instructions.open', 'planner.openDraft',
+    'help.choose', 'workspace.manageTrust', 'planner.openDraft', 'admin.open',
 ]);
 export function explorerRequestPolicy(type: WebviewMessageType): { uncertain: boolean; interactive: boolean } {
     const uncertain = UNCERTAIN_REQUESTS.has(type);

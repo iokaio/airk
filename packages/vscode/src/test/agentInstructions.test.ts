@@ -81,12 +81,9 @@ test('instruction paths cannot follow a redirected parent or open a directory as
     assert.deepEqual(f.opened, []);
 });
 
-test('instruction messages bind a project and fixed agent rather than accepting webview paths', () => {
-    const message = { v: 1, type: 'instructions.open', requestId: 'test', project: 'a'.repeat(64), agent: 'copilot' };
-    assert.deepEqual(parseWebviewMessage(message), message);
-    assert.equal(parseWebviewMessage({ ...message, path: '/elsewhere' }), undefined);
-    assert.equal(parseWebviewMessage({ ...message, agent: 'shell' }), undefined);
-    assert.equal(parseWebviewMessage({ ...message, project: '' }), undefined);
+test('the Explorer accepts no instruction-file message and the instruction text stays current', () => {
+    // Agent instructions moved with Management to AIRK Admin (U6, U97); the Explorer has no such message.
+    assert.equal(parseWebviewMessage({ v: 1, type: 'instructions.open', requestId: 'test', project: 'a'.repeat(64), agent: 'copilot' }), undefined);
     assert.match(AIRK_AGENT_INSTRUCTIONS, /deferred tool discovery/);
     assert.match(AIRK_AGENT_INSTRUCTIONS, /verify relevant live file contents before edits/);
 });

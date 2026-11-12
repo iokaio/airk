@@ -6,16 +6,18 @@ import { Route } from '../explorerRoutes';
 import { savedState, saveState } from './api';
 import { CopyDetails, Facts, WorkspaceIcon } from './components';
 import { ago, observed } from './format';
-import { Act, IndexContents, ProjectHealth, useActions, WorkProgress } from './manage';
+import { IndexContents, ProjectHealth, WorkProgress } from './projectStatus';
+import { AdminButton, CreateIndexForFolders, openAdmin } from './adminLinks';
+import type { AdminPage } from '../explorerContracts';
 import { semanticExplanation } from '../explorerStatus';
 
-const JOURNEYS: { id: string; title: string; text: string; route: Route }[] = [
+const JOURNEYS: { id: string; title: string; text: string; route: Route; admin?: AdminPage }[] = [
     { id: 'explore', title: 'Explore', text: 'Search code and documents; every hit is a citation.', route: { workspace: 'search', tab: 'query' } },
     { id: 'investigate', title: 'Investigate', text: 'Inspect declarations, references and candidate relationships.', route: { workspace: 'code', tab: 'symbols' } },
     { id: 'review', title: 'Review', text: 'Check changed files against indexed facts.', route: { workspace: 'review', tab: 'changes' } },
     { id: 'prepare', title: 'Prepare', text: 'Compile bounded, cited evidence into a prompt.', route: { workspace: 'strategies', tab: 'studio' } },
     { id: 'handoff', title: 'Hand off', text: 'Save a plan file an agent can follow.', route: { workspace: 'strategies', tab: 'planner' } },
-    { id: 'maintain', title: 'Maintain', text: 'Index, repair, storage, agents and usage.', route: { workspace: 'manage', tab: 'overview' } },
+    { id: 'maintain', title: 'Maintain', text: 'Indexes, recovery, storage, agents and usage in AIRK Admin.', route: { workspace: 'manage', tab: 'overview' }, admin: 'overview' },
 ];
 /** Lenses reorder journeys only; they never hide a workspace. */
 const LENSES: Record<string, string[]> = {
@@ -33,7 +35,7 @@ const ROLE_HINTS: Record<string, string> = {
 
 export function Overview(props: { state: ExplorerViewState; project?: ProjectSummary; go(route: Route): void }) {
     const { state, project } = props, status = state.status;
-    const actions = useActions(), management = state.management;
+    const management = state.management;
     const managed = management?.projects.find(entry => entry.summary.project === state.selectedProject);
     const semantic = semanticExplanation(status);
     const [lens, setLens] = useState<string>(() => { const value = savedState<{ lens?: unknown }>()?.lens; return typeof value === 'string' && Object.hasOwn(LENSES, value) ? value : 'developer'; });
@@ -42,32 +44,32 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
         <div class="workspace-heading"><div><p class="eyebrow">AIRK workspace</p><h1>Connecting to AIRK</h1>
             <p>Checking the local service and saved project registrations. Project details have not been loaded yet.</p></div></div>
         <p class="callout" role="status">Your project has not been reported as removed or unregistered. Waiting for the service response.</p>
-        <button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'service'})}>View connection details</button>
+        <AdminButton page="service" label="View connection details in AIRK Admin" ghost />
     </section>;
     const first = !state.trusted ? state.workspaceTrusted===false?'VS Code Restricted Mode is active. Manage Workspace Trust to review this workspace.':'AIRK client authority is unavailable; no current evidence access is assumed.'
         : state.connection === 'connecting' ? 'Connecting to AIRK and checking registered projects. Saved project details will appear when the service responds.'
-        : !state.projects.length ? 'No AIRK index is selected for this window. Use Indexing to set up an index, assign Project memberships, review access, then explicitly Use Grant.'
-        : state.connection === 'disconnected' ? 'The AIRK service is not connected. Open Management › Service to start or reconnect it.'
-        : state.connection === 'incompatible' ? 'The selected AIRK runtime does not match this extension. Review the runtime in Management › Service.'
+        : !state.projects.length ? 'AIRK has no index for this window yet. Create one in AIRK Admin.'
+        : state.connection === 'disconnected' ? 'The AIRK service is not connected. Start it, or review it in AIRK Admin › Service.'
+        : state.connection === 'incompatible' ? 'The installed AIRK Service does not match this extension. Review it in AIRK Admin › Service.'
         : undefined;
     return (
         <section class="workspace">
             <div class="workspace-heading"><div><p class="eyebrow">Local evidence. Clear provenance.</p><h1>{project?.name ?? 'Your workspace'}</h1>
-                <p>{project && status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div></div>
+                <p>{project && status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div>
+                <AdminButton page="overview" disabled={!state.trusted} /></div>
             {first && <Notice noticeKey={noticeKey("overview-connection", first)}><p>{first}</p></Notice>}
-            {actions.outcome && <Notice noticeKey={noticeKey("control-outcome", actions.outcome)}><p>{actions.outcome}</p></Notice>}
-            {management?.message && !actions.outcome && <Notice noticeKey={noticeKey("control-outcome", management.message)}><p>Last control outcome: {management.message}</p></Notice>}
+            {state.trusted && state.connection === 'ready' && !state.projects.length && <CreateIndexForFolders folders={state.workspaceFolders} />}
+            {management?.message && <Notice noticeKey={noticeKey("control-outcome", management.message)}><p>Last control outcome: {management.message}</p></Notice>}
             {project&&<IndexContents project={project} status={status} connected={management?.connected??state.connection==='ready'}/>}
             {managed && management && <>
-                <ProjectHealth entry={managed} view={management} actions={actions} go={props.go} compact />
+                <ProjectHealth entry={managed} compact />
                 {(managed.jobId||managed.pendingJobId||managed.configuration.pending)&&<WorkProgress entry={managed} />}
                 <div class="actions">
-                    <button type="button" class="ghost" onClick={() => props.go({ workspace: 'manage', tab: 'activity' })}>View full activity</button>
-                    <Act actions={actions} action={managed.summary.paused ? 'resume' : 'pause'} fields={{ project: managed.summary.project }} enabled={management.enabled.projectActions && !management.inactive} ghost>{managed.summary.paused ? 'Resume project' : 'Pause project'}</Act>
-                    {managed.jobId && ['running', 'pending'].includes(managed.jobState ?? '') && <Act actions={actions} action="cancelJob" fields={{ id: managed.jobId }} enabled={management.enabled.projectActions} ghost>Cancel job</Act>}
+                    <AdminButton page="activity" label="View full activity in AIRK Admin" ghost choose={false} />
                 </div>
+                <p class="muted">Pausing, resuming and canceling indexing are in AIRK Admin › Activity.</p>
             </>}
-            {!managed && <p class="muted">Current worker progress is not present in this project page. <button type="button" class="ghost" onClick={() => props.go({ workspace: 'manage', tab: 'overview' })}>Review projects</button></p>}
+            {!managed && <p class="muted">Current worker progress is not present in this project page. <AdminButton page="overview" label="Review indexes in AIRK Admin" ghost choose={false} /></p>}
             <details class="card project-details"><summary>Project and semantic settings</summary>
             <div class="cards two">
                 <article class="card">
@@ -93,7 +95,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                     ['Detailed observations', ago(status?.detailsObservedAt)],
                 ]} />
                 <p class="muted">Saved setup policy can be newer than this publication. Source indexing and semantic work run separately.</p>
-                <div class="actions"><button type="button" onClick={() => props.go({ workspace: 'manage', tab: 'overview' })}>Review semantic setup</button>
+                <div class="actions"><AdminButton page="index-library" label="Review semantic setup in AIRK Admin" choose={false} />
                     <button type="button" class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'indexing-choices' })}>Why these states?</button></div>
             </article>
             </div></details>
@@ -117,7 +119,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
             </article>
             <div class="cards three">
                 {order.map(id => JOURNEYS.find(entry => entry.id === id)!).map(journey => (
-                    <button type="button" key={journey.id} class="card journey" onClick={() => props.go(journey.route)}>
+                    <button type="button" key={journey.id} class="card journey" onClick={() => { if (journey.admin) { void openAdmin({ page: journey.admin }).catch(() => undefined); } else { props.go(journey.route); } }}>
                         <WorkspaceIcon name={journey.route.workspace} /><strong>{journey.title}</strong><span>{journey.text}</span>
                     </button>
                 ))}

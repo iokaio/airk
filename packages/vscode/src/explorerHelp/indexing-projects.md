@@ -6,14 +6,10 @@ area: explorer
 aliases: index sets, saved selections, memberships, Projects
 related_airk_help: indexing
 ---
-# Index sets
+# Indexing — Index sets
 
-An index set is a named selection of existing indexes. It organizes search without copying or splitting index data. Choose it in Search scope alongside any individual indexes you want to search.
+Index sets are reusable selections of indexes. This tab lists them read-only from the AIRK Service; create, rename, change and delete index sets in AIRK Admin.
 
-The list loads automatically when the connection is ready. Refresh Index sets refreshes or retries a failed read. Next page reads more entries; filtering applies only to the displayed page. A failed read does not mean the list is empty.
+Show index set details reads the set and the indexes it contains, with the complete native responses and Copy JSON. Open in AIRK Admin on a row opens that index set in AIRK Admin. Load more index sets continues a long list.
 
-Expand Create an index set, enter its name, check the indexes to include and choose Create index set. Open index set edits its name and index checkboxes. Save index set applies those choices. Newly added indexes include their current sources. Existing folder-specific selections stay unchanged when their indexes remain checked. Renaming never widens an existing folder selection. Existing sets load their complete membership before Save becomes available.
-
-Delete index set removes only that grouping; its indexes and original source files remain. To stop maintaining an index and remove its searchable data, use Delete index in Index library instead.
-
-The underlying native contract calls an index set a Project; complete structured details retain those original field names. Complete details, JSON/Markdown copies and exports keep all native fields and receipts. Stale revisions, replaced connections and lost workspace trust refuse changes. Unconfirmed requests remain visible in Operation status and recovery and are reconciled by their exact receipts.
+Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.

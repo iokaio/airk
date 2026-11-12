@@ -350,6 +350,19 @@
             "scope": "machine",
             "markdownDescription": "Allow this extension to start native AIRK processes (discovery, self-test, the service, MCP sessions, tools and usage reports). Turn off in User settings to inspect AIRK's settings and help without running any AIRK executable; workspace values are ignored. Views then report that native execution is off instead of inferring native status. This controls process execution only: it is not a sandbox and does not isolate the operating-system account. The editor-hosted Explorer Assistance endpoint follows `#airk.explorer.assistance.enabled#`. Run **AIRK: Enable Native Execution** to resume the normal verified-runtime path."
           },
+          "airk.admin.openIn": {
+            "type": "string",
+            "enum": [
+              "external",
+              "vscode"
+            ],
+            "enumDescriptions": [
+              "Open AIRK Admin in your default browser (airkctl admin open).",
+              "Open AIRK Admin in VS Code's Simple Browser with a single-use sign-in link that is kept only in memory."
+            ],
+            "default": "external",
+            "markdownDescription": "Where **Open AIRK Admin** opens the AIRK admin pages. Choose **Open AIRK Admin › Choose where…** in the Explorer to change it. If the VS Code browser cannot open the page or reports a certificate problem, AIRK offers to open it in your browser instead."
+          },
           "airk.explorer.assistance.enabled": {
             "type": "boolean",
             "default": true,
