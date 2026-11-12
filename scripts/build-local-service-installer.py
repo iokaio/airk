@@ -10,9 +10,11 @@ airkctl dependency proof; the §9.5 staged layout (bin/, service/, notices/) wit
 script installers/windows/airk-service.iss; a receipt. Nothing is installed, started, trusted or
 published.
 
-Signing (U22): the local Trusted Signing adapter of scripts/sign-native.py is used when that
-script provides one (`sign_windows_local`). It does not yet, so a build stops before packaging
-unless --unsigned is given. --unsigned labels everything unsigned (inventory `signing: null`,
+Signing (U22, U70): scripts/local_signing.py signs fresh copies of `airk.exe` and `airkctl.exe`
+(the staged images), the Inno uninstaller (ISCC's manual-signing first pass stops after writing
+it; the signed copy replaces it and ISCC runs again) and the outer installer EXE, each with an
+`airk-native-signing-local/1` receipt in the run folder. Without Azure CLI access to the
+Artifact Signing account the build stops; --unsigned labels everything unsigned (inventory `signing: null`,
 artifact name `...-UNSIGNED-installer.exe`); setup refuses such a payload at placement
 (`payload_unsigned`), so an unsigned installer is a packaging check, never an installable product.
 """
@@ -109,7 +111,31 @@ def stage(layout, airk, airkctl, version, signing):
     return inventory
 
 
-def compile_installer(steps, iscc, layout, output, artifact, uninstallers=None):
+def windows_signing():
+    """The install record's signing claim (I4 `Signing::Windows`), from the C10 identity."""
+    identity = json.loads((ROOT / "scripts/signing-identity.json").read_text(encoding="utf-8"))["windows"]
+    return {"platform": "windows", "publisher": identity["publisher"], "identity_eku": identity["identity_eku"]}
+
+
+class Signer:
+    """Signs fresh copies through the U70 adapter and keeps each receipt beside the run."""
+
+    def __init__(self, folder, commit):
+        self.adapter = load_script("local_signing")
+        self.folder = folder
+        self.commit = commit
+        self.lock_sha256 = digest(ROOT / "Cargo.lock")
+        self.receipts = {}
+
+    def sign(self, name, source, output):
+        document = self.adapter.sign(source, output, "windows-x64", self.commit, self.lock_sha256)
+        (self.folder / f"signing-{name}.json").write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
+        self.receipts[name] = {"source_sha256": document["source_sha256"],
+                               "binary_sha256": document["binary_sha256"], "identity": document["identity"]}
+        return output
+
+
+def compile_installer(steps, iscc, layout, output, artifact, uninstallers=None, name="iscc", allow_failure=False):
     definitions = {"AirkVersion": json.loads((layout / "payload-inventory.json").read_text())["version"],
                    "AirkPayload": layout, "AirkOutput": output, "AirkArtifact": artifact,
                    "AirkInventorySHA": digest(layout / "payload-inventory.json"),
@@ -119,8 +145,40 @@ def compile_installer(steps, iscc, layout, output, artifact, uninstallers=None):
         definitions["AirkUninstallers"] = uninstallers
     if any(any(char in str(value) for char in ("\r", "\n", '"')) for value in definitions.values()):
         raise ValueError("Unsafe Inno Setup definition")
-    steps.run("iscc", [iscc, "/Qp", "/NI", *[f"/D{name}={value}" for name, value in definitions.items()],
-                       SCRIPT])
+    command = [iscc, "/Qp", "/NI", *[f"/D{key}={value}" for key, value in definitions.items()], SCRIPT]
+    if allow_failure:
+        try:
+            steps.run(name, command)
+        except RuntimeError:
+            return False
+        return True
+    steps.run(name, command)
+    return True
+
+
+def signed_installer(steps, signer, iscc, layout, compiled, artifact, run):
+    """Inno manual signing: pass one writes the unsigned uninstaller and stops; its signed copy
+    replaces it; pass two embeds it; the outer EXE is signed as a fresh copy."""
+    uninstallers = run / "uninstallers"
+    uninstallers.mkdir()
+    if compile_installer(steps, iscc, layout, compiled, artifact, uninstallers, "iscc-prepare", allow_failure=True):
+        raise RuntimeError("ISCC did not stop at its unsigned-uninstaller boundary")
+    candidates = [*uninstallers.glob("*.e32"), *uninstallers.glob("*.e64")]
+    if len(candidates) != 1 or (compiled / f"{artifact}.exe").exists():
+        raise RuntimeError("ISCC did not stop at its single unsigned-uninstaller boundary")
+    cache = candidates[0]
+    unsigned = digest(cache)
+    signed = steps.call("sign-uninstaller", lambda: signer.sign("uninstaller", cache, run / "signed/uninstaller.exe"))
+    shutil.copyfile(signed, cache)
+    compile_installer(steps, iscc, layout, compiled, artifact, uninstallers, "iscc-build")
+    if digest(cache) != digest(signed):
+        raise RuntimeError("ISCC changed the signed uninstaller")
+    built = compiled / f"{artifact}.exe"
+    if not built.is_file():
+        raise RuntimeError("ISCC did not produce the installer")
+    final = run / f"{artifact}.exe"
+    steps.call("sign-installer", lambda: signer.sign("installer", built, final))
+    return final, unsigned
 
 
 def main():
@@ -133,11 +191,6 @@ def main():
                         / "Inno Setup 6/ISCC.exe")
     args = parser.parse_args()
     prerequisites(args.iscc)
-    signer = load_script("sign-native")
-    local_signing = getattr(signer, "sign_windows_local", None)
-    if local_signing is None and not args.unsigned:
-        raise SystemExit("scripts/sign-native.py has no local Trusted Signing adapter yet (U70); "
-                         "a signed installer cannot be built. Pass --unsigned for a labeled packaging check.")
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     if not load_script("split_receipts").split_version(version):
         raise SystemExit(f"Version {version} predates the split; increment the patch version before a local build")
@@ -160,21 +213,28 @@ def main():
         airkctl = steps.call("airkctl", lambda: runtime.cargo_binary("airkctl", "release", None, package="airkctl"))
         layout = run / "layout"
         signing = None
-        if local_signing is not None:
-            # The adapter signs both images in place and returns the record's signing identity.
-            signing = steps.call("sign-images", lambda: local_signing([airk, airkctl]))
+        signer = None
+        if not args.unsigned:
+            signer = Signer(run, commit)
+            steps.call("signing-client", signer.adapter.provision)
+            airk = steps.call("sign-airk", lambda: signer.sign("airk", airk, run / "signed/service/airk.exe"))
+            airkctl = steps.call("sign-airkctl", lambda: signer.sign("airkctl", airkctl,
+                                                                     run / "signed/bin/airkctl.exe"))
+            signing = windows_signing()
         inventory = steps.call("stage", lambda: stage(layout, airk, airkctl, version, signing))
         artifact = f"airk-service-{version}-{TARGET}-{'installer' if signing else 'UNSIGNED-installer'}"
         compiled = run / "compiled"
         compiled.mkdir()
-        compile_installer(steps, args.iscc, layout, compiled, artifact)
-        installer = compiled / f"{artifact}.exe"
-        if not installer.is_file():
-            raise RuntimeError("ISCC did not produce the installer")
-        if signing is not None:
-            # Signed uninstaller and outer EXE follow package-standalone-windows.py's
-            # prepare/build/record order once the local adapter exists (§10.5.4).
-            raise RuntimeError("Signed installer packaging awaits the local signing adapter's installer stage")
+        if signer is None:
+            compile_installer(steps, args.iscc, layout, compiled, artifact)
+            installer = compiled / f"{artifact}.exe"
+            if not installer.is_file():
+                raise RuntimeError("ISCC did not produce the installer")
+        else:
+            installer, unsigned_uninstaller = signed_installer(steps, signer, args.iscc, layout, compiled,
+                                                               artifact, run)
+            receipt["signing"] = {"provenance": "local", "claim": signing, "artifacts": signer.receipts,
+                                  "uninstaller_unsigned_sha256": unsigned_uninstaller}
         receipt.update({"result": "built", "signed": signing is not None, "installer": str(installer),
                         "installer_sha256": digest(installer),
                         "payload_inventory_sha256": digest(layout / "payload-inventory.json"),

@@ -239,14 +239,61 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
         self.assertEqual(out.getvalue(), "")
         self.assertIn("FAILED", err.getvalue())
 
-    def test_unsigned_build_needs_explicit_label_and_pre_split_versions_stop(self):
+    def test_signed_build_without_signing_access_stops_before_staging(self):
+        calls = []
+
+        class Admin:
+            @staticmethod
+            def check(output, runner=None):
+                calls.append("admin")
+
+        class Runtime:
+            @staticmethod
+            def verify_static_inputs():
+                calls.append("static-ort")
+
+            @staticmethod
+            def cargo_binary(name, *args, **kwargs):
+                calls.append("cargo-" + name)
+                return Path("/fictional") / f"{name}.exe"
+
+            @staticmethod
+            def check_lightweight_dependencies():
+                calls.append("airkctl-proof")
+
+        class LocalSigning:
+            @staticmethod
+            def provision():
+                calls.append("provision")
+                raise RuntimeError("Azure CLI sign-in required")
+
+        scripts = {"build-admin-assets": Admin, "build-service-runtime": Runtime,
+                   "local_signing": LocalSigning, "split_receipts": fixtures.package.receipts}
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(service, "OUTPUT", Path(temporary)), \
+                patch.object(service, "prerequisites", lambda iscc: None), \
+                patch.object(service, "load_script", lambda name: scripts[name]), \
+                patch.object(service, "digest", lambda path: "0" * 64), \
+                patch.object(service, "stage", lambda *args: calls.append("stage")), \
+                patch.object(service.tomllib, "loads", lambda text: {"workspace": {"package": {"version": fixtures.SPLIT}}}), \
+                patch.object(service, "compile_installer", lambda *args, **kwargs: calls.append("iscc")), \
+                patch("sys.argv", ["build-local-service-installer.py", "--force-build"]), \
+                redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(service.main(), 1)
+            receipt, = Path(temporary).glob("*/receipt.json")
+            record = json.loads(receipt.read_text())
+        self.assertEqual(calls[-1], "provision")
+        self.assertNotIn("stage", calls)
+        self.assertNotIn("iscc", calls)
+        self.assertEqual(record["result"], "failed")
+        self.assertIn("Azure CLI sign-in required", record["error"])
+        self.assertNotIn("installer", record)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("FAILED", err.getvalue())
+
+    def test_pre_split_versions_stop(self):
         class Signer:
             pass
-        with patch.object(service, "prerequisites", lambda iscc: None), \
-                patch.object(service, "load_script", lambda name: Signer if name == "sign-native" else fixtures.package.receipts), \
-                patch("sys.argv", ["build-local-service-installer.py", "--force-build"]):
-            with self.assertRaisesRegex(SystemExit, "no local Trusted Signing adapter"):
-                service.main()
         with patch.object(service, "prerequisites", lambda iscc: None), \
                 patch.object(service, "load_script", lambda name: Signer if name == "sign-native" else fixtures.package.receipts), \
                 patch.object(service.tomllib, "loads", lambda text: {"workspace": {"package": {"version": "1.8.23"}}}), \
