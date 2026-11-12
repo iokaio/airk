@@ -11,11 +11,22 @@
 //! identity is generated here from `RequestEpoch`, as every keyed `airkctl`
 //! request is, and stays in the printed draft so a later apply or receipt
 //! read can name it.
+//!
+//! Catalog changes (`change` and the set/rename/retire conveniences) print
+//! the service's preview; `--yes` applies it under the same request identity.
+//! A change that removes or retires something needs `--confirm <name>`
+//! (U98), checked against the target's current name with the core rule the
+//! admin pages use (`CatalogOperation::confirmation_target`).
 use super::{Context, Selection, VERSION, fail, installed, print_control, running, usage};
+use crate::contract::{ErrorLine, ExitClass};
 use airk_core::{
-    catalog_management::{CatalogEntity, CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
+    catalog_management::{
+        CatalogEntity, CatalogItem, CatalogKind, CatalogOperation, CatalogPageRequest,
+        CatalogRequest, ConfirmationTarget, MAX_PAGE_BYTES,
+    },
     catalog_setup::{IndexSetupDraft, IndexSetupSelection, SetupAdditionalRoot},
-    index_catalog::{CatalogRevision, MAX_SELECTION},
+    catalog_source_change::IndexRetirementReason,
+    index_catalog::{CatalogRevision, IndexDefinition, MAX_SELECTION, QueryProject},
     service::{ControlMethod, ControlResponse, RequestKey},
 };
 use clap::Subcommand;
@@ -90,6 +101,68 @@ pub(super) enum LibraryCommand {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
     },
+    /// Preview any catalog operation (JSON, as the admin pages send it);
+    /// --yes applies the preview.
+    Change {
+        /// The `CatalogOperation` JSON, for example {"operation":"rename_index",…}.
+        #[arg(long)]
+        operation: String,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
+    /// Create an index set.
+    SetCreate {
+        #[arg(long)]
+        name: String,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
+    /// Rename an index set.
+    SetRename {
+        #[arg(long)]
+        set: String,
+        #[arg(long)]
+        name: String,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
+    /// Delete an index set (its indexes stay); needs --confirm <set name>.
+    SetDelete {
+        #[arg(long)]
+        set: String,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
+    /// Rename an index.
+    Rename {
+        #[arg(long)]
+        index: String,
+        #[arg(long)]
+        name: String,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
+    /// Retire an index (stop tracking it); needs --confirm <index name>.
+    Retire {
+        #[arg(long)]
+        index: String,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
+}
+
+/// Preview, then apply only with --yes; destructive changes need --confirm.
+#[derive(clap::Args)]
+pub(super) struct ApplyArgs {
+    /// Apply the previewed change.
+    #[arg(long)]
+    yes: bool,
+    /// The target's current name (or a grant's or context's id), typed to
+    /// confirm a delete, removal or retirement (U98).
+    #[arg(long)]
+    confirm: Option<String>,
+    #[arg(long)]
+    runtime_dir: Option<PathBuf>,
 }
 
 /// The service's control directory, as `projects` resolves it.
@@ -169,6 +242,57 @@ pub(super) fn run(cx: &mut Context, selection: Selection, command: LibraryComman
             draft_file,
             runtime_dir,
         } => setup_apply(cx, &selection, &draft_file, runtime_dir),
+        LibraryCommand::Change { operation, apply } => {
+            match serde_json::from_str::<CatalogOperation>(&operation) {
+                Ok(operation) => change(cx, &selection, apply, |_, _| Ok(operation)),
+                Err(error) => Err(usage(cx, &format!("invalid --operation: {error}"))),
+            }
+        }
+        LibraryCommand::SetCreate { name, apply } => change(cx, &selection, apply, |cx, _| {
+            let id = crate::journal::mint().map_err(|line| fail(cx, &line))?;
+            let id = format!("prj_{id}")
+                .parse()
+                .map_err(|_| usage(cx, "index set id"))?;
+            Ok(CatalogOperation::CreateProject { id, name })
+        }),
+        LibraryCommand::SetRename { set, name, apply } => {
+            change(cx, &selection, apply, |cx, control| {
+                let project = project(cx, control, &set)?;
+                Ok(CatalogOperation::RenameProject {
+                    id: project.id,
+                    expected_definition_revision: project.definition_revision,
+                    name,
+                })
+            })
+        }
+        LibraryCommand::SetDelete { set, apply } => change(cx, &selection, apply, |cx, control| {
+            let project = project(cx, control, &set)?;
+            Ok(CatalogOperation::DeleteProject {
+                id: project.id,
+                expected_definition_revision: project.definition_revision,
+                expected_scope_revision: project.scope_revision,
+                expected_defaults_revision: project.defaults_revision,
+            })
+        }),
+        LibraryCommand::Rename { index, name, apply } => {
+            change(cx, &selection, apply, |cx, control| {
+                let index = index_definition(cx, control, &index)?;
+                Ok(CatalogOperation::RenameIndex {
+                    id: index.id,
+                    expected_definition_revision: index.definition_revision,
+                    name,
+                })
+            })
+        }
+        LibraryCommand::Retire { index, apply } => change(cx, &selection, apply, |cx, control| {
+            let index = index_definition(cx, control, &index)?;
+            Ok(CatalogOperation::RetireIndex {
+                id: index.id,
+                expected_definition_revision: index.definition_revision,
+                expected_source_revision: index.source_revision,
+                reason: IndexRetirementReason::Explicit,
+            })
+        }),
     };
     result.unwrap_or_else(|code| code)
 }
@@ -403,6 +527,148 @@ fn setup_apply(
         ControlMethod::CatalogIndexSetupApply { draft },
     )?;
     Ok(print_control(cx, &response))
+}
+
+/// The current detail of `entity` (at any revision).
+fn detail(
+    cx: &mut Context,
+    control: &Path,
+    entity: CatalogEntity,
+    revision: Option<CatalogRevision>,
+) -> Result<Option<CatalogItem>, u8> {
+    match request(
+        cx,
+        control,
+        ControlMethod::CatalogDetail {
+            entity,
+            expected_catalog_revision: revision,
+        },
+    )? {
+        ControlResponse::CatalogDetail { detail, .. } => Ok(detail.item),
+        other => Err(print_control(cx, &other).max(1)),
+    }
+}
+
+fn project(cx: &mut Context, control: &Path, set: &str) -> Result<QueryProject, u8> {
+    let id = parse(cx, "--set", Some(set.to_owned()))?.ok_or(2u8)?;
+    match detail(cx, control, CatalogEntity::Project { id }, None)? {
+        Some(CatalogItem::Project(project)) if project.id == id => Ok(project),
+        _ => Err(fail(
+            cx,
+            &refused("catalog_entity_unknown", "no such index set"),
+        )),
+    }
+}
+
+fn index_definition(cx: &mut Context, control: &Path, index: &str) -> Result<IndexDefinition, u8> {
+    let id = parse(cx, "--index", Some(index.to_owned()))?.ok_or(2u8)?;
+    match detail(cx, control, CatalogEntity::Index { id }, None)? {
+        Some(CatalogItem::Index(index)) if index.id == id && !index.tombstone => Ok(index),
+        _ => Err(fail(
+            cx,
+            &refused("catalog_entity_unknown", "no such live index"),
+        )),
+    }
+}
+
+fn refused(code: &str, message: &str) -> ErrorLine {
+    ErrorLine::new(ExitClass::Refused, code, false, message)
+}
+
+/// The text `--confirm` must equal for `operation` at `revision`, if any.
+fn confirmation(
+    cx: &mut Context,
+    control: &Path,
+    operation: &CatalogOperation,
+    revision: CatalogRevision,
+) -> Result<Option<String>, u8> {
+    let missing = |cx: &mut Context| {
+        fail(
+            cx,
+            &refused(
+                "confirmation_mismatch",
+                "the target is no longer in the catalog",
+            ),
+        )
+    };
+    match operation.confirmation_target() {
+        None => Ok(None),
+        Some(ConfirmationTarget::Id(id)) => Ok(Some(id)),
+        Some(ConfirmationTarget::ProjectName(id)) => {
+            match detail(cx, control, CatalogEntity::Project { id }, Some(revision))? {
+                Some(CatalogItem::Project(project)) if project.id == id => Ok(Some(project.name)),
+                _ => Err(missing(cx)),
+            }
+        }
+        Some(ConfirmationTarget::IndexName(id)) => {
+            match detail(cx, control, CatalogEntity::Index { id }, Some(revision))? {
+                Some(CatalogItem::Index(index)) if index.id == id => Ok(Some(index.name)),
+                _ => Err(missing(cx)),
+            }
+        }
+    }
+}
+
+/// Preview `build`'s operation at the current revision; with --yes, check
+/// the typed confirmation and apply under the same request identity.
+fn change(
+    cx: &mut Context,
+    selection: &Selection,
+    apply: ApplyArgs,
+    build: impl FnOnce(&mut Context, &Path) -> Result<CatalogOperation, u8>,
+) -> Result<u8, u8> {
+    let control = control(cx, selection, apply.runtime_dir)?;
+    let operation = build(cx, &control)?;
+    let expected_catalog_revision = current_revision(cx, &control)?;
+    let (namespace, epoch) =
+        crate::journal::epoch(&control, VERSION).map_err(|line| fail(cx, &line))?;
+    let caller = crate::journal::mint().map_err(|line| fail(cx, &line))?;
+    let nonce = crate::journal::mint().map_err(|line| fail(cx, &line))?;
+    let request = CatalogRequest {
+        caller,
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce,
+        },
+        expected_catalog_revision,
+        operation,
+    };
+    let response = self::request(
+        cx,
+        &control,
+        ControlMethod::CatalogPreview {
+            request: request.clone(),
+        },
+    )?;
+    let code = print_control(cx, &response);
+    let ControlResponse::CatalogPreview { preview_digest, .. } = response else {
+        return Ok(code);
+    };
+    if code != 0 || !apply.yes {
+        return Ok(code);
+    }
+    // U98: the same rule and the same current name the admin pages check.
+    if let Some(name) = confirmation(cx, &control, &request.operation, expected_catalog_revision)?
+        && apply.confirm.as_deref() != Some(name.as_str())
+    {
+        return Err(fail(
+            cx,
+            &refused(
+                "confirmation_mismatch",
+                &format!("type --confirm \"{name}\" to apply this change"),
+            ),
+        ));
+    }
+    let applied = self::request(
+        cx,
+        &control,
+        ControlMethod::CatalogApply {
+            request,
+            preview_digest,
+        },
+    )?;
+    Ok(print_control(cx, &applied))
 }
 
 #[cfg(test)]

@@ -92,9 +92,17 @@ fn unserved_commands_and_argument_errors_keep_their_classes() {
 
 #[test]
 fn a_missing_installation_or_service_exits_three() {
-    let (code, _, stderr) = run_line(&["status"]);
-    assert_eq!(code, 3);
-    assert!(stderr.contains("--service-runtime-dir"), "{stderr}");
+    // Discovery reads the fixed per-user pointer (no override, by design), so
+    // the missing-installation branch is observable only on a host without an
+    // installation (CI); the missing-service branch below runs everywhere.
+    if matches!(
+        crate::install::discover(),
+        crate::install::Discovery::NotFound
+    ) {
+        let (code, _, stderr) = run_line(&["status"]);
+        assert_eq!(code, 3);
+        assert!(stderr.contains("--service-runtime-dir"), "{stderr}");
+    }
     let missing = std::env::temp_dir().join("airkctl-no-such-control-root");
     let (code, _, stderr) = run_line(&[
         "--output",

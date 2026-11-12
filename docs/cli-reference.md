@@ -43,7 +43,13 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl init`](#airkctl-init)
 - [`airkctl inspect`](#airkctl-inspect)
 - [`airkctl library`](#airkctl-library)
+- [`airkctl library change`](#airkctl-library-change)
 - [`airkctl library list`](#airkctl-library-list)
+- [`airkctl library rename`](#airkctl-library-rename)
+- [`airkctl library retire`](#airkctl-library-retire)
+- [`airkctl library set-create`](#airkctl-library-set-create)
+- [`airkctl library set-delete`](#airkctl-library-set-delete)
+- [`airkctl library set-rename`](#airkctl-library-set-rename)
 - [`airkctl library setup`](#airkctl-library-setup)
 - [`airkctl library setup-apply`](#airkctl-library-setup-apply)
 - [`airkctl library show`](#airkctl-library-show)
@@ -2590,6 +2596,12 @@ Commands:
   show         One catalog entity: an index, an index set or a grant
   setup        Draft a new index for --root (and --data-dir) and print the service's review; --apply also creates it
   setup-apply  Apply a draft `setup` printed (the whole `catalog_index_setup_draft` line or its `draft`)
+  change       Preview any catalog operation (JSON, as the admin pages send it); --yes applies the preview
+  set-create   Create an index set
+  set-rename   Rename an index set
+  set-delete   Delete an index set (its indexes stay); needs --confirm <set name>
+  rename       Rename an index
+  retire       Retire an index (stop tracking it); needs --confirm <index name>
 
 Options:
       --output <OUTPUT>
@@ -2606,6 +2618,70 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library change
+
+```text
+Preview any catalog operation (JSON, as the admin pages send it); --yes applies the preview
+
+Usage: airkctl library change [OPTIONS] --operation <OPERATION>
+
+Options:
+      --operation <OPERATION>
+          The `CatalogOperation` JSON, for example {"operation":"rename_index",…}
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --yes
+          Apply the previewed change
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
@@ -2683,6 +2759,332 @@ Options:
 
       --runtime-dir <RUNTIME_DIR>
           The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library rename
+
+```text
+Rename an index
+
+Usage: airkctl library rename [OPTIONS] --index <INDEX> --name <NAME>
+
+Options:
+      --index <INDEX>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --name <NAME>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --yes
+          Apply the previewed change
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library retire
+
+```text
+Retire an index (stop tracking it); needs --confirm <index name>
+
+Usage: airkctl library retire [OPTIONS] --index <INDEX>
+
+Options:
+      --index <INDEX>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --yes
+          Apply the previewed change
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library set-create
+
+```text
+Create an index set
+
+Usage: airkctl library set-create [OPTIONS] --name <NAME>
+
+Options:
+      --name <NAME>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --yes
+          Apply the previewed change
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library set-delete
+
+```text
+Delete an index set (its indexes stay); needs --confirm <set name>
+
+Usage: airkctl library set-delete [OPTIONS] --set <SET>
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --set <SET>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --yes
+          Apply the previewed change
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library set-rename
+
+```text
+Rename an index set
+
+Usage: airkctl library set-rename [OPTIONS] --set <SET> --name <NAME>
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --set <SET>
+
+
+      --name <NAME>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --yes
+          Apply the previewed change
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
