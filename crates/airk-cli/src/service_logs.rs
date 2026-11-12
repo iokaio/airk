@@ -53,7 +53,7 @@ fn expected_owner(root: &Path) -> Result<Owner> {
 /// Metadata-only ownership proof for installer retirement. Unlike opening a
 /// log reader/writer, this never creates directories or changes permissions.
 pub(crate) fn has_saved_owner(parent: &Path, control: &Path) -> Result<bool> {
-    if crate::install_layout::log_parent(control)? != parent {
+    if crate::service_locations::log_parent(control)? != parent {
         return Ok(false);
     }
     let expected = expected_owner(control)?;
@@ -82,7 +82,7 @@ fn owner(root: &Path, create: bool) -> Result<PathBuf> {
     named_owner(root, create, DIRECTORY, OWNER)
 }
 fn named_owner(root: &Path, create: bool, name: &str, owner_name: &str) -> Result<PathBuf> {
-    let parent = crate::install_layout::log_parent(root)?;
+    let parent = crate::service_locations::log_parent(root)?;
     if !exists(&parent)? {
         ensure!(create, "diagnostic log location missing");
         crate::local_ipc::prepare_root(&parent)?;

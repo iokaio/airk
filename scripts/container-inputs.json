@@ -107,6 +107,7 @@
     "scripts/provision-onnx-runtime.py",
     "scripts/provision-static-onnx-runtime.py",
     "scripts/provision-static-onnx-tools.py",
+    "scripts/signing-identity.json",
     "scripts/static-onnx-link-closure.py",
     "scripts/static-onnx-runtime-lock.json",
     "scripts/static-onnx-tools-lock.json",

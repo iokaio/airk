@@ -292,6 +292,12 @@ pub async fn run(request: RoleRequest) -> Result<()> {
     match request {
         RoleRequest::ServiceDetached { runtime_dir, nonce } => {
             let mode = consume_start_request(&runtime_dir, nonce, now_unix_ms()?)?;
+            // U89: started for the installation whose state folder this is,
+            // the service uses the record's log location.
+            crate::service_locations::adopt_for_control(
+                &runtime_dir,
+                crate::setup_role::installed_locations()?,
+            )?;
             // The saved Stop and any pending lifecycle record are settled once
             // the service holds its single-instance lease (step 3b.1e-2).
             crate::service_runtime::serve_admitted(&runtime_dir, mode).await
@@ -315,6 +321,11 @@ pub async fn run(request: RoleRequest) -> Result<()> {
             // The control root must already be this user's owner-only root.
             crate::local_ipc::require_existing_root(&runtime_dir)
                 .context("role_admission_refused: control root is not owner-only")?;
+            // U89: the error goes to the ring the installed service writes.
+            crate::service_locations::adopt_for_control(
+                &runtime_dir,
+                crate::setup_role::installed_locations()?,
+            )?;
             let mut input = Vec::new();
             std::io::stdin()
                 .take(airk_core::service::MAX_CLIENT_ERROR_INPUT_BYTES as u64 + 1)

@@ -105,7 +105,7 @@ fn windows_signing() -> Value {
     case("records", "valid record")["signing"].clone()
 }
 
-fn accept(_: &Signing) -> Result<(), (String, String)> {
+fn accept(_: &Signing, _: &[&Path]) -> Result<(), (String, String)> {
     Ok(())
 }
 
@@ -136,7 +136,10 @@ fn a_complete_installation_verifies_its_pair() {
 }
 
 #[test]
-fn signatures_fail_closed_until_their_check_lands() {
+fn unsigned_images_are_refused_and_linux_rests_on_the_digest() {
+    // The fixture images are not signed: a record naming the C10 Windows
+    // identity is refused by Authenticode on Windows and as another
+    // platform's record elsewhere.
     let installed = fixture(windows_signing());
     let expected = if cfg!(windows) {
         "signature_unverified"
@@ -152,6 +155,45 @@ fn signatures_fail_closed_until_their_check_lands() {
     } else {
         assert_eq!(code(outcome), "signing_platform_mismatch");
     }
+}
+
+#[test]
+fn a_record_naming_another_signing_identity_is_refused() {
+    let mut signing = windows_signing();
+    signing["publisher"] = json!("CN=Someone Else, O=Someone Else, C=US");
+    let installed = fixture(signing);
+    let expected = if cfg!(windows) {
+        "signing_identity_mismatch"
+    } else {
+        "signing_platform_mismatch"
+    };
+    assert_eq!(code(read(&installed.pointer, platform_signature)), expected);
+    let macos = fixture(json!({"platform": "macos", "team_id": "ZZZZZ99999"}));
+    let expected = if cfg!(target_os = "macos") {
+        "signing_identity_mismatch"
+    } else {
+        "signing_platform_mismatch"
+    };
+    assert_eq!(code(read(&macos.pointer, platform_signature)), expected);
+}
+
+#[test]
+fn the_signature_check_sees_both_verified_images() {
+    let installed = fixture(windows_signing());
+    let seen = std::cell::RefCell::new(Vec::new());
+    let outcome = read(&installed.pointer, |_: &Signing, executables: &[&Path]| {
+        seen.borrow_mut()
+            .extend(executables.iter().map(|path| path.to_path_buf()));
+        Ok(())
+    });
+    assert!(matches!(outcome, Discovery::Verified(_)));
+    assert_eq!(
+        seen.into_inner(),
+        vec![
+            installed.program.join("bin/airkctl.exe"),
+            installed.program.join("service/airk.exe"),
+        ]
+    );
 }
 
 #[test]

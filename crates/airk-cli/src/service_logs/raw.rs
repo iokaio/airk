@@ -166,7 +166,7 @@ pub fn export(root: &Path) -> Result<Vec<u8>> {
 }
 /// Stream a finite capture to a caller-owned file; large logs never need an IPC frame.
 pub fn export_to(root: &Path, output: &mut impl Write) -> Result<u64> {
-    let parent = crate::install_layout::log_parent(root)?;
+    let parent = crate::service_locations::log_parent(root)?;
     if !exists(&parent.join(OWNER))? && !exists(&parent.join(DIRECTORY))? {
         return Ok(0);
     }

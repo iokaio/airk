@@ -2547,14 +2547,39 @@ fn lifecycle_service(
 /// logs` printed: recent pages from the running service (`Logs`), otherwise and
 /// for `--all`/`--raw` the local files through the shared parser.
 fn logs_service(cx: &mut Context, selection: Selection, options: LogOptions) -> u8 {
-    let control = match options.runtime_dir.clone().or(selection.control) {
-        Some(control) => control,
+    // U89: an installation's rings are in its record's `locations.logs`; an
+    // explicit control folder that is not the installation's state keeps
+    // them beside itself.
+    let (control, installation) = match options.runtime_dir.clone().or(selection.control) {
+        Some(control) => match crate::install::discover() {
+            crate::install::Discovery::Verified(verified) => {
+                (control, Some(verified.record.locations))
+            }
+            _ => (control, None),
+        },
         None => match installed(cx) {
-            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Ok(verified) => (
+                PathBuf::from(&verified.record.locations.state),
+                Some(verified.record.locations),
+            ),
             Err(code) => return code,
         },
     };
-    match read_logs(cx, &control, options) {
+    let rings = match crate::logs::locate(&control, installation.as_ref()) {
+        Ok(rings) => rings,
+        Err(error) => {
+            return fail(
+                cx,
+                &ErrorLine::new(
+                    ExitClass::Refused,
+                    "diagnostic_logs_unavailable",
+                    false,
+                    &format!("{error:#}"),
+                ),
+            );
+        }
+    };
+    match read_logs(cx, &control, &rings, options) {
         Ok(code) => code,
         Err(error) => fail(
             cx,
@@ -2594,12 +2619,17 @@ fn capture(
     Ok(written)
 }
 
-fn read_logs(cx: &mut Context, control: &Path, options: LogOptions) -> anyhow::Result<u8> {
+fn read_logs(
+    cx: &mut Context,
+    control: &Path,
+    rings: &Path,
+    options: LogOptions,
+) -> anyhow::Result<u8> {
     if options.raw {
         if let Some(path) = &options.output_file {
             let mut captured = 0;
             capture(path, |file| {
-                captured = crate::logs::export_raw_to(control, file)?;
+                captured = crate::logs::export_raw_to(control, rings, file)?;
                 Ok(())
             })?;
             let line = serde_json::json!({"written_bytes": captured}).to_string();
@@ -2607,7 +2637,7 @@ fn read_logs(cx: &mut Context, control: &Path, options: LogOptions) -> anyhow::R
             return Ok(written(cx, result));
         }
         let mut bytes = Vec::new();
-        crate::logs::export_raw_to(control, &mut bytes)?;
+        crate::logs::export_raw_to(control, rings, &mut bytes)?;
         let result = cx.io.stdout.write_all(&bytes);
         return Ok(written(cx, result));
     }
@@ -2621,7 +2651,7 @@ fn read_logs(cx: &mut Context, control: &Path, options: LogOptions) -> anyhow::R
         ));
     }
     let page = if options.all {
-        crate::logs::export(control)?
+        crate::logs::export(control, rings)?
     } else {
         match crate::service::request(
             control,
@@ -2632,7 +2662,7 @@ fn read_logs(cx: &mut Context, control: &Path, options: LogOptions) -> anyhow::R
         ) {
             Ok(ControlResponse::Logs { page }) => page,
             Err(line) if line.class == ExitClass::ServiceMissing => {
-                crate::logs::recent(control, options.limit)?
+                crate::logs::recent(control, rings, options.limit)?
             }
             Ok(other) => return Ok(fail(cx, &crate::service::refusal(&other))),
             Err(line) => return Ok(fail(cx, &line)),

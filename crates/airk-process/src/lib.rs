@@ -7,6 +7,7 @@ pub mod client_owner;
 pub mod detached;
 pub mod monotonic;
 pub mod private_stdio;
+pub mod signature;
 pub mod user_folders;
 pub use child_job::ChildJob;
 #[cfg(windows)]

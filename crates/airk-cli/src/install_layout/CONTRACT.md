@@ -37,7 +37,7 @@ All items are `pub(crate)`; there are no callers outside `airk-cli`.
 | `validate_control(control)` | Control binding validation only. Must run before any directory creation. |
 | `record_control_root(lease)`, `record_control(lease)` | Under the singleton lease, records the control receipt and begins the registry pin. Idempotent; resumes only an owned prefix. |
 | `record_registry_root(lease, namespace)`, `record_registry(..)` | Completes the registry pin with the opened namespace. |
-| `log_parent(control)` | The verified log directory for a control namespace; the control directory itself in raw development mode. |
+| `log_parent(control)` | The verified log directory for a control namespace; the control directory itself in raw development mode. The log modules reach it through `service_locations::log_parent`, which first applies an installation the service role adopted (U89, the record's `locations.logs`). |
 | `saved_control`, `initialization_control`, `retained_parameters`, `retained_private_paths`, `managed_origin`, `require_managed_ready`, `installation_for_control`, `validate_catalog_control`, `issuer_rotation_control`, `inspect`, `abort` | Installer reads of the claimed layout. `abort` removes only an unready `runtime-layout.json`. |
 | `Layout`, its fields, `read`, `owner`, `claimed`, `claim` | The layout receipt. `claim` writes the state ownership receipt. |
 | `LAYOUT`, `OWNER`, `CLAIM`, `OWNER_PART`, `CONTROL_OWNER`, `CONTROL_PART`, `MAX_LAYOUT` | Receipt names and the 32 KiB metadata bound. |

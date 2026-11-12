@@ -55,6 +55,8 @@ pub mod service_frontend;
 pub mod setup_role;
 /// Compatibility path (split G1): the frame codec moved to `ipc::frame`.
 pub use ipc::frame as service_ipc;
+/// U89: the install record's locations for an installed service.
+mod service_locations;
 pub mod service_logs;
 mod service_management;
 pub mod service_registration;

@@ -98,8 +98,12 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
 - `verify_placement`: every inventory file matches size and SHA-256; version
   equals this `airk`; the placed `airkctl --version` reports the same
   version; admin digests equal the embedded bundle's; the inventory names a
-  signing identity (`payload_unsigned` otherwise). Authenticode and
-  `codesign` are not re-verified here.
+  signing identity (`payload_unsigned` otherwise) and both placed images pass
+  the I4 readers' signature check (`airk_process::signature::verify`, the one
+  implementation `airkctl` uses: Windows Authenticode / macOS `codesign`
+  against the C10 identity, Linux digest only); a refusal keeps its code
+  (`signature_unverified`, `signing_identity_mismatch`,
+  `signing_platform_mismatch`).
 - `write_record`: `install_id` is kept for the same program folder, otherwise
   derived from the operation (`framed_digest("airk/install-id/1",
   operation_id)`), so a resume rewrites the same record. Owner-private,
@@ -130,13 +134,24 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
 macOS SMAppService login and the `AIRK.app` layout (U40/U78); removing a
 moved program folder; program-file removal for `airkctl service uninstall`
 on macOS/Linux; U74 roster widening (Inno `standalone`, extension CLI copies
-and PATH, 1.3 schedulers beyond what `replace_installation` covers); the
-service consuming the record's `data`, `cache` and `logs` locations (U89).
+and PATH, 1.3 schedulers beyond what `replace_installation` covers).
+
+## Service locations (U89)
+
+`service-login` adopts the record's locations before serving
+(`service_locations::adopt`); `service-detached` and `record-error` adopt them
+when their control root is the record's `locations.state`
+(`service_locations::adopt_for_control`). The log rings of that control root
+are then in `locations.logs`, and `airkctl service logs` reads them there
+(`airkctl::logs::locate`). State is the control root; data roots are chosen
+per registration by the client (`airkctl` defaults them to `locations.data`);
+the service derives no cache folder. `service-foreground` adopts nothing.
 
 ## T0
 
 ```console
 cargo test -p airk-cli --lib setup_role
 cargo test -p airk-cli --lib role_admission
+cargo test -p airk-cli --lib service_locations
 cargo test -p airk-core --lib install_record
 ```

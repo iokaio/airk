@@ -153,6 +153,9 @@ STARTS = {
         "primitive: CreateProcessW atomically inside a named job",
     ("crates/airk-process/src/child_job_named.rs", "spawn_guarded_with_stderr"):
         "primitive: Windows start inside a named job with a stderr handle",
+    ("crates/airk-process/src/signature.rs", "codesign"):
+        "external: /usr/bin/codesign --verify --strict against the C10 team requirement "
+        "through the bounded native command runner (macOS I4 reader and setup, step 3b.1c-sig)",
 }
 
 SELF = re.compile(r"\bcurrent_exe\s*\(")

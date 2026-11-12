@@ -125,6 +125,7 @@ COPY scripts/check-service-install.py ./scripts/check-service-install.py
 COPY scripts/check-tokenizer-calibration.py ./scripts/check-tokenizer-calibration.py
 COPY scripts/check-usage-inputs.py ./scripts/check-usage-inputs.py
 COPY scripts/container-inputs.json ./scripts/container-inputs.json
+COPY scripts/signing-identity.json ./scripts/signing-identity.json
 COPY tools/parser-train/conversational-regression-v4.json ./tools/parser-train/conversational-regression-v4.json
 COPY tools/parser-train/evaluation.json ./tools/parser-train/evaluation.json
 COPY tools/parser-train/fixtures-v2.json ./tools/parser-train/fixtures-v2.json

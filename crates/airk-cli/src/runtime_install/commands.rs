@@ -937,8 +937,32 @@ mod connection_observation_tests {
         }
     }
 
-    #[tokio::test]
-    async fn source_scope_rejected_metadata_never_creates_install_lock_or_state() -> Result<()> {
+    /// Run `body` on a thread with the production CLI stack (`main.rs`
+    /// `CLI_STACK_BYTES`, 8 MiB): the source-scope path is deeper than the
+    /// test harness's default thread allows on Windows debug builds.
+    fn on_cli_stack<F>(body: fn() -> F) -> Result<()>
+    where
+        F: std::future::Future<Output = Result<()>> + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(8 << 20)
+            .spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(body())
+            })?
+            .join()
+            .map_err(|_| anyhow::anyhow!("source-scope test thread panicked"))?
+    }
+
+    #[test]
+    fn source_scope_rejected_metadata_never_creates_install_lock_or_state() -> Result<()> {
+        on_cli_stack(source_scope_rejected_metadata_never_creates_install_lock_or_state_body)
+    }
+
+    async fn source_scope_rejected_metadata_never_creates_install_lock_or_state_body() -> Result<()>
+    {
         let owner = tempfile::tempdir()?;
         let base = owner.path().canonicalize()?;
         let root = base.join("absent-install");
@@ -971,8 +995,15 @@ mod connection_observation_tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn source_scope_authenticates_digest_control_and_missing_state_without_creation()
+    #[test]
+    fn source_scope_authenticates_digest_control_and_missing_state_without_creation() -> Result<()>
+    {
+        on_cli_stack(
+            source_scope_authenticates_digest_control_and_missing_state_without_creation_body,
+        )
+    }
+
+    async fn source_scope_authenticates_digest_control_and_missing_state_without_creation_body()
     -> Result<()> {
         let (owner, root, digest) = super::super::tests::unselected_fixture()?;
         replace_json(

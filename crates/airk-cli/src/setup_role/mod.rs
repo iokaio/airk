@@ -20,7 +20,7 @@ use airk_core::{
     install_record::{
         Contracts, Executable, Executables, InstallPointer, InstallRecord, InstalledBy, Installer,
         Leftover, POINTER_SCHEMA, RECORD_FILE, RECORD_SCHEMA, SETUP_RECEIPT_SCHEMA, SetupFailure,
-        SetupOperation, SetupPhase, SetupReceipt, SetupStep, TrustChoice,
+        SetupOperation, SetupPhase, SetupReceipt, SetupStep, Signing, TrustChoice,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -253,6 +253,25 @@ fn authorize_image(
         }
     }
     Ok(())
+}
+
+/// A record's signing as the shared signature check reads it.
+fn signature_claim(signing: &Signing) -> airk_process::signature::Claim<'_> {
+    use airk_process::signature::Claim;
+    match signing {
+        Signing::Windows {
+            publisher,
+            identity_eku,
+        } => Claim::Windows {
+            publisher,
+            identity_eku,
+        },
+        Signing::Macos { team_id } => Claim::Macos { team_id },
+        Signing::Linux { signed, integrity } => Claim::Linux {
+            signed: *signed,
+            integrity,
+        },
+    }
 }
 
 /// One running setup operation.
@@ -574,15 +593,28 @@ impl Setup {
                 && self.inventory.admin_assets.bundle_sha256 == bundle_sha256,
             "admin_assets_mismatch: the payload inventory names other admin assets than this airk embeds"
         );
-        ensure!(
-            self.inventory.signing.is_some(),
-            "payload_unsigned: this payload carries no signing identity; install a signed build"
-        );
+        let signing = self.inventory.signing.as_ref().context(
+            "payload_unsigned: this payload carries no signing identity; install a signed build",
+        )?;
+        // The I4 readers' own check (contracts §5.4.3), so the record is
+        // written only for a pair they will accept (plan §9.6.3).
+        let airk = plan::program_file(&program, &self.inventory.executables.airk);
+        let verdict = airk_process::signature::verify(
+            signature_claim(signing),
+            &[airkctl.as_path(), airk.as_path()],
+        )
+        .map_err(|refusal| anyhow::anyhow!("{}: {}", refusal.code, refusal.message))?;
+        let signatures = match verdict {
+            airk_process::signature::Verdict::Signed => "the pair's signatures verify against C10",
+            airk_process::signature::Verdict::DigestOnly => {
+                "the pair is unsigned (Linux: integrity rests on the record digest)"
+            }
+        };
         self.record(
             SetupPhase::Placed,
             "verified",
             format!(
-                "{} files match the payload inventory; the pair reports version {VERSION}; Authenticode/codesign are not re-verified by setup",
+                "{} files match the payload inventory; the pair reports version {VERSION}; {signatures}",
                 self.inventory.files.len()
             ),
         )
@@ -945,6 +977,12 @@ impl Setup {
     }
 }
 
+/// The locations of this user's installation as its pointer and record name
+/// them (`None` without a pointer); used by `service_locations` (U89).
+pub(crate) fn installed_locations() -> Result<Option<airk_core::install_record::Locations>> {
+    Ok(files::read_installation()?.map(|installed| installed.record.locations))
+}
+
 /// The `service-login` role (§5.7): the pointer's installation must be
 /// `install_id`, this image must be its record's `airk` (path and digest),
 /// and the login receipt must name this registration. Then the service runs
@@ -968,6 +1006,8 @@ pub async fn serve_login(install_id: Incarnation) -> Result<()> {
         "role_admission_refused: this airk image is not the installation's airk"
     );
     let state = PathBuf::from(&record.locations.state);
+    // U89: this service writes its logs to the record's `locations.logs`.
+    crate::service_locations::adopt(crate::service_locations::installed(&record.locations)?)?;
     let manager = crate::service_manager::ServiceManager::for_installation(
         &state,
         &airk,

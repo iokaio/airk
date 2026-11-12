@@ -2,9 +2,11 @@
 //! Local reads of the service's log rings for `airkctl service logs`
 //! (U86/U88/U89; split step 3b.1f-2): the same ownership proof, preflight and
 //! bounded reads the service performs, over the shared layout and parser in
-//! `airk_core::service_logs`. The rings sit beside the control root (U89; the
-//! install record's `locations.logs` takes over in Phase 7). These reads never
-//! create or change a path.
+//! `airk_core::service_logs`. The rings of an installation's control root
+//! (its `locations.state`) are in the install record's `locations.logs`; any
+//! other control root keeps them beside itself (U89; `ring_parent`). These
+//! reads never create or change a path.
+use airk_core::install_record::Locations;
 use airk_core::service_logs::{
     LOG_DIRECTORY, LOG_FILES, LOG_OWNER, LogPage, MAX_LOG_FILE_BYTES, MAX_RETAINED_LOG_BYTES,
     RAW_LOG_DIRECTORY, RAW_LOG_OWNER, RECENT_READ_BYTES, finish, owner_digest, read_tail,
@@ -39,15 +41,42 @@ fn safe_file(path: &Path) -> Result<std::fs::Metadata> {
     Ok(metadata)
 }
 
+/// Pure (U89): the folder holding the rings of `control`. `installation` is
+/// the install record's `(state, logs)`; both sides are normalized alike by
+/// `locate`. The installation's state folder takes its `logs`; any other
+/// control root keeps its rings beside itself.
+pub fn ring_parent(control: &Path, installation: Option<(&Path, &Path)>) -> Option<PathBuf> {
+    installation
+        .filter(|(state, _)| *state == control)
+        .map(|(_, logs)| logs.to_path_buf())
+}
+
+/// The folder holding the rings of `control` for this user's verified
+/// installation (`None`: no installation), as the installed service selects
+/// it (`airk-cli` `service_locations`).
+pub fn locate(control: &Path, installation: Option<&Locations>) -> Result<PathBuf> {
+    let normal = |path: &Path| -> Result<PathBuf> {
+        airk_process::user_folders::canonical_location(&std::path::absolute(path)?)
+    };
+    let Some(locations) = installation else {
+        return Ok(control.to_path_buf());
+    };
+    let state = normal(Path::new(&locations.state))?;
+    let logs = normal(Path::new(&locations.logs))?;
+    Ok(ring_parent(&normal(control)?, Some((&state, &logs)))
+        .unwrap_or_else(|| control.to_path_buf()))
+}
+
 /// The ring folder after its ownership proof, or `None` when the ring and its
-/// record are both absent and `absent_is_empty`.
+/// record are both absent and `absent_is_empty`. The ownership record names
+/// the control root wherever the rings are.
 fn owned_folder(
     control: &Path,
+    parent: &Path,
     directory: &str,
     owner: &str,
     absent_is_empty: bool,
 ) -> Result<Option<PathBuf>> {
-    let parent = control;
     if absent_is_empty && !exists(&parent.join(owner))? && !exists(&parent.join(directory))? {
         return Ok(None);
     }
@@ -107,11 +136,12 @@ fn preflight(directory: &Path) -> Result<u64> {
 
 fn read_retained(
     control: &Path,
+    parent: &Path,
     limit: usize,
     read_bytes: usize,
     output_bytes: usize,
 ) -> Result<LogPage> {
-    let directory = owned_folder(control, LOG_DIRECTORY, LOG_OWNER, false)?
+    let directory = owned_folder(control, parent, LOG_DIRECTORY, LOG_OWNER, false)?
         .context("diagnostic log directory missing")?;
     let stored_bytes = preflight(&directory)?;
     let mut page = LogPage {
@@ -143,18 +173,20 @@ fn read_retained(
 }
 
 /// The newest `limit` (1..=32) records, as `airk service logs` read them.
-pub fn recent(control: &Path, limit: usize) -> Result<LogPage> {
+/// `parent` is the ring folder (`locate`).
+pub fn recent(control: &Path, parent: &Path, limit: usize) -> Result<LogPage> {
     ensure!(
         (1..=32).contains(&limit),
         "invalid diagnostic log page bound"
     );
-    read_retained(control, limit, RECENT_READ_BYTES, 48 << 10)
+    read_retained(control, parent, limit, RECENT_READ_BYTES, 48 << 10)
 }
 
 /// The entire retained ring.
-pub fn export(control: &Path) -> Result<LogPage> {
+pub fn export(control: &Path, parent: &Path) -> Result<LogPage> {
     read_retained(
         control,
+        parent,
         usize::MAX,
         MAX_RETAINED_LOG_BYTES as usize,
         MAX_RETAINED_LOG_BYTES as usize + (1 << 20),
@@ -163,8 +195,9 @@ pub fn export(control: &Path) -> Result<LogPage> {
 
 /// The raw job-error ring's exact bytes, oldest file first; files are
 /// newline-delimited. Returns the bytes written.
-pub fn export_raw_to(control: &Path, output: &mut impl Write) -> Result<u64> {
-    let Some(directory) = owned_folder(control, RAW_LOG_DIRECTORY, RAW_LOG_OWNER, true)? else {
+pub fn export_raw_to(control: &Path, parent: &Path, output: &mut impl Write) -> Result<u64> {
+    let Some(directory) = owned_folder(control, parent, RAW_LOG_DIRECTORY, RAW_LOG_OWNER, true)?
+    else {
         return Ok(0);
     };
     preflight(&directory)?;
@@ -206,3 +239,6 @@ pub fn export_raw_to(control: &Path, output: &mut impl Write) -> Result<u64> {
     }
     Ok(total)
 }
+
+#[cfg(test)]
+mod tests;
