@@ -465,6 +465,12 @@ pub enum ControlMethod {
     /// U87 (`service status`): the saved explicit Stop and the pending
     /// lifecycle record, read from the lifecycle ledger.
     LifecycleStatus,
+    /// M20 (U80): mark a stuck lifecycle record abandoned in the ledger; a
+    /// terminal record answers unchanged. A record this instance is draining
+    /// is refused (`lifecycle_request_in_progress`).
+    AbandonLifecycle {
+        id: Sha256Digest,
+    },
     /// M14 (`service record-error`): append a bounded client error to the raw
     /// job-error ring, as `airk service record-error` did. `input` is the
     /// error's JSON text (`{code, detail}`), at most
@@ -1279,6 +1285,10 @@ pub enum ControlResponse {
         record: crate::service_lifecycle::LifecycleRecord,
         service_instance: Incarnation,
         process_id: u32,
+    },
+    /// M20: the record, abandoned (or already terminal).
+    LifecycleAbandoned {
+        record: crate::service_lifecycle::LifecycleRecord,
     },
     /// M5: the request is journaled (`duplicate` when this exact request was
     /// already journaled under its nonce).

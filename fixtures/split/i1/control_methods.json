@@ -701,6 +701,40 @@
           "bytes": "{\"status\":\"explorer_offline\"}"
         }
       ]
+    },
+    {
+      "variant": "abandon_lifecycle",
+      "method": "M20",
+      "methods": [
+        {
+          "name": "abandon",
+          "bytes": "{\"abandon_lifecycle\":{\"id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "without_id",
+          "bytes": "{\"abandon_lifecycle\":{}}"
+        },
+        {
+          "name": "short_id",
+          "bytes": "{\"abandon_lifecycle\":{\"id\":\"0d0d\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "abandoned",
+          "bytes": "{\"status\":\"lifecycle_abandoned\",\"record\":{\"id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"request\":{\"caller\":\"02020202020202020202020202020202\",\"key\":{\"namespace\":\"03030303030303030303030303030303\",\"epoch\":4,\"nonce\":\"05050505050505050505050505050505\"},\"action\":\"restart\",\"expected_instance\":\"06060606060606060606060606060606\",\"runtime\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"manager\":false},\"phase\":\"abandoned\"}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_record",
+          "bytes": "{\"status\":\"lifecycle_abandoned\"}"
+        }
+      ]
     }
   ]
 }

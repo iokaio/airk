@@ -1145,7 +1145,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::AssistanceSubmit { .. }
         | ControlMethod::AssistanceDrain { .. }
         | ControlMethod::HandoffPublish { .. }
-        | ControlMethod::ExplorerHandoff { .. } => {
+        | ControlMethod::ExplorerHandoff { .. }
+        | ControlMethod::AbandonLifecycle { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

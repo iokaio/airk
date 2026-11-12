@@ -76,7 +76,8 @@ async fn handle(
         | ControlMethod::AssistanceSubmit { .. }
         | ControlMethod::AssistanceDrain { .. }
         | ControlMethod::HandoffPublish { .. }
-        | ControlMethod::ExplorerHandoff { .. } => {
+        | ControlMethod::ExplorerHandoff { .. }
+        | ControlMethod::AbandonLifecycle { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before
