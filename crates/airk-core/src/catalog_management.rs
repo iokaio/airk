@@ -44,6 +44,48 @@ impl Membership {
 #[cfg(test)]
 mod containment_tests {
     use super::*;
+
+    /// U98 targets, written by hand from the contract (contracts §4.3b).
+    #[test]
+    fn destructive_catalog_operations_name_their_confirmation_target() {
+        let set: QueryProjectId = "prj_02020202020202020202020202020202".parse().unwrap();
+        let index: IndexId = "idx_03030303030303030303030303030303".parse().unwrap();
+        let revision = CatalogRevision::INITIAL;
+        let delete: CatalogOperation = serde_json::from_value(serde_json::json!({
+            "operation": "delete_project", "id": set.to_string(),
+            "expected_definition_revision": 1, "expected_scope_revision": 1,
+            "expected_defaults_revision": 1}))
+        .unwrap();
+        assert_eq!(
+            delete.confirmation_target(),
+            Some(ConfirmationTarget::ProjectName(set))
+        );
+        let remove = CatalogOperation::RemoveMembership {
+            project_id: set,
+            index_id: index,
+            expected_scope_revision: revision,
+            expected_membership_revision: revision,
+        };
+        assert_eq!(
+            remove.confirmation_target(),
+            Some(ConfirmationTarget::ProjectName(set))
+        );
+        let rename = CatalogOperation::RenameIndex {
+            id: index,
+            expected_definition_revision: revision,
+            name: "Docs".into(),
+        };
+        assert_eq!(rename.confirmation_target(), None);
+        let create = CatalogOperation::CreateProject {
+            id: set,
+            name: "Docs".into(),
+        };
+        assert_eq!(create.confirmation_target(), None);
+        assert_eq!(
+            plan_confirmation_text(&Sha256Digest::from_bytes([0x3b; 32])),
+            "3b3b3b3b3b3b"
+        );
+    }
     #[test]
     fn frozen_membership_containment_preserves_source_and_path_boundaries() {
         let id = Incarnation::from_bytes([1; 16]);
@@ -177,6 +219,47 @@ impl CatalogOperation {
                 | Self::ChangeIndexPolicy { .. }
         )
     }
+
+    /// U98: what a typed confirmation of this operation must equal, or `None`
+    /// when the operation creates, renames, adds or completes a reviewed
+    /// change and needs no text. The admin pages and `airkctl` share this
+    /// one rule.
+    pub fn confirmation_target(&self) -> Option<ConfirmationTarget> {
+        match self {
+            Self::DeleteProject { id, .. } => Some(ConfirmationTarget::ProjectName(*id)),
+            Self::RemoveMembership { project_id, .. } => {
+                Some(ConfirmationTarget::ProjectName(*project_id))
+            }
+            Self::RetireIndex { id, .. }
+            | Self::ChangeIndexPolicy { id, .. }
+            | Self::BeginIndexSourceChange { id, .. } => Some(ConfirmationTarget::IndexName(*id)),
+            Self::RevokeGrant { id, .. } => Some(ConfirmationTarget::Id(id.to_string())),
+            Self::DeleteContext { id, .. } => Some(ConfirmationTarget::Id(id.to_string())),
+            Self::CreateProject { .. }
+            | Self::RenameProject { .. }
+            | Self::RenameIndex { .. }
+            | Self::CompleteIndexSourceChange { .. }
+            | Self::SetMembership { .. }
+            | Self::SetProjectDefaults { .. }
+            | Self::SetContext { .. }
+            | Self::CreateGrant { .. } => None,
+        }
+    }
+}
+
+/// The text a typed confirmation must equal (U98): an entity's current
+/// display name, read at the request's expected revision, or an id itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConfirmationTarget {
+    ProjectName(QueryProjectId),
+    IndexName(IndexId),
+    Id(String),
+}
+
+/// The first 12 hexadecimal characters of a plan id: `PlanExecute`'s typed
+/// confirmation (U98).
+pub fn plan_confirmation_text(id: &Sha256Digest) -> String {
+    id.to_string().chars().take(12).collect()
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

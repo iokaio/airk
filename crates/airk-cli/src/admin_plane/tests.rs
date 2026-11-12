@@ -1079,17 +1079,13 @@ async fn mapped_rows_are_served_by_their_mapping() {
     .await;
     assert_eq!(status, 409);
     assert_eq!(*sent.lock().unwrap(), [info]);
-    // Phase 7 rows and destructive rows are not served yet.
-    let execute = json!({"plan_execute": {"id": "3b".repeat(32), "preview": "3c".repeat(32),
-        "allow_fallback": false}})
-    .to_string();
+    // Phase 7 rows are not served yet.
     for (operation, body) in [
         ("storage.inventory", r#"{"storage_inventory":{}}"#),
         (
             "service.login_startup_status",
             r#"{"login_startup":{"action":"status"}}"#,
         ),
-        ("recovery.plan_execute", execute.as_str()),
     ] {
         let (status, reply) = envelope(&plane, api_call(&cookie, &csrf, operation, body)).await;
         assert_eq!(
@@ -1125,4 +1121,206 @@ async fn mapped_rows_are_served_by_their_mapping() {
         (503, "not_yet_served")
     );
     assert_eq!(sent.lock().unwrap().len(), 1);
+}
+
+fn epoch(epoch: u64) -> ControlResponse {
+    ControlResponse::RequestEpoch {
+        namespace: Incarnation::from_bytes([0x0a; 16]),
+        epoch,
+    }
+}
+
+const SET: &str = "prj_02020202020202020202020202020202";
+
+#[tokio::test]
+async fn reviews_keep_the_request_identity_in_the_session() {
+    // The preview's and the receipt's native answers stand in as successes.
+    let (plane, sent, _) = scripted_plane(vec![
+        Some(epoch(7)),
+        Some(epoch(1)),
+        Some(epoch(2)),
+        Some(epoch(3)),
+    ]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let create = json!({"operation": "create_project", "id": SET, "name": "Docs"});
+    let preview = json!({"catalog_preview": {"request": {
+        "expected_catalog_revision": 3, "operation": create}}});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.preview", &preview.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    let reply: SuccessEnvelope = serde_json::from_value(reply).unwrap();
+    reply.validate().unwrap();
+    // The launch code, cookie and token drew 1-3; caller 4, nonce 5, token 6.
+    assert_eq!(reply.review.as_deref(), Some("06".repeat(16).as_str()));
+    let identity = json!({"caller": "04".repeat(16),
+        "key": {"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)}});
+    assert_eq!(
+        sent.lock().unwrap()[1]["catalog_preview"]["request"]["key"],
+        identity["key"]
+    );
+    // Apply under the token: the session's identity, nothing from the browser.
+    let apply = json!({"method": {"catalog_apply": {"request": {
+        "expected_catalog_revision": 3, "operation": create},
+        "preview_digest": "3c".repeat(32)}}, "review": "06".repeat(16)});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.apply", &apply.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    let applied = sent.lock().unwrap()[2]["catalog_apply"]["request"].clone();
+    assert_eq!(applied["caller"], identity["caller"]);
+    assert_eq!(applied["key"], identity["key"]);
+    // The receipt reads the same identity.
+    let receipt = json!({"method": {"catalog_receipt": {}}, "review": "06".repeat(16)});
+    let (status, _) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.receipt", &receipt.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        sent.lock().unwrap()[3],
+        json!({"catalog_receipt": identity})
+    );
+    // Refused before anything is sent: an unknown or missing token, a
+    // browser-named key, a bare body on a review row.
+    let unknown = json!({"method": {"catalog_receipt": {}}, "review": "07".repeat(16)});
+    let missing = json!({"method": {"catalog_receipt": {}}});
+    let named = json!({"method": {"catalog_receipt": {"caller": "04".repeat(16)}},
+        "review": "06".repeat(16)});
+    for (body, code) in [
+        (unknown, "admin_review_unknown"),
+        (missing, "admin_review_unknown"),
+        (named, "admin_malformed_request"),
+        (json!({"catalog_receipt": {}}), "admin_malformed_request"),
+    ] {
+        let (status, reply) = envelope(
+            &plane,
+            api_call(&cookie, &csrf, "catalog.receipt", &body.to_string()),
+        )
+        .await;
+        assert_eq!((status, error_code(&reply).as_str()), (400, code), "{body}");
+    }
+    assert_eq!(sent.lock().unwrap().len(), 4);
+    // Another session never sees this session's token.
+    let (other_cookie, other_csrf) = sign_in(&plane).await;
+    let receipt = json!({"method": {"catalog_receipt": {}}, "review": "06".repeat(16)});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &other_cookie,
+            &other_csrf,
+            "catalog.receipt",
+            &receipt.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (400, "admin_review_unknown")
+    );
+    assert_eq!(sent.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn destructive_calls_need_the_typed_target_name() {
+    let (plane, sent, _) = scripted_plane(vec![
+        Some(ControlResponse::ClientErrorRecorded {}),
+        // The delete's preview (epoch, answer), then its target read: the
+        // catalog no longer finds the index set, so nothing can be confirmed.
+        Some(epoch(7)),
+        Some(epoch(1)),
+        Some(ControlResponse::Failure {
+            code: "catalog_entity_unknown".into(),
+        }),
+    ]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let id = "3b".repeat(32);
+    let execute = |text: Option<&str>| {
+        let mut body = json!({"method": {"plan_execute": {"id": id, "preview": "3c".repeat(32),
+            "allow_fallback": false}}});
+        if let Some(text) = text {
+            body["confirm_text"] = json!(text);
+        }
+        body.to_string()
+    };
+    let long = "x".repeat(257);
+    for (text, status, code) in [
+        (None, 400, "admin_confirmation_mismatch"),
+        (Some("3b3b3b3b3b3c"), 400, "admin_confirmation_mismatch"),
+        (Some(long.as_str()), 400, "admin_malformed_request"),
+    ] {
+        let (got, reply) = envelope(
+            &plane,
+            api_call(&cookie, &csrf, "recovery.plan_execute", &execute(text)),
+        )
+        .await;
+        assert_eq!((got, error_code(&reply).as_str()), (status, code));
+    }
+    assert!(sent.lock().unwrap().is_empty());
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "recovery.plan_execute",
+            &execute(Some("3b3b3b3b3b3b")),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(sent.lock().unwrap().len(), 1);
+    // A catalog delete reads the target first; a missing target refuses.
+    let operation = json!({"operation": "delete_project", "id": SET,
+        "expected_definition_revision": 1, "expected_scope_revision": 1,
+        "expected_defaults_revision": 1});
+    let preview = json!({"catalog_preview": {"request": {
+        "expected_catalog_revision": 3, "operation": operation}}});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.preview", &preview.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    // Plan execution drew nonce 4; the preview caller 5, nonce 6, token 7.
+    assert_eq!(reply["review"], json!("07".repeat(16)));
+    let delete = json!({"method": {"catalog_apply": {"request": {
+        "expected_catalog_revision": 3, "operation": operation},
+        "preview_digest": "3c".repeat(32)}}, "review": "07".repeat(16), "confirm_text": "Docs"});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.apply", &delete.to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (400, "admin_confirmation_mismatch")
+    );
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 4);
+    assert_eq!(
+        sent[3],
+        json!({"catalog_detail": {"entity": {"kind": "project", "id": SET},
+            "expected_catalog_revision": 3}})
+    );
+}
+
+#[test]
+fn redaction_removes_only_the_issued_identity() {
+    let key = json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)});
+    let other = json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "09".repeat(16)});
+    let mut value = json!({"draft": {"request": {"caller": "04".repeat(16), "key": key,
+        "name": "Docs"}, "review_digest": "3c".repeat(32)},
+        "history": [{"caller": "08".repeat(16), "key": other}]});
+    let caller = mutations::redact(&mut value, &key);
+    assert_eq!(caller, Some(json!("04".repeat(16))));
+    assert_eq!(
+        value,
+        json!({"draft": {"request": {"name": "Docs"}, "review_digest": "3c".repeat(32)},
+            "history": [{"caller": "08".repeat(16), "key": other}]})
+    );
 }

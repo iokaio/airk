@@ -6,8 +6,8 @@
 //! kept; the secret text exists only in the reply that issues it. Nothing
 //! here implements `Debug`, so no secret or digest can reach a log.
 use crate::admin_contract::{
-    LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_SESSIONS, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS,
-    SessionFacts,
+    LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_REVIEWS_PER_SESSION, MAX_SESSIONS,
+    SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SessionFacts,
 };
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
@@ -123,6 +123,18 @@ pub(super) struct Grant {
     pub(super) instance: Incarnation,
 }
 
+/// A request identity a generate-mode row issued (contracts §4.3b, U98):
+/// held only inside its session under a review token, so the browser never
+/// holds a request key. Logout, expiry, eviction and restart drop it.
+#[derive(Clone)]
+pub(super) struct Review {
+    pub(super) token: Incarnation,
+    /// The caller beside the key (generated, or the native caller the
+    /// result carried); `None` when the row names no caller.
+    pub(super) caller: Option<serde_json::Value>,
+    pub(super) key: serde_json::Value,
+}
+
 struct Session {
     cookie: [u8; 32],
     csrf: [u8; 32],
@@ -130,6 +142,7 @@ struct Session {
     last_used_at_ms: u64,
     instance: Incarnation,
     grant: Option<Grant>,
+    reviews: VecDeque<Review>,
 }
 
 impl Session {
@@ -183,6 +196,7 @@ impl Sessions {
             last_used_at_ms: now_ms,
             instance: self.instance,
             grant: None,
+            reviews: VecDeque::new(),
         });
         minted
     }
@@ -259,6 +273,45 @@ impl Sessions {
         let grant = session.grant.as_ref()?;
         (session.instance == self.instance && grant.instance == self.instance)
             .then(|| grant.clone())
+    }
+
+    /// Keep `review` in the live session `cookie` (oldest dropped past
+    /// `MAX_REVIEWS_PER_SESSION`); `None` when the session ended meanwhile.
+    pub(super) fn add_review(&mut self, cookie: &str, review: Review, now_ms: u64) -> Option<()> {
+        self.purge(now_ms);
+        let digest = digest(cookie);
+        let session = self
+            .sessions
+            .iter_mut()
+            .find(|session| bool::from(session.cookie[..].ct_eq(&digest[..])))?;
+        if session.instance != self.instance {
+            return None;
+        }
+        while session.reviews.len() >= MAX_REVIEWS_PER_SESSION {
+            session.reviews.pop_front();
+        }
+        session.reviews.push_back(review);
+        Some(())
+    }
+
+    /// The identity `token` names in the live session `cookie`. Tokens are
+    /// not consumed: a repeated apply carries the same key (U98).
+    pub(super) fn review(
+        &mut self,
+        cookie: &str,
+        token: &Incarnation,
+        now_ms: u64,
+    ) -> Option<Review> {
+        self.purge(now_ms);
+        let session = self.find(cookie)?;
+        if session.instance != self.instance {
+            return None;
+        }
+        session
+            .reviews
+            .iter()
+            .find(|review| review.token == *token)
+            .cloned()
     }
 
     /// End one session; whether it existed.

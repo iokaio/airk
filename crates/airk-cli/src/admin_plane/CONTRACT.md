@@ -72,12 +72,24 @@ observations and carries out the admitted route.
   | `storage.inventory`, `storage.purge` | `StorageInventory`, `StoragePurge` | `not_yet_served`: no service handler (Phase 7) |
   | `service.login_startup_status`, `…_install`, `…_uninstall` | `LoginStartup.*` | `not_yet_served`: login startup is managed offline by `airkctl` until Phase 7 (U75) |
 
-- **Mutations** (`mutations`; contracts §2.4, §4.4). The browser never sends
-  `caller` or `key`; a body that names either is 400
-  `admin_malformed_request` before anything is sent. For the keyed methods
-  (`Enqueue`, `ConfigureProject`, `Retry`, `PlanCreate`,
-  `CatalogPolicyResume`, `Lifecycle`) the handler reads `RequestEpoch` and
-  draws the caller and nonce from the OS random source. `Enqueue` and
+- **Request identities** (`mutations`; contracts §2.4, §4.3b, U98).
+  - The browser never sends a request identity. Each row's reviewed
+    `request_key` rule says where the caller and key live. A body that names
+    a rule path is 400 `admin_malformed_request` before anything is sent.
+  - **`generate`** rows: keyed mutations and the draft/preview reads. The
+    handler reads `RequestEpoch` and draws the caller and nonce from the OS
+    random source. It removes the key, and the caller beside it, from the
+    native result and keeps both in the session (`secrets::Review`, at most
+    32, oldest dropped). The success envelope names the review token; a
+    refusal issues none.
+  - **`review`** rows: apply and receipt rows. The body is a `ReviewedCall`
+    `{method, review, confirm_text?}`. The handler fills the identity the
+    token holds. A missing, unknown or other-session token is 400
+    `admin_review_unknown`.
+  - Tokens are not consumed: a repeated apply carries the same key and the
+    native key idempotency answers it.
+  - **Keyed mutation methods** (`Enqueue`, `ConfigureProject`, `Retry`,
+    `PlanCreate`, `CatalogPolicyResume`, `Lifecycle`, `CatalogSplitRecover`). `Enqueue` and
   `ConfigureProject` are journaled as `airkctl` journals them: M5
   `ClientRequestPrepare`, M7 `ClientRequestSubmit` by nonce, M8
   `ClientRequestForget` once a job is the answer (a refusal keeps the
@@ -103,10 +115,24 @@ observations and carries out the admitted route.
   or the login start-up entry), and the page needs a new launch code from
   `airkctl admin open`. No note is added to the result, which stays the
   complete native record.
-- **Destructive rows** (`catalog.apply`, `catalog.split_apply`,
-  `recovery.plan_execute`, `storage.purge`) answer `not_yet_served`: §4.3
-  requires a typed confirmation besides the native digest, and the contract
-  does not yet define its wire form.
+- **Destructive rows** (`confirm`; U98): `catalog.apply`,
+  `catalog.split_apply` and `recovery.plan_execute` are served after the typed
+  confirmation. `storage.purge` stays `not_yet_served` (no service handler).
+  - The handler reads the target's current display name through `Dispatch`
+    and compares `confirm_text` (≤ 256 bytes) exactly. A mismatch, a missing
+    text, or a target the read no longer finds is 400
+    `admin_confirmation_mismatch`, and nothing is sent.
+  - Targets:
+    - `catalog.apply`:
+      - `delete_project`, `remove_membership`: the index set's name;
+      - `retire_index`, `change_index_policy`, `begin_index_source_change`:
+        the index name;
+      - `revoke_grant`, `delete_context`: the id;
+      - every other catalog operation needs no text.
+    - `catalog.split_apply`: the original index's name.
+    - `recovery.plan_execute`: the first 12 hex characters of the plan id.
+  - The request is then sent once, and the native digest decides whether the
+    reviewed draft is current.
 - **Admin read grant (A2; §4.6, U77):** `search.select_scope` sends
   `{"admin_scope_grant":{"selection":{namespace, expected_catalog_revision,
   index_ids, project_ids}}}`. The selection is checked by the shared W4/A2

@@ -9,6 +9,7 @@
 //! to its own control endpoint, so the browser reaches the same canonical
 //! handlers as the pipe. See `CONTRACT.md`.
 mod assets;
+mod confirm;
 mod mutations;
 mod operations;
 mod peer;
@@ -22,9 +23,9 @@ pub(crate) use peer::ConnectionPeer;
 
 use crate::admin_contract::{
     self as contract, AdminCode, Admission, CLEAR_SESSION_COOKIE, CSRF_HEADER, Effect, ErrorBody,
-    ErrorClass, ExchangeResponse, FailureEnvelope, MAX_EXCHANGE_BODY_BYTES, MAX_REQUEST_BODY_BYTES,
-    PathMatch, PeerProof, RequestFacts, RequestProgress, ResponseKind, Route, SESSION_ABSOLUTE_MS,
-    SESSION_IDLE_MS, SuccessEnvelope,
+    ErrorClass, ExchangeResponse, FailureEnvelope, KeyMode, MAX_EXCHANGE_BODY_BYTES,
+    MAX_REQUEST_BODY_BYTES, PathMatch, PeerProof, RequestFacts, RequestKeyRule, RequestProgress,
+    ResponseKind, ReviewedCall, Route, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SuccessEnvelope,
 };
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
@@ -326,8 +327,22 @@ impl AdminPlane {
             .admin_row(operation)
             .ok_or(AdminCode::AdminOperationUnknown)?;
         let body = read_body(body, MAX_REQUEST_BODY_BYTES).await?;
-        let mut body: Value =
+        let body: Value =
             serde_json::from_slice(&body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+        // U98: a review-mode or destructive row takes a `ReviewedCall`; every
+        // other row takes the bare method object.
+        let review_rule = row
+            .request_key
+            .as_ref()
+            .filter(|rule| rule.mode == KeyMode::Review);
+        let (mut body, token, confirm_text) = if review_rule.is_some() || row.confirmation.is_some()
+        {
+            let call: ReviewedCall =
+                serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+            (call.method, call.review, call.confirm_text)
+        } else {
+            (body, None, None)
+        };
         // Defense in depth: the validated table already names none of these.
         if table.never_over_http(&body) {
             return Err(AdminCode::AdminOperationUnknown);
@@ -341,36 +356,105 @@ impl AdminPlane {
         if !operations::names(target, &body) {
             return Err(AdminCode::AdminMalformedRequest);
         }
-        match row.effect {
-            Effect::Read => {
-                let method: ControlMethod =
-                    serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
-                self.read(operation, cookie, method).await
+        match (review_rule, token) {
+            (Some(rule), Some(token)) => {
+                let token: Incarnation = serde_json::from_value(Value::String(token))
+                    .map_err(|_| AdminCode::AdminReviewUnknown)?;
+                let now = (self.clock)();
+                let review = cookie
+                    .and_then(|cookie| self.secrets().sessions.review(cookie, &token, now))
+                    .ok_or(AdminCode::AdminReviewUnknown)?;
+                mutations::restore(rule, &mut body, &review)?;
             }
-            // Destructive rows need the native draft, preview and digest
-            // plus a typed confirmation (§4.3); the contract does not define
-            // the confirmation's wire form yet.
-            Effect::Destructive => Err(AdminCode::NotYetServed),
-            Effect::Mutation => {
-                // §2.4: the key is generated here, never by the browser.
-                let key = match mutations::fill_key(&self.dispatch, &self.random, &mut body).await?
-                {
-                    Ok(key) => key,
-                    Err(refused) => return Ok(native(operation, refused)),
-                };
-                let method: ControlMethod =
-                    serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
-                if let ControlMethod::AdminScopeGrant { selection } = method {
-                    return self.grant(operation, cookie, selection).await;
-                }
-                match mutations::execute(&self.dispatch, &self.random, method, key).await? {
-                    mutations::Executed::Answered(response, request) => {
-                        Ok(native_request(operation, *response, request))
-                    }
-                    mutations::Executed::Unknown => Ok(outcome_unknown()),
-                }
-            }
+            (Some(_), None) => return Err(AdminCode::AdminReviewUnknown),
+            (None, Some(_)) => return Err(AdminCode::AdminMalformedRequest),
+            (None, None) => {}
         }
+        let generate = row
+            .request_key
+            .as_ref()
+            .filter(|rule| rule.mode == KeyMode::Generate);
+        let key = match generate {
+            Some(rule) => {
+                match mutations::generate(&self.dispatch, &self.random, rule, &mut body).await? {
+                    Ok(key) => Some(key),
+                    Err(refused) => return Ok(native(operation, refused)),
+                }
+            }
+            None => None,
+        };
+        let method: ControlMethod =
+            serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+        if let Some(rule) = row.confirmation {
+            confirm::check(&self.dispatch, rule, &method, confirm_text.as_deref()).await?;
+        } else if confirm_text.is_some() {
+            return Err(AdminCode::AdminMalformedRequest);
+        }
+        if row.effect == Effect::Read {
+            let Some((rule, key)) = generate.zip(key) else {
+                return self.read(operation, cookie, method).await;
+            };
+            // A draft or preview: the identity stays in the session.
+            let response = (self.dispatch)(method)
+                .await
+                .map_err(|_| AdminCode::AdminInternal)?;
+            return self.issue(operation, cookie, rule, key, response, None);
+        }
+        if let ControlMethod::AdminScopeGrant { selection } = method {
+            return self.grant(operation, cookie, selection).await;
+        }
+        let issued = generate.zip(key.clone());
+        match mutations::execute(&self.dispatch, &self.random, method, key).await? {
+            mutations::Executed::Answered(response, request) => match issued {
+                Some((rule, key)) => self.issue(operation, cookie, rule, key, *response, request),
+                None => Ok(native_request(operation, *response, request)),
+            },
+            mutations::Executed::Unknown => Ok(outcome_unknown()),
+        }
+    }
+
+    /// The answer of a generate-mode row: the identity leaves the native
+    /// result and stays in the session under a new review token, which the
+    /// success envelope names (contracts §4.3b). A refusal issues no token.
+    fn issue(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+        rule: &RequestKeyRule,
+        key: mutations::Key,
+        response: ControlResponse,
+        request: Option<RequestProgress>,
+    ) -> Result<HttpResponse, AdminCode> {
+        let mut value = serde_json::to_value(&response).map_err(|_| AdminCode::AdminInternal)?;
+        if refused(&value) {
+            return Ok(native_value(operation, value, request, None));
+        }
+        let key_value = serde_json::json!(key.key);
+        let redacted = mutations::redact(&mut value, &key_value);
+        let caller = rule
+            .caller
+            .as_ref()
+            .map(|_| serde_json::json!(key.caller))
+            .or(redacted);
+        let token = mutations::identity(&self.random)?;
+        let cookie = cookie.ok_or(AdminCode::AdminSessionInvalid)?;
+        let now = (self.clock)();
+        let review = secrets::Review {
+            token,
+            caller,
+            key: key_value,
+        };
+        // The session may have ended while the native call ran.
+        self.secrets()
+            .sessions
+            .add_review(cookie, review, now)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        Ok(native_value(
+            operation,
+            value,
+            request,
+            Some(token.to_string()),
+        ))
     }
 
     /// A read row. Search runs only unselected (help) or under the
@@ -664,13 +748,23 @@ fn success_request(
     set_cookie: Option<&str>,
     request: Option<RequestProgress>,
 ) -> HttpResponse {
+    success_review(operation, result, set_cookie, request, None)
+}
+
+fn success_review(
+    operation: &str,
+    result: Value,
+    set_cookie: Option<&str>,
+    request: Option<RequestProgress>,
+    review: Option<String>,
+) -> HttpResponse {
     let envelope = SuccessEnvelope {
         schema: contract::ENVELOPE_SCHEMA.to_owned(),
         ok: true,
         operation: operation.to_owned(),
         result,
         request,
-        review: None,
+        review,
     };
     api(200, &envelope, set_cookie)
 }
@@ -733,17 +827,35 @@ fn native_request(
     let Ok(value) = serde_json::to_value(&response) else {
         return refusal(AdminCode::AdminInternal);
     };
+    native_value(operation, value, request, None)
+}
+
+/// Whether an encoded native response is a refusal.
+fn refused(value: &Value) -> bool {
     let status = value
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let refused = status == "failure"
+    status == "failure"
         || status == "incompatible"
         || status.ends_with("_refused")
-        || status.ends_with("_failed");
-    if !refused {
-        return success_request(operation, value, None, request);
+        || status.ends_with("_failed")
+}
+
+/// `native_request` over an encoded response; `review` only on success.
+fn native_value(
+    operation: &str,
+    value: Value,
+    request: Option<RequestProgress>,
+    review: Option<String>,
+) -> HttpResponse {
+    if !refused(&value) {
+        return success_review(operation, value, None, request, review);
     }
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let code = match status {
         "failure" => value
             .get("code")

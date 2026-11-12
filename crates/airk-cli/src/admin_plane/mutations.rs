@@ -2,33 +2,24 @@
 //! Admin mutations through the canonical handlers (contracts §2.4, §4.1,
 //! §4.4; split Phase 5b).
 //!
-//! The browser never holds a request key. For a keyed method the handler
-//! reads `(namespace, epoch)` with `RequestEpoch`, draws the caller and the
-//! nonce from the OS random source and fills them in; a body that names
-//! `caller` or `key` itself is refused. A keyed `Enqueue` or
+//! The browser never holds a request key. A row's reviewed `request_key`
+//! rule (contracts §4.3b, U98) says where the identity lives. In `generate`
+//! mode the handler reads `(namespace, epoch)` with `RequestEpoch`, draws the
+//! caller and the nonce from the OS random source and fills them in; a body
+//! that names a rule path itself is refused. In `review` mode the handler
+//! fills the identity a session review token holds. A keyed `Enqueue` or
 //! `ConfigureProject` is journaled the way `airkctl` journals it (M5
 //! prepare, M7 submit, M8 forget after a job is the answer); the other keyed
 //! methods are key-idempotent in their own ledger and are sent once with
 //! their key. A lost reply is resent with the same key or nonce, never a
 //! new one; a second loss is an unknown outcome.
-use super::{Dispatch, Random};
-use crate::admin_contract::{AdminCode, RequestProgress, RequestState};
+use super::{Dispatch, Random, secrets::Review};
+use crate::admin_contract::{AdminCode, RequestKeyRule, RequestProgress, RequestState};
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse, RequestKey},
 };
 use serde_json::{Value, json};
-
-/// `ControlMethod` variants (serde names) whose request carries `caller`
-/// and `key`.
-pub(super) const KEYED: &[&str] = &[
-    "enqueue",
-    "configure_project",
-    "retry",
-    "plan_create",
-    "catalog_policy_resume",
-    "lifecycle",
-];
 
 /// The keyed variants the request journal (M5) accepts
 /// (`request_journal::prepare_keyed`).
@@ -44,6 +35,7 @@ pub(super) fn variant(body: &Value) -> Option<&str> {
 }
 
 /// The server-generated identity of a keyed request.
+#[derive(Clone)]
 pub(super) struct Key {
     pub(super) caller: Incarnation,
     pub(super) key: RequestKey,
@@ -59,30 +51,106 @@ pub(super) enum Executed {
 }
 
 /// 128 bits from the OS random source.
-fn identity(random: &Random) -> Result<Incarnation, AdminCode> {
+pub(super) fn identity(random: &Random) -> Result<Incarnation, AdminCode> {
     let bytes = random().ok_or(AdminCode::AdminInternal)?;
     let mut half = [0u8; 16];
     half.copy_from_slice(&bytes[..16]);
     Ok(Incarnation::from_bytes(half))
 }
 
-/// For a keyed body: refuse a browser-supplied `caller` or `key`, read the
-/// epoch and fill a fresh caller and key in. `Ok(Err(response))` is the
-/// epoch's own refusal (nothing was sent but the read). Other bodies are
-/// returned unchanged with no key.
+/// The generate-mode rule of the reviewed row whose method `body` encodes.
+#[cfg(test)]
+fn generate_rule(body: &Value) -> Option<&'static RequestKeyRule> {
+    let name = variant(body)?;
+    let table = super::operations::table().ok()?;
+    table
+        .operations
+        .iter()
+        .filter(|row| {
+            let variant = row.method.split('.').next().unwrap_or_default();
+            super::operations::snake(variant) == name
+        })
+        .find_map(|row| {
+            row.request_key
+                .as_ref()
+                .filter(|rule| rule.mode == crate::admin_contract::KeyMode::Generate)
+        })
+}
+
+/// For a body whose method has a generate-mode rule: `generate`. Other
+/// bodies are returned unchanged with no key (the unit tests' entry; `call`
+/// passes its row's rule to `generate` directly).
+#[cfg(test)]
 pub(super) async fn fill_key(
     dispatch: &Dispatch,
     random: &Random,
     body: &mut Value,
 ) -> Result<Result<Option<Key>, ControlResponse>, AdminCode> {
-    let Some(name) = variant(body).filter(|name| KEYED.contains(name)) else {
+    let Some(rule) = generate_rule(body) else {
         return Ok(Ok(None));
     };
-    let name = name.to_owned();
-    let Some(Value::Object(fields)) = body.get(&name) else {
-        return Err(AdminCode::AdminMalformedRequest);
+    Ok(generate(dispatch, random, rule, body).await?.map(Some))
+}
+
+/// The method's own object (`{"<variant>": {..}}`) and its variant name.
+fn inner_mut(body: &mut Value) -> Result<&mut Value, AdminCode> {
+    let name = variant(body)
+        .ok_or(AdminCode::AdminMalformedRequest)?
+        .to_owned();
+    body.get_mut(&name)
+        .filter(|inner| inner.is_object())
+        .ok_or(AdminCode::AdminMalformedRequest)
+}
+
+fn present(inner: &Value, path: &str) -> bool {
+    let mut value = inner;
+    for segment in path.split('.') {
+        match value.get(segment) {
+            Some(next) => value = next,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Set `path` inside `inner`; every parent must already be an object.
+fn place(inner: &mut Value, path: &str, value: Value) -> Result<(), AdminCode> {
+    let (parents, last) = match path.rsplit_once('.') {
+        Some((parents, last)) => (Some(parents), last),
+        None => (None, path),
     };
-    if fields.contains_key("caller") || fields.contains_key("key") {
+    let mut target = inner;
+    for segment in parents.into_iter().flat_map(|parents| parents.split('.')) {
+        target = target
+            .get_mut(segment)
+            .ok_or(AdminCode::AdminMalformedRequest)?;
+    }
+    target
+        .as_object_mut()
+        .ok_or(AdminCode::AdminMalformedRequest)?
+        .insert(last.to_owned(), value);
+    Ok(())
+}
+
+fn named(inner: &Value, rule: &RequestKeyRule) -> bool {
+    present(inner, &rule.key)
+        || rule
+            .caller
+            .as_deref()
+            .is_some_and(|path| present(inner, path))
+}
+
+/// Generate mode: refuse a browser-supplied identity, read the epoch and
+/// fill a fresh caller (where the rule names one) and key in.
+/// `Ok(Err(response))` is the epoch's own refusal (nothing was sent but
+/// the read).
+pub(super) async fn generate(
+    dispatch: &Dispatch,
+    random: &Random,
+    rule: &RequestKeyRule,
+    body: &mut Value,
+) -> Result<Result<Key, ControlResponse>, AdminCode> {
+    if named(inner_mut(body)?, rule) {
         return Err(AdminCode::AdminMalformedRequest);
     }
     let (namespace, epoch) = match dispatch(ControlMethod::RequestEpoch).await {
@@ -98,12 +166,60 @@ pub(super) async fn fill_key(
             nonce: identity(random)?,
         },
     };
-    let Some(Value::Object(fields)) = body.get_mut(&name) else {
+    let inner = inner_mut(body)?;
+    if let Some(path) = &rule.caller {
+        place(inner, path, json!(key.caller))?;
+    }
+    place(inner, &rule.key, json!(key.key))?;
+    Ok(Ok(key))
+}
+
+/// Review mode: refuse a browser-supplied identity and fill the one the
+/// session's review holds.
+pub(super) fn restore(
+    rule: &RequestKeyRule,
+    body: &mut Value,
+    review: &Review,
+) -> Result<(), AdminCode> {
+    let inner = inner_mut(body)?;
+    if named(inner, rule) {
         return Err(AdminCode::AdminMalformedRequest);
-    };
-    fields.insert("caller".into(), json!(key.caller));
-    fields.insert("key".into(), json!(key.key));
-    Ok(Ok(Some(key)))
+    }
+    if let Some(path) = &rule.caller {
+        let caller = review.caller.clone().ok_or(AdminCode::AdminReviewUnknown)?;
+        place(inner, path, caller)?;
+    }
+    place(inner, &rule.key, review.key.clone())
+}
+
+/// Remove every object's `key` equal to `key` from a native result, and the
+/// `caller` beside it; the first such caller (§4.3b: request identities are
+/// the only fields removed).
+pub(super) fn redact(value: &mut Value, key: &Value) -> Option<Value> {
+    fn walk(value: &mut Value, key: &Value, caller: &mut Option<Value>) {
+        match value {
+            Value::Object(map) => {
+                if map.get("key") == Some(key) {
+                    map.remove("key");
+                    if let Some(found) = map.remove("caller") {
+                        caller.get_or_insert(found);
+                    }
+                }
+                for child in map.values_mut() {
+                    walk(child, key, caller);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    walk(child, key, caller);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut caller = None;
+    walk(value, key, &mut caller);
+    caller
 }
 
 /// The request state a successful native answer shows (§2.4 UI states).
