@@ -54,10 +54,6 @@
         "project_supervisor"
       ],
       [
-        "client_requests",
-        "service_configuration"
-      ],
-      [
         "combined_frontend",
         "console_client",
         "http_backend",
@@ -167,6 +163,7 @@
         "policy_ignore"
       ]
     ],
+    "airk-ipc": [],
     "airk-kernel": [
       [
         "continuity",

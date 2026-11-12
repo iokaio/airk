@@ -3,7 +3,8 @@
 #[cfg(test)]
 use airk_core::usage::ContentKind;
 use airk_core::{
-    service::{ControlMethod, ControlResponse, ProjectBinding},
+    identity::Incarnation,
+    service::{ControlResponse, ProjectBinding},
     service_configuration::{ConfigurationRequest, InputFile, ProjectConfiguration},
 };
 use anyhow::{Context, Result, ensure};
@@ -12,6 +13,26 @@ use std::path::{Path, PathBuf};
 /// The draft `configure` reads and the `usage` commands build; owned by
 /// `airk_core` so every client sends the same JSON (split step 3c.5a).
 pub use airk_core::service_configuration::ConfigurationDraft as Draft;
+
+/// The service calls preparation makes, injected so this module reaches no
+/// control client (split step 3c.5b-1). The `client_requests` module
+/// implements it for a control root (`Path`) with the CLI's own requests, so
+/// every caller passes the control root as before.
+pub trait ConfigurationReads {
+    /// The request epoch's namespace and epoch (derived-cleanup drafts).
+    fn epoch(&self) -> impl std::future::Future<Output = Result<(Incarnation, u64)>> + Send;
+    /// The project's current `Inspection` response.
+    fn inspection(
+        &self,
+        project: ProjectBinding,
+    ) -> impl std::future::Future<Output = Result<ControlResponse>> + Send;
+    /// One administrative native read for the project.
+    fn administrative_read(
+        &self,
+        project: ProjectBinding,
+        read: airk_core::native_reads::NativeRead,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send;
+}
 
 fn selected(path: &Path) -> Result<PathBuf> {
     let text = path.to_str().context("configuration input must be UTF-8")?;
@@ -29,8 +50,8 @@ pub(crate) fn input(path: &Path, limit: u64) -> Result<InputFile> {
 /// Source-bearing preparation runs inside the same native owner as other
 /// administrative reads. A local hash before admission could outlive a trim
 /// fence and capture a permanently excluded source.
-async fn native_input(
-    runtime: &Path,
+async fn native_input<R: ConfigurationReads + ?Sized>(
+    runtime: &R,
     project: ProjectBinding,
     path: &Path,
     limit: u64,
@@ -43,16 +64,15 @@ async fn native_input(
             && (1..=1_048_576).contains(&limit),
         "invalid bounded native configuration input"
     );
-    let result = crate::service_runtime::administrative_read(
-        runtime,
-        project,
-        airk_core::native_reads::NativeRead::PrepareInputFile {
-            path: path.into(),
-            max_source_bytes: limit,
-        },
-        airk_core::usage::ClientFamily::Unknown,
-    )
-    .await?;
+    let result = runtime
+        .administrative_read(
+            project,
+            airk_core::native_reads::NativeRead::PrepareInputFile {
+                path: path.into(),
+                max_source_bytes: limit,
+            },
+        )
+        .await?;
     let input: InputFile = serde_json::from_value(result)
         .context("native input preparation omitted its complete pin")?;
     input.validate()?;
@@ -116,8 +136,8 @@ impl PrepareDraft for Draft {
         Ok(configuration)
     }
 }
-pub async fn prepare(
-    runtime: &Path,
+pub async fn prepare<R: ConfigurationReads + ?Sized>(
+    runtime: &R,
     project: ProjectBinding,
     draft: Draft,
 ) -> Result<ConfigurationRequest> {
@@ -125,7 +145,7 @@ pub async fn prepare(
         &draft,
         Draft::PrepareDerivedCleanup | Draft::DeleteDerived { .. }
     ) {
-        let (namespace, _) = crate::client_requests::request_epoch(runtime).await?;
+        let (namespace, _) = runtime.epoch().await?;
         let request = ConfigurationRequest {
             prepare: false,
             incarnation: namespace,
@@ -138,7 +158,7 @@ pub async fn prepare(
     let ControlResponse::Inspection {
         observation: Some(observation),
         ..
-    } = crate::service_runtime::request(runtime, ControlMethod::Inspection { project }).await?
+    } = runtime.inspection(project).await?
     else {
         anyhow::bail!("inspect the selected project before configuring it")
     };
@@ -148,13 +168,12 @@ pub async fn prepare(
     );
     let configuration = match draft {
         Draft::RetainedProfile { target } => {
-            let native = crate::service_runtime::administrative_read(
-                runtime,
-                project,
-                airk_core::native_reads::NativeRead::RetentionMigrationPreview { target },
-                airk_core::usage::ClientFamily::Unknown,
-            )
-            .await?;
+            let native = runtime
+                .administrative_read(
+                    project,
+                    airk_core::native_reads::NativeRead::RetentionMigrationPreview { target },
+                )
+                .await?;
             let review: airk_core::retention::RetentionMigrationReview =
                 serde_json::from_value(native)?;
             review.validate()?;
