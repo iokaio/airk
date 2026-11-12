@@ -10,6 +10,12 @@ const NOT_REGISTERED: &str = "project is not registered with this service";
 
 pub(super) fn response(control: &Path, target: ResolveTarget) -> ControlResponse {
     let resolved = match &target {
+        // The catalog target is served in step 3c.4c-2; until then the typed refusal.
+        ResolveTarget::Catalog { .. } => {
+            return ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            };
+        }
         ResolveTarget::Binding { project } => crate::service_frontend::saved(
             control,
             Some(*project),

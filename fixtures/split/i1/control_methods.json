@@ -343,6 +343,12 @@
           "bytes": "{\"resolve_project\":{\"target\":{\"registration\":{\"root\":\"C:\\\\work\\\\repo\",\"data_root\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\data\",\"collection\":\"default\"}}}}",
           "request_frame_budget": 65536,
           "response_frame_budget": 65536
+        },
+        {
+          "name": "by_catalog_session",
+          "bytes": "{\"resolve_project\":{\"target\":{\"catalog\":{\"request\":{\"schema\":1,\"context_key\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"namespace\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_catalog_revision\":3,\"grant_id\":\"grt_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_grant_revision\":2,\"index_id\":\"idx_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"project_ids\":[\"prj_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"]}}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
         }
       ],
       "rejected_methods": [
@@ -357,6 +363,14 @@
         {
           "name": "extra_field",
           "bytes": "{\"resolve_project\":{\"target\":{\"binding\":{\"project\":\"abababababababababababababababababababababababababababababababab\"}},\"start\":true}}"
+        },
+        {
+          "name": "catalog_without_request",
+          "bytes": "{\"resolve_project\":{\"target\":{\"catalog\":{}}}}"
+        },
+        {
+          "name": "catalog_request_extra_field",
+          "bytes": "{\"resolve_project\":{\"target\":{\"catalog\":{\"request\":{\"schema\":1,\"context_key\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"namespace\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_catalog_revision\":3,\"grant_id\":\"grt_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_grant_revision\":2,\"index_id\":\"idx_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"project_ids\":[\"prj_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"]},\"refresh\":true}}}}"
         }
       ],
       "responses": [

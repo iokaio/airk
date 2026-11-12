@@ -546,6 +546,11 @@ pub enum ResolveTarget {
         data_root: String,
         collection: String,
     },
+    /// The ready index a reviewed catalog session names (split step 3c.4c),
+    /// as the CLI resolved it before connecting: the index's backing project.
+    Catalog {
+        request: ScopedConnectRequest,
+    },
 }
 
 /// The project an M3 call reads, as the pre-split CLI selected it.
