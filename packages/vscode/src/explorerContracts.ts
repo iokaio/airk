@@ -217,6 +217,25 @@ export interface ExplorerViewState {
     readonly workspaceFolders?: readonly string[];
     /** Agent drafts waiting in this window's Suggestions Inbox (summaries only; bodies are fetched on review). */
     readonly suggestions?: SuggestionsView;
+    /** This window's search scope (U77, W4), shown in the Overview and Search headers. */
+    readonly searchScope?: SearchScopeSummary;
+}
+
+/** The window search scope as the headers show it. While `active`, Explorer reads run under it. */
+export interface SearchScopeSummary {
+    /** The service advertises `window-scope/1`. */
+    readonly available: boolean;
+    readonly active: boolean;
+    /** A read was refused `scoped_read_unavailable` (or the remembered choice could not be applied): reselect. */
+    readonly outOfDate: boolean;
+    /** A choice is remembered for this workspace. */
+    readonly remembered: boolean;
+    /** Index set and index names (or IDs) of the granted scope. */
+    readonly label?: string;
+    readonly indexIds?: readonly string[];
+    readonly projectIds?: readonly string[];
+    readonly scopeIdentity?: string;
+    readonly catalogRevision?: number;
 }
 
 /** One Inbox card. Duplicates by destination and title collapse into one card with a count. */

@@ -11,6 +11,10 @@ export interface LaunchSpec { command: string; root: string; dataDir: string; co
     /** Explicit native-reviewed selection; display origins remain native Index metadata. */
     catalogSession?: CatalogSessionSelector;
     combinedSession?: CombinedCatalogSessionSelector;
+    /** The window's granted search scope (W4): reads name no selection and run
+     * under the window scope (contracts §3.7). `key` is a stable 64-hex key of
+     * the selection (Workbench history); `service.project` carries the same key. */
+    windowScope?: { readonly key: string; readonly label: string };
     /** `universal`: `command` is the version-free universal launcher, which finds the install root itself. */
     service?: { installDir: string; project: string; universal?: boolean; direct?: boolean } }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }

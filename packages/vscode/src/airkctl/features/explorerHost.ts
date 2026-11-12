@@ -3,11 +3,15 @@
 //! "features"). Reads use the window session; management (index library,
 //! storage, service, recovery, usage, logs) is in the admin pages, so the
 //! control source here is read-only and every management action answers with
-//! the Open AIRK Admin guidance instead of a second implementation.
+//! the Open AIRK Admin guidance instead of a second implementation. The window
+//! search scope (W4), Assistance drafts and handoffs use the session's window
+//! plane when their capabilities are advertised (windowScope.ts,
+//! windowAssistance.ts).
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { AgentConfigHealth } from '../../agentConfigHealth';
-import type { ExplorerHost } from '../../explorerController';
+import type { ExplorerHost, HandoffPublisher } from '../../explorerController';
+import type { SearchDraft } from '../../explorerDrafts';
 import type { ControlSource } from '../../explorerControl';
 import { SuggestionStore } from '../../explorerSuggestions';
 import type { LaunchSpec } from '../../model';
@@ -15,6 +19,11 @@ import type { ConsolePage, RecordValue } from '../../serviceClient';
 import type { ConsoleObservation, ServiceConsoleState } from '../../serviceConsoleView';
 import { AirkctlUnavailable, type Airkctl, type AirkctlState } from '../index';
 import type { AdminOpener, AdminTarget } from './adminOpener';
+import { WindowScope } from './windowScope';
+import { HANDOFF_CAPABILITY, WindowAssistance, WindowHandoffs } from './windowAssistance';
+
+/** The Workbench side of the window search scope: prefills an inert search form under it. */
+export interface WindowScopeWorkbench { prefillWindowSearch(search: SearchDraft): Promise<void> }
 
 /** One registered project as `airkctl projects --output json` lists it. */
 export interface ProjectRow { project: string; root: string; data_root: string; collection: string; name?: string }
@@ -99,6 +108,11 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     readonly extensionUri: vscode.Uri;
     readonly version: string;
     readonly workspaceState: Pick<vscode.Memento, 'get' | 'update'>;
+    /** This window's search scope (U77, W4). */
+    readonly windowScope: WindowScope;
+    readonly assistance: WindowAssistance;
+    private readonly publisher: WindowHandoffs;
+    private workbench?: WindowScopeWorkbench;
 
     constructor(context: vscode.ExtensionContext, private readonly airkctl: Airkctl, private readonly output: vscode.OutputChannel,
         private readonly status: vscode.StatusBarItem, private readonly admin?: AdminOpener) {
@@ -107,10 +121,17 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         this.workspaceState = context.workspaceState;
         this.current = consoleState(airkctl.state, [], this.trusted(), 0);
         this.suggestions = new SuggestionStore({
-            binding: () => vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()).join('\n') ?? '',
+            binding: () => this.suggestionsBinding(),
             revisions: () => ({}), publication: () => undefined,
             ttlMs: () => Math.max(1, vscode.workspace.getConfiguration('airk').get<number>('explorer.suggestions.ttlHours', 24)) * 3_600_000,
         });
+        const capabilities = () => airkctl.state.kind === 'ready' ? airkctl.state.capabilities : undefined;
+        this.windowScope = new WindowScope(airkctl.session, capabilities, context.workspaceState, () => {
+            const installation = airkctl.installation, first = this.specs()[0];
+            return installation && first ? { command: installation.airkctl, installDir: installation.record.locations.program, root: first.root } : undefined;
+        }, line => output.appendLine(line));
+        this.assistance = new WindowAssistance(airkctl.session, capabilities, this.suggestions, line => output.appendLine(line));
+        this.publisher = new WindowHandoffs(airkctl.session, () => this.suggestionsBinding());
         const host = this;
         this.control = {
             get controller() { return { state: host.current, observationIdentity: String(host.revision) }; },
@@ -121,7 +142,31 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
             retain: () => ({ dispose: () => {} }),
             onDidChangeState: listener => { host.stateChanged.add(listener); return { dispose: () => { host.stateChanged.delete(listener); } }; },
         };
-        this.subscriptions.push(airkctl.onDidChangeState(() => { void this.refresh(false); }));
+        this.subscriptions.push(airkctl.onDidChangeState(() => { void this.refresh(false); }), airkctl.session.onEvent(event => {
+            void this.assistance.event(event);
+            // The window and its scope grant are gone; the remembered choice is applied again on the next refresh.
+            if (event.kind === 'session_lost') { this.windowScope.lost(); }
+            if (event.kind === 'resync' && event.reason === 'service_restarted') { this.windowScope.lost(); void this.windowScope.restore(); }
+        }));
+    }
+    private suggestionsBinding(): string { return vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()).join('\n') ?? ''; }
+
+    /** Handoffs through the service (W8), only with `handoff/1`. */
+    get handoffs(): HandoffPublisher | undefined {
+        return this.airkctl.state.kind === 'ready' && this.airkctl.state.capabilities.includes(HANDOFF_CAPABILITY) ? this.publisher : undefined;
+    }
+    /** The Workbench registers its prefill target once it exists. */
+    bindWorkbench(workbench: WindowScopeWorkbench | undefined): void { this.workbench = workbench; }
+    /** Workbench entry for the granted window scope (read with no selection). */
+    windowScopeSpec(): LaunchSpec | undefined { return this.windowScope.spec(); }
+    /** Recommendations "Use this query scope": select it as the window scope, then prefill Workbench. */
+    prefillRecommendedSearch(search: SearchDraft): Promise<void> { return this.prefillUnderScope(search); }
+    /** Suggestions "Apply" of an agent search draft naming index sets: the same path. */
+    prefillCombinedSearch(search: SearchDraft): Promise<void> { return this.prefillUnderScope(search); }
+    private async prefillUnderScope(search: SearchDraft): Promise<void> {
+        if (!this.workbench) { throw Object.assign(new Error('The AIRK Workbench is not available in this window.'), { code: 'workbench_unavailable' }); }
+        await this.windowScope.selectIds(search.project_ids, search.index_ids);
+        await this.workbench.prefillWindowSearch(search);
     }
 
     trusted(): boolean { return vscode.workspace.isTrusted; }
@@ -174,7 +219,11 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         this.current = consoleState(this.airkctl.state, this.rows, this.trusted(), this.revision);
         for (const listener of [...this.stateChanged]) { try { listener(this.current); } catch { /* Listener failures stay local. */ } }
         if (JSON.stringify(this.rows) !== before) { this.specsChanged.fire(); }
+        if (this.airkctl.state.kind === 'ready') {
+            // Each starts nothing without its capability; the scope is re-applied only after a fresh catalog read.
+            await Promise.all([this.assistance.start(), this.windowScope.restore()]);
+        } else { this.windowScope.lost(); }
     }
 
-    dispose(): void { for (const item of this.subscriptions.splice(0)) { item.dispose(); } this.specsChanged.dispose(); this.stateChanged.clear(); }
+    dispose(): void { for (const item of this.subscriptions.splice(0)) { item.dispose(); } this.workbench = undefined; this.specsChanged.dispose(); this.stateChanged.clear(); }
 }

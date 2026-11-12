@@ -10,6 +10,7 @@ import { IndexContents, ProjectHealth, WorkProgress } from './projectStatus';
 import { AdminButton, CreateIndexForFolders, openAdmin } from './adminLinks';
 import type { AdminPage } from '../explorerContracts';
 import { semanticExplanation } from '../explorerStatus';
+import { ScopeBanner } from './scopeBanner';
 
 const JOURNEYS: { id: string; title: string; text: string; route: Route; admin?: AdminPage }[] = [
     { id: 'explore', title: 'Explore', text: 'Search code and documents; every hit is a citation.', route: { workspace: 'search', tab: 'query' } },
@@ -57,6 +58,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
             <div class="workspace-heading"><div><p class="eyebrow">Local evidence. Clear provenance.</p><h1>{project?.name ?? 'Your workspace'}</h1>
                 <p>{project && status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div>
                 <AdminButton page="overview" disabled={!state.trusted} /></div>
+            <ScopeBanner state={state} go={props.go} />
             {first && <Notice noticeKey={noticeKey("overview-connection", first)}><p>{first}</p></Notice>}
             {state.trusted && state.connection === 'ready' && !state.projects.length && <CreateIndexForFolders folders={state.workspaceFolders} />}
             {management?.message && <Notice noticeKey={noticeKey("control-outcome", management.message)}><p>Last control outcome: {management.message}</p></Notice>}

@@ -137,19 +137,60 @@ test('clearing evidence selection rejects late advice before storage while retai
     }finally{f.explorer.dispose();}
 });
 
+/** A window search scope host (U77) recording its calls; `available` follows `window-scope/1`. */
+function windowScope(available=true,overrides:Record<string,unknown>={}){
+    const calls:unknown[]=[];
+    const scope={generation:0,calls,available:()=>available,identity:()=>undefined as string|undefined,searchScopeChoices:()=>undefined,
+        searchScopeSummary:()=>({available,active:false,outOfDate:false,remembered:false}),
+        readSearchScope:async(kind?:string,next?:boolean)=>{calls.push(['read',kind,next]);},
+        applySearchScope:async(selection:unknown)=>{calls.push(['apply',selection]);return {status:'scope'};},
+        clearSearchScope:async()=>{calls.push(['clear']);},onDidChange:()=>disposable,...overrides};
+    return scope;
+}
+
 test('explicit scope and index-set operations acknowledge their own selection change through the actual panel',async()=>{
-    for(const [type,adapter,status]of [['indexing.scope.apply','applySearchScope','search_scope_selected']] as const){
-        const {explorer}=controller();
+    for(const [type,status]of [['indexing.scope.apply','scope_released']] as const){
+        const {explorer,host}=controller();
+        (host as any).windowScope=windowScope(true,{applySearchScope:async()=>{(explorer as any).select(undefined);return {status};}});
         try{
             explorer.open('#indexing/window');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
-            const indexing=(explorer as any).indexing;
-            indexing.host[adapter]=async()=>{(explorer as any).select(undefined);return {status};};
-            const generation=indexing.snapshot().generation;
+            const generation=(explorer as any).indexing.snapshot().generation;
             panel.send({v:1,type,requestId:'own-scope-change',generation,selection:{index_ids:[],project_ids:[]}});await flush();
             const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='own-scope-change');
             assert.equal(reply?.ok,true,type);assert.equal(reply.data.status,status);
         }finally{explorer.dispose();}
     }
+});
+
+test('the window search scope is read and applied through the host session path, and an absent capability is CAPABILITY_DISABLED',async()=>{
+    const f=controller(),instance=f.explorer as any,scope=windowScope(true,{searchScopeChoices:()=>({indexes:[],projects:[],selectedIndexIds:[],selectedProjectIds:[],managedProjectIds:[],active:false,responses:[]})});
+    try{
+        await assert.rejects(instance.dispatch({type:'indexing.scope.read'}),(error:any)=>error.error?.code==='CAPABILITY_DISABLED','no host scope');
+        (f.host as any).windowScope=windowScope(false);
+        await assert.rejects(instance.dispatch({type:'indexing.scope.read'}),(error:any)=>error.error?.code==='CAPABILITY_DISABLED'&&/window-scope\/1/.test(error.message),'capability absent');
+        await assert.rejects(instance.dispatch({type:'indexing.scope.apply',generation:0,selection:{index_ids:[],project_ids:[]}}),(error:any)=>error.error?.code==='CAPABILITY_DISABLED');
+        (f.host as any).windowScope=scope;
+        const view=await instance.dispatch({type:'indexing.scope.read',kind:'projects',next:true});
+        assert.deepEqual(view.searchScope.selectedProjectIds,[],'the reply carries the host choices');
+        const selection={index_ids:[],project_ids:['prj_'+'01'.repeat(16)]};
+        assert.deepEqual(await instance.dispatch({type:'indexing.scope.apply',generation:0,selection}),{status:'scope'});
+        assert.deepEqual(scope.calls,[['read','projects',true],['apply',selection]]);
+        assert.ok(f.explorer.snapshot().searchScope,'the summary is published');
+        (f.host as any).windowScope=windowScope(true,{applySearchScope:async()=>{throw Object.assign(new Error('Search scope out of date — reselect.'),{code:'scoped_read_unavailable'});}});
+        await assert.rejects(instance.dispatch({type:'indexing.scope.apply',generation:0,selection}),(error:any)=>error.error?.code==='scoped_read_unavailable'&&/out of date/.test(error.message),'a refusal keeps its native code');
+    }finally{f.explorer.dispose();}
+});
+
+test('a changed window search scope resets evidence, status and search state',()=>{
+    const f=controller();let identity:string|undefined,changed=()=>{};
+    (f.host as any).windowScope=windowScope(true,{identity:()=>identity,onDidChange:(listener:()=>void)=>{changed=listener;return disposable;}});
+    const explorer=new (f.explorer.constructor as any)(f.host);
+    try{
+        const before=explorer.snapshot().selectionEpoch;
+        changed();assert.equal(explorer.snapshot().selectionEpoch,before,'an unchanged scope keeps evidence');
+        identity='granted';changed();assert.equal(explorer.snapshot().selectionEpoch,before+1);
+        identity=undefined;changed();assert.equal(explorer.snapshot().selectionEpoch,before+2,'releasing the scope also resets evidence');
+    }finally{explorer.dispose();f.explorer.dispose();}
 });
 
 test('read-only library and AIRK Admin requests relay complete native data and accept only this window folders',async()=>{
@@ -432,6 +473,7 @@ test('Recommendations copy and temporary scope use revalidate native scope and n
     instance.indexing=new IndexingCatalogController({identity:()=> 'one',authorized:()=>f.host.trusted(),changed(){},control:{catalogRead:async()=>({}),catalogPrepare:async()=>{throw new Error('unexpected mutation');},catalogApply:async()=>{throw new Error('unexpected mutation');},catalogReconcile:async()=>[],catalogPending:()=>[]}});
     instance.session=()=>({call:async(tool:string,args:unknown)=>{assert.equal(tool,'airk_query_scope');calls.push(structuredClone(args));return {payload:structuredClone(current)};}});
     (f.host as any).prefillRecommendedSearch=async(search:unknown)=>{applied.push(search);};
+    (f.host as any).windowScope=windowScope(true);
     t.mock.method(vscodeStub.env.clipboard,'writeText',async(text:string)=>{copied.push(text);});
     try{
         await instance.dispatch({type:'indexing.recommendations',arguments:{situation:'shared_dependencies'}});
@@ -443,6 +485,10 @@ test('Recommendations copy and temporary scope use revalidate native scope and n
         current={...current,catalog_revision:3};
         await assert.rejects(instance.dispatch({type:'indexing.recommendations.copy'}),/changed/);assert.equal(copied.length,1);
         f.host.trusted=()=>false;await assert.rejects(instance.dispatch({type:'indexing.recommendations.use'}));assert.equal(applied.length,1);
+        f.host.trusted=()=>true;current={...current,catalog_revision:2};(f.host as any).windowScope=windowScope(false);
+        await instance.dispatch({type:'indexing.recommendations',arguments:{situation:'shared_dependencies'}});
+        await assert.rejects(instance.dispatch({type:'indexing.recommendations.use'}),(error:any)=>error.error?.code==='CAPABILITY_DISABLED','no window scope: nothing is prefilled');
+        assert.equal(applied.length,1);
     }finally{f.explorer.dispose();}
 });
 
@@ -922,6 +968,7 @@ test('the Inbox reaches the webview as summaries; review, resolve and discard go
 test('combined Inbox Apply prefills only the host-owned matching Workbench form and never runs a read', async () => {
     const f = controller(), applied: unknown[] = [];
     (f.host as any).prefillCombinedSearch = async (search: unknown) => { applied.push(structuredClone(search)); };
+    (f.host as any).windowScope = windowScope(true);
     const projects = ['prj_' + '01'.repeat(16)], indexes = ['idx_' + '02'.repeat(16)];
     const submitted = f.suggestions.submit('search', { schema_version: '1.0', idempotency_key: 'combined-apply', title: 'Find originals',
         draft: { query: 'original', project_ids: projects, index_ids: indexes, member_availability: 'require' } }, { name: 'agent', version: '1' });

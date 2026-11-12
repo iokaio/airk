@@ -23,6 +23,7 @@ import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWo
 
 /** Separate saved histories for explicit scopes; native backing remains service.project. */
 export function workbenchProjectKey(spec:LaunchSpec):string|undefined {
+    if(spec.windowScope)return /^[0-9a-f]{64}$/.test(spec.windowScope.key)?spec.windowScope.key:undefined;
     return spec.combinedSession?combinedScopeSelectionIdentity(spec.combinedSession):spec.catalogSession?scopeSelectionIdentity(spec.catalogSession):spec.service?.project;
 }
 
@@ -124,6 +125,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private pendingInput?:string;
     private pendingForm=false;
     constructor(private readonly context:vscode.ExtensionContext, private readonly host:ExplorerHost){
+        if(host.windowScope)this.subscriptions.push(host.windowScope.onDidChange(()=>{this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}));
         this.subscriptions.push(host.onDidChangeSpecs(()=>{this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}),vscode.workspace.onDidChangeConfiguration(event=>{
             if(event.affectsConfiguration('airk.runtime.nativeExecution')){this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}
             if(event.affectsConfiguration('airk.workbench')){void this.privacyChanged().catch(error=>this.fail(error));}
@@ -136,7 +138,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private permitted():boolean{return this.localAllowed()&&this.nativeAllowed();}
     private authorized():void{if(!this.host.trusted()||this.disposed){throw new Error('A trusted workspace is required.');}}
     private releaseClient():void{this.client?.dispose();this.client=undefined;this.clientIdentity=undefined;}
-    private selectedSpec():LaunchSpec|undefined{return this.host.specs().find(spec=>workbenchProjectKey(spec)===this.session?.project);}
+    /** Registered projects plus the window search scope while one is granted (U77); the scope entry reads with no selection. */
+    private specs():LaunchSpec[]{const window=this.permitted()?this.host.windowScopeSpec?.():undefined;return window?[...this.host.specs(),window]:[...this.host.specs()];}
+    private selectedSpec():LaunchSpec|undefined{return this.specs().find(spec=>workbenchProjectKey(spec)===this.session?.project);}
     /** Invalidate synchronously before refresh/list awaits, including hidden views. */
     private invalidateChangedClient():void{
         const spec=this.selectedSpec();
@@ -159,7 +163,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         void this.refresh().catch(error=>this.fail(error));
     }
     private state():WorkbenchState{
-        return {projects:this.host.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
+        return {projects:this.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
             ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations,referenceRefresh:this.refreshState()};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
@@ -173,7 +177,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     async refresh():Promise<void>{
         this.invalidateChangedClient();
         if(!this.permitted()){this.send();return;}
-        const specs=this.host.specs();
+        const specs=this.specs();
         if(!this.session){const active=this.host.activeProject(),legacy=specs.find(spec=>!spec.catalogSession&&!spec.combinedSession&&spec.service?.project===active);const id=legacy?workbenchProjectKey(legacy):specs.length===1?workbenchProjectKey(specs[0]):undefined;if(id){await this.select(id);return;}}
         if(this.session&&!specs.some(s=>workbenchProjectKey(s)===this.session!.project)){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         this.send();
@@ -181,13 +185,13 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     /** Host calls only after an explicit reviewed scope choice is exposed in specs. */
     async useScope(spec:LaunchSpec):Promise<void>{
         const id=workbenchProjectKey(spec);
-        if((!spec.catalogSession&&!spec.combinedSession)||!id||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('Reviewed scope is not available in this workspace.');
+        if((!spec.catalogSession&&!spec.combinedSession)||!id||!this.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('Reviewed scope is not available in this workspace.');
         this.invalidateChangedClient();
         if(this.session?.project===id){await this.refresh();return;}
         await this.select(id);
     }
     private async select(id:string):Promise<void>{
-        this.authorized();const spec=this.host.specs().find(value=>workbenchProjectKey(value)===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
+        this.authorized();const spec=this.specs().find(value=>workbenchProjectKey(value)===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
         const identity=JSON.stringify(spec);
         this.stop();
         if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
@@ -525,11 +529,27 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.view?.show(false);
         if(this.view&&input){void this.view.webview.postMessage({type:'prefill',input});this.pendingInput=undefined;}
     }
+    /** Recommendations "Use this query scope" and an applied agent search draft, after the host
+     * granted the window search scope: stores editable inputs on the window-scope session and
+     * never prepares or runs evidence. The scope itself is the selection, so no selectors are copied. */
+    async prefillWindowSearch(search:SearchDraft):Promise<void>{
+        this.authorized();const spec=this.host.windowScopeSpec?.(),key=spec?workbenchProjectKey(spec):undefined;
+        if(!spec||!key)throw new Error('The window search scope is not granted; choose it in Indexing › Search scope.');
+        if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;}
+        const session=this.session,prior=normalizeWorkbenchFormDraft(session.formDraft)??defaultWorkbenchFormDraft();
+        const values:Record<string,string>={...(search.query?{query:search.query}:{}),limit:String(search.limit),max_bytes:String(search.maxBytes),full_chunks:String(search.fullChunks),
+            ...(search.mode!=='policy'?{mode:search.mode}:{}),...(search.pathPrefix?{path_prefix:search.pathPrefix}:{})};
+        const draft=normalizeWorkbenchFormDraft({...prior,activeTool:'search',values:{...prior.values,search:values},revision:prior.revision+1});
+        if(!draft)throw new Error('The search draft exceeds the saved form limits.');
+        session.formDraft=draft;session.updatedAt=Date.now();this.notice=`Search scope selected (${spec.windowScope!.label}). Review the search in Tool forms, then choose Prepare or Run.`;
+        this.pendingForm=true;this.save(session,true);this.send();await this.focus();
+        if(this.view){void this.view.webview.postMessage({type:'prefillForm'});this.pendingForm=false;}
+    }
     /** Explicit Inbox Apply only: stores editable inputs, never prepares or runs
      * evidence and never restores a grant or another window's saved defaults. */
     async prefillSearchForm(spec:LaunchSpec,search:SearchDraft,reviewedSubset=false):Promise<void>{
         this.authorized();const key=workbenchProjectKey(spec);
-        if(!spec.combinedSession||!key||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('The combined scope changed before applying the search draft.');
+        if(!spec.combinedSession||!key||!this.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('The combined scope changed before applying the search draft.');
         if(reviewedSubset){
             if(!search.project_ids?.length||!search.index_ids?.length||search.project_ids.some(id=>!spec.combinedSession!.project_ids.includes(id))
                 ||spec.combinedSession.index_ids&&search.index_ids.some(id=>!spec.combinedSession!.index_ids!.includes(id)))throw new Error('The recommended scope is outside the frozen connection.');

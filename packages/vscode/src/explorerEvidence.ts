@@ -63,6 +63,16 @@ function publicationOf(payload: Record<string, unknown>): string | undefined {
     return tokens[0];
 }
 
+/** Refusals of a read under the window search scope (contracts §2.5 W4, §3.7 Q4),
+ * shown with their native code instead of a generic tool error. */
+export const WINDOW_SCOPE_READ_ERRORS: Readonly<Record<string, string>> = Object.freeze({
+    scoped_read_unavailable: 'Search scope out of date — reselect it in Indexing › Search scope.',
+    window_scope_not_granted: 'This window has no search scope. Choose one in Indexing › Search scope.',
+    not_yet_served: 'The AIRK Service does not serve this read yet (not_yet_served).',
+});
+const windowScopeError = (code: unknown): ExplorerError | undefined =>
+    typeof code === 'string' && Object.hasOwn(WINDOW_SCOPE_READ_ERRORS, code) ? { code, message: WINDOW_SCOPE_READ_ERRORS[code] } : undefined;
+
 function toolFailure(text: string, nativeResponse:Record<string,unknown>): EvidenceFailure {
     let nativePayload: Record<string,unknown> | undefined;
     try {
@@ -71,6 +81,10 @@ function toolFailure(text: string, nativeResponse:Record<string,unknown>): Evide
             nativePayload = materializeNativeMetadata(parsed as Record<string,unknown>);
         }
     } catch { nativePayload = {}; /* Refuse derived cards; retain the original response for copying. */ }
+    try {
+        const parsed = JSON.parse(text), scoped = windowScopeError(parsed?.error?.code ?? parsed?.code);
+        if (scoped) { return new EvidenceFailure(scoped,nativeResponse,nativePayload); }
+    } catch { /* Not a coded native error. */ }
     if (/current revision expired|known_hash does not match/.test(text)) { return new EvidenceFailure(explorerError('EVIDENCE_MISMATCH'),nativeResponse,nativePayload); }
     if (/workspace is not indexed|index_unavailable|no readable publication/i.test(text)) { return new EvidenceFailure(explorerError('INDEX_UNAVAILABLE'),nativeResponse,nativePayload); }
     try {
@@ -177,7 +191,10 @@ export class EvidenceClient {
                 if (error instanceof ToolCallError && error.code === 'overloaded') { throw new EvidenceFailure(explorerError('RATE_LIMITED')); }
                 if (error instanceof ToolCallError && error.code === 'timeout') { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT')); }
                 // The complete airkctl result (exit class, stdout, stderr, error line) stays with the failure.
-                if (error instanceof ToolCallError && error.code === 'rpc') { throw new EvidenceFailure(explorerError('TOOL_ERROR', error.message), error.result ? { ...error.result } : undefined); }
+                if (error instanceof ToolCallError && error.code === 'rpc') {
+                    const scoped = windowScopeError(error.result?.error?.code);
+                    throw new EvidenceFailure(scoped ?? explorerError('TOOL_ERROR', error.message), error.result ? { ...error.result } : undefined);
+                }
                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
             }
             const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope,this.spec.catalogSession);

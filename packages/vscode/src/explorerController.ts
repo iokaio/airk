@@ -25,9 +25,9 @@ import { saveStudioInWorkspace } from './explorerWorkspaceIO';
 import type { AgentConfigHealth } from './agentConfigHealth';
 import type { AgentConfigAlerts } from './explorerContracts';
 import { validateStudio } from './explorerStrategies';
-import { HandoffStore } from './explorerHandoffs';
+import type { ExplorerHandoff, SearchScopeSummary } from './explorerContracts';
 import { IndexingCatalogController } from './indexingCatalogController';
-import { CatalogObject, WindowContextDescriptor, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
+import { CatalogObject, CatalogView, WindowContextDescriptor, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
 import { readLibrary } from './indexLibrary';
 import type { AdminTarget } from './airkctl/features/adminOpener';
 import { MANAGE_WORKSPACE_TRUST_COMMAND } from './explorerCommands';
@@ -41,9 +41,14 @@ import { ServiceError } from './serviceClient';
 export interface ExplorerHost {
     /** Resolve an already reviewed selection against protected native HTTPS setup. */
     prepareEvidenceConnection?(spec:LaunchSpec,client?:'airk-explorer'|'airk-workbench'):Promise<LaunchSpec>;
-    /** Validate the active frozen combined selection and prefill an inert form. */
+    /** Select the drafted indexes and index sets as the window search scope, then prefill an inert Workbench form. */
     prefillCombinedSearch?(search: SearchDraft): Promise<void>;
+    /** Select the recommended scope as the window search scope, then prefill an inert Workbench form. */
     prefillRecommendedSearch?(search: SearchDraft): Promise<void>;
+    /** The window search scope (U77, W4), when the host offers one. */
+    readonly windowScope?: WindowScopeHost;
+    /** Workbench entry for the granted window scope; reads under it name no selection. */
+    windowScopeSpec?(): LaunchSpec | undefined;
     /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
     windowContext?(): WindowContextDescriptor | undefined;
     windowContextObservation?(): CatalogObject | undefined;
@@ -62,9 +67,6 @@ export interface ExplorerHost {
     readonly onDidChangeWorkbenchVisibility?: vscode.Event<void>;
     startup?(): ExplorerViewState['startup'];
     runtimeUpgrade?(): ExplorerViewState['runtimeUpgrade'];
-    searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean};
-    applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;
-    saveIndexSet?(selection:CatalogObject):Promise<CatalogObject>;
     reloadUpdatedExtension?(): Promise<void>;
     trusted(): boolean;
     workspaceTrusted?(): boolean;
@@ -80,7 +82,7 @@ export interface ExplorerHost {
     readonly workspaceState: Pick<vscode.Memento, 'get' | 'update'>;
     /** This window's agent drafts (Suggestions Inbox). */
     readonly suggestions: SuggestionStore;
-    readonly handoffs?: HandoffStore;
+    readonly handoffs?: HandoffPublisher;
     /** Host check of one project's agent files with native HTTPS observations and the reconnect ledger. */
     agentConfigHealth?(root: string, check: () => void): Promise<AgentConfigHealth>;
     /** Current proactive agent-configuration alert, when findings remain. */
@@ -89,6 +91,26 @@ export interface ExplorerHost {
     catalogControl?(method: Record<string, unknown>): Promise<Record<string, unknown>>;
     /** Open AIRK Admin on a page (U97); `choose` asks where and remembers it. */
     openAdmin?(target: AdminTarget, choose: boolean): Promise<void>;
+}
+
+/** Shares one reviewed Studio or Planner snapshot with a coding agent. */
+export interface HandoffPublisher {
+    share(kind: 'studio' | 'planner', revision: number, content: string, publication?: string): ExplorerHandoff | Promise<ExplorerHandoff>;
+}
+/** The window search scope (U77; contracts §2.5 W4, §3.7): existing indexes and
+ * index sets chosen for this window through its `airkctl` session. */
+export interface WindowScopeHost {
+    available(): boolean;
+    /** Changes with every published change. */
+    readonly generation: number;
+    /** Identity of the granted scope; a change invalidates evidence. */
+    identity(): string | undefined;
+    searchScopeChoices(): CatalogView['searchScope'] | undefined;
+    searchScopeSummary(): SearchScopeSummary;
+    readSearchScope(kind?: 'indexes' | 'projects', next?: boolean): Promise<unknown>;
+    applySearchScope(selection: Record<string, unknown>): Promise<Record<string, unknown>>;
+    clearSearchScope(): Promise<void>;
+    onDidChange(listener: () => void): { dispose(): void };
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
@@ -152,6 +174,7 @@ export class ExplorerController implements vscode.Disposable {
     private route = '#overview';
     private retained?: { dispose(): void };
     private managementOpen = false;
+    private scopeIdentity?: string;
     private lastAutomaticStatusCheck = 0;
     private disposed = false;
 
@@ -159,7 +182,7 @@ export class ExplorerController implements vscode.Disposable {
         this.control = new ExplorerControl(host.control, host.version);
         const control=this.control;
         this.indexing = new IndexingCatalogController({ get control(){return control.catalog;}, identity: () => JSON.stringify([this.control.observationIdentity,this.host.windowContextIdentity?.()]),
-            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), evidenceEpoch:()=>this.selectionEpoch, windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),searchScopeSelection:host.searchScopeSelection?.bind(host),applySearchScope:host.applySearchScope?.bind(host),saveIndexSet:host.saveIndexSet?.bind(host),changed: () => this.publish() });
+            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), evidenceEpoch:()=>this.selectionEpoch, windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),changed: () => this.publish() });
         this.panel = new ExplorerPanel(host.extensionUri, {
             message: message => { void this.handle(message); },
             visible: visible => this.visibility(visible),
@@ -167,6 +190,7 @@ export class ExplorerController implements vscode.Disposable {
         });
         this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()), host.suggestions.onDidChange(() => this.publish()));
         if(host.onDidChangeWorkbenchVisibility)this.listeners.push(host.onDidChangeWorkbenchVisibility(()=>this.publish()));
+        if(host.windowScope){this.scopeIdentity=host.windowScope.identity();this.listeners.push(host.windowScope.onDidChange(()=>this.searchScopeChanged()));}
         if(host.onDidChangeWindowContext)this.listeners.push(host.onDidChangeWindowContext(()=>{this.publish();this.observeConnectedContext();}));
         this.selectDefault();
         this.rememberSource(vscode.window.activeTextEditor);
@@ -245,7 +269,8 @@ export class ExplorerController implements vscode.Disposable {
             selectionEpoch: this.selectionEpoch,
             ...(this.host.trusted() && this.status && this.statusFor === this.selected && this.statusIdentity === this.control.observationIdentity ? { status: this.status } : {}),
             features: FEATURES,
-            indexing: this.indexing.snapshot(),
+            indexing: this.indexingView(),
+            ...(this.host.trusted() && this.host.windowScope ? { searchScope: this.host.windowScope.searchScopeSummary() } : {}),
             ...(this.notice ? { notice: this.notice } : {}),
             dismissedNotices: this.dismissedNotices(),
             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
@@ -285,7 +310,7 @@ export class ExplorerController implements vscode.Disposable {
         const {indexing,...scalarState}=state;
         this.panel.post({ v: MESSAGE_VERSION, type: 'state', state: scalarState });
         if(indexing){
-            const tag=JSON.stringify([indexing.generation,indexing.adviceGeneration,indexing.busy,indexing.error,indexing.pending,indexing.review?.previewDigest]);
+            const tag=JSON.stringify([indexing.generation,indexing.adviceGeneration,indexing.busy,indexing.error,indexing.pending,indexing.review?.previewDigest,this.host.windowScope?.generation]);
             if(this.indexingDelivery?.panel!==this.panel.generation||this.indexingDelivery.tag!==tag){
                 this.indexingDelivery={panel:this.panel.generation,tag};
                 this.panel.post({v:MESSAGE_VERSION,type:'indexing.session',session:indexing});
@@ -342,6 +367,45 @@ export class ExplorerController implements vscode.Disposable {
         this.publish();
         if (this.panel.open) { void this.loadStatus(); }
         this.observeConnectedContext();
+    }
+
+    /** A granted, changed or released window search scope changes what every read
+     * returns: evidence, status, search state and references start again. */
+    private searchScopeChanged(): void {
+        if (this.disposed) { return; }
+        const identity = this.host.windowScope?.identity();
+        if (identity !== this.scopeIdentity) {
+            this.scopeIdentity = identity;
+            this.evidence?.dispose(); this.evidence = undefined;
+            this.selectionEpoch++; this.status = undefined; this.statusFor = undefined; this.notice = undefined;
+            this.indexing.clearEvidenceRecommendations();
+            this.retainedDetails = undefined; this.statusIdentity = undefined;
+            this.searchState = undefined;
+            this.refs.clear(); this.facts.clear();
+            if (this.panel.open) { void this.loadStatus(); }
+        }
+        this.publish();
+    }
+
+    /** Recommendations and reviews from the catalog controller, with the window search scope choices. */
+    private indexingView(): CatalogView {
+        const view = this.indexing.snapshot(), choices = this.host.trusted() ? this.host.windowScope?.searchScopeChoices() : undefined;
+        return choices ? { ...view, searchScope: choices } : view;
+    }
+    private scopeHost(): WindowScopeHost {
+        const scope = this.host.windowScope;
+        if (!scope?.available()) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'The window search scope is not available from this AIRK Service (window-scope/1).')); }
+        return scope;
+    }
+    /** A scope failure keeps its native code; only an absent capability is CAPABILITY_DISABLED. */
+    private async scopeWork<T>(work: () => Promise<T>): Promise<T> {
+        try { return await work(); }
+        catch (error) {
+            if (error instanceof EvidenceFailure) { throw error; }
+            const code = (error as { code?: unknown })?.code, message = error instanceof Error ? error.message : String(error);
+            throw new EvidenceFailure({ code: typeof code === 'string' && /^[a-z0-9_]{1,128}$/.test(code) ? code : 'TOOL_ERROR', message: message.slice(0, 600) },
+                (error as { nativeResponse?: Record<string, unknown> })?.nativeResponse);
+        }
     }
 
     private observedControl(): void {
@@ -586,7 +650,9 @@ export class ExplorerController implements vscode.Disposable {
             // can change while those operations return their committed receipt.
             // Recommendation reads/actions still belong to the evidence epoch.
             const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
-            const managementOrLocal=['admin.open','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload'].includes(message.type);
+            // Using recommended advice and applying an agent search draft select the window search
+            // scope themselves, which starts a new evidence epoch; their own committed outcome stands.
+            const managementOrLocal=['admin.open','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -625,19 +691,27 @@ export class ExplorerController implements vscode.Disposable {
                     if(instructions.status!=='available'||typeof instructions.text!=='string')throw new Error('Scope instructions unavailable.');
                     await vscode.env.clipboard.writeText(instructions.text);return {copied:true};
                 }
-                if(!this.host.prefillRecommendedSearch)throw new Error('A reviewed combined Workbench connection is required.');
-                await this.host.prefillRecommendedSearch({query:'',mode:'lexical',limit:12,maxBytes:8192,fullChunks:false,...choice} as SearchDraft);
+                // Selects the recommended indexes and index sets as this window's search scope, then prefills Workbench.
+                if(!this.host.prefillRecommendedSearch||!this.host.windowScope?.available())throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','The window search scope is not available from this AIRK Service (window-scope/1).'));
+                await this.scopeWork(()=>this.host.prefillRecommendedSearch!({query:'',mode:'lexical',limit:12,maxBytes:8192,fullChunks:false,...choice} as SearchDraft));
                 return {prefilled:true};
             }
             case 'workspace.manageTrust':
                 if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 if(this.host.workspaceTrusted?.()!==false&&!this.host.trusted())throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 await vscode.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND);return;
-            case 'indexing.scope.read':
-                this.requireAuthorization(true);
-                if(this.host.prepareWindowContext)await this.host.prepareWindowContext();
-                this.requireAuthorization(true);return this.indexing.scopeRead(message.kind,message.next);
-            case 'indexing.scope.apply':return this.indexing.scopeApply(message.selection,message.generation);
+            // The window search scope (U77): choices are read read-only through the session; Apply grants
+            // them with scope_select and nothing selected releases (scope_release). Index sets are created in AIRK Admin.
+            case 'indexing.scope.read': {
+                const scope=this.scopeHost();
+                await this.scopeWork(()=>scope.readSearchScope(message.kind,message.next));
+                return this.indexingView();
+            }
+            // Nothing selected releases the scope (the Overview and Search "Clear"); reads return to the selected project.
+            case 'indexing.scope.apply': {
+                const scope=this.scopeHost();
+                return this.scopeWork(()=>scope.applySearchScope(message.selection));
+            }
             case 'library.read': {
                 this.requireAuthorization(true);
                 if(!this.host.catalogControl)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','The index library is not available in this window.'));
@@ -918,9 +992,11 @@ export class ExplorerController implements vscode.Disposable {
                 if (typed.status === 'applied' && item?.draft.body.kind === 'search' && item.draft.body.search.project_ids) {
                     const status = this.host.suggestions.status(typed.id)?.status;
                     if (status !== 'pending_review' && status !== 'deferred') { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED')); }
-                    if (!this.host.prefillCombinedSearch) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'A matching reviewed combined Workbench session is required to apply this draft.')); }
+                    // Selects the drafted indexes and index sets as this window's search scope, then prefills Workbench.
+                    if (!this.host.prefillCombinedSearch || !this.host.windowScope?.available()) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'The window search scope is not available from this AIRK Service (window-scope/1), so this draft cannot be applied.')); }
                     if (!this.host.suggestions.resolve(typed.id, 'applied')) { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED')); }
-                    try { await this.host.prefillCombinedSearch(item.draft.body.search); }
+                    const search = item.draft.body.search;
+                    try { await this.scopeWork(() => this.host.prefillCombinedSearch!(search)); }
                     catch (error) { this.host.suggestions.resolve(typed.id, 'conflicted'); throw error; }
                     return;
                 }
@@ -941,7 +1017,7 @@ export class ExplorerController implements vscode.Disposable {
                     detail: 'Only this complete snapshot will be available through an expiring token for ten minutes. Review the displayed text before sharing; the agent cannot read other drafts with it.' }, 'Share snapshot');
                 if (approved !== 'Share snapshot') { return { shared: false }; }
                 if (owner !== this.selectionEpoch) { throw new EvidenceFailure(explorerError('STALE_BINDING')); }
-                const value = this.host.handoffs.share(typed.kind as 'studio' | 'planner', typed.revision, typed.content, typed.publication);
+                const value = await this.host.handoffs.share(typed.kind as 'studio' | 'planner', typed.revision, typed.content, typed.publication);
                 return { shared: true, token: value.token, content_sha256: value.content_sha256, expires_unix_ms: value.expires_unix_ms };
             }
             case 'suggestions.revisions': {

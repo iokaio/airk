@@ -10,6 +10,7 @@ import { FileBrowser, type LibraryFile } from './fileBrowser';
 import { currentSelection } from './strategyStore';
 import { CompleteNativeResponse, dialogFocus } from './components';
 import { beginSearch, consumeSearchInput, editSearch, editSearchPage, failSearch, searchPage, useSearchSession } from './searchStore';
+import { ScopeBanner } from './scopeBanner';
 
 type Form = SearchForm;
 
@@ -63,7 +64,8 @@ export function SearchScreen(props: ScreenProps) {
 
     return (
         <div class="search">
-            <p class="muted">Search this project’s published index using the query and path scope below. The source file selected in the header does not limit this search. On a result, Inspect opens its indexed record and saved-file comparison in Evidence › Inspector; Open source opens its cited lines in the editor.</p>
+            <ScopeBanner state={props.state} go={props.go} />
+            <p class="muted">{props.state.searchScope?.active ? 'Search the indexes of this window’s search scope' : 'Search this project’s published index'} using the query and path scope below. The source file selected in the header does not limit this search. On a result, Inspect opens its indexed record and saved-file comparison in Evidence › Inspector; Open source opens its cited lines in the editor.</p>
             <form class="search-form" onSubmit={event => { event.preventDefault(); void run(form); }}>
                 <label class="grow">Query
                     <input ref={input} value={form.query} maxLength={4096} required placeholder={form.mode === 'lexical' ? 'Words that must all appear' : 'Describe what you want to find'}

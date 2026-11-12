@@ -27,7 +27,7 @@ function webview(name: string, state: any, renderWith: (exports: any) => any) {
     }
     const slots: any[] = [], effects: (() => unknown)[] = [], sent: any[] = [];
     const events = new Map<string, (event: any) => void>();
-    let cursor = 0, fail = false;
+    let cursor = 0, fail = false, failCode = 'HOST_UNAVAILABLE', failMessage = 'Native catalog unavailable';
     const hold=new Set<string>(),held:any[]=[];
     const hooks = {
         useState(initial: any) {
@@ -52,14 +52,14 @@ function webview(name: string, state: any, renderWith: (exports: any) => any) {
             sent.push(message);
             if(hold.has(message.type)){held.push(message);return;}
             queueMicrotask(() => events.get('message')?.({ data: { v: 1, type: 'result', requestId: message.requestId,
-                ...(fail ? { ok: false, error: { code: 'HOST_UNAVAILABLE', message: 'Native catalog unavailable' } } : { ok: true, data: { generation: 1 } }) } }));
+                ...(fail ? { ok: false, error: { code: failCode, message: failMessage } } : { ok: true, data: { generation: 1 } }) } }));
         } }),
     });
     return {
         sent, state, exports: module.exports, slots,
         hold(type:string){hold.add(type);},
         release(type:string,data:any={}){const at=held.findIndex(message=>message.type===type);assert.ok(at>=0,`Held ${type} request required`);const message=held.splice(at,1)[0];events.get('message')?.({data:{v:1,type:'result',requestId:message.requestId,ok:true,data}});},
-        failure(value: boolean) { fail = value; },
+        failure(value: boolean, code = 'HOST_UNAVAILABLE', message = 'Native catalog unavailable') { fail = value; failCode = code; failMessage = message; },
         render() { cursor = 0; return renderWith(module.exports); },
         reset() { slots.length = 0; effects.length = 0; },
         async flush() { while (effects.length) { effects.shift()!(); } for (let i = 0; i < 8; i++) { await Promise.resolve(); } },
@@ -120,13 +120,47 @@ test('every Indexing tab offers Open AIRK Admin and the library tabs render the 
     }
 });
 
-test('Search scope failures say the window search scope is not available yet and keep the native text in details', async () => {
-    const f = screen('window'); f.failure(true); f.render(); await f.flush();
+test('Search scope says it is not available only when the service lacks window-scope/1, keeping the native text in details', async () => {
+    const f = screen('window'); f.failure(true, 'CAPABILITY_DISABLED', 'The window search scope is not available from this AIRK Service (window-scope/1).'); f.render(); await f.flush();
     assert.equal(f.sent.length, 1); assert.equal(f.sent[0].type, 'indexing.scope.read');
     const tree = f.render(), notice = component(tree, 'Notice').find(node => node.props.role === 'alert'); assert.ok(notice);
-    assert.match(text(nodes(notice).find(node => node.type === 'p')), /window search scope is not available yet/);
-    assert.doesNotMatch(text(nodes(notice).find(node => node.type === 'p')), /HOST_UNAVAILABLE|Native catalog unavailable/);
+    assert.match(text(nodes(notice).find(node => node.type === 'p')), /window search scope is not available from this AIRK Service/);
     assert.ok(nodes(notice).some(node => node.type === 'details'), 'the native failure remains available');
+});
+
+test('Search scope failures show their own message and keep the code in details', async () => {
+    const f = screen('window'); f.failure(true, 'scoped_read_unavailable', 'Search scope out of date — reselect.'); f.render(); await f.flush();
+    const tree = f.render(), notice = component(tree, 'Notice').find(node => node.props.role === 'alert'); assert.ok(notice);
+    assert.match(text(nodes(notice).find(node => node.type === 'p')), /Search scope out of date — reselect/);
+    assert.doesNotMatch(text(notice), /not available from this AIRK Service/);
+    assert.match(text(nodes(notice).find(node => node.type === 'details')), /scoped_read_unavailable/);
+});
+
+test('an out-of-date scope asks to reselect, and Clear releases it by applying nothing', async () => {
+    const choices = { indexes: [indexValue], projects: [projectValue], selectedIndexIds: [], selectedProjectIds: [projectId], managedProjectIds: [], active: true, outOfDate: true, responses: [] };
+    const f = screen('window', { searchScope: choices }); let tree = f.render(); await f.flush();
+    const notice = component(tree, 'Notice').find(node => node.props.role === 'alert'); assert.ok(notice);
+    assert.match(text(notice), /Search scope out of date — reselect/);
+    const clear = button(tree, /Clear search scope/); assert.ok(clear);
+    clear.props.onClick(); await f.flush(); await f.flush(); tree = f.render();
+    assert.deepEqual(JSON.parse(JSON.stringify(f.sent.map(fields))), [{ type: 'indexing.scope.apply', generation: 0, selection: { index_ids: [], project_ids: [] } }, { type: 'indexing.scope.read' }]);
+    assert.ok(component(tree, 'AdminButton').some(node => node.props.label === 'Create or change index sets in AIRK Admin' && node.props.page === 'index-library'), 'index sets are created in AIRK Admin');
+});
+
+test('the Overview and Search headers show the active scope with Clear', async () => {
+    const searchScope = { available: true, active: true, outOfDate: false, remembered: true, label: 'Application Project' };
+    let went: unknown;
+    const f = webview('scopeBanner.tsx', {}, exports => exports.ScopeBanner({ state: { trusted: true, searchScope }, go(route: unknown) { went = route; } }));
+    const tree = f.render(); await f.flush();
+    assert.match(text(tree), /Searching: Application Project/);
+    button(tree, /^Clear$/).props.onClick(); await f.flush();
+    assert.deepEqual(JSON.parse(JSON.stringify(f.sent.map(fields))), [{ type: 'indexing.scope.apply', generation: 0, selection: { index_ids: [], project_ids: [] } }]);
+    const stale = webview('scopeBanner.tsx', {}, exports => exports.ScopeBanner({ state: { trusted: true, searchScope: { ...searchScope, outOfDate: true } }, go(route: unknown) { went = route; } }));
+    const staleTree = stale.render();
+    assert.match(text(staleTree), /Search scope out of date — reselect/);
+    button(staleTree, /Reselect/).props.onClick(); assert.deepEqual(JSON.parse(JSON.stringify(went)), { workspace: 'indexing', tab: 'window' });
+    const none = webview('scopeBanner.tsx', {}, exports => exports.ScopeBanner({ state: { trusted: true, searchScope: { ...searchScope, available: false } }, go() {} }));
+    assert.equal(none.render(), null, 'without window-scope/1 nothing is shown');
 });
 
 test('the read-only library reads pages through the session relay, continues with the native cursor and keeps every response', async () => {

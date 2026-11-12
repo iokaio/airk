@@ -7,8 +7,11 @@ import { request } from './api';
 import { AdminButton } from './adminLinks';
 import { LibraryView } from './libraryView';
 
-/** The window search scope is not served by the AIRK Service yet (it moves to the session's W4 scope). */
-export const SCOPE_UNAVAILABLE='The window search scope is not available yet. Search uses the indexes your coding agents and Workbench already select.';
+/** Shown when the AIRK Service does not advertise `window-scope/1` (CAPABILITY_DISABLED). */
+export const SCOPE_UNAVAILABLE='The window search scope is not available from this AIRK Service. Search uses the selected project.';
+export const SCOPE_OUT_OF_DATE='Search scope out of date — reselect. Refresh the choices, then apply your selection again.';
+/** Nothing selected releases the window scope (scope_release). */
+export const CLEAR_SCOPE={generation:0,selection:{index_ids:[],project_ids:[]}};
 
 /**
  * Indexing (U97): the window search scope and recommendations, and a read-only
@@ -29,8 +32,9 @@ export function IndexingScreen(props: ScreenProps) {
     const scopeDirty=JSON.stringify([scopeIndexes.slice().sort(),scopeProjects.slice().sort()])!==JSON.stringify([(scope?.selectedIndexIds??[]).slice().sort(),(scope?.selectedProjectIds??[]).slice().sort()]);
     const toggle=(items:string[],id:string,checked:boolean)=>checked?[...items.filter(item=>item!==id),id]:items.filter(item=>item!==id);
     // Keep the complete action chain exclusive, including the fresh read after Apply.
-    // Search scope failures say the scope is not available yet; the native text stays in Details.
-    const run=async(work:()=>Promise<unknown>,scopeWork=false)=>{if(workingNow.current)return;workingNow.current=true;setWorking(true);setError('');setErrorDetail('');try{await work();}catch(failure){const text=failure instanceof Error?failure.message:String(failure);if(scopeWork){setError(SCOPE_UNAVAILABLE);setErrorDetail(text);}else setError(text);}finally{workingNow.current=false;setWorking(false);}};
+    // A scope failure shows its message and keeps its code in Details; only an absent
+    // window-scope/1 capability says the scope is not available.
+    const run=async(work:()=>Promise<unknown>,scopeWork=false)=>{if(workingNow.current)return;workingNow.current=true;setWorking(true);setError('');setErrorDetail('');try{await work();}catch(failure){const text=failure instanceof Error?failure.message:String(failure),code=(failure as {error?:{code?:unknown}})?.error?.code;if(scopeWork&&code==='CAPABILITY_DISABLED'){setError(SCOPE_UNAVAILABLE);setErrorDetail(text);}else{setError(text);if(typeof code==='string')setErrorDetail(code);}}finally{workingNow.current=false;setWorking(false);}};
     const connectionPending=['connecting','disconnected','incompatible','untrusted'].includes(props.state.connection);
     const disabled=working||view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false||connectionPending;
     const tab=props.route.tab;
@@ -41,8 +45,8 @@ export function IndexingScreen(props: ScreenProps) {
         if(tab!=='window'||disabled||workingNow.current||automaticRead.current===readOwner)return;
         if(!scope){automaticRead.current=readOwner;void run(()=>request('indexing.scope.read',{}),true);}
     },[readOwner,disabled,connectionPending,scope]);
-    const shownError=error||(tab==='window'&&view.error?SCOPE_UNAVAILABLE:'');
-    const shownDetail=errorDetail||(tab==='window'&&!error?view.error??'':'');
+    const shownError=error||(tab==='window'&&(scope?.outOfDate||props.state.searchScope?.outOfDate)?SCOPE_OUT_OF_DATE:'');
+    const shownDetail=errorDetail;
     return <section class="indexing-screen">
         <div class="section-head"><p class="indexing-intro">{tab==='window'?'Choose the indexes and index sets to search in this VS Code window.':tab==='projects'?'Index sets on this computer. Create and change them in AIRK Admin.':'Indexes on this computer. Create, change and delete them in AIRK Admin.'}</p>
             {tab==='window'&&<AdminButton page="index-library" disabled={!props.state.trusted}/>}</div>
@@ -65,10 +69,12 @@ export function IndexingScreen(props: ScreenProps) {
                     {scope.projects.filter(item=>!scope.managedProjectIds?.includes(String(item.id))).map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeProjects.includes(String(item.id))} onChange={event=>setScopeProjects(items=>toggle(items,String(item.id),event.currentTarget.checked))}/>{String(item.name??item.id)}</label>)}
                     {!scope.projects.some(item=>!scope.managedProjectIds?.includes(String(item.id)))&&<p>No index sets on this page. Create one in AIRK Admin.</p>}
                     {scope.projectContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'projects',next:true}),true)}>More index sets</button>}
+                    <AdminButton page="index-library" label="Create or change index sets in AIRK Admin" ghost disabled={!props.state.trusted} choose={false}/>
                 </fieldset>
-                <p>{scopeIndexes.length} {scopeIndexes.length===1?'index':'indexes'} and {scopeProjects.length} {scopeProjects.length===1?'index set':'index sets'} selected. Uncheck everything to stop searching indexes in this window.</p>
+                <p>{scopeIndexes.length} {scopeIndexes.length===1?'index':'indexes'} and {scopeProjects.length} {scopeProjects.length===1?'index set':'index sets'} selected. Choose at least one index set; checked indexes narrow it to those indexes. Uncheck everything to stop searching indexes in this window.</p>
                 <p role="status">{scopeDirty?'Changes not applied.':scope.active?'Selection active in this window.':'Apply your selection to use it in this window.'}</p>
-                <button disabled={disabled||!scopeDirty&&scope.active}>Apply selection</button>
+                <button disabled={disabled||!scopeDirty&&scope.active||scopeIndexes.length>0&&!scopeProjects.length}>Apply selection</button>
+                {scope.active&&<button type="button" class="ghost" disabled={disabled} onClick={()=>void run(async()=>{await request('indexing.scope.apply',CLEAR_SCOPE);await request('indexing.scope.read',{});},true)}>Clear search scope</button>}
                 <p class="muted">Existing manual coding-agent configurations keep their own selection.</p>
             </form>}
         </article>
@@ -90,7 +96,7 @@ export function IndexingScreen(props: ScreenProps) {
                 {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p>{card.action==='review_split'&&Array.isArray(adviceSelection?.index_ids)&&adviceSelection.index_ids.filter(id=>/^idx_[0-9a-f]{32}$/.test(String(id))).map(id=><AdminButton key={String(id)} page="index-library" index={String(id)} label={`Review a split of ${String(id)} in AIRK Admin`} disabled={disabled} choose={false}/>)}</article>;})}
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.use',{}))}>Use this query scope</button>
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
-                <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
+                <p>Use this query scope makes it this window's search scope and prefills a Workbench search form. Review it before running. It does not change an agent connection or an index set.</p>
                 <p>Reusable choices are saved as index sets, and splits are reviewed, in AIRK Admin.</p>
                 <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>View index sets</button>
                 <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>

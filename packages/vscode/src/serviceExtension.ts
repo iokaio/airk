@@ -79,11 +79,15 @@ class SplitExtension implements vscode.Disposable {
         this.status.show();
         this.subscriptions.push(this.output, this.status, this.definitions, this.host,
             this.airkctl.onDidChangeState(state => this.stateChanged(state)));
-        setEvidenceTransport(spec => new AirkctlToolSession(this.airkctl.session, {
-            ...(spec.service?.project ? { project: spec.service.project } : {}),
-            ...(spec.catalogSession ? { catalogSession: spec.catalogSession } : {}),
-            ...(spec.combinedSession ? { combinedSession: spec.combinedSession } : {}),
-        }));
+        // The Workbench's window-scope entry always reads under the window scope; the Explorer
+        // reads under it while one is granted, and otherwise names its selected project (U77, §3.7).
+        setEvidenceTransport((spec, client) => new AirkctlToolSession(this.airkctl.session,
+            () => (spec.windowScope || (client === 'airk-explorer' && this.host.windowScope.active)) ? { window: true } : {
+                ...(spec.service?.project ? { project: spec.service.project } : {}),
+                ...(spec.catalogSession ? { catalogSession: spec.catalogSession } : {}),
+                ...(spec.combinedSession ? { combinedSession: spec.combinedSession } : {}),
+            },
+            { windowReadFailed: code => this.host.windowScope.refused(code) }));
     }
 
     private stateChanged(state: AirkctlState): void {
@@ -284,6 +288,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
     context.subscriptions.push(extension);
     const explorerOpen = (route?: unknown) => extension.explorerController().then(explorer => explorer.open(typeof route === 'string' ? route : undefined));
     const workbench = new WorkbenchView(context, extension.host);
+    extension.host.bindWorkbench(workbench);
     context.subscriptions.push(workbench, vscode.window.registerWebviewViewProvider('airk.workbench', workbench, { webviewOptions: { retainContextWhenHidden: true } }));
     const sidebar = new ExplorerSidebar({
         commandUris: ['airk.explorer.open', 'airk.openAdmin', 'airk.serviceStart', 'airk.downloadService', 'airk.checkAgain', 'airk.setupAgent', 'airk.explorer.showSuggestions'],
