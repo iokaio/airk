@@ -7,7 +7,7 @@
 use super::{Context, ErrorLine, ExitClass, Selection, VERSION, fail};
 use airk_core::service::{
     CombinedConnectRequest, ControlMethod, ControlResponse, MAX_TOOL_ARGUMENT_BYTES,
-    ProjectRegistration, ResolveTarget, ToolResponseMode, ToolSelection, ToolsCatalogDetail,
+    ProjectRegistration, ToolResponseMode, ToolSelection, ToolsCatalogDetail,
 };
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -118,21 +118,7 @@ fn open(
     let (control, registration, tool_selection) = match &selection.catalog {
         Some(request) => {
             let control = super::control(cx, selection)?;
-            let target = ResolveTarget::Catalog {
-                request: request.clone(),
-            };
-            let registration = match crate::service::request(
-                &control,
-                ControlMethod::ResolveProject { target },
-                VERSION,
-            ) {
-                Ok(ControlResponse::Resolved { registration }) => registration,
-                Ok(ControlResponse::RegistrationRefused { message }) => {
-                    return Err(fail(cx, &crate::registration::failed(&message)));
-                }
-                Ok(other) => return Err(fail(cx, &crate::service::refusal(&other))),
-                Err(line) => return Err(fail(cx, &line)),
-            };
+            let registration = super::resolve_catalog(cx, &control, request)?;
             let tool_selection = ToolSelection::Catalog {
                 request: request.clone(),
             };

@@ -116,6 +116,13 @@ enum Command {
     /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant.
     /// Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airkctl service register --runtime-dir <control>` instead.
     Init,
+    /// Read one project setting view; read-only.
+    Settings {
+        #[arg(value_parser = ["extraction_policy", "vector_selection", "vector_status", "roots", "scan_limits", "quota_policy", "quota_status"])]
+        view: String,
+        #[arg(long)]
+        validate_file: Option<PathBuf>,
+    },
     /// Apply a guarded project configuration draft from --file or --stdin (JSON with an "operation").
     Configure {
         #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
@@ -1202,9 +1209,39 @@ fn configure_command(cx: &mut Context, selection: Selection, file: Option<PathBu
 /// `usage …` (step 3c.5b: the mutations and `import --preview`; `report`
 /// and `policy` are step 3c.5c).
 fn usage_command(cx: &mut Context, selection: Selection, action: UsageCommand) -> u8 {
+    use airk_core::service::UsageDocumentRead;
     use airk_core::service_configuration::ConfigurationDraft as Draft;
-    if matches!(action, UsageCommand::Report { .. } | UsageCommand::Policy) {
-        return not_yet_served(cx);
+    match action {
+        UsageCommand::Report {
+            days,
+            format,
+            price_scenario,
+        } => {
+            let Ok(format) = serde_json::from_value(serde_json::json!(format)) else {
+                return usage(cx, "unknown report format");
+            };
+            let read = match price_scenario {
+                Some(path) => match crate::registration::absolute(&path) {
+                    Some(price_scenario_path) => UsageDocumentRead::ReportFile {
+                        days,
+                        format,
+                        price_scenario_path,
+                    },
+                    None => {
+                        return fail(
+                            cx,
+                            &crate::registration::failed("price scenario path must be UTF-8"),
+                        );
+                    }
+                },
+                None => UsageDocumentRead::Report { days, format },
+            };
+            return usage_document(cx, &selection, read);
+        }
+        UsageCommand::Policy => {
+            return usage_document(cx, &selection, UsageDocumentRead::Policy);
+        }
+        _ => {}
     }
     if let Err(code) = administrative(cx, &selection) {
         return code;
@@ -1257,6 +1294,106 @@ fn usage_command(cx: &mut Context, selection: Selection, action: UsageCommand) -
     match draft {
         Ok(draft) => configure(cx, &control, registration.binding, draft),
         Err(error) => fail(cx, &crate::registration::failed(&error.to_string())),
+    }
+}
+
+/// `settings <view> [--validate-file]` (step 3c.5c): N1.
+fn settings_command(
+    cx: &mut Context,
+    selection: Selection,
+    view: String,
+    validate_file: Option<PathBuf>,
+) -> u8 {
+    use airk_core::service::UsageDocumentRead;
+    let Ok(view) = serde_json::from_value(serde_json::json!(view)) else {
+        return usage(cx, "unknown settings view");
+    };
+    let read = match validate_file {
+        Some(path) => match crate::registration::absolute(&path) {
+            Some(path) => UsageDocumentRead::ValidateSettingsFile { view, path },
+            None => {
+                return fail(
+                    cx,
+                    &crate::registration::failed("settings input path must be UTF-8"),
+                );
+            }
+        },
+        None => UsageDocumentRead::Settings { view },
+    };
+    usage_document(cx, &selection, read)
+}
+
+/// N1 for the project or the catalog session (combined sessions refused, as
+/// `airk` refused them), printed as `airk` printed it: a text report as is,
+/// any other document as one JSON line.
+fn usage_document(
+    cx: &mut Context,
+    selection: &Selection,
+    read: airk_core::service::UsageDocumentRead,
+) -> u8 {
+    if selection.combined.is_some() {
+        return usage(
+            cx,
+            "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation",
+        );
+    }
+    let (control, project) = match &selection.catalog {
+        Some(request) => {
+            let control = match control(cx, selection) {
+                Ok(control) => control,
+                Err(code) => return code,
+            };
+            match resolve_catalog(cx, &control, request) {
+                Ok(registration) => (control, registration.binding),
+                Err(code) => return code,
+            }
+        }
+        None => match project_for(cx, selection) {
+            Ok((control, registration)) => (control, registration.binding),
+            Err(code) => return code,
+        },
+    };
+    let method = ControlMethod::UsageDocument {
+        project,
+        catalog: selection.catalog.clone(),
+        read,
+    };
+    match crate::service::request(&control, method, VERSION) {
+        Ok(ControlResponse::UsageDocument { document }) => match document.as_str() {
+            Some(text) => {
+                let result = write!(cx.io.stdout, "{text}");
+                written(cx, result)
+            }
+            None => json_line(cx, &document),
+        },
+        Ok(ControlResponse::UsageReadFailed { message, native }) => {
+            // `airk` printed a failed native read's complete result first.
+            if let Some(native) = native {
+                let _ = json_line(cx, &native);
+            }
+            fail(cx, &crate::registration::failed(&message))
+        }
+        Ok(other) => fail(cx, &crate::service::refusal(&other)),
+        Err(line) => fail(cx, &line),
+    }
+}
+
+/// The project a catalog session reads (M1 `Catalog`), as `airk` resolved it.
+fn resolve_catalog(
+    cx: &mut Context,
+    control: &Path,
+    request: &ScopedConnectRequest,
+) -> Result<airk_core::service::ProjectRegistration, u8> {
+    let target = airk_core::service::ResolveTarget::Catalog {
+        request: request.clone(),
+    };
+    match crate::service::request(control, ControlMethod::ResolveProject { target }, VERSION) {
+        Ok(ControlResponse::Resolved { registration }) => Ok(registration),
+        Ok(ControlResponse::RegistrationRefused { message }) => {
+            Err(fail(cx, &crate::registration::failed(&message)))
+        }
+        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
+        Err(line) => Err(fail(cx, &line)),
     }
 }
 
@@ -2012,6 +2149,10 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
         Command::Init => init(cx, selection),
+        Command::Settings {
+            view,
+            validate_file,
+        } => settings_command(cx, selection, view, validate_file),
         Command::Configure { file, stdin: _ } => configure_command(cx, selection, file),
         Command::Usage { action } => usage_command(cx, selection, action),
         Command::Index { full: true } => usage(

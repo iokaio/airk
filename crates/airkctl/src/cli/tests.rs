@@ -42,7 +42,7 @@ fn unserved_commands_and_argument_errors_keep_their_classes() {
     for unserved in [
         &["explorer", "templates"][..],
         &["agents", "connect"],
-        &["usage", "report"],
+        &["session"],
     ] {
         let (code, _, stderr) = run_line(unserved);
         assert_eq!(code, 5, "{unserved:?}");

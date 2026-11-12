@@ -1721,3 +1721,115 @@ fn regex_free_configuration_nonce(stderr: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// `settings` and `usage report|policy` (split step 3c.5c): the document
+/// `airk` printed, by project binding and by catalog session (N1). JSON
+/// documents compare after `stable`; text reports compare as printed.
+#[test]
+fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-usage");
+    // Readiness fields move while the first index settles; compare after it.
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
+    else {
+        panic!("the reviewed fixture selects one scoped index");
+    };
+    let catalog = serde_json::to_string(&selection)?;
+    let binding = service.project.binding.to_string();
+    let control = service.control.to_str().unwrap().to_owned();
+    let ctl = |selection: &[&str], arguments: &[&str]| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: true,
+        };
+        let line = std::iter::once("airkctl")
+            .chain(selection.iter().copied())
+            .chain(arguments.iter().copied())
+            .map(std::ffi::OsString::from)
+            .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let comparable_text = |text: &str| match serde_json::from_str::<Value>(text) {
+        Ok(mut value) => {
+            stable(&mut value);
+            value.to_string()
+        }
+        Err(_) => text.to_owned(),
+    };
+    let reads: Vec<Vec<&str>> = vec![
+        vec!["settings", "roots"],
+        vec!["settings", "vector_status"],
+        vec!["usage", "policy"],
+        vec!["usage", "report"],
+        vec!["usage", "report", "--format", "markdown"],
+        vec!["usage", "report", "--days", "0"],
+    ];
+    for read in &reads {
+        for (name, old, selection) in [
+            (
+                "project",
+                common::command(root.path(), state.path(), "ctl-usage"),
+                vec![
+                    "--service-runtime-dir",
+                    control.as_str(),
+                    "--service-project",
+                    binding.as_str(),
+                ],
+            ),
+            (
+                "catalog",
+                common::scoped_command(root.path(), state.path(), "ctl-usage"),
+                vec![
+                    "--service-runtime-dir",
+                    control.as_str(),
+                    "--catalog-session",
+                    catalog.as_str(),
+                ],
+            ),
+        ] {
+            let mut old = old;
+            let before = old.args(read).output()?;
+            let (code, stdout, stderr) = ctl(&selection, read);
+            assert_eq!(
+                code == 0,
+                before.status.success(),
+                "{name} {read:?}: {stderr}"
+            );
+            assert_eq!(
+                comparable_text(&stdout),
+                comparable_text(&String::from_utf8(before.stdout)?),
+                "{name} {read:?}"
+            );
+            if code != 0 {
+                assert_eq!(
+                    stderr
+                        .lines()
+                        .last()
+                        .unwrap_or_default()
+                        .strip_prefix("airkctl: "),
+                    String::from_utf8(before.stderr)?
+                        .lines()
+                        .last()
+                        .unwrap_or_default()
+                        .strip_prefix("Error: "),
+                    "{name} {read:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
