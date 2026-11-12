@@ -469,3 +469,34 @@ class PromotionContracts(unittest.TestCase):
         self.assertNotIn("scripts/ci-candidates.py download --target", marketplace)
         self.assertNotIn("rehearsal_run_id", marketplace)
         self.assertIn("--output artifacts/release --published-only", marketplace)
+
+    def test_split_release_steps_bind_the_pair_alone_and_promote_one_universal_vsix(self):
+        workflow = (ROOT / ".github/workflows/github-release.yml").read_text(encoding="utf-8")
+        self.assertIn("split: ${{ steps.identity.outputs.split || 'false' }}", workflow)
+        steps = workflow.split("\n      - ")
+        def step(name):
+            matches = [text for text in steps if f"name: {name}" in text]
+            self.assertEqual(len(matches), 1, name)
+            return matches[0]
+        sign = step("Download pinned native and compiled VSIX artifacts")
+        self.assertIn("scripts/github-release.py source-record --directory artifacts/tested-native", sign)
+        linux = step("Promote unchanged Linux CI packages (adjust channel only when requested)")
+        self.assertIn("ci-candidates.py download --pinned --kind vsix --output artifacts/tested-vsix", linux)
+        self.assertIn("promote-vsix.py channel --vsix", linux)
+        package = step("Package signed bytes using CI metadata and compiled extension")
+        self.assertIn("if ($env:AIRK_SPLIT -ne 'true')", package)
+        producer = step("Authenticate and download the producer's tested universal VSIX")
+        self.assertIn("ci-candidates.py download --pinned --kind vsix --output artifacts/candidates", producer)
+        self.assertLess(workflow.index("ci-candidates.py release-inputs --output artifacts/candidates"),
+                        workflow.index("Authenticate and download the producer's tested universal VSIX"))
+        uploads = [text for text in steps if "airk-vsix-universal-" in text and "upload-artifact" in text]
+        self.assertEqual(len(uploads), 1)
+        self.assertIn("if: ${{ needs.preflight.outputs.split == 'true' }}", uploads[0])
+        for name in ("airk-signed-vsix-", "airk-vsix-x86_64-unknown-linux-gnu-"):
+            upload = [text for text in steps if f"name: {name}" in text]
+            self.assertEqual(len(upload), 1, name)
+            self.assertIn("if: ${{ needs.preflight.outputs.split != 'true' }}", upload[0])
+        # The release-assembly TODOs are resolved; scoped ones (signing §9.4, harness row) remain.
+        for path in (".github/workflows/github-release.yml", ".github/workflows/extension-release.yml",
+                     ".github/workflows/release-tag.yml", ".github/workflows/ci.yml"):
+            self.assertNotIn("TODO(split 10.5.2):", (ROOT / path).read_text(encoding="utf-8"), path)

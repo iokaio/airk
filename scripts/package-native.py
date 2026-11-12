@@ -219,7 +219,13 @@ def split_candidate(common, files, executables, runtime, model_smoke):
 def source_packaging_metadata(path, target, signed):
     receipt = bounded_json(path, 4_194_304)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
-    if (not signed or receipt.get("schema") != "airk-native-candidate/2"
+    # A split pair is repackaged only from its own tested airk-native-candidate/3 receipt. The
+    # C7 owner is loaded beside this file (not through ROOT, which tests may relocate).
+    specification = importlib.util.spec_from_file_location("airk_split_receipts", Path(__file__).with_name("split_receipts.py"))
+    receipts = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(receipts)
+    schema = "airk-native-candidate/3" if receipts.split_version(version) else "airk-native-candidate/2"
+    if (not signed or receipt.get("schema") != schema
             or receipt.get("version") != version or receipt.get("target") != target
             or receipt.get("dirty_checkout") is not False or receipt.get("signed_distribution") is not False
             or receipt.get("cargo_lock_sha256") != sha256(ROOT / "Cargo.lock")

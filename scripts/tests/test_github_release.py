@@ -249,20 +249,20 @@ def pair_vsix(directory, native_dir, files, native_receipt, executables):
 
 
 class ServicePairReleaseContracts(unittest.TestCase):
-    def standalone_fixture(self, directory, target):
-        files, runtime, _ = pair_fixture(directory / "native", target, target in release.SIGNED_TARGETS, "1.8.14")
+    def standalone_fixture(self, directory, target, version="1.8.14", make_pair=None):
+        files, runtime, _ = (make_pair or pair_fixture)(directory / "native", target, target in release.SIGNED_TARGETS, version)
         output = directory / "installer"
         output.mkdir()
-        artifact = release.standalone.artifact("1.8.14", target)
+        artifact = release.standalone.artifact(version, target)
         payload = {"runtime/" + name: data for name, data in files.items()}
         if "apple" in target:
             mac = release.module("test_installer_mac", "package-standalone-macos.py")
-            payload.update(mac.installer_files("1.8.14", target, runtime["install_manifest_sha256"],
+            payload.update(mac.installer_files(version, target, runtime["install_manifest_sha256"],
                                                runtime["payload"]["AIRK.app/Contents/MacOS/airk"]))
         elif "linux" in target:
             linux = release.module("test_installer_linux", "package-standalone-linux.py")
             sums = "".join(f"{value}  runtime/{path}\n" for path, value in sorted(runtime["payload"].items())).encode()
-            values = {"VERSION": "1.8.14", "ARCHIVE_NAME": artifact, "DIRECTORY_NAME": artifact.removesuffix(".tar.gz"),
+            values = {"VERSION": version, "ARCHIVE_NAME": artifact, "DIRECTORY_NAME": artifact.removesuffix(".tar.gz"),
                 "PAYLOAD_FILE_COUNT": len(runtime["payload"]), "INSTALL_MANIFEST_SHA256": runtime["install_manifest_sha256"],
                 "PAYLOAD_SUMS_SHA256": release.hashlib.sha256(sums).hexdigest()}
             payload.update({"payload.sha256": sums, **{name: linux.render_template(name + ".in", values).encode()
@@ -278,7 +278,7 @@ class ServicePairReleaseContracts(unittest.TestCase):
                     archive.addfile(info, io.BytesIO(encoded))
         else:
             (output / artifact).write_bytes(b"Fictional OS installer; these tests assert no actual platform trust")
-        receipt = {"schema": "airk-standalone-installer/1", "version": "1.8.14", "target": target,
+        receipt = {"schema": "airk-standalone-installer/1", "version": version, "target": target,
             "commit": COMMIT, "cargo_lock_sha256": runtime["cargo_lock_sha256"],
             "runtime_install_sha256": runtime["install_manifest_sha256"], "runtime_source": runtime["source"],
             "artifact": artifact, "artifact_sha256": release.digest(output / artifact),
@@ -558,6 +558,289 @@ class ServicePairReleaseContracts(unittest.TestCase):
                 save_pair_candidate(directory, files, receipt, executables)
                 with self.assertRaises(ValueError):
                     release.verify_native(directory, target, COMMIT, PAIR_VERSION, True)
+
+
+SPLIT = "1.8.24"
+SPLIT_TREE = "c" * 40
+# Reviewed, checked-in split release catalog (split plan §10.5.4; never derived from the code under test).
+SPLIT_TARGETS = ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin")
+SPLIT_SIGNED = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"}
+SPLIT_PREVIEW_ASSETS = {"airk-1.8.24.vsix", "airk-1.8.24.vsix-manifest.json",
+                        *(f"airk-1.8.24-{target}{suffix}" for target in SPLIT_TARGETS
+                          for suffix in (".zip", ".native-manifest.json"))}
+SPLIT_STABLE_ASSETS = SPLIT_PREVIEW_ASSETS | {
+    *(f"airk-1.8.24-{target}-installer.manifest.json" for target in SPLIT_TARGETS),
+    "airk-1.8.24-x86_64-unknown-linux-gnu-installer.tar.gz", "airk-1.8.24-x86_64-pc-windows-msvc-installer.exe",
+    "airk-1.8.24-aarch64-apple-darwin-installer.dmg", "airk-1.8.24-x86_64-apple-darwin-installer.dmg"}
+SPLIT_ADMIN = {"bundle_sha256": "4" * 64, "inventory_sha256": "3" * 64, "node": "v24.15.0", "npm": "11.6.2",
+               "locks": {"packages/admin/package-lock.json": "9" * 64}}
+universal = release.module("universal_fixtures", "tests/test_package_extension.py")
+promotion = release.module("split_promote_vsix", "promote-vsix.py")
+
+
+def split_files(target, signed=False, version=SPLIT, admin=SPLIT_ADMIN, images=True):
+    """Fictional bytes in the split pair layout: schema-3 pair metadata and schema-2 build receipt."""
+    files, executables = pair_files(target, signed, version)
+    if not images:
+        files.pop(executables[1])
+    operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
+    pair = {"schema": 3, "version": version, "os": operating_system,
+            "arch": "aarch64" if target.startswith("aarch64-") else "x86_64",
+            "airk_sha256": release.hashlib.sha256(files[executables[0]]).hexdigest(),
+            "airkctl_sha256": release.hashlib.sha256(("signed " if signed else "tested ").encode()
+                                                     + executables[1].encode()).hexdigest(),
+            "i1_protocol": 1, "i2_contract": 1, "admin_inventory_sha256": admin["inventory_sha256"]}
+    imports = {"schema": 1, "command": ["inspect", "airk"], "stdout": "fixture imports\n", "external_onnxruntime_imports": False}
+    build = {"schema": 2, "source": {"sha256": "d" * 64, "files": 4}, "profile": "release", "runtime": pair,
+             "rustc": "rustc fixture\nhost: " + target,
+             "static_ort": {"build_receipt_sha256": "6" * 64, "target": target, "static_link_closure_sha256": "7" * 64,
+                            "static_link_supplement_sha256": None, "static_link_recovery_sha256": None,
+                            "verified_inputs_sha256": "8" * 64},
+             "static_imports": imports, "airkctl_static_imports": {**imports, "inference_symbols": False},
+             "embedded_model_smoke": {"schema": 1}, "admin_assets": admin}
+    files["airk-runtime.json"] = json.dumps(pair).encode()
+    files["airk-build.json"] = json.dumps(build).encode()
+    seal_pair_files(files)
+    return files, executables
+
+
+def split_fixture(directory, target, signed=False, version=SPLIT, admin=SPLIT_ADMIN, images=True):
+    files, executables = split_files(target, signed, version, admin, images)
+    original, _ = split_files(target, version=version, admin=admin)
+    signing = None
+    if signed:
+        builder = release.native.runtime_builder()
+        components = {}
+        for name in builder.signing_names("windows" if "windows" in target else "macos", version):
+            component = {"schema": "airk-native-signing/1", "target": target, "commit": COMMIT,
+                         "cargo_lock_sha256": release.digest(release.ROOT / "Cargo.lock"),
+                         "source_sha256": release.hashlib.sha256(original[name]).hexdigest(),
+                         "binary_sha256": release.hashlib.sha256(files[name]).hexdigest() if name in files else "0" * 64,
+                         "identity": "c" * 40}
+            if "windows" in target:
+                component.update(platform="Windows", azure=release.signer.AZURE_SIGNING,
+                    verification={"trust": "authenticode_valid", "timestamp_present": True, "signer_thumbprint": "c" * 40})
+            else:
+                component.update(platform="Darwin", team_id="5PX7D99PXA",
+                    verification={"trust": "apple_developer_id", "team_id": "5PX7D99PXA",
+                                  "timestamp_present": True, "hardened_runtime": True},
+                    notarization={"status": "Accepted", "id": "fictional-app-job", "stapled": True, "scope": "AIRK.app"})
+            components[name] = component
+        signing = {"schema": "airk-service-pair-signing/1", "target": target, "commit": COMMIT,
+                   "cargo_lock_sha256": release.digest(release.ROOT / "Cargo.lock"),
+                   "source_install_sha256": release.hashlib.sha256(original["airk-install.json"]).hexdigest(),
+                   "install_manifest_sha256": release.hashlib.sha256(files["airk-install.json"]).hexdigest(),
+                   "components": components}
+    pair = json.loads(files["airk-runtime.json"])
+    policy = release.native.runtime_builder().load_script("int8-policy")
+    receipt = {"schema": "airk-native-candidate/3", "version": version, "target": target, "commit": COMMIT,
+               "tree": SPLIT_TREE, "dirty_checkout": False, "source": {"sha256": "d" * 64, "files": 4},
+               "cargo_lock_sha256": release.digest(release.ROOT / "Cargo.lock"),
+               "toolchain_file_sha256": release.digest(release.ROOT / "rust-toolchain.toml"),
+               "rustc": "rustc fixture\nhost: " + target, "cargo": "cargo fixture",
+               "archive": f"airk-{version}-{target}.zip", "airk_sha256": pair["airk_sha256"],
+               "airkctl_sha256": pair["airkctl_sha256"],
+               "admin_assets": {"inventory_sha256": admin["inventory_sha256"], "bundle_sha256": admin["bundle_sha256"]},
+               "i1_protocol": 1, "i2_contract": 1, "bundled_model": {"manifest": "fixture-model.json"},
+               "embedded_models": {"schema": 1, "fp32_included": False, "profiles": policy.catalog()["profiles"]},
+               "embedded_model_smoke": {"schema": 1, "profile": "fixture"}, "signed_distribution": signed,
+               "signing": signing, "qualification": "native service pair candidate; installed acceptance and oldest OS not qualified"}
+    save_pair_candidate(directory, files, receipt, executables)
+    return files, receipt, executables
+
+
+def split_producer():
+    names = sorted({f"airk-native-{target}-{COMMIT}-123-1" for target in SPLIT_TARGETS}
+                   | {f"airk-vsix-universal-{COMMIT}-123-1"})
+    return dict(schema="airk-ci-producer/1", repository="iokaio/airk", commit=COMMIT, workflow_id=42,
+                run_id="123", attempt="1", event="push",
+                artifacts={name: dict(id=index + 1, digest="sha256:" + f"{index:x}" * 64) for index, name in enumerate(names)})
+
+
+class SplitReleaseContracts(unittest.TestCase):
+    standalone_fixture = ServicePairReleaseContracts.standalone_fixture
+    write_installer = ServicePairReleaseContracts.write_installer
+
+    def split_inputs(self, root, channel, producer=None):
+        producer = producer or split_producer()
+        inputs = root / "in"
+        for target in SPLIT_TARGETS:
+            original = root / "originals" / target
+            split_fixture(original, target)
+            release.write_source_record(inputs / f"airk-source-{target}-{COMMIT}-456", original, producer, target, COMMIT)
+            signed = target in SPLIT_SIGNED
+            native_dir = inputs / f"{'airk-signed' if signed else 'airk'}-native-{target}-{COMMIT}-456"
+            if signed:
+                split_fixture(native_dir, target, True)
+            else:
+                shutil.copytree(original, native_dir)
+            if channel == "stable":
+                fixture = root / "installers" / target
+                fixture.mkdir(parents=True)
+                installer, _, _ = self.standalone_fixture(fixture, target, SPLIT, split_fixture)
+                shutil.copytree(installer, inputs / f"airk-installer-{target}-{COMMIT}-456")
+        tested = inputs / f"airk-vsix-universal-{COMMIT}-123-1"
+        universal.universal_candidate(tested, commit=COMMIT, tree=SPLIT_TREE)
+        if channel == "preview":
+            promotion.promote_universal(tested, inputs / f"airk-vsix-universal-{COMMIT}-456", COMMIT, SPLIT, "preview")
+        else:
+            shutil.copytree(tested, inputs / f"airk-vsix-universal-{COMMIT}-456")
+        return inputs, producer
+
+    def assemble(self, inputs, output, channel, producer):
+        return release.assemble(inputs, output, COMMIT, SPLIT, "v" + SPLIT, channel, "456", "1", producer,
+                                pinned=True, source_records=True)
+
+    def test_split_pair_verifies_both_images_admin_identity_and_restores_both_for_signing(self):
+        for target in SPLIT_TARGETS:
+            for signed in ((False, True) if target in SPLIT_SIGNED else (False,)):
+                with self.subTest(target=target, signed=signed), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    files, receipt, executables = split_fixture(root / "candidate", target, signed)
+                    self.assertEqual(len(executables), 2)
+                    observed, _ = release.verify_native(root / "candidate", target, COMMIT, SPLIT, signed)
+                    self.assertEqual(observed, receipt)
+                    # A split candidate never qualifies a pre-split version, and vice versa.
+                    with self.assertRaisesRegex(ValueError, "provenance or signing state"):
+                        release.verify_native(root / "candidate", target, COMMIT, "1.8.23", signed)
+                    if signed:
+                        continue
+                    pair_fixture(root / "pre-split", target, False, SPLIT)
+                    with self.assertRaisesRegex(ValueError, "provenance or signing state"):
+                        release.verify_native(root / "pre-split", target, COMMIT, SPLIT, False)
+                    if target not in SPLIT_SIGNED:
+                        continue
+                    for name in ("Cargo.lock", "rust-toolchain.toml"):
+                        (root / name).write_bytes((release.ROOT / name).read_bytes())
+                    with patch.object(release, "ROOT", root):
+                        release.stage_signing(root / "candidate", target, COMMIT, SPLIT)
+                    output = root / "artifacts/runtime" / target
+                    self.assertEqual(release.native.inventory(output), receipt["payload"])
+                    for name in executables:
+                        self.assertEqual((output / name).read_bytes(), files[name])
+
+    def test_split_pair_refuses_missing_image_admin_drift_and_local_or_platform_receipts(self):
+        target = "x86_64-pc-windows-msvc"
+        for mutation, reason in (("missing_airkctl", "split receipt contract: inventory_mismatch"),
+                                 ("admin_receipt", "admin, interface or image identities"),
+                                 ("vsix_target", "provenance or signing state"),
+                                 ("local_signing", "split receipt contract"),
+                                 ("component_signing", "split receipt contract: schema_mismatch")):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "candidate"
+                signed = mutation in ("local_signing", "component_signing")
+                files, receipt, executables = split_fixture(directory, target, signed, images=mutation != "missing_airkctl")
+                if mutation == "admin_receipt":
+                    receipt["admin_assets"] = {**receipt["admin_assets"], "bundle_sha256": "5" * 64}
+                elif mutation == "vsix_target":
+                    receipt["vsix_target"] = "win32-x64"
+                elif mutation == "local_signing":
+                    receipt["signing"] = {**receipt["signing"], "schema": "airk-service-pair-signing-local/1"}
+                elif mutation == "component_signing":
+                    receipt["signing"] = next(iter(receipt["signing"]["components"].values()))
+                write_receipt(directory, receipt)
+                with self.assertRaisesRegex(ValueError, reason):
+                    release.verify_native(directory, target, COMMIT, SPLIT, signed)
+
+    def test_split_release_assembles_pairs_installers_and_one_universal_vsix(self):
+        for channel, expected in (("preview", SPLIT_PREVIEW_ASSETS), ("stable", SPLIT_STABLE_ASSETS)):
+            with self.subTest(channel=channel), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                inputs, producer = self.split_inputs(root, channel)
+                with patch.object(release.producers, "verify_record") as remote:
+                    record = self.assemble(inputs, root / "out", channel, producer)
+                    remote.assert_not_called()
+                self.assertEqual(set(record["assets"]), expected)
+                self.assertEqual(record["producer"], producer)
+                self.assertEqual(release.verify_bundle(root / "out", COMMIT, SPLIT, "v" + SPLIT, "456", "1"), record)
+                notes = (root / "out/release-notes.md").read_text(encoding="utf-8")
+                self.assertIn("`airkctl`", notes)
+                self.assertIn("airk-1.8.24.vsix", notes)
+                for target in SPLIT_TARGETS:
+                    manifest = json.loads((root / "out" / f"airk-{SPLIT}-{target}.native-manifest.json").read_text())
+                    self.assertEqual(manifest["admin_assets"], {"inventory_sha256": "3" * 64, "bundle_sha256": "4" * 64})
+                    self.assertIs(manifest["signed_distribution"], target in SPLIT_SIGNED)
+                vsix = json.loads((root / "out/airk-1.8.24.vsix-manifest.json").read_text())
+                self.assertEqual((vsix["target"], vsix["pre_release"]), ("universal", channel == "preview"))
+                # Marketplace staging copies the one universal VSIX and reads no native bytes.
+                with patch.object(release.producers, "verify_record") as remote, \
+                        patch.object(release, "verify_native", side_effect=AssertionError("native bytes read")):
+                    release.stage_marketplace_bundle(root / "out", root / "market", COMMIT, SPLIT, channel, "456", "1")
+                    remote.assert_called_once_with(producer, COMMIT, version=SPLIT)
+                self.assertEqual(sorted(path.name for path in (root / "market").iterdir()), ["universal"])
+                self.assertEqual((root / "market/universal/airk-1.8.24.vsix").read_bytes(),
+                                 (root / "out/airk-1.8.24.vsix").read_bytes())
+                self.assertEqual(len(release.extension.verify(root / "market", COMMIT, SPLIT, channel)), 1)
+                # The bundle check rejects a pre-split platform VSIX added to the split asset set.
+                extra = root / "out" / f"airk-{SPLIT}-win32-x64.vsix"
+                extra.write_bytes(b"fictional platform package")
+                record["assets"][extra.name] = release.digest(extra)
+                (root / "out/release.json").write_text(json.dumps(record), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "asset set differs"):
+                    release.verify_bundle(root / "out", COMMIT, SPLIT, "v" + SPLIT, "456", "1")
+
+    def test_split_assembly_fails_closed_before_emitting_output(self):
+        windows = "x86_64-pc-windows-msvc"
+        for mutation, reason in (("missing_release_vsix", "Missing or linked candidate"),
+                                 ("vsix_drift", "producer's tested universal VSIX"),
+                                 ("producer_without_universal", "identity"),
+                                 # The admin bundle is sealed in the pair's install manifest.
+                                 ("signed_admin_drift", "did not originate in the tested candidate"),
+                                 ("pre_split_native", "provenance or signing state"),
+                                 ("linux_drift", "differs from the tested producer"),
+                                 ("no_source_records", "authenticated producer and source receipts")):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                inputs, producer = self.split_inputs(root, "preview")
+                released = inputs / f"airk-vsix-universal-{COMMIT}-456"
+                source_records = mutation != "no_source_records"
+                if mutation == "missing_release_vsix":
+                    shutil.rmtree(released)
+                elif mutation == "vsix_drift":
+                    receipt = json.loads((released / "manifest.json").read_text())
+                    receipt["i2_contracts"] = [1, 2]
+                    write_receipt(released, receipt)
+                elif mutation == "producer_without_universal":
+                    producer = copy.deepcopy(producer)
+                    del producer["artifacts"][f"airk-vsix-universal-{COMMIT}-123-1"]
+                elif mutation == "signed_admin_drift":
+                    directory = inputs / f"airk-signed-native-{windows}-{COMMIT}-456"
+                    shutil.rmtree(directory)
+                    split_fixture(directory, windows, True, admin={**SPLIT_ADMIN, "bundle_sha256": "5" * 64})
+                elif mutation == "pre_split_native":
+                    directory = inputs / f"airk-signed-native-{windows}-{COMMIT}-456"
+                    shutil.rmtree(directory)
+                    pair_fixture(directory, windows, True, SPLIT)
+                elif mutation == "linux_drift":
+                    directory = inputs / f"airk-native-x86_64-unknown-linux-gnu-{COMMIT}-456"
+                    receipt = json.loads((directory / "manifest.json").read_text())
+                    receipt["bundled_model"] = {"manifest": "another-model.json"}
+                    write_receipt(directory, receipt)
+                with patch.object(release.producers, "verify_record"), self.assertRaisesRegex(ValueError, reason):
+                    release.assemble(inputs, root / "out", COMMIT, SPLIT, "v" + SPLIT, "preview", "456", "1", producer,
+                                     pinned=True, source_records=source_records)
+                self.assertFalse((root / "out").exists())
+
+    def test_split_source_record_binds_the_tested_pair_alone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            split_fixture(root / "native", "x86_64-pc-windows-msvc")
+            producer = split_producer()
+            release.write_split_source_record(root / "native", root / "source", producer, "x86_64-pc-windows-msvc",
+                                              COMMIT, SPLIT)
+            original = release.source_receipt(root / "source", producer, "x86_64-pc-windows-msvc", COMMIT, SPLIT)
+            self.assertEqual(original["schema"], "airk-native-candidate/3")
+            with self.assertRaisesRegex(ValueError, "Pre-split source records"):
+                release.write_split_source_record(root / "native", root / "other", producer, "x86_64-pc-windows-msvc",
+                                                  COMMIT, "1.8.23")
+            # The pre-split eight-artifact producer catalog cannot authorize a split candidate.
+            legacy = {**producer, "artifacts": {f"airk-{kind}-{target}-{COMMIT}-123-1": dict(id=index * 2 + offset + 1, digest="sha256:" + "1" * 64)
+                                                for index, target in enumerate(SPLIT_TARGETS)
+                                                for offset, kind in enumerate(("native", "vsix"))}}
+            with self.assertRaises(ValueError):
+                release.write_split_source_record(root / "native", root / "legacy", producer=legacy,
+                                                  target="x86_64-pc-windows-msvc", commit=COMMIT, version=SPLIT)
+            self.assertFalse((root / "legacy").exists())
 
 
 class GithubReleaseContracts(unittest.TestCase):

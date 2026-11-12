@@ -30,6 +30,8 @@ signer = module("native_signer", "sign-native.py")
 producers = module("ci_candidates", "ci-candidates.py")
 reads = module("github_read", "github-read.py")
 standalone = module("standalone_contract", "standalone-installer-contract.py")
+# The C7 owner of the split threshold, receipt validators and release catalog names.
+receipts = extension.package.receipts
 SIGNED_TARGETS = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"}
 REPOSITORY = "iokaio/airk"
 WORKFLOW = REPOSITORY + "/.github/workflows/github-release.yml@refs/heads/main"
@@ -88,10 +90,13 @@ def candidate(directory):
 
 def verify_native(directory, target, commit, version, signed, *, tree=None):
     receipt, archive = candidate(directory)
-    paired = tuple(int(part) for part in version.split(".")[:2]) >= (1, 4)
-    schema = "airk-native-candidate/2" if paired else "airk-native-candidate/1"
-    if (receipt.get("schema") != schema
-            or receipt.get("target") != target or receipt.get("vsix_target") != native.TARGETS[target]
+    # Split versions package the airk + airkctl pair with the admin identity (C7, no vsix_target).
+    split = receipts.split_version(version)
+    paired = split or tuple(int(part) for part in version.split(".")[:2]) >= (1, 4)
+    schema = ("airk-native-candidate/3" if split else "airk-native-candidate/2" if paired
+              else "airk-native-candidate/1")
+    if (receipt.get("schema") != schema or receipt.get("target") != target
+            or ("vsix_target" in receipt if split else receipt.get("vsix_target") != native.TARGETS[target])
             or not extension.package.same_source(receipt, commit, tree) or receipt.get("version") != version
             or receipt.get("dirty_checkout") is not False
             or receipt.get("cargo_lock_sha256") != digest(ROOT / "Cargo.lock")
@@ -99,6 +104,11 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
             or receipt.get("signed_distribution") is not signed
             or archive.name != f"airk-{version}-{target}.zip"):
         raise ValueError("Native candidate provenance or signing state differs")
+    if split:
+        try:
+            receipts.validate_native_candidate(receipt)
+        except ValueError as error:
+            raise ValueError(f"Native candidate differs from the split receipt contract: {error}") from error
     os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     builder = native.runtime_builder()
     executables = builder.runtime_executables(os_name, version) if paired else ("airk.exe" if "windows" in target else "airk",)
@@ -151,8 +161,22 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
                 raise ValueError("Native pair installer platform/version differs")
             if (install.get("files") != {name: value for name, value in payload.items() if name != "airk-install.json"}
                     or receipt.get("install_manifest_sha256") != payload["airk-install.json"]
-                    or build.get("schema") != 1 or build.get("runtime") != pair or build.get("source") != receipt.get("source")):
+                    or build.get("schema") != (2 if split else 1) or build.get("runtime") != pair
+                    or build.get("source") != receipt.get("source")):
                 raise ValueError("Native pair build/installer identities differ")
+            if split:
+                try:
+                    receipts.validate_build_receipt(build)
+                except ValueError as error:
+                    raise ValueError(f"Native pair build receipt differs from the split contract: {error}") from error
+                # The embedded admin shell and interface versions are one identity across receipts.
+                admin = build["admin_assets"]
+                if (receipt["admin_assets"] != {"inventory_sha256": admin["inventory_sha256"],
+                                                "bundle_sha256": admin["bundle_sha256"]}
+                        or pair["admin_inventory_sha256"] != admin["inventory_sha256"]
+                        or (receipt["i1_protocol"], receipt["i2_contract"]) != (pair["i1_protocol"], pair["i2_contract"])
+                        or (receipt["airk_sha256"], receipt["airkctl_sha256"]) != (pair["airk_sha256"], pair["airkctl_sha256"])):
+                    raise ValueError("Native pair admin, interface or image identities differ")
     executable_names = tuple(dict.fromkeys((*executables, builder.launcher_name(os_name, version)))) if paired else executable
     native.verify_archive(archive, payload, executable_names)
     signing = receipt.get("signing")
@@ -215,7 +239,7 @@ def stage_signing(directory, target, commit, version, output_root=None, *, tree=
     if target not in SIGNED_TARGETS:
         raise ValueError("Unsupported signing target")
     receipt, archive = verify_native(directory, target, commit, version, False, tree=tree)
-    paired = receipt["schema"] == "airk-native-candidate/2"
+    paired = receipt["schema"] in ("airk-native-candidate/2", "airk-native-candidate/3")
     executable = "airk.exe" if "windows" in target else "airk"
     executables = native.runtime_builder().runtime_executables("windows" if "windows" in target else "macos", version) if paired else (executable,)
     if paired:
@@ -250,14 +274,23 @@ def producer_fingerprint(producer):
 
 
 def write_source_record(output, directory, producer, target, commit):
-    producers.validate_record(producer, commit)
-    name = producers.native_artifact(producer, target)
     raw = (directory / "manifest.json").read_bytes().decode("utf-8")
+    # The verified candidate's own version selects the producer catalog it must belong to.
+    producers.validate_record(producer, commit, **producers.catalog_args(json.loads(raw).get("version")))
+    name = producers.native_artifact(producer, target)
     record = {"schema": "airk-release-source/1", "commit": commit, "target": target,
               "producer_sha256": producer_fingerprint(producer), "artifact": producer["artifacts"][name],
               "manifest_sha256": hashlib.sha256(raw.encode()).hexdigest(), "manifest_json": raw}
     output.mkdir(parents=True, exist_ok=False)
     (output / "source.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def write_split_source_record(directory, output, producer, target, commit, version, *, tree=None):
+    """Split versions: the source record binds the tested native pair alone (no VSIX is per target)."""
+    if not receipts.split_version(version):
+        raise ValueError("Pre-split source records also bind the platform VSIX (promote-vsix.py source)")
+    verify_native(directory, target, commit, version, False, tree=tree)
+    write_source_record(output, directory, producer, target, commit)
 
 
 def source_receipt(directory, producer, target, commit, version, tree=None):
@@ -272,8 +305,16 @@ def source_receipt(directory, producer, target, commit, version, tree=None):
             or not isinstance(raw, str) or hashlib.sha256(raw.encode()).hexdigest() != record.get("manifest_sha256")):
         raise ValueError("Source receipt differs from this release's pinned producer")
     original = json.loads(raw)
-    if (original.get("schema") != "airk-native-candidate/2" or original.get("target") != target
-            or original.get("vsix_target") != native.TARGETS[target] or original.get("version") != version
+    split = receipts.split_version(version)
+    if split:
+        try:
+            receipts.validate_native_candidate(original)
+        except ValueError as error:
+            raise ValueError(f"Original native receipt differs from the split contract: {error}") from error
+    if (original.get("schema") != ("airk-native-candidate/3" if split else "airk-native-candidate/2")
+            or original.get("target") != target
+            or ("vsix_target" in original if split else original.get("vsix_target") != native.TARGETS[target])
+            or original.get("version") != version
             or not extension.package.same_source(original, commit, tree) or original.get("dirty_checkout") is not False
             or original.get("signed_distribution") is not False or original.get("signing") is not None
             or original.get("cargo_lock_sha256") != digest(ROOT / "Cargo.lock")
@@ -389,6 +430,11 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
         raise ValueError("Invalid release identity/channel")
     if source_records and producer is None:
         raise ValueError("Source receipts require a pinned producer")
+    if receipts.split_version(version):
+        if repair is not None:
+            raise ValueError("Release-tooling repairs are pinned to their historical catalog")
+        return assemble_split(directory, output, commit, version, tag, channel, run_id, attempt, producer,
+                              tree=tree, pinned=pinned, source_records=source_records)
     suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
     if producer is not None:
         (producers.validate_record if pinned else producers.verify_record)(producer, commit)
@@ -486,6 +532,101 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
     return record
 
 
+def universal_vsix(directory, producer, commit, version, channel, run_id, *, tree=None):
+    """The release run's channel-promoted universal VSIX, bound to the producer's tested VSIX.
+
+    Only the pre-release property may differ (promote-vsix.py channel); every extension byte,
+    the UI inventory and the supported I2 contracts are the tested ones. No native identity
+    participates: a universal VSIX is never native platform evidence.
+    """
+    tested_dir = directory / producers.universal_artifact(producer)
+    tested, _ = candidate(tested_dir)
+    receipts.validate_vsix(tested)
+    if not extension.package.same_source(tested, commit, tree) or tested["version"] != version:
+        raise ValueError("Producer universal VSIX has different provenance")
+    released_dir = directory / f"{producers.UNIVERSAL}{commit}-{run_id}"
+    released, archive = candidate(released_dir)
+    extension.verify(released_dir, commit, version, channel, receipts=[released_dir / "manifest.json"], tree=tree)
+    keys = ("version", "tree", "extension_id", "display_name", "target", "i2_contracts", "required_capabilities",
+            "ui_inventory_sha256", "locks", "node", "vsce", "archive", "payload")
+    if (any(released[key] != tested[key] for key in keys)
+            or released["pre_release"] == tested["pre_release"] and released["archive_sha256"] != tested["archive_sha256"]):
+        raise ValueError("Release VSIX differs from the producer's tested universal VSIX")
+    return released_dir / "manifest.json", archive
+
+
+def assemble_split(directory, output, commit, version, tag, channel, run_id, attempt, producer, *, tree=None,
+                   pinned=False, source_records=False):
+    """Split catalog: per target the signed (Linux: promoted) pair and installer, one universal VSIX."""
+    if producer is None or not source_records:
+        raise ValueError("Split releases require an authenticated producer and source receipts")
+    (producers.validate_record if pinned else producers.verify_record)(producer, commit, version=version)
+    selected = []
+    for target in native.TARGETS:
+        signed = target in SIGNED_TARGETS
+        prefix = "airk-signed" if signed else "airk"
+        native_dir = directory / f"{prefix}-native-{target}-{commit}-{run_id}"
+        receipt, archive = verify_native(native_dir, target, commit, version, signed, tree=tree)
+        original = source_receipt(directory / f"airk-source-{target}-{commit}-{run_id}",
+                                  producer, target, commit, version, tree)
+        if signed:
+            if receipt["signing"]["source_install_sha256"] != original["payload"]["airk-install.json"]:
+                raise ValueError("Signed pair did not originate in the tested candidate")
+            for name, component in receipt["signing"]["components"].items():
+                if component["source_sha256"] != original["payload"][name]:
+                    raise ValueError("Signed component did not originate in the tested candidate")
+            # Signing transforms executables only: the admin shell and interfaces stay the tested ones.
+            if any(receipt[key] != original[key] for key in ("tree", "source", "admin_assets", "i1_protocol",
+                                                             "i2_contract", "cargo_lock_sha256")):
+                raise ValueError("Signed pair changed the tested source, admin or interface identity")
+        elif receipt != original:
+            raise ValueError("Linux native package differs from the tested producer")
+        selected.extend(((archive, archive.name),
+                         (native_dir / "manifest.json", f"airk-{version}-{target}.native-manifest.json")))
+        if standalone.required(version, channel):
+            installer_dir = directory / f"airk-installer-{target}-{commit}-{run_id}"
+            _, installer = verify_installer(installer_dir, target, commit, version, receipt)
+            selected.extend(((installer, installer.name),
+                             (installer_dir / "installer.json", standalone.manifest(version, target))))
+    manifest, vsix = universal_vsix(directory, producer, commit, version, channel, run_id, tree=tree)
+    selected.extend(((vsix, vsix.name), (manifest, f"airk-{version}.vsix-manifest.json")))
+    if ({name for _, name in selected}
+            != receipts.catalog_names(version, channel, commit, producer, dict(run_id=str(run_id)))[2]):
+        raise ValueError("Assembled assets differ from the split release catalog")
+    output.mkdir(parents=True, exist_ok=False)
+    for source, name in selected:
+        shutil.copyfile(source, output / name)
+    record = {"schema": "airk-github-release/1", "tag": tag, "package_version": version,
+              "commit": commit, "tree": tree, "channel": channel, "run_id": str(run_id), "attempt": str(attempt),
+              "assets": {name: digest(output / name) for _, name in selected}, "producer": producer}
+    (output / "release.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    notes = (f"AIRK {tag} ({channel})\n\n"
+             "**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents "
+             "a shared, local index of your workspace.** AIRK returns small, cited passages and facts, each "
+             "with its file path, content hash and original location, instead of whole files. Your agent "
+             "does the reasoning; you can check exactly what it used.\n\n"
+             f"Package version: {version}. Source commit: {commit}.\n"
+             f"Changes and upgrade guidance: https://github.com/{REPOSITORY}/blob/{commit}/docs/releases/release-{version}.md\n"
+             f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{producer['run_id']}/attempts/{producer['attempt']}\n"
+             f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
+             + ("Installers: signed Windows EXE, signed/notarized macOS DMG and unsigned Linux tar.gz. "
+                if standalone.required(version, channel) else "") +
+             "Each native ZIP holds the AIRK service (`airk`) and its command-line client (`airkctl`) for one "
+             "OS/architecture. The VS Code extension is one universal VSIX "
+             f"(airk-{version}.vsix) with no native code; it connects to a separately installed AIRK service. "
+             "Windows uses Ioka LLC Azure Artifact Signing. macOS executables use Developer ID signing, accepted "
+             "Apple notarization and a stapled app ticket. Linux is unsigned.\n\n"
+             "SHA256SUMS covers packages and build records. The release tag matches the service and "
+             "extension version.\n\n"
+             "Installed-editor and oldest-OS qualification remain separate. Review the release checklist "
+             "and dependency notices. This release does not publish to Visual Studio Marketplace.\n")
+    notes += interface_previews(version, commit)
+    (output / "release-notes.md").write_text(notes, encoding="utf-8")
+    checksums = "".join(f"{digest(path)}  {path.name}\n" for path in sorted(output.iterdir()))
+    (output / "SHA256SUMS").write_text(checksums, encoding="utf-8")
+    return record
+
+
 def github(path, *, missing=False, paginate=False):
     return reads.get(f"repos/{REPOSITORY}/{path}", missing=missing, paginate=paginate)
 
@@ -516,13 +657,20 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
             or record.get("run_id") != str(run_id) or record.get("attempt") != str(attempt)
             or record.get("channel") not in ("preview", "stable")):
         raise ValueError("Release bundle belongs to another run or commit")
-    expected = set()
-    for target, platform in native.TARGETS.items():
-        expected.update((f"airk-{version}-{target}.zip", f"airk-{version}-{platform}.vsix",
-                         f"airk-{version}-{target}.native-manifest.json",
-                         f"airk-{version}-{platform}.vsix-manifest.json"))
-        if standalone.required(version, record["channel"]):
-            expected.update((standalone.artifact(version, target), standalone.manifest(version, target)))
+    if receipts.split_version(version):
+        # Pair packages (and installers) per target and one universal VSIX (C7 release catalog).
+        if not isinstance(record.get("producer"), dict) or record.get("release_tooling_repair") is not None:
+            raise ValueError("Split release bundle lacks its authenticated producer")
+        expected = set(receipts.catalog_names(version, record["channel"], commit, record["producer"],
+                                              dict(run_id=str(run_id)))[2])
+    else:
+        expected = set()
+        for target, platform in native.TARGETS.items():
+            expected.update((f"airk-{version}-{target}.zip", f"airk-{version}-{platform}.vsix",
+                             f"airk-{version}-{target}.native-manifest.json",
+                             f"airk-{version}-{platform}.vsix-manifest.json"))
+            if standalone.required(version, record["channel"]):
+                expected.update((standalone.artifact(version, target), standalone.manifest(version, target)))
     if set(record["assets"]) != expected:
         raise ValueError("Release bundle asset set differs")
     expected.update(("release.json", "release-notes.md", "SHA256SUMS"))
@@ -556,7 +704,8 @@ def stage_marketplace_bundle(directory, output, commit, version, channel, run_id
     producer = record.get("producer")
     if producer is None:
         raise ValueError("Signed release has no authenticated CI producer")
-    producers.verify_record(producer, commit)
+    split = receipts.split_version(version)
+    producers.verify_record(producer, commit, **producers.catalog_args(version))
     if published_only:
         published = github(f"releases/tags/{identity(version)}", missing=True)
         tag = github(f"git/ref/tags/{identity(version)}", missing=True)
@@ -573,6 +722,8 @@ def stage_marketplace_bundle(directory, output, commit, version, channel, run_id
             raise ValueError("Published GitHub assets differ from the selected signed producer")
     if output.exists():
         raise ValueError("Marketplace staging destination must be fresh")
+    if split:
+        return stage_universal(directory, output, record, commit, version, channel, run_id, attempt, tree=tree)
     with tempfile.TemporaryDirectory(prefix="airk-marketplace-verify-") as temporary:
         staging = Path(temporary)
         for target, platform in native.TARGETS.items():
@@ -606,6 +757,28 @@ def stage_marketplace_bundle(directory, output, commit, version, channel, run_id
     return record
 
 
+def stage_universal(directory, output, record, commit, version, channel, run_id, attempt, *, tree=None):
+    """Copy the signed release's one universal VSIX for Marketplace; no native byte participates."""
+    archive_name, manifest_name = f"airk-{version}.vsix", f"airk-{version}.vsix-manifest.json"
+    with tempfile.TemporaryDirectory(prefix="airk-marketplace-verify-") as temporary:
+        staging = Path(temporary) / "vsix"
+        destination = staging / "universal"
+        destination.mkdir(parents=True)
+        shutil.copyfile(directory / archive_name, destination / archive_name)
+        shutil.copyfile(directory / manifest_name, destination / "manifest.json")
+        (destination / "SHA256SUMS").write_text(
+            f"{digest(destination / archive_name)}  {archive_name}\n"
+            f"{digest(destination / 'manifest.json')}  manifest.json\n", encoding="utf-8")
+        extension.verify(staging, commit, version, channel, tree=tree)
+        # Recheck complete source bytes after validation, before emitting anything.
+        verify_bundle(directory, commit, version, identity(version), run_id, attempt)
+        shutil.copytree(staging, output)
+        if (digest(output / "universal" / archive_name) != record["assets"][archive_name]
+                or digest(output / "universal" / "manifest.json") != record["assets"][manifest_name]):
+            raise ValueError("Marketplace staging changed the signed producer's package bytes")
+    return record
+
+
 def publish(directory, resume=False, source_commit=None):
     commit, version, tag = context()
     # Only the hard-pinned repair adapter supplies this after validating both
@@ -621,7 +794,7 @@ def publish(directory, resume=False, source_commit=None):
     if source_commit is None and record.get("producer") is not None:
         # Final live authentication catches a changed producer attempt/artifact
         # after signing. Intermediate jobs use the pinned IDs and verify bytes.
-        producers.verify_record(record["producer"], commit)
+        producers.verify_record(record["producer"], commit, **producers.catalog_args(version))
     assets = sorted(directory.iterdir())
     release_id = release_id_for_tag(tag) if resume else None
     expected = {p.name: "sha256:" + digest(p) for p in assets}
@@ -678,7 +851,7 @@ def create_draft(tag, commit, channel, directory, assets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("preflight", "stage-signing", "assemble", "publish"))
+    parser.add_argument("command", choices=("preflight", "stage-signing", "source-record", "assemble", "publish"))
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--target", choices=native.TARGETS)
@@ -691,11 +864,17 @@ def main():
     commit, version, tag = context()
     if args.command == "preflight":
         require_unused_tag(tag)
+        split = str(receipts.split_version(version)).lower()
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-            output.write(f"version={version}\ntag={tag}\n")
-        print(f"Release {tag}, package version {version}, source {commit}")
+            output.write(f"version={version}\ntag={tag}\nsplit={split}\n")
+        print(f"Release {tag}, package version {version}, source {commit}, split catalog {split}")
     elif args.command == "stage-signing":
         stage_signing(args.directory, args.target, commit, version, tree=extension.package.source_tree(commit))
+    elif args.command == "source-record":
+        if not receipts.split_version(version) or not (args.directory and args.target and args.producer and args.output):
+            parser.error("source-record is the split-version path and requires --directory, --target, --producer and --output")
+        write_split_source_record(args.directory, args.output, json.loads(args.producer.read_text(encoding="utf-8")),
+                                  args.target, commit, version, tree=extension.package.source_tree(commit))
     elif args.command == "assemble":
         assemble(args.directory, args.output, commit, version, tag, args.channel,
                  os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],

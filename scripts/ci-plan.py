@@ -55,8 +55,10 @@ def try_promotion(commit, destination):
         if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != commit:
             raise ValueError("Promotion requires the exact main checkout")
         tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+        module = candidates()
         with tempfile.TemporaryDirectory(prefix="airk-promote-") as temporary:
-            record = candidates().promote(commit, tree, Path(temporary))
+            # The checked-in version selects the producer catalog (one universal VSIX when split).
+            record = module.promote(commit, tree, Path(temporary), **module.catalog_args(module.checkout_version()))
     except Exception as error:  # The fallback is the complete four-target build.
         print(f"::notice title=Complete main build::{type(error).__name__}: {error}")
         return False

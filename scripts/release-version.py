@@ -18,7 +18,9 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "iokaio/airk"
+# Pre-split Marketplace targets; split versions publish one universal (untargeted) VSIX.
 PLATFORMS = {"win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"}
+UNIVERSAL = "universal"
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 TAG = re.compile(rf"v({VERSION})(?:-build\.[1-9][0-9]*)?")
 
@@ -26,6 +28,9 @@ TAG = re.compile(rf"v({VERSION})(?:-build\.[1-9][0-9]*)?")
 _spec = importlib.util.spec_from_file_location("github_read", ROOT / "scripts/github-read.py")
 reads = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(reads)
+_spec = importlib.util.spec_from_file_location("airk_split_receipts", ROOT / "scripts/split_receipts.py")
+receipts = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(receipts)
 
 
 def numeric(version):
@@ -85,14 +90,21 @@ def marketplace(*, timeout=60):
     return extensions[0]["versions"]
 
 
+def expected_platforms(version):
+    """The Marketplace entries a complete publication of `version` has."""
+    return {UNIVERSAL} if receipts.split_version(version) else PLATFORMS
+
+
 def market_platforms(entries, version, channel):
     matches = [e for e in entries if e["version"] == version]
     platforms = set()
     for entry in matches:
         platform = entry.get("targetPlatform")
+        if platform is None and receipts.split_version(version):
+            platform = UNIVERSAL  # An untargeted entry; a platform entry never completes a split version.
         preview = any(p["key"] == "Microsoft.VisualStudio.Code.PreRelease" and p["value"] == "true"
                       for p in entry["properties"])
-        if platform not in PLATFORMS or platform in platforms or preview != (channel == "preview"):
+        if platform not in expected_platforms(version) or platform in platforms or preview != (channel == "preview"):
             raise ValueError("Marketplace version has conflicting platforms or channel")
         platforms.add(platform)
     return platforms
@@ -116,7 +128,7 @@ def plan(version, channel, destination, entries, releases, tags, *, publish, att
         downloads = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(downloads)
         downloads.release_metadata(published[0], require_installers=True)
-    if platforms == PLATFORMS and published:
+    if platforms == expected_platforms(version) and published:
         # A rerun is a retry, never an instruction to prepare another release.
         if attempt > 1:
             return {**result, "action": "skip"}
@@ -127,7 +139,7 @@ def plan(version, channel, destination, entries, releases, tags, *, publish, att
         while f"{major}.{minor}.{patch}" in used:
             patch += 1
         return {**result, "action": "bump", "next_version": f"{major}.{minor}.{patch}"}
-    if (destination == "marketplace" and platforms == PLATFORMS) or (destination == "github" and published):
+    if (destination == "marketplace" and platforms == expected_platforms(version)) or (destination == "github" and published):
         return {**result, "action": "skip"}
     if destination == "github" and (matching or f"v{version}" in tags):
         raise ValueError("Existing draft/tag: rerun only the failed publish job of its original run; never overwrite assets")
@@ -195,16 +207,21 @@ def download_vsix(response, archive, *, deadline=None):
 
 def package_inventory(inventory, version):
     paths = json.loads(inventory.read_text(encoding="utf-8"))
-    expected = {f"airk-{version}-{platform}.vsix": platform for platform in PLATFORMS}
-    if not isinstance(paths, list) or len(paths) != 4 or {Path(p).name for p in paths} != set(expected):
-        raise ValueError("Expected the verified four-platform VSIX inventory")
+    if receipts.split_version(version):
+        expected = {f"airk-{version}.vsix": UNIVERSAL}
+    else:
+        expected = {f"airk-{version}-{platform}.vsix": platform for platform in PLATFORMS}
+    if (not isinstance(paths, list) or len(paths) != len(expected) or not all(isinstance(p, str) for p in paths)
+            or {Path(p).name for p in paths} != set(expected)):
+        raise ValueError("Expected the verified universal VSIX inventory" if receipts.split_version(version)
+                         else "Expected the verified four-platform VSIX inventory")
     return {expected[Path(path).name]: path for path in paths}
 
 
 def verify_marketplace_package(path, platform, version, *, timeout=60, deadline=None):
     receipt = json.loads(Path(path).with_name("manifest.json").read_text(encoding="utf-8"))
     url = (f"https://marketplace.visualstudio.com/_apis/public/gallery/publishers/iokaio/vsextensions/airk/"
-           f"{version}/vspackage?targetPlatform={platform}")
+           f"{version}/vspackage" + ("" if platform == UNIVERSAL else f"?targetPlatform={platform}"))
     with urlopen(url, timeout=timeout) as response, tempfile.TemporaryFile() as archive:
         download_vsix(response, archive, deadline=deadline)
         verify_published_payload(archive, receipt)
@@ -223,8 +240,9 @@ def pending_packages(inventory, version, channel, entries):
 
 
 def verify_marketplace_publication(inventory, version, channel, *, attempts=7, delay=10, timeout=180):
-    """Read back all four served packages; retry only absent catalog/package entries."""
+    """Read back every served package (four platforms, or one universal); retry only absent entries."""
     paths = package_inventory(inventory, version)
+    expected = expected_platforms(version)
     deadline = time.monotonic() + timeout
     verified = set()
     for attempt in range(attempts):
@@ -243,14 +261,14 @@ def verify_marketplace_publication(inventory, version, channel, *, attempts=7, d
                     raise
             else:
                 verified.add(platform)
-        if verified == PLATFORMS:
-            print(f"Verified Marketplace served payloads for all four platforms: {version} ({channel})")
+        if verified == expected:
+            print(f"Verified Marketplace served payloads for {', '.join(sorted(expected)) if len(expected) == 1 else 'all four platforms'}: {version} ({channel})")
             return
         if attempt + 1 < attempts:
-            print("Waiting for Marketplace propagation: " + ", ".join(sorted(PLATFORMS - verified)))
+            print("Waiting for Marketplace propagation: " + ", ".join(sorted(expected - verified)))
             time.sleep(min(delay, remaining()))
     raise RuntimeError("Marketplace packages did not propagate within the verification bound: "
-                       + ", ".join(sorted(PLATFORMS - verified)))
+                       + ", ".join(sorted(expected - verified)))
 
 
 def prepare_pr(decision, commit):
@@ -332,7 +350,7 @@ def main():
             raise ValueError("Pending-package verification requires Marketplace publication and inventory/output paths")
         paths = pending_packages(args.inventory, version, args.channel, marketplace())
         args.output.write_text(json.dumps(paths, indent=2) + "\n", encoding="utf-8")
-        print(f"{len(paths)} platform packages remain; existing packages verified without republishing")
+        print(f"{len(paths)} packages remain; existing packages verified without republishing")
         return
     entries = marketplace() if args.publish else []
     releases = [r for page in api("releases?per_page=100", paginate=True) for r in page] if args.publish else []

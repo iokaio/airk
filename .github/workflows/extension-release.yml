@@ -147,10 +147,9 @@ jobs:
         with:
           name: airk-signed-producer-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts
-      # TODO(split 10.5.2): ci-candidates.py signed-release-download (github-release.py
-      # stage_marketplace_bundle) copies four per-target VSIXs bound to signed native receipts;
-      # for split versions it must copy the one airk-<version>.vsix from the signed release and
-      # check it against the release catalog, without any native-byte dependency.
+      # Split versions: stage_marketplace_bundle rechecks the complete signed release catalog,
+      # then copies its one airk-<version>.vsix (artifacts/release/universal/) with no native-byte
+      # dependency. Pre-split versions copy four platform VSIXs bound to signed native receipts.
       - name: Revalidate and copy the exact signed producer packages without rebuilding
         env:
           GH_TOKEN: ${{ github.token }}
@@ -197,7 +196,7 @@ jobs:
           AIRK_VERSION: ${{ inputs.version }}
           AIRK_CHANNEL: ${{ inputs.channel }}
         run: python scripts/ci-candidates.py signed-release-download --record artifacts/signed-producer.json --version "$AIRK_VERSION" --channel "$AIRK_CHANNEL" --output artifacts/release --published-only
-      # Split versions: verify-extension-release.py expects exactly one universal receipt.
+      # Split versions: verify-extension-release.py requires exactly one universal receipt.
       - name: Verify complete platform set, payloads, version and source provenance
         env:
           AIRK_COMMIT: ${{ github.sha }}
@@ -217,10 +216,9 @@ jobs:
         run: |
           python scripts/release-version.py pending --destination marketplace --channel "$AIRK_CHANNEL" --publish --inventory artifacts/verified-vsix.json --output artifacts/unpublished-vsix.json
           node packages/vscode/scripts/publish.cjs artifacts/unpublished-vsix.json "$AIRK_CHANNEL"
-      # TODO(split 10.5.2): release-version.py pending/verify-published and
-      # packages/vscode/scripts/publish.cjs assume one Marketplace target per platform VSIX;
-      # a universal VSIX publishes once with no --target.
-      - name: Verify all four Marketplace downloads match the authenticated signed packages
+      # Split versions publish and read back one universal (untargeted) Marketplace package;
+      # pre-split versions read back all four platform packages.
+      - name: Verify every Marketplace download matches the authenticated signed packages
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
           AIRK_VERSION: ${{ inputs.version }}

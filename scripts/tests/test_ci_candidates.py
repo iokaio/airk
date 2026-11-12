@@ -539,5 +539,228 @@ class PromotionTests(unittest.TestCase):
             candidates.verify_record({**record, "schema": "airk-ci-producer/3"}, COMMIT)
 
 
+SPLIT = "1.8.24"
+LINUX, WINDOWS, ARM, INTEL = ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc",
+                              "aarch64-apple-darwin", "x86_64-apple-darwin")
+# Reviewed, checked-in split catalog names (split plan §10.5.4, docs/split/inventory/build.md A.7):
+# four native pair candidates and one universal VSIX per producer run; nine same-run release inputs.
+SPLIT_PRODUCER = {f"airk-native-{LINUX}-{COMMIT}-123-1", f"airk-native-{WINDOWS}-{COMMIT}-123-1",
+                  f"airk-native-{ARM}-{COMMIT}-123-1", f"airk-native-{INTEL}-{COMMIT}-123-1",
+                  f"airk-vsix-universal-{COMMIT}-123-1"}
+SPLIT_PROMOTED = {f"airk-native-{LINUX}-{MERGE}-777-1", f"airk-native-{WINDOWS}-{MERGE}-777-1",
+                  f"airk-native-{ARM}-{MERGE}-777-1", f"airk-vsix-universal-{MERGE}-777-1",
+                  f"airk-native-{INTEL}-{COMMIT}-123-1"}
+SPLIT_RELEASE_INPUTS = {f"airk-vsix-universal-{COMMIT}-456",
+                        f"airk-native-{LINUX}-{COMMIT}-456", f"airk-source-{LINUX}-{COMMIT}-456",
+                        f"airk-signed-native-{WINDOWS}-{COMMIT}-456", f"airk-source-{WINDOWS}-{COMMIT}-456",
+                        f"airk-signed-native-{ARM}-{COMMIT}-456", f"airk-source-{ARM}-{COMMIT}-456",
+                        f"airk-signed-native-{INTEL}-{COMMIT}-456", f"airk-source-{INTEL}-{COMMIT}-456"}
+SPLIT_STABLE_ASSETS = {"airk-1.8.24.vsix", "airk-1.8.24.vsix-manifest.json",
+                       *(f"airk-1.8.24-{target}{suffix}" for target in (LINUX, WINDOWS, ARM, INTEL)
+                         for suffix in (".zip", ".native-manifest.json", "-installer.manifest.json")),
+                       f"airk-1.8.24-{LINUX}-installer.tar.gz", f"airk-1.8.24-{WINDOWS}-installer.exe",
+                       f"airk-1.8.24-{ARM}-installer.dmg", f"airk-1.8.24-{INTEL}-installer.dmg"}
+
+
+def split_artifacts(names, run_id=123, head_sha=COMMIT, head_branch="main", first=1):
+    return [dict(id=first + index, name=name, expired=False, digest="sha256:" + f"{index:x}" * 64,
+                 workflow_run=dict(id=run_id, head_sha=head_sha, head_branch=head_branch))
+            for index, name in enumerate(sorted(names))]
+
+
+def split_ci_api(artifacts):
+    names = ["Required checks", "container", "quick", "plan", "extension"]
+    names += [f"Native / {target}" for target in (LINUX, WINDOWS, ARM, INTEL)]
+    names += [f"Contracts / {host}" for host in ("ubuntu-24.04", "windows-2025", "macos-15", "macos-15-intel")]
+    def respond(path, paginate=False):
+        if path == "actions/runs/123":
+            return run_fixture()
+        if path == "actions/workflows/ci.yml":
+            return dict(id=42)
+        if path == "actions/runs/123/attempts/1/jobs?per_page=100":
+            return [dict(jobs=[dict(name=name, conclusion="success") for name in names])]
+        if path == "actions/runs/123/artifacts?per_page=100":
+            return [dict(artifacts=artifacts)]
+        raise AssertionError(f"Unexpected API call: {path}")
+    return respond
+
+
+def split_receipt_download(tree=TREE, vsix_tree=TREE):
+    def write(artifact, destination):
+        destination.mkdir(parents=True)
+        name = next(a["name"] for a in split_artifacts(SPLIT_PROMOTED - {f"airk-native-{INTEL}-{COMMIT}-123-1"},
+                                                       777, HEAD, "feature", 100) if a["id"] == artifact["id"])
+        if "universal" in name:
+            receipt = dict(commit=MERGE, tree=vsix_tree, target="universal", version=SPLIT)
+        else:
+            target = next(t for t in (LINUX, WINDOWS, ARM) if f"-{t}-" in name)
+            receipt = dict(commit=MERGE, tree=tree, dirty_checkout=False, target=target, version=SPLIT)
+        (destination / "manifest.json").write_text(json.dumps(receipt), encoding="utf-8")
+    return write
+
+
+class SplitCatalogTests(unittest.TestCase):
+    def test_split_producer_is_four_native_pairs_and_one_universal_vsix(self):
+        # A retained per-target VSIX name is not part of the split catalog and is ignored.
+        artifacts = split_artifacts(SPLIT_PRODUCER | {f"airk-vsix-{LINUX}-{COMMIT}-123-1"})
+        with patch.object(candidates, "api", side_effect=split_ci_api(artifacts)):
+            record = candidates.attest(123, COMMIT, version=SPLIT)
+            with self.assertRaisesRegex(ValueError, "complete artifact platform set"):
+                candidates.attest(123, COMMIT)  # The pre-split catalog needs four platform VSIXs.
+        self.assertEqual(set(record["artifacts"]), SPLIT_PRODUCER)
+        self.assertEqual(candidates.universal_artifact(record), f"airk-vsix-universal-{COMMIT}-123-1")
+        candidates.validate_record(record, COMMIT, version=SPLIT)
+        with self.assertRaisesRegex(ValueError, "exactly 8 unique|digest|identity"):
+            candidates.validate_record(record, COMMIT)
+        with patch.object(candidates, "attest", return_value=record) as attest:
+            candidates.verify_record(record, COMMIT, version=SPLIT)
+            attest.assert_called_once_with("123", COMMIT, allow_manual=False, version=SPLIT)
+        self.assertEqual(candidates.catalog_args("1.8.23"), {})
+        self.assertEqual(candidates.catalog_args(SPLIT), {"version": SPLIT})
+
+    def test_universal_vsix_never_replaces_native_platform_evidence(self):
+        for mutation in ("missing_native", "missing_universal", "universal_attempt", "duplicate_universal",
+                         "expired_universal", "universal_origin"):
+            names = set(SPLIT_PRODUCER)
+            if mutation == "missing_native":
+                names.discard(f"airk-native-{WINDOWS}-{COMMIT}-123-1")
+            elif mutation == "missing_universal":
+                names = (names - {f"airk-vsix-universal-{COMMIT}-123-1"}) | {f"airk-vsix-{t}-{COMMIT}-123-1" for t in (LINUX, WINDOWS, ARM, INTEL)}
+            elif mutation == "universal_attempt":
+                names = (names - {f"airk-vsix-universal-{COMMIT}-123-1"}) | {f"airk-vsix-universal-{COMMIT}-123-2"}
+            artifacts = split_artifacts(names)
+            universal = [a for a in artifacts if a["name"] == f"airk-vsix-universal-{COMMIT}-123-1"]
+            if mutation == "duplicate_universal":
+                artifacts.append({**universal[0], "id": 99})
+            elif mutation == "expired_universal":
+                universal[0]["expired"] = True
+            elif mutation == "universal_origin":
+                universal[0]["workflow_run"] = dict(id=123, head_sha="b" * 40, head_branch="main")
+            with self.subTest(mutation=mutation), patch.object(candidates, "api", side_effect=split_ci_api(artifacts)), \
+                    self.assertRaises(ValueError):
+                candidates.attest(123, COMMIT, version=SPLIT)
+        with patch.object(candidates, "api", side_effect=split_ci_api(split_artifacts(SPLIT_PRODUCER))):
+            record = candidates.attest(123, COMMIT, version=SPLIT)
+        for change in ("drop_native", "extra_universal", "shared_id"):
+            bad = copy.deepcopy(record)
+            if change == "drop_native":
+                del bad["artifacts"][f"airk-native-{ARM}-{COMMIT}-123-1"]
+            elif change == "extra_universal":
+                bad["artifacts"][f"airk-vsix-universal-{COMMIT}-123-2"] = dict(id=77, digest="sha256:" + "7" * 64)
+            else:
+                bad["artifacts"][f"airk-vsix-universal-{COMMIT}-123-1"]["id"] = bad["artifacts"][f"airk-native-{ARM}-{COMMIT}-123-1"]["id"]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                candidates.validate_record(bad, COMMIT, version=SPLIT)
+        with self.assertRaisesRegex(ValueError, "exactly one universal"):
+            candidates.universal_artifact({"artifacts": {f"airk-native-{LINUX}-{COMMIT}-123-1": {}}})
+
+    def test_split_promotion_reuses_the_pr_universal_vsix_with_the_identical_tree(self):
+        pr_artifacts = split_artifacts(SPLIT_PROMOTED - {f"airk-native-{INTEL}-{COMMIT}-123-1"}, 777, HEAD, "feature", 100)
+        main_artifacts = [a for a in main_artifacts_fixture() if "-vsix-" not in a["name"]]
+        api = promotion_api(pr_artifacts=pr_artifacts, main_artifacts=main_artifacts)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(candidates, "api", side_effect=api), \
+                patch.object(candidates, "download", side_effect=split_receipt_download()):
+            promotion = candidates.promote(COMMIT, TREE, Path(temporary), version=SPLIT)
+        self.assertEqual(set(promotion["producer"]["artifacts"]), SPLIT_PROMOTED - {f"airk-native-{INTEL}-{COMMIT}-123-1"})
+        def fetch(artifact, destination):
+            destination.mkdir(parents=True)
+            (destination / "promotion.json").write_text(json.dumps(promotion), encoding="utf-8")
+        with patch.object(candidates, "api", side_effect=api), patch.object(candidates, "download", side_effect=fetch):
+            record = candidates.attest(123, COMMIT, version=SPLIT)
+        self.assertEqual(record["schema"], "airk-ci-producer/2")
+        self.assertEqual(set(record["artifacts"]), SPLIT_PROMOTED)
+        self.assertEqual(candidates.universal_artifact(record), f"airk-vsix-universal-{MERGE}-777-1")
+        candidates.validate_record(record, COMMIT, version=SPLIT)
+        # A universal VSIX from another tree, or a PR run without one, leaves main to build everything.
+        for name, download, artifacts in (
+                ("vsix tree", split_receipt_download(vsix_tree="b" * 40), pr_artifacts),
+                ("native tree", split_receipt_download(tree="b" * 40), pr_artifacts),
+                ("no universal", split_receipt_download(), [a for a in pr_artifacts if "universal" not in a["name"]])):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(candidates, "api", side_effect=promotion_api(pr_artifacts=artifacts)), \
+                    patch.object(candidates, "download", side_effect=download), \
+                    self.assertRaisesRegex(ValueError, "No eligible PR candidate"):
+                candidates.promote(COMMIT, TREE, Path(temporary), version=SPLIT)
+
+    def test_split_release_inputs_are_one_universal_vsix_and_two_per_target(self):
+        self.assertEqual(candidates.release_input_names(COMMIT, 456, version=SPLIT), SPLIT_RELEASE_INPUTS)
+        self.assertEqual(candidates.release_input_names(COMMIT, 456, version=SPLIT), candidates.contract.catalog_names(
+            SPLIT, "stable", COMMIT, dict(run_id="123", attempt="1"), dict(run_id="456"))[1])
+        self.assertEqual(len(candidates.release_input_names(COMMIT, 456)), 12)
+        run = {**run_fixture(), "id": 456, "event": "workflow_dispatch", "path": ".github/workflows/github-release.yml",
+               "status": "in_progress"}
+        for case in (None, "per_target_vsix", "missing_source"):
+            names = set(SPLIT_RELEASE_INPUTS)
+            if case == "per_target_vsix":
+                names = (names - {f"airk-vsix-universal-{COMMIT}-456"}) | {f"airk-vsix-{LINUX}-{COMMIT}-456"}
+            elif case == "missing_source":
+                names.discard(f"airk-source-{ARM}-{COMMIT}-456")
+            artifacts = split_artifacts(names, run_id=456)
+            def api(path, paginate=False):
+                if path == "actions/runs/456":
+                    return run
+                if path == "actions/runs/456/artifacts?per_page=100":
+                    return [dict(artifacts=artifacts)]
+                raise AssertionError(path)
+            def download(artifact, destination):
+                destination.mkdir(parents=True)
+                (destination / "source.json").write_text("{}", encoding="utf-8")
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(candidates, "api", side_effect=api), \
+                    patch.object(candidates, "download", side_effect=download) as fetched:
+                output = Path(temporary) / "inputs"
+                if case:
+                    with self.assertRaisesRegex(ValueError, "exactly 9 unique"):
+                        candidates.release_inputs(COMMIT, 456, output, version=SPLIT)
+                    fetched.assert_not_called()
+                else:
+                    candidates.release_inputs(COMMIT, 456, output, version=SPLIT)
+                    self.assertEqual({path.name for path in output.iterdir()}, SPLIT_RELEASE_INPUTS)
+
+    def test_split_downloads_select_the_universal_vsix_once_and_never_per_target(self):
+        record = dict(artifacts={name: dict(id=index + 1, digest="sha256:" + "1" * 64)
+                                 for index, name in enumerate(sorted(SPLIT_PRODUCER))})
+        self.assertEqual(candidates.download_names(record, "vsix", version=SPLIT), [f"airk-vsix-universal-{COMMIT}-123-1"])
+        self.assertEqual(candidates.download_names(record, "native", WINDOWS, version=SPLIT),
+                         [f"airk-native-{WINDOWS}-{COMMIT}-123-1"])
+        with self.assertRaisesRegex(ValueError, "without --target"):
+            candidates.download_names(record, "vsix", WINDOWS, version=SPLIT)
+        with self.assertRaisesRegex(ValueError, "no single matching"):
+            candidates.download_names(record, "vsix", WINDOWS)  # Pre-split selection finds no platform VSIX.
+
+    def test_split_tag_verifies_exactly_the_split_release_catalog(self):
+        producer = dict(schema="airk-ci-producer/1", commit=COMMIT, run_id="123", attempt="1")
+        def check(assets, record_changes=None):
+            record = {"schema": "airk-github-release/1", "tag": "v1.8.24", "package_version": SPLIT,
+                      "commit": COMMIT, "channel": "stable", "run_id": "456", "attempt": "1",
+                      "producer": producer, "assets": {name: "0" * 64 for name in assets}, **(record_changes or {})}
+            data = json.dumps(record).encode()
+            published = [dict(id=index + 1, name=name, size=1, digest="sha256:" + "0" * 64) for index, name in enumerate(assets)]
+            published.append(dict(id=900, name="release.json", size=len(data), digest="sha256:" + hashlib.sha256(data).hexdigest()))
+            published += [dict(id=901, name="release-notes.md", size=1, digest="sha256:" + "1" * 64),
+                          dict(id=902, name="SHA256SUMS", size=1, digest="sha256:" + "2" * 64)]
+            def api(path, paginate=False):
+                if path == "releases/tags/v1.8.24":
+                    return dict(draft=False, tag_name="v1.8.24", assets=published)
+                if path == "git/ref/tags/v1.8.24":
+                    return dict(object=dict(sha=COMMIT))
+                raise AssertionError(path)
+            with patch.object(candidates, "api", side_effect=api), \
+                    patch.object(candidates.subprocess, "check_output", return_value=data), \
+                    patch.object(candidates, "verify_record") as verified:
+                candidates.verify_tag("v1.8.24", COMMIT)
+                verified.assert_called_once_with(producer, COMMIT, version=SPLIT)
+        check(SPLIT_STABLE_ASSETS)
+        pre_split = {f"airk-1.8.24-{target}.{suffix}" for target in (LINUX, WINDOWS, ARM, INTEL)
+                     for suffix in ("zip", "native-manifest.json")}
+        pre_split |= {f"airk-1.8.24-{platform}.vsix{suffix}" for platform in ("linux-x64", "win32-x64", "darwin-arm64", "darwin-x64")
+                      for suffix in ("", "-manifest.json")}
+        for name, assets, changes in (("platform VSIX catalog", pre_split, None),
+                                      ("missing installer", SPLIT_STABLE_ASSETS - {f"airk-1.8.24-{ARM}-installer.dmg"}, None),
+                                      ("other version", SPLIT_STABLE_ASSETS, {"package_version": "1.8.25"})):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "split release catalog|another package version"):
+                check(assets, changes)
+
+
 if __name__ == "__main__":
     unittest.main()

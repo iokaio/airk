@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Authenticate and download exact main CI artifacts before release promotion."""
+"""Authenticate and download exact main CI artifacts before release promotion.
+
+Split versions (split_receipts.SPLIT_VERSION and later) produce, per target, one
+native service-pair candidate and, once per producer run, one universal UI-only
+VSIX (`airk-vsix-universal-<source>-<run>-<attempt>`); earlier versions keep the
+per-target native-plus-VSIX catalog. `version=None` selects that historical
+catalog, so pre-split callers (the pinned 1.4.4 repair) keep their exact
+behavior; the CLI passes the checked-in version. A universal VSIX never stands
+in for a target's native evidence.
+"""
 import argparse
 from datetime import datetime
 import hashlib
@@ -12,6 +21,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import tomllib
 import zipfile
 
 REPOSITORY = "iokaio/airk"
@@ -22,9 +32,39 @@ MAIN_TARGETS = TARGETS[3:]
 CONTRACT_HOSTS = ("ubuntu-24.04", "windows-2025", "macos-15", "macos-15-intel")
 
 
-_spec = importlib.util.spec_from_file_location("github_read", Path(__file__).with_name("github-read.py"))
-reads = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(reads)
+ROOT = Path(__file__).resolve().parent.parent
+UNIVERSAL = "airk-vsix-universal-"
+
+
+def _load(name, filename):
+    specification = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    result = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(result)
+    return result
+
+
+reads = _load("github_read", "github-read.py")
+# The C7 owner of the split threshold and the release catalog names.
+contract = _load("airk_split_receipts", "split_receipts.py")
+
+
+def checkout_version():
+    """The checked-in package version; every candidate command runs on the exact commit's checkout."""
+    return tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+
+
+def split(version):
+    return version is not None and contract.split_version(version)
+
+
+def catalog_args(version):
+    """Keyword arguments selecting `version`'s producer catalog; pre-split call shapes stay unchanged."""
+    return dict(version=version) if split(version) else {}
+
+
+def producer_kinds(version):
+    """(per-target artifact kinds, one universal VSIX per producer run) of a version's catalog."""
+    return (("native",), True) if split(version) else (("native", "vsix"), False)
 
 
 def api(path, paginate=False):
@@ -50,10 +90,12 @@ def verify_run(run, commit, workflow, events, success=True):
 
 
 def select_artifacts(artifacts, commit, run_id, attempt, kinds=("native", "vsix"), targets=TARGETS,
-                     origin_sha=None, origin_branch="main"):
+                     origin_sha=None, origin_branch="main", universal=False):
     suffix = f"{commit}-{run_id}" + (f"-{attempt}" if attempt is not None else "")
     expected = {f"airk-{kind}-{target}-{suffix}"
                 for target in targets for kind in kinds}
+    if universal:
+        expected.add(UNIVERSAL + suffix)
     selected = {}
     for artifact in artifacts:
         name = artifact.get("name")
@@ -94,7 +136,7 @@ def promotion_name(commit, run_id, attempt):
     return f"airk-promotion-{commit}-{run_id}-{attempt}"
 
 
-def attest_pull_request(run_id, head_sha, head_ref):
+def attest_pull_request(run_id, head_sha, head_ref, *, version=None):
     """Authenticate a same-repository PR CI run that produced and gated the PR targets."""
     run = api(f"actions/runs/{positive(run_id)}")
     if (run.get("head_sha") != head_sha or run.get("head_branch") != head_ref or run.get("event") != "pull_request"
@@ -116,13 +158,14 @@ def attest_pull_request(run_id, head_sha, head_ref):
     if len(sources) != 1:
         raise ValueError("PR producer lacks one unambiguous merge-ref candidate")
     source = sources.pop()
-    selected = select_artifacts(artifacts, source, run_id, attempt, targets=PR_TARGETS,
-                                origin_sha=head_sha, origin_branch=head_ref)
+    kinds, universal = producer_kinds(version)
+    selected = select_artifacts(artifacts, source, run_id, attempt, kinds=kinds, targets=PR_TARGETS,
+                                origin_sha=head_sha, origin_branch=head_ref, universal=universal)
     return dict(run_id=str(run_id), attempt=str(attempt), workflow_id=workflow_id, event="pull_request",
                 head_sha=head_sha, head_ref=head_ref, source_commit=source, artifacts=selected)
 
 
-def promote(commit, tree, scratch):
+def promote(commit, tree, scratch, *, version=None):
     """Select the merged PR's tested candidate; a mismatch leaves main to build everything."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"[0-9a-f]{40}", tree or ""):
         raise ValueError("Expected full main commit and tree")
@@ -138,15 +181,24 @@ def promote(commit, tree, scratch):
     pages = api(f"actions/workflows/ci.yml/runs?head_sha={head_sha}&event=pull_request&status=success&per_page=100", True)
     for run in sorted((r for page in pages for r in page["workflow_runs"]), key=lambda r: r["id"], reverse=True):
         try:
-            producer = attest_pull_request(run["id"], head_sha, head_ref)
+            producer = attest_pull_request(run["id"], head_sha, head_ref, **catalog_args(version))
             for target in PR_TARGETS:
                 name = f"airk-native-{target}-{producer['source_commit']}-{producer['run_id']}-{producer['attempt']}"
                 destination = scratch / name
                 download(producer["artifacts"][name], destination)
                 receipt = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
                 if (receipt.get("commit") != producer["source_commit"] or receipt.get("tree") != tree
-                        or receipt.get("dirty_checkout") is not False or receipt.get("target") != target):
+                        or receipt.get("dirty_checkout") is not False or receipt.get("target") != target
+                        or split(version) and receipt.get("version") != version):
                     raise ValueError("PR candidate source tree differs from main")
+            if split(version):
+                # The universal VSIX is promoted with the PR targets; its receipt binds the same tree.
+                name = universal_artifact(producer)
+                download(producer["artifacts"][name], scratch / name)
+                receipt = json.loads((scratch / name / "manifest.json").read_text(encoding="utf-8"))
+                if (receipt.get("commit") != producer["source_commit"] or receipt.get("tree") != tree
+                        or receipt.get("target") != "universal" or receipt.get("version") != version):
+                    raise ValueError("PR universal VSIX source tree differs from main")
             return dict(schema="airk-ci-promotion/1", repository=REPOSITORY, commit=commit, tree=tree,
                         pull_request=positive(pull["number"]), producer=producer)
         except ValueError as error:
@@ -154,7 +206,7 @@ def promote(commit, tree, scratch):
     raise ValueError("No eligible PR candidate; main builds every target")
 
 
-def attest(run_id, commit, allow_manual=False):
+def attest(run_id, commit, allow_manual=False, *, version=None):
     run = api(f"actions/runs/{positive(run_id)}")
     verify_run(run, commit, "ci.yml", ("push", "workflow_dispatch") if allow_manual else ("push",))
     workflow_id = ci_workflow(run)
@@ -170,7 +222,9 @@ def attest(run_id, commit, allow_manual=False):
         names.update(f"Native / {target}" for target in TARGETS)
         names.update(f"Contracts / {os_name}" for os_name in CONTRACT_HOSTS)
         require_jobs(run_id, attempt, names)
-        return dict(schema="airk-ci-producer/1", **base, artifacts=select_artifacts(artifacts, commit, run_id, attempt))
+        kinds, universal = producer_kinds(version)
+        return dict(schema="airk-ci-producer/1", **base, artifacts=select_artifacts(
+            artifacts, commit, run_id, attempt, kinds=kinds, universal=universal))
     if run["event"] != "push" or len(promotions) != 1 or promotions[0].get("expired") is not False:
         raise ValueError("Ambiguous, expired or manual promotion record")
     require_jobs(run_id, attempt, {"Required checks", "quick", "plan", *(f"Native / {t}" for t in MAIN_TARGETS)})
@@ -184,10 +238,14 @@ def attest(run_id, commit, allow_manual=False):
             or promotion.get("commit") != commit or not re.fullmatch(r"[0-9a-f]{40}", str(promotion.get("tree", "")))):
         raise ValueError("Promotion record belongs to another commit/schema")
     # Recheck the PR producer's run, jobs and artifact identities now, not only at merge.
-    if attest_pull_request(producer.get("run_id"), producer.get("head_sha"), producer.get("head_ref")) != producer:
+    if attest_pull_request(producer.get("run_id"), producer.get("head_sha"), producer.get("head_ref"),
+                           **catalog_args(version)) != producer:
         raise ValueError("Promoted PR producer changed after promotion")
+    # A promoted split main run builds only the remaining native target; the PR run's
+    # universal VSIX is the release's tested extension.
     selected = {**producer["artifacts"],
-                **select_artifacts(artifacts, commit, run_id, attempt, targets=MAIN_TARGETS)}
+                **select_artifacts(artifacts, commit, run_id, attempt, kinds=producer_kinds(version)[0],
+                                   targets=MAIN_TARGETS)}
     return dict(schema="airk-ci-producer/2", **base, tree=promotion["tree"],
                 promotion=dict(pull_request=promotion["pull_request"],
                                record=dict(id=positive(record["id"]), digest=record["digest"]),
@@ -203,22 +261,30 @@ def native_artifact(record, target):
     return names[0]
 
 
-def resolve(commit, run_id=None):
+def universal_artifact(record):
+    """The producer record names exactly one authenticated universal VSIX (split versions)."""
+    names = [name for name in record["artifacts"] if name.startswith(UNIVERSAL)]
+    if len(names) != 1:
+        raise ValueError("Producer record lacks exactly one universal VSIX artifact")
+    return names[0]
+
+
+def resolve(commit, run_id=None, *, version=None):
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Expected full source commit")
     if run_id:
-        return attest(positive(run_id), commit, allow_manual=True)
+        return attest(positive(run_id), commit, allow_manual=True, **catalog_args(version))
     pages = api(f"actions/workflows/ci.yml/runs?head_sha={commit}&event=push&status=success&per_page=100", True)
     runs = sorted((r for page in pages for r in page["workflow_runs"]), key=lambda r: r["id"], reverse=True)
     for run in runs:
         try:
-            return attest(run["id"], commit)
+            return attest(run["id"], commit, **catalog_args(version))
         except ValueError as error:
             print(f"Candidate {run['id']} unavailable: {error}")
     raise ValueError("No eligible main CI candidate. Run CI manually on this exact main commit, then supply candidate_run_id; no implicit rebuild is performed.")
 
 
-def validate_record(record, commit):
+def validate_record(record, commit, *, version=None):
     """Check a protected preflight record locally, without claiming live origin."""
     if (record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2")
             or record.get("repository") != REPOSITORY or record.get("commit") != commit
@@ -228,30 +294,42 @@ def validate_record(record, commit):
     for key in ("run_id", "attempt", "workflow_id"):
         positive(record.get(key))
     artifacts = record.get("artifacts", {})
+    kinds, universal = producer_kinds(version)
     expected = set()
-    for target in TARGETS:
-        owner = record
-        source = commit
+
+    def owner_of(target):
         if record["schema"] == "airk-ci-producer/2" and target in PR_TARGETS:
             owner = record.get("promotion", {}).get("producer", {})
             source = owner.get("source_commit", "")
             if not re.fullmatch(r"[0-9a-f]{40}", source):
                 raise ValueError("Invalid promoted source commit")
-        for kind in ("native", "vsix"):
-            name = f"airk-{kind}-{target}-{source}-{positive(owner.get('run_id'))}-{positive(owner.get('attempt'))}"
-            expected.add(name)
-            artifact = artifacts.get(name, {})
-            positive(artifact.get("id"))
-            if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", "")):
-                raise ValueError("Invalid pinned artifact digest")
-    if set(artifacts) != expected or len({a["id"] for a in artifacts.values()}) != 8:
-        raise ValueError("Pinned producer lacks exactly eight unique artifacts")
+            return owner, source
+        return record, commit
+
+    def require(owner, source, prefix):
+        name = f"{prefix}{source}-{positive(owner.get('run_id'))}-{positive(owner.get('attempt'))}"
+        expected.add(name)
+        artifact = artifacts.get(name, {})
+        positive(artifact.get("id"))
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", "")):
+            raise ValueError("Invalid pinned artifact digest")
+
+    for target in TARGETS:
+        for kind in kinds:
+            require(*owner_of(target), f"airk-{kind}-{target}-")
+    if universal:
+        # One universal VSIX, from the run that produced the PR targets (or every target).
+        require(*owner_of(PR_TARGETS[0]), UNIVERSAL)
+    count = len(TARGETS) * len(kinds) + universal
+    if set(artifacts) != expected or len({a["id"] for a in artifacts.values()}) != count:
+        raise ValueError(f"Pinned producer lacks exactly {count} unique artifacts")
 
 
-def verify_record(record, commit):
+def verify_record(record, commit, *, version=None):
     if record.get("commit") != commit or record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2"):
         raise ValueError("Producer record belongs to another commit/schema")
-    current = attest(record["run_id"], commit, allow_manual=record.get("event") == "workflow_dispatch")
+    current = attest(record["run_id"], commit, allow_manual=record.get("event") == "workflow_dispatch",
+                     **catalog_args(version))
     if current != record:
         raise ValueError("Producer run attempt or artifact identities changed after preflight")
 
@@ -409,16 +487,27 @@ def download(artifact, destination):
         unpack_artifact(archive, destination)
 
 
-def release_inputs(commit, run_id, destination):
+def release_input_names(commit, run_id, *, version=None):
+    """Same-run release inputs: signed (Linux: promoted) packages and a source receipt per target.
+
+    Split versions have no per-target VSIX; the release run emits one channel-promoted
+    universal VSIX (split_receipts.catalog_names `release_inputs`).
+    """
+    kinds, universal = producer_kinds(version)
+    expected = {f"{UNIVERSAL}{commit}-{run_id}"} if universal else set()
+    for target in TARGETS:
+        prefix = "airk" if target == "x86_64-unknown-linux-gnu" else "airk-signed"
+        expected.update(f"{prefix}-{kind}-{target}-{commit}-{run_id}" for kind in kinds)
+        expected.add(f"airk-source-{target}-{commit}-{run_id}")
+    return expected
+
+
+def release_inputs(commit, run_id, destination, *, version=None):
     """Admit exact same-run signed outputs and small verified source receipts."""
     run_id = positive(run_id)
     run = api(f"actions/runs/{run_id}")
     verify_run({**run, "status": "completed"}, commit, "github-release.yml", ("workflow_dispatch",), success=False)
-    expected = set()
-    for target in TARGETS:
-        prefix = "airk" if target == "x86_64-unknown-linux-gnu" else "airk-signed"
-        expected.update(f"{prefix}-{kind}-{target}-{commit}-{run_id}" for kind in ("native", "vsix"))
-        expected.add(f"airk-source-{target}-{commit}-{run_id}")
+    expected = release_input_names(commit, run_id, **catalog_args(version))
     selected = {}
     for artifact in run_artifacts(run_id):
         name = artifact.get("name")
@@ -431,8 +520,8 @@ def release_inputs(commit, run_id, destination):
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))):
             raise ValueError("Release inputs are duplicate, expired or from another origin")
         selected[name] = dict(id=positive(artifact["id"]), digest=artifact["digest"])
-    if set(selected) != expected or len({row["id"] for row in selected.values()}) != 12:
-        raise ValueError("Release inputs lack exactly twelve unique artifacts")
+    if set(selected) != expected or len({row["id"] for row in selected.values()}) != len(expected):
+        raise ValueError(f"Release inputs lack exactly {len(expected)} unique artifacts")
     destination.mkdir(parents=True, exist_ok=False)
     for name, artifact in selected.items():
         download(artifact, destination / name)
@@ -471,13 +560,37 @@ def verify_tag(tag, commit):
     record = json.loads(data)
     if record.get("commit") != commit or record.get("tag") != tag or record.get("schema") != "airk-github-release/1":
         raise ValueError("Release provenance belongs to another source/tag")
-    verify_record(record["producer"], commit)
+    version = record.get("package_version")
+    if not isinstance(version, str) or tag.split("-", 1)[0] != f"v{version}":
+        raise ValueError("Release provenance names another package version")
+    verify_record(record["producer"], commit, **catalog_args(version))
+    if split(version):
+        # The reviewed split catalog: per-target pair packages (and installers) and one universal VSIX.
+        catalog = contract.catalog_names(version, record.get("channel"), commit, record["producer"],
+                                         dict(run_id=record.get("run_id")))[2]
+        if set(record["assets"]) != catalog:
+            raise ValueError("Release provenance differs from the split release catalog")
+    count = len(catalog) if split(version) else 16
     assets = {asset["name"]: asset.get("digest") for asset in release["assets"]}
-    if (len(assets) != len(release["assets"]) or len(record["assets"]) != 16
+    if (len(assets) != len(release["assets"]) or len(record["assets"]) != count
             or set(assets) != set(record["assets"]) | {"release.json", "release-notes.md", "SHA256SUMS"}
             or any(assets.get(name) != "sha256:" + digest for name, digest in record["assets"].items())):
         raise ValueError("Published asset set differs from verified release provenance")
     print(f"Verified published tag {tag} from CI {record['producer']['run_id']}")
+
+
+def download_names(record, kind, target=None, *, version=None):
+    """The authenticated artifacts one download selects; selecting none is a failure."""
+    if split(version) and kind == "vsix":
+        if target:
+            raise ValueError("Split versions have one universal VSIX; download it without --target")
+        names = [universal_artifact(record)]
+    else:
+        names = [name for name in record["artifacts"] if name.startswith(f"airk-{kind}-")
+                 and (not target or name.startswith(f"airk-{kind}-{target}-"))]
+    if not names or target and len(names) != 1:
+        raise ValueError("Producer record names no single matching artifact")
+    return names
 
 
 def main():
@@ -494,6 +607,8 @@ def main():
     parser.add_argument("--published-only", action="store_true", help="Require exact matching published GitHub assets before Marketplace publication")
     args = parser.parse_args()
     commit = os.environ["GITHUB_SHA"]
+    # Every command runs on the exact commit's checkout; its version selects the catalog.
+    catalog = catalog_args(checkout_version())
     if args.command == "promote":
         if args.output is None:
             parser.error("promote requires --output")
@@ -501,7 +616,7 @@ def main():
             raise ValueError("Promotion requires the exact main checkout")
         tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
         with tempfile.TemporaryDirectory(prefix="airk-promote-") as temporary:
-            record = promote(commit, tree, Path(temporary))
+            record = promote(commit, tree, Path(temporary), **catalog)
         args.output.mkdir(parents=True, exist_ok=False)
         (args.output / "promotion.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Promoted PR #{record['pull_request']} CI {record['producer']['run_id']} for main tree {tree}")
@@ -530,20 +645,19 @@ def main():
     elif args.command == "tag":
         verify_tag(os.environ["GITHUB_REF_NAME"], commit)
     elif args.command == "resolve":
-        record = resolve(commit, os.environ.get("AIRK_CANDIDATE_RUN_ID"))
+        record = resolve(commit, os.environ.get("AIRK_CANDIDATE_RUN_ID"), **catalog)
         args.record.parent.mkdir(parents=True, exist_ok=True)
         args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Verified producer {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
     elif args.command == "release-inputs":
-        release_inputs(commit, os.environ["GITHUB_RUN_ID"], args.output)
+        release_inputs(commit, os.environ["GITHUB_RUN_ID"], args.output, **catalog)
     elif args.command == "bundle":
         release_bundle(commit, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], args.output)
     else:
         record = json.loads(args.record.read_text(encoding="utf-8"))
-        (validate_record if args.pinned else verify_record)(record, commit)
-        for name, artifact in record["artifacts"].items():
-            if name.startswith(f"airk-{args.kind}-") and (not args.target or name.startswith(f"airk-{args.kind}-{args.target}-")):
-                download(artifact, args.output if args.target else args.output / name)
+        (validate_record if args.pinned else verify_record)(record, commit, **catalog)
+        for name in download_names(record, args.kind, args.target, **catalog):
+            download(record["artifacts"][name], args.output if args.target else args.output / name)
 
 
 if __name__ == "__main__":

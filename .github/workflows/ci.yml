@@ -144,10 +144,8 @@ jobs:
         env:
           AIRK_CHANNEL: ${{ inputs.channel || 'stable' }}
         run: python scripts/package-extension.py --channel "$AIRK_CHANNEL"
-      # TODO(split 10.5.2): scripts/ci-candidates.py select_artifacts/promote/release-inputs still
-      # expect per-target airk-vsix-<target>-... artifacts; switch them to this single
-      # airk-vsix-universal-<commit>-<run>-<attempt> artifact (split_receipts.catalog_names).
-      # Until then main promotion falls back to the complete build.
+      # Split versions: ci-candidates.py selects this single airk-vsix-universal-<commit>-<run>-<attempt>
+      # artifact with the per-target native candidates; a promoted main run reuses the PR run's copy.
       - name: Retain the universal extension and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

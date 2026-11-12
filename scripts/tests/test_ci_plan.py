@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 spec = importlib.util.spec_from_file_location("ci_plan", Path(__file__).parents[1] / "ci-plan.py")
 plan = importlib.util.module_from_spec(spec)
@@ -281,6 +281,22 @@ class PlanTests(unittest.TestCase):
             module.return_value.promote.return_value = record
             self.assertTrue(plan.try_promotion(commit, Path(temporary) / "promotion"))
             self.assertEqual(json.loads((Path(temporary) / "promotion/promotion.json").read_text(encoding="utf-8")), record)
+
+    def test_promotion_selects_the_checked_in_versions_producer_catalog(self):
+        # A split checkout promotes the PR's native pairs with its one universal VSIX (split §10.5.4);
+        # a pre-split checkout keeps the historical call shape.
+        commit = "a" * 40
+        real = plan.candidates()
+        for checked_in, expected in (("1.8.24", {"version": "1.8.24"}), ("1.8.23", {})):
+            with self.subTest(version=checked_in), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(plan.subprocess, "check_output",
+                                 side_effect=lambda command, text: commit if command[-1] == "HEAD" else "c" * 40), \
+                    patch.object(plan, "candidates") as module:
+                module.return_value.checkout_version.return_value = checked_in
+                module.return_value.catalog_args.side_effect = real.catalog_args
+                module.return_value.promote.return_value = dict(pull_request=5, producer=dict(run_id="777"))
+                self.assertTrue(plan.try_promotion(commit, Path(temporary) / "promotion"))
+                module.return_value.promote.assert_called_once_with(commit, "c" * 40, ANY, **expected)
 
 
 if __name__ == "__main__":

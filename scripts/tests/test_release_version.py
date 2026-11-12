@@ -204,6 +204,49 @@ class VersionContracts(unittest.TestCase):
                     version.verify_marketplace_publication(inventory, "0.1.0", "stable")
                 catalog.assert_not_called()
 
+    def test_split_versions_publish_and_read_back_one_universal_package(self):
+        split = "1.8.24"
+        served = [dict(version=split, properties=[])]  # Marketplace lists a universal package without a target.
+        self.assertEqual(version.market_platforms(served, split, "stable"), {"universal"})
+        self.assertEqual(version.plan(split, "stable", "marketplace", served, [], [], publish=True)["action"], "skip")
+        self.assertEqual(version.plan(split, "stable", "marketplace", [], [], [], publish=True)["action"], "publish")
+        for name, catalog, number in (("platform entry", [dict(version=split, targetPlatform="win32-x64", properties=[])], split),
+                                      ("duplicate", served + served, split),
+                                      ("untargeted pre-split", [dict(version="1.8.23", properties=[])], "1.8.23")):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "conflicting"):
+                version.market_platforms(catalog, number, "stable")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "universal").mkdir()
+            path = root / "universal" / "airk-1.8.24.vsix"
+            (root / "universal" / "manifest.json").write_text(json.dumps({"payload": {
+                "package.json": version.hashlib.sha256(b"fictional universal host").hexdigest()}}))
+            inventory = root / "inventory.json"
+            inventory.write_text(json.dumps([str(path)]))
+            self.assertEqual(version.package_inventory(inventory, split), {"universal": str(path)})
+            platforms = root / "platforms.json"
+            platforms.write_text(json.dumps([str(root / f"airk-1.8.24-{p}.vsix") for p in sorted(version.PLATFORMS)]))
+            with self.assertRaisesRegex(ValueError, "universal VSIX inventory"):
+                version.package_inventory(platforms, split)
+            urls = []
+            def response(url, **kwargs):
+                urls.append(url)
+                archive = io.BytesIO()
+                with zipfile.ZipFile(archive, "w") as zipped:
+                    zipped.writestr("extension/package.json", b"fictional universal host")
+                    zipped.writestr("marketplace.signature", b"store metadata")
+                archive.seek(0)
+                archive.headers = {}
+                return archive
+            with patch.object(version, "marketplace", return_value=served), \
+                    patch.object(version, "urlopen", side_effect=response), patch.object(version.time, "sleep") as sleep:
+                version.verify_marketplace_publication(inventory, split, "stable")
+                self.assertEqual(version.pending_packages(inventory, split, "stable", served), [])
+                self.assertEqual(version.pending_packages(inventory, split, "stable", []), [str(path)])
+            sleep.assert_not_called()
+            self.assertEqual(urls, ["https://marketplace.visualstudio.com/_apis/public/gallery/publishers/iokaio/"
+                                    "vsextensions/airk/1.8.24/vspackage"] * 2)
+
     def test_postpublish_workflow_uses_authenticated_inventory_after_upload(self):
         workflow = (version.ROOT / ".github/workflows/extension-release.yml").read_text()
         self.assertLess(workflow.index("node packages/vscode/scripts/publish.cjs"),

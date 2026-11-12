@@ -112,13 +112,21 @@ class ArchiveContracts(unittest.TestCase):
                     package.validate_runtime(root, version, "aarch64-apple-darwin", source)
 
     def test_signed_packaging_reuses_ci_metadata_without_invoking_rust(self):
+        # Reviewed pairs: a pre-split version reuses /2 metadata, a split version only /3.
+        for checked_in, schema, other in (("1.8.23", "airk-native-candidate/2", "airk-native-candidate/3"),
+                                          ("1.8.24", "airk-native-candidate/3", "airk-native-candidate/2")):
+            with self.subTest(version=checked_in):
+                self.check_signed_packaging_metadata(checked_in, schema, other)
+
+    def check_signed_packaging_metadata(self, checked_in, schema, other):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):
+            for name in ("Cargo.lock", "rust-toolchain.toml"):
                 (root / name).write_bytes((package.ROOT / name).read_bytes())
+            (root / "Cargo.toml").write_text(f'[workspace.package]\nversion = "{checked_in}"\n', encoding="utf-8")
             target = "x86_64-pc-windows-msvc"
-            receipt = {"schema": "airk-native-candidate/2", "target": target,
-                       "version": package.tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"], "tree": "a" * 40, "dirty_checkout": False,
+            receipt = {"schema": schema, "target": target,
+                       "version": checked_in, "tree": "a" * 40, "dirty_checkout": False,
                        "signed_distribution": False, "rustc": "rustc fixture\nhost: " + target,
                        "cargo": "cargo fixture", "cargo_lock_sha256": package.sha256(root / "Cargo.lock"),
                        "toolchain_file_sha256": package.sha256(root / "rust-toolchain.toml")}
@@ -127,8 +135,8 @@ class ArchiveContracts(unittest.TestCase):
                 self.assertEqual(command, ("git", "rev-parse", "HEAD^{tree}"))
                 return "a" * 40
             with patch.object(package, "ROOT", root), patch.object(package, "capture", side_effect=git_only):
-                for mutation in (None, "version", "target", "tree", "cargo_lock_sha256", "rustc"):
-                    bad = {**receipt, **({mutation: "wrong"} if mutation else {})}
+                for mutation in (None, "version", "target", "tree", "cargo_lock_sha256", "rustc", "schema"):
+                    bad = {**receipt, **({mutation: other if mutation == "schema" else "wrong"} if mutation else {})}
                     path.write_text(json.dumps(bad), encoding="utf-8")
                     if mutation:
                         with self.assertRaises(ValueError):
