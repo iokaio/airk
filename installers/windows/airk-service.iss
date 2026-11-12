@@ -144,8 +144,9 @@ begin
     ',"logs":' + JsonString(Cache + '\logs\service') + '}';
 end;
 
-{ Write one airk-setup-operation/1 file into a fresh folder below {tmp} and
-  return its path. Setup refuses anything but these canonical bytes. }
+// Write one airk-setup-operation/1 file into a fresh folder below the setup
+// temporary folder and return its path. Setup refuses anything but these
+// canonical bytes.
 function WriteOperation(const Kind, Locations, InventorySha, DeleteIndexes: String;
   Acknowledged, LoginStartup, Trust, Start: Boolean): String;
 var
@@ -595,8 +596,8 @@ begin
   if CurUninstallStep = usUninstall then begin
     try
       DeleteIndexes := 'keep';
-      if (not UninstallSilent) and (MsgBox('Also delete the AIRK index data, service state, cache and logs?' +
-        #13#10#13#10 + 'Choose No to keep them for a later AIRK Service installation. Source files are never touched.',
+      if (not UninstallSilent) and (MsgBox('Also delete the AIRK index data, service state, cache and logs?' + #13#10#13#10 +
+        'Choose No to keep them for a later AIRK Service installation. Source files are never touched.',
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
         DeleteIndexes := 'purge';
       Operation := WriteOperation('uninstall',
