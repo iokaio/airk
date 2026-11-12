@@ -655,9 +655,10 @@ pub enum ToolsCatalogDetail {
 
 /// The largest M2 response frame (contracts §2.8): the catalog with schemas.
 pub const MAX_TOOLS_CATALOG_RESPONSE_BYTES: usize = 1024 * 1024;
-/// N1's response budget (contracts §2.8): the CLI reassembled at most 8 MiB
-/// of records; JSON escaping of a text report can double it.
-pub const MAX_USAGE_DOCUMENT_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+/// N1's response budget (contracts §2.8): the I1 framing ceiling (4 MiB, as
+/// M3). The CLI reassembled up to 8 MiB of records; a larger document is
+/// refused by the frame reader (recorded gap, split step 3c.5c).
+pub const MAX_USAGE_DOCUMENT_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// The largest tool argument object, as the pre-split CLI bounded it.
 pub const MAX_TOOL_ARGUMENT_BYTES: usize = 64 * 1024;
 /// The largest M3 request frame (contracts §2.8): arguments, selection and
@@ -1135,9 +1136,13 @@ pub enum ControlResponse {
         document: serde_json::Value,
     },
     /// N1 failed. `message` is the full error chain bounded to 4,096
-    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    /// characters, as the pre-split CLI's `operation_failed` line carried it;
+    /// `native` is a failed native read's complete result, which the CLI
+    /// printed on stdout before that line.
     UsageReadFailed {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native: Option<serde_json::Value>,
     },
     /// M9: the guarded configuration request.
     ConfigurationPrepared {

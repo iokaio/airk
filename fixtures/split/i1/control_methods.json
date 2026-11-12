@@ -534,31 +534,31 @@
           "name": "settings",
           "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"settings\":{\"view\":\"roots\"}}}}",
           "request_frame_budget": 65536,
-          "response_frame_budget": 16777216
+          "response_frame_budget": 4194304
         },
         {
           "name": "validate_settings_file",
           "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"validate_settings_file\":{\"view\":\"scan_limits\",\"path\":\"/home/fixture/limits.json\"}}}}",
           "request_frame_budget": 65536,
-          "response_frame_budget": 16777216
+          "response_frame_budget": 4194304
         },
         {
           "name": "report_markdown",
           "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"report\":{\"days\":7,\"format\":\"markdown\"}}}}",
           "request_frame_budget": 65536,
-          "response_frame_budget": 16777216
+          "response_frame_budget": 4194304
         },
         {
           "name": "report_file",
           "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"report_file\":{\"days\":30,\"format\":\"csv\",\"price_scenario_path\":\"/home/fixture/prices.json\"}}}}",
           "request_frame_budget": 65536,
-          "response_frame_budget": 16777216
+          "response_frame_budget": 4194304
         },
         {
           "name": "policy_by_catalog_session",
           "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"catalog\":{\"schema\":1,\"context_key\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"namespace\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_catalog_revision\":3,\"grant_id\":\"grt_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_grant_revision\":2,\"index_id\":\"idx_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"project_ids\":[\"prj_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"]},\"read\":\"policy\"}}",
           "request_frame_budget": 65536,
-          "response_frame_budget": 16777216
+          "response_frame_budget": 4194304
         }
       ],
       "rejected_methods": [
@@ -591,6 +591,10 @@
         {
           "name": "failed",
           "bytes": "{\"status\":\"usage_read_failed\",\"message\":\"usage report days must be 1..30\"}"
+        },
+        {
+          "name": "failed_with_native_result",
+          "bytes": "{\"status\":\"usage_read_failed\",\"message\":\"native read failed\",\"native\":{\"error\":{\"code\":\"read_failed\",\"message\":\"workspace is not indexed\",\"retryable\":false}}}"
         }
       ],
       "rejected_responses": [
