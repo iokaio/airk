@@ -35,6 +35,18 @@ inherited entries are removed (`icacls /inheritance:r`) and that grants only
 the user, SYSTEM and Administrators; the image is copied there and verified
 before it runs. Rebuilt at the same version (nothing had been installed).
 
+**Second installer rebuild (12 November 2026):** the same machine then
+refused every default location, because the Codex sandbox group's read access
+is inherited throughout `%LOCALAPPDATA%`. Windows defaults now live under one
+new root, `%LOCALAPPDATA%\AIRK Service\` (`program\`, `data\indexes`,
+`state\service`, `cache\service`, `logs\service`), which the installer creates
+private. On Windows, the existing parent of a location that does not exist yet
+must only be not writable by others (read-only grants are accepted; a write
+grant is refused with the account and the `icacls` command that removes it);
+an existing location folder must still be private. Setup creates the program
+folder owner-only before placement, as `airkctl` and the extension require
+(split plan U96). macOS and Linux are unchanged. Rebuilt at the same version.
+
 ## Not yet in this candidate
 
 Reads under a window or admin scope selection (W4/A2) answer

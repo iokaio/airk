@@ -81,3 +81,30 @@ fn native_private_create_and_acl_checks_support_long_unprefixed_paths() -> Resul
     assert!(!leaf.join("uncreated").exists());
     Ok(())
 }
+
+fn grant(folder: &Path, entry: &str) -> Result<()> {
+    let status = std::process::Command::new("icacls")
+        .arg(folder)
+        .args(["/grant", entry, "/q"])
+        .status()?;
+    ensure!(status.success(), "icacls {entry} failed");
+    Ok(())
+}
+
+#[test]
+fn location_parents_accept_read_only_grants_and_refuse_write_grants() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let folder = temporary.path().join("parent");
+    prepare_root(&folder)?;
+    require_not_writable_by_others(&folder)?;
+    // BUILTIN\Users read and execute, inherited below: accepted for a parent,
+    // refused by the owner-private rule.
+    grant(&folder, "*S-1-5-32-545:(OI)(CI)(RX)")?;
+    require_not_writable_by_others(&folder)?;
+    assert!(require_owner_private(&folder).is_err());
+    grant(&folder, "*S-1-5-32-545:(OI)(CI)(M)")?;
+    let refusal = format!("{:#}", require_not_writable_by_others(&folder).unwrap_err());
+    assert!(refusal.contains("S-1-5-32-545"), "{refusal}");
+    assert!(refusal.contains("/remove:g *S-1-5-32-545"), "{refusal}");
+    Ok(())
+}

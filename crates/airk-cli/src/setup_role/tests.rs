@@ -370,3 +370,24 @@ fn program_removal_deletes_the_running_airk_last_and_folders_deepest_first() {
         ]
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn a_location_parent_may_be_readable_by_others_but_an_existing_location_may_not()
+-> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let parent = temporary.path().join("parent");
+    airk_ipc::endpoint::prepare_root(&parent)?;
+    let status = std::process::Command::new("icacls")
+        .arg(&parent)
+        .args(["/grant", "*S-1-5-32-545:(OI)(CI)(RX)", "/q"])
+        .status()?;
+    assert!(status.success());
+    super::files::safe_parent(&parent)?;
+    let refusal = format!("{:#}", super::files::owned_folder(&parent).unwrap_err());
+    assert!(
+        refusal.contains("choose a folder that does not exist yet"),
+        "{refusal}"
+    );
+    Ok(())
+}

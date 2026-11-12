@@ -160,6 +160,7 @@ These came from the user's request and answers. They are not agent choices.
 | U93 | (12 November) Phase 4 keeps the pre-split setup, retirement and login operations that the Phase 7 setup role will own reachable only behind the private-role selector, as a recorded non-shippable interim state; every command with an `airkctl` owner leaves the user tree with deletion evidence. |
 | U94 | (12 November) `airk` with no arguments (and with user-style arguments, for the running state) runs the `airkctl` installed beside it (`service start`, `service status`), so start and status have one implementation; one reviewed process-start roster entry. |
 | U95 | (12 November) Before the old CLI is deleted, its outputs used by parity tests are captured as checked-in expectations; the original goldens keep their source identity; the parity tests become `airkctl`-only tests against those expectations. The user also accepted, as recorded in the ledger: VS Code entries treated as AIRK-owned (the extension keeps `airk.httpCredential`), `agents remove` removing retired project stdio entries, M17 not added, M18 status only, `airk-process`'s new workspace dependencies, and the offline trust differences. |
+| U96 | (12 November, after the first manual 1.8.24 install) Windows default locations move to one new root, `%LOCALAPPDATA%\AIRK Service\` (program `program\`; `data\indexes`, `state\service`, `cache\service`, `logs\service`), separate from the pre-split `%LOCALAPPDATA%\AIRK` root; the installer creates that root with its inherited entries removed, granting only the user, SYSTEM and Administrators (amends the U36 Windows defaults). The U39 location rule on Windows is split: an existing parent folder of a location that does not exist yet must be **not writable by others** — read, list and traverse grants to other accounts are accepted, write-type grants refused (`require_not_writable_by_others`), as on Unix; an existing location folder stays owner-private (`require_owner_private`), as the I4 readers require. Setup creates the program folder owner-only before placement. Reason: a Codex sandbox group's inherited read access to `%LOCALAPPDATA%` refused every default location. macOS and Linux defaults are unchanged. |
 
 ### 2.2 Formerly open decisions
 
@@ -829,7 +830,8 @@ setup entry point that remains available across placement and finalization.
    default data/index, cache and log locations, and let the user choose
    others. Unattended installs take the same choices as explicit arguments.
    Validate every choice before any change: owned by the current user, not
-   writable by others, no links or redirects, not inside a pre-split root, a
+   writable by others (Windows, U96: an existing location owner-private, the
+   parent of a new one not writable by others), no links or redirects, not inside a pre-split root, a
    source root or another chosen AIRK location, and either empty or carrying
    this split installation's ownership receipt. Refuse rather than adopt a
    folder holding pre-split or foreign content.
@@ -938,7 +940,7 @@ pre-split root.
 
 | Item | Windows | macOS | Linux |
 |---|---|---|---|
-| Program folder (default; U39 allows another) | `%LOCALAPPDATA%\Programs\AIRK\` | `~/Library/Application Support/AIRK/program/AIRK.app` (U78), outside every pre-split root | `~/.local/lib/airk-service/` |
+| Program folder (default; U39 allows another) | `%LOCALAPPDATA%\AIRK Service\program\` (U96) | `~/Library/Application Support/AIRK/program/AIRK.app` (U78), outside every pre-split root | `~/.local/lib/airk-service/` |
 | `airkctl` | `bin\airkctl.exe` | `AIRK.app/Contents/MacOS/airkctl` | `bin/airkctl` |
 | `airk` | `service\airk.exe` | `AIRK.app/Contents/MacOS/airk` | `service/airk` |
 | Notices and licenses | `notices\` | Inside the bundle | `notices/` |
@@ -946,7 +948,7 @@ pre-split root.
 | Install pointer (U39) | Fixed per-user path, owner-only | Same | Same |
 | User choice (U39) | Inno directory page plus an AIRK data-location page; command-line arguments for unattended installs | Setup asks during installation; arguments to `Install AIRK.command` or the first-launch setup | `install.sh` options and prompts |
 | On `PATH` | `bin\` added to the user PATH under an ownership receipt. `airk.exe` is not on `PATH`. | A receipt-owned `airkctl` link in `~/.local/bin` when that folder exists; otherwise the path is printed | Same as macOS |
-| State, data, cache, logs | Default: new folder names under the existing per-user AIRK roots. The user may choose other user-owned locations (U39). | Same | Same |
+| State, data, cache, logs | Default: new folder names under the existing per-user AIRK roots; on Windows under the new private root `%LOCALAPPDATA%\AIRK Service\` (U96). The user may choose other user-owned locations (U39). | Same | Same |
 | Login startup | One Task Scheduler task | The bundle's SMAppService agent | One systemd user unit |
 | Certificate trust | CurrentUser Root, with consent | Login keychain, with consent | Not automatic |
 | Shortcut | Start menu: AIRK Admin | None | None |

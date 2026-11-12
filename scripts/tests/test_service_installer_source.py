@@ -54,9 +54,23 @@ class ServiceInstallerSource(unittest.TestCase):
         self.assertIn("Folder := SetupPrivateFolder + '\\airk-setup-' + Id;", text)
         self.assertIn("Result := SetupPrivateFolder + '\\airk-setup.exe';", text)
         self.assertNotIn("ExpandConstant('{tmp}\\airk-setup-'", text)
-        restrict = re.search(r"icacls\.exe'\), '\"' \+ PrivateFolder \+\s+'\" /inheritance:r /grant:r ", text)
+        restrict = re.search(r"icacls\.exe'\), '\"' \+ Folder \+\s+'\" /inheritance:r /grant:r ", text)
         self.assertIsNotNone(restrict)
         self.assertIn("or (Code <> 0) then", text)
+        self.assertIn("RestrictToUser(PrivateFolder);", text)
+
+    def test_default_locations_use_a_new_private_root(self):
+        # Separate from the pre-split %LOCALAPPDATA%\AIRK root and created
+        # private, so inherited grants to other accounts do not apply.
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("DefaultDirName={localappdata}\\AIRK Service\\program\n", text)
+        self.assertIn("DefaultRootName = 'AIRK Service';", text)
+        self.assertIn("GetPreviousData('DataRoot', DefaultRoot)", text)
+        self.assertIn("GetPreviousData('CacheRoot', DefaultRoot)", text)
+        self.assertNotIn("{localappdata}\\AIRK')", text)
+        start = text.index("procedure PrepareDefaultRoot;")
+        body = text[start:text.index("\nend;", start)]
+        self.assertIn("RestrictToUser(DefaultRoot);", body)
 
     def test_the_checks_catch_the_defects_they_name(self):
         self.assertEqual(code_comment_problems("[Code]\n{ below {tmp} and }\nbegin end;\n"), [2])

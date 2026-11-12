@@ -423,7 +423,12 @@ impl Setup {
                     continue;
                 }
             };
-            if let Err(error) = files::owned_folder(&owner) {
+            let checked = if owner == path {
+                files::owned_folder(&owner)
+            } else {
+                files::safe_parent(&owner)
+            };
+            if let Err(error) = checked {
                 problems.push(format!("{role} location: {error:#}"));
                 continue;
             }
@@ -468,6 +473,21 @@ impl Setup {
             "location_refused: {}",
             problems.join("; ")
         );
+        // The I4 readers require the program folder itself to be private;
+        // Inno would create it with the parent's inherited ACL, so setup
+        // creates it owner-only before placement (Windows).
+        #[cfg(windows)]
+        if self.mode == Mode::Prepare && !plan::removes(self.operation.kind) {
+            let program = self.program();
+            if !program.try_exists()? {
+                airk_ipc::endpoint::prepare_root(&program).with_context(|| {
+                    format!(
+                        "location_refused: AIRK could not create its program folder {}",
+                        program.display()
+                    )
+                })?;
+            }
+        }
         if !self.receipt.reached(SetupPhase::Locked) {
             self.record(SetupPhase::Locked, "locked", format!("{:?}", self.mode))?;
         }

@@ -23,7 +23,7 @@ AppName=AIRK Service
 AppVersion={#AirkVersion}
 AppPublisher=Ioka LLC
 AppPublisherURL=https://airk.ioka.io
-DefaultDirName={localappdata}\Programs\AIRK
+DefaultDirName={localappdata}\AIRK Service\program
 DisableDirPage=no
 UsePreviousAppDir=yes
 PrivilegesRequired=lowest
@@ -63,6 +63,9 @@ Name: "{userprograms}\AIRK Admin"; Filename: "{app}\bin\airkctl.exe"; Parameters
 const
   AppKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{1A421FBD-1C33-47AD-9770-AE490F2737CF}_is1';
   OperationLifetimeMs = 600000;
+  { The default root for every location: separate from the pre-split
+    %LOCALAPPDATA%\AIRK root and created private (RestrictToUser). }
+  DefaultRootName = 'AIRK Service';
 
 type
   TAirkFileTime = record
@@ -145,33 +148,51 @@ begin
     ',"logs":' + JsonString(Cache + '\logs\service') + '}';
 end;
 
-// The setup temporary folder inherits the user's Temp ACL, which may grant
-// other accounts access (for example a sandbox group). Setup reads its
-// operation only from an owner-private file, so every operation folder and
-// the setup image live below one folder whose inherited entries are removed
-// and that grants only this user, SYSTEM and Administrators. Setup verifies
-// the result itself and fails closed.
-function SetupPrivateFolder: String;
+// Remove the inherited entries of a folder this installer just created and
+// grant only this user, SYSTEM and Administrators. Needs no elevation: the
+// user owns the folder it created.
+procedure RestrictToUser(const Folder: String);
 var
   Code: Integer;
   Account: String;
+begin
+  Account := GetEnv('USERDOMAIN');
+  if Account <> '' then Account := Account + '\';
+  Account := Account + GetUserNameString;
+  if not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + Folder +
+    '" /inheritance:r /grant:r "' + Account + ':(OI)(CI)F" "*S-1-5-18:(OI)(CI)F"' +
+    ' "*S-1-5-32-544:(OI)(CI)F" /q', '', SW_HIDE, ewWaitUntilTerminated, Code)
+    or (Code <> 0) then
+    RaiseException('AIRK could not restrict ' + Folder +
+      ' to this account (icacls exit ' + IntToStr(Code) + ').');
+end;
+
+// The setup temporary folder inherits the user's Temp ACL, which may grant
+// other accounts access (for example a sandbox group). Setup reads its
+// operation only from an owner-private file, so every operation folder and
+// the setup image live below one restricted folder. Setup verifies the
+// result itself and fails closed.
+function SetupPrivateFolder: String;
 begin
   if PrivateFolder = '' then
   begin
     PrivateFolder := ExpandConstant('{tmp}\airk-private');
     if not CreateDir(PrivateFolder) then
       RaiseException('AIRK could not create its private setup folder ' + PrivateFolder);
-    Account := GetEnv('USERDOMAIN');
-    if Account <> '' then Account := Account + '\';
-    Account := Account + GetUserNameString;
-    if not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + PrivateFolder +
-      '" /inheritance:r /grant:r "' + Account + ':(OI)(CI)F" "*S-1-5-18:(OI)(CI)F"' +
-      ' "*S-1-5-32-544:(OI)(CI)F" /q', '', SW_HIDE, ewWaitUntilTerminated, Code)
-      or (Code <> 0) then
-      RaiseException('AIRK could not restrict its private setup folder ' + PrivateFolder +
-        ' to this account (icacls exit ' + IntToStr(Code) + ').');
+    RestrictToUser(PrivateFolder);
   end;
   Result := PrivateFolder;
+end;
+
+function DefaultRoot: String;
+begin
+  Result := ExpandConstant('{localappdata}\' + DefaultRootName);
+end;
+
+function UnderDefaultRoot(const Path: String): Boolean;
+begin
+  Result := (CompareText(Path, DefaultRoot) = 0) or
+    (CompareText(Copy(Path, 1, Length(DefaultRoot) + 1), DefaultRoot + '\') = 0);
 end;
 
 // Write one airk-setup-operation/1 file into a fresh folder below the private
@@ -254,8 +275,21 @@ begin
     RaiseException('AIRK could not stage its payload inventory.');
 end;
 
+// Create the default root private when a chosen location uses it and it
+// does not exist yet. An existing root is left as it is; setup checks it.
+procedure PrepareDefaultRoot;
+begin
+  if DirExists(DefaultRoot) then Exit;
+  if not (UnderDefaultRoot(RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) or
+    UnderDefaultRoot(DataRoot) or UnderDefaultRoot(CacheRoot)) then Exit;
+  if not CreateDir(DefaultRoot) then
+    RaiseException('AIRK could not create ' + DefaultRoot);
+  RestrictToUser(DefaultRoot);
+end;
+
 function InstallLocations: String;
 begin
+  PrepareDefaultRoot;
   Result := LocationsJson(RemoveBackslashUnlessRoot(ExpandConstant('{app}')),
     DataRoot, CacheRoot);
 end;
@@ -479,9 +513,9 @@ begin
   DataPage.Add('Index data and service state');
   DataPage.Add('Cache and logs');
   DataPage.Values[0] := ExpandConstant('{param:DATA|' +
-    GetPreviousData('DataRoot', ExpandConstant('{localappdata}\AIRK')) + '}');
+    GetPreviousData('DataRoot', DefaultRoot) + '}');
   DataPage.Values[1] := ExpandConstant('{param:CACHE|' +
-    GetPreviousData('CacheRoot', ExpandConstant('{localappdata}\AIRK')) + '}');
+    GetPreviousData('CacheRoot', DefaultRoot) + '}');
 
   DisclosurePage := CreateCustomPage(DataPage.ID, 'Earlier AIRK installations',
     'Review what this installation changes before anything is changed.');
@@ -514,7 +548,8 @@ begin
   if CurPageID = DataPage.ID then begin
     try
       if not LoadPlan(Text) then begin
-        MsgBox(Text, mbError, MB_OK);
+        MsgBox(Text + #13#10 + #13#10 + 'Choose other folders on this page, then click Next.',
+          mbError, MB_OK);
         Result := False;
         Exit;
       end;
@@ -620,7 +655,7 @@ end;
 function PreviousRoot(const Name: String): String;
 begin
   if not RegQueryStringValue(HKCU, AppKey, 'Inno Setup CodeFile: ' + Name, Result) then
-    Result := ExpandConstant('{localappdata}\AIRK');
+    Result := DefaultRoot;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

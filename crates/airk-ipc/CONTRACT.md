@@ -13,7 +13,10 @@ The same-user local transport between `airk` and its clients:
   Unix sockets), peer identity checks before any message is read, bounded
   message reads and writes, and `require_owner_private` for a file this user
   wrote (Windows: owner and ACL; Unix: regular single-link file owned by the
-  effective user without group or other bits; U84). Platform code lives in
+  effective user without group or other bits; U84), and on Windows
+  `require_not_writable_by_others` for a location's parent folder (owner the
+  user, SYSTEM or Administrators; no write-type allowed entry for another
+  account, by the pure `foreign_write_grant` rule; U96). Platform code lives in
   `endpoint/windows.rs` and `endpoint/unix.rs`, selected by `cfg`.
 - `private_record` (split U90): owner-private bounded record files under an
   owner-only root, `read_private`/`write_private` (atomic replace or

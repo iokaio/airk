@@ -17,10 +17,37 @@ use self::unix as platform;
 pub use platform::require_existing_root;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root, require_owner_private};
 #[cfg(windows)]
-pub use platform::{create_root, process_user, require_job_user};
+pub use platform::{create_root, process_user, require_job_user, require_not_writable_by_others};
 
 #[cfg(windows)]
 pub use platform::with_current_user_job_security;
+
+/// Windows access rights that let a holder change a folder or what it holds:
+/// write/add file, append/add subfolder, write extended attributes, delete
+/// child, write attributes, delete, write DACL, write owner, and the generic
+/// all/write and maximum-allowed requests.
+const WRITE_CAPABLE_RIGHTS: u32 = 0x0002
+    | 0x0004
+    | 0x0010
+    | 0x0040
+    | 0x0100
+    | 0x0001_0000
+    | 0x0004_0000
+    | 0x0008_0000
+    | 0x0200_0000
+    | 0x1000_0000
+    | 0x4000_0000;
+
+/// Pure rule for a location's parent folder (U39 "not writable by others"):
+/// the allowed entry's `mask` grants another account (any SID other than the
+/// user, SYSTEM or Administrators) a right that could change the folder.
+/// Read, list, traverse and synchronize grants are accepted.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn foreign_write_grant(sid: &str, user: &str, mask: u32) -> bool {
+    const SYSTEM: &str = "S-1-5-18";
+    const ADMINISTRATORS: &str = "S-1-5-32-544";
+    sid != user && sid != SYSTEM && sid != ADMINISTRATORS && mask & WRITE_CAPABLE_RIGHTS != 0
+}
 
 /// Stable counter identity for the OS-authenticated user; not a bearer credential.
 pub fn caller_identity() -> Result<airk_core::identity::Incarnation> {
@@ -327,6 +354,36 @@ pub async fn write_message_limited<S: AsyncWrite + Unpin, T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn location_parents_refuse_only_write_capable_grants_to_other_accounts() {
+        const USER: &str = "S-1-5-21-1-2-3-1002";
+        const SANDBOX: &str = "S-1-5-21-1-2-3-1011";
+        // icacls RX (read, list, traverse, synchronize) and R.
+        for read_only in [0x0012_00a9, 0x0012_0089] {
+            assert!(!foreign_write_grant(SANDBOX, USER, read_only));
+        }
+        // icacls M, F, W, D, and single write-type rights.
+        for write in [
+            0x0013_01bf,
+            0x001f_01ff,
+            0x0010_0116,
+            0x0001_0000,
+            0x0002,
+            0x0004,
+            0x0040,
+            0x0004_0000,
+            0x0008_0000,
+            0x1000_0000,
+            0x4000_0000,
+            0x0200_0000,
+        ] {
+            assert!(foreign_write_grant(SANDBOX, USER, write), "{write:#x}");
+        }
+        for trusted in [USER, "S-1-5-18", "S-1-5-32-544"] {
+            assert!(!foreign_write_grant(trusted, USER, 0x001f_01ff));
+        }
+    }
 
     #[test]
     fn clean_break_endpoint_roles_require_exact_original_child_identity() {

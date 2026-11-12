@@ -370,6 +370,8 @@ leftovers (`*.removed-*`, `.<leaf>.replacement-1`, `.<leaf>.replace-1.lock`,
 `standalone`, `airk/services`) and Git history (`git log --all -S`: 0 path uses
 of `join("indexes")`, `join("program")`, `install-pointer`, `install-record`) [V].
 Defaults follow the U39 grouping: data + state together, cache + logs together.
+Windows defaults were later moved below `%LOCALAPPDATA%\AIRK Service\` (U96);
+the table keeps the reviewed pre-U96 values.
 
 | Role | Windows | macOS | Linux (XDG respected as today) |
 |---|---|---|---|

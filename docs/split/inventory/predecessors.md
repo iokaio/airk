@@ -48,7 +48,9 @@ for removal. [V]
 **§9.5 collision check (U36):**
 
 - **Windows.** `%LOCALAPPDATA%\Programs\AIRK\` is outside every pre-split root.
-  No pre-split code writes under `Programs`. [V]
+  No pre-split code writes under `Programs`. [V] (U96 later moved every Windows
+  default to `%LOCALAPPDATA%\AIRK Service\`, a sibling of the pre-split
+  `%LOCALAPPDATA%\AIRK` root and outside it.)
 - **Linux.** `~/.local/lib/airk-service/` is a sibling of `~/.local/lib/airk/` and
   outside every pre-split root. [V]
 - **macOS.** `AIRK.app` directly under `~/Library/Application Support/AIRK/` is

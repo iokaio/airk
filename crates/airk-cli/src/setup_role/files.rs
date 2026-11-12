@@ -349,7 +349,7 @@ pub(crate) fn no_links(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// An existing folder owned by this user and not writable by others
+/// An existing location folder, which the I4 readers check as private
 /// (Windows: owner and every allowed ACE limited to this user, SYSTEM and
 /// Administrators, as `require_owner_private`; Unix: uid and no group/other
 /// write). Machine-wide folders fail this check (U39).
@@ -358,8 +358,12 @@ pub(crate) fn owned_folder(path: &Path) -> Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     ensure!(metadata.is_dir(), "{} is not a folder", path.display());
     #[cfg(windows)]
-    airk_ipc::endpoint::require_owner_private(path)
-        .with_context(|| format!("{} is not owned by this user alone", path.display()))?;
+    airk_ipc::endpoint::require_owner_private(path).with_context(|| {
+        format!(
+            "{} exists and is not private to this user; choose a folder that does not exist yet (AIRK creates its folders private)",
+            path.display()
+        )
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -372,6 +376,24 @@ pub(crate) fn owned_folder(path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// The nearest existing parent of a location that does not exist yet: a
+/// folder no other account can change (U39 "not writable by others"). On
+/// Windows read-only grants to other accounts are accepted
+/// (`require_not_writable_by_others`), because AIRK creates the location
+/// below it owner-only; Unix keeps the `owned_folder` rule.
+pub(crate) fn safe_parent(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        no_links(path)?;
+        let metadata = std::fs::symlink_metadata(path)?;
+        ensure!(metadata.is_dir(), "{} is not a folder", path.display());
+        airk_ipc::endpoint::require_not_writable_by_others(path)
+            .with_context(|| format!("{} cannot hold AIRK folders", path.display()))
+    }
+    #[cfg(unix)]
+    owned_folder(path)
 }
 
 /// The nearest existing ancestor of `path` (the path itself when it exists).

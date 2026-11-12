@@ -95,8 +95,13 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   below a top-level folder, no links, no nesting between the five locations,
   no overlap with any pre-split root (both channels and layout families of
   `user_paths`, the pre-split Inno `standalone` folder) or the pointer folder;
-  each existing folder (or nearest existing ancestor) is owned by this user
-  and not writable by others; each chosen folder is absent, empty, the
+  an existing location folder is owner-private (`owned_folder`); the nearest
+  existing ancestor of one that does not exist yet is not writable by others
+  (`safe_parent`; Windows `require_not_writable_by_others` accepts read-only
+  grants to other accounts, U96; Unix the `owned_folder` rule); in
+  `--prepare` on Windows the program folder is then created owner-only
+  (`prepare_root`) before placement, as the I4 readers require it private;
+  each chosen folder is absent, empty, the
   existing installation's, or (program, complete mode) holds only inventory
   files, the record, the inventory, Inno's `unins###.{exe,dat,msg}` and the
   wrappers' `user-path-owner.txt` or `airkctl-link-owner.txt`.

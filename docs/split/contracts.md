@@ -756,7 +756,7 @@ proceeds:
 | Owner | Setup/install contract in `airk-cli` (setup role); pure record types in `airk_core::install_record` [P] |
 | Consumers | Setup role (writer), `airkctl` (reader, §3.10.1), the extension discovery (reader, plan §8.2), later installers (U50) |
 | Surfaces | Files only |
-| Authorization | Owner = current user; not writable by others (Windows: owner user or Administrators, ACEs limited to the user, SYSTEM, Administrators, as `require_owner_private` [V `local_ipc_windows.rs:282-330`]; Unix: uid match, mode without group/other write); regular single-link file, no reparse point or symlink in any component (`safe_file` [V `install_files/CONTRACT.md`]) |
+| Authorization | Owner = current user; not writable by others (Windows: owner user or Administrators, ACEs limited to the user, SYSTEM, Administrators, as `require_owner_private` [V `local_ipc_windows.rs:282-330`]; Unix: uid match, mode without group/other write); regular single-link file, no reparse point or symlink in any component (`safe_file` [V `install_files/CONTRACT.md`]). Chosen locations (U39, U96): an existing location folder passes the same owner-private rule; on Windows the existing parent of a location that does not exist yet need only be not writable by others (`airk_ipc::endpoint::require_not_writable_by_others`: owner the user, SYSTEM or Administrators; no write-type allowed entry for another account; read-only grants accepted) |
 | Version | `schema` string per file; unknown major → refuse (exit 7) |
 | Unknown fields | `deny_unknown_fields` (readers fail closed) |
 | Limits | Pointer ≤ 4 KiB; record ≤ 64 KiB; setup operation ≤ 16 KiB |

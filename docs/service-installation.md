@@ -59,7 +59,7 @@ pre-split installer flow described in the rest of this page
 - **`airkctl service uninstall --yes [--purge-indexes]`** writes an
   uninstall operation, starts the setup role and exits (U20).
 - **Windows installer** `installers/windows/airk-service.iss`: per user, no
-  elevation, default `%LOCALAPPDATA%\Programs\AIRK` (`bin\airkctl.exe`,
+  elevation, default `%LOCALAPPDATA%\AIRK Service\program` (`bin\airkctl.exe`,
   `service\airk.exe`, `notices\`), a data-location page (index data and state;
   cache and logs), a disclosure page listing earlier AIRK installations found
   by `setup --plan`, a preflight (`--prepare`) before files are replaced,
