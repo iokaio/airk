@@ -18,5 +18,6 @@ pub mod registration;
 #[rustfmt::skip]
 pub mod evidence;
 pub mod service;
+pub mod session;
 pub mod start;
 pub mod tools;

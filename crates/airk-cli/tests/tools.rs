@@ -2138,3 +2138,91 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `airkctl session` on a real service (split step 3f.3): `hello` opens a
+/// window the service lists (W1, W5), an `invoke` prints what the one-shot
+/// command printed, and end of input closes the window (W3). No frame carries
+/// the lease.
+#[test]
+fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Result<()> {
+    use std::sync::{Arc, Mutex};
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Shared {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let frame = |value: Value| {
+        let body = serde_json::to_vec(&value).unwrap();
+        let mut bytes = (body.len() as u32).to_be_bytes().to_vec();
+        bytes.extend(body);
+        bytes
+    };
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-session");
+    let airk_core::service::ControlResponse::Health { observation } =
+        service.request(airk_core::service::ControlMethod::Health)
+    else {
+        anyhow::bail!("missing service health");
+    };
+    let mut input = frame(json!({"id": "01".repeat(16), "request": {"hello": {
+        "protocol": 2, "client": {"name": "airk-vscode", "version": "1.9.0"}, "i2_contracts": [1]}}}));
+    input.extend(frame(json!({"id": "02".repeat(16), "request": {"invoke": {
+        "argv": ["projects"], "deadline_ms": 30000}}})));
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let mut options = airkctl::session::Options::new(env!("CARGO_PKG_VERSION"), "0".repeat(64));
+    options.control_root = Some(service.control.clone());
+    options.label = "live window".into();
+    let code = airkctl::session::serve_streams(
+        std::io::Cursor::new(input),
+        Shared(output.clone()),
+        options,
+    );
+    assert_eq!(code, 0);
+    let bytes = output.lock().unwrap().clone();
+    let mut frames = Vec::new();
+    let mut rest = &bytes[..];
+    while rest.len() >= 4 {
+        let length = u32::from_be_bytes(rest[..4].try_into()?) as usize;
+        frames.push(serde_json::from_slice::<Value>(&rest[4..4 + length])?);
+        rest = &rest[4 + length..];
+    }
+    let reply = |id: &str| {
+        frames
+            .iter()
+            .find(|frame| frame["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("no reply {id}: {frames:?}"))
+    };
+    let hello = reply(&"01".repeat(16));
+    assert_eq!(hello["outcome"]["status"], "hello", "{hello}");
+    assert_eq!(
+        hello["outcome"]["service_instance"],
+        observation.instance.to_string()
+    );
+    assert!(hello["outcome"]["window_id"].is_string(), "{hello}");
+    let invoked = reply(&"02".repeat(16));
+    let control = service.control.to_str().unwrap().to_owned();
+    let one_shot = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .args(["projects", "--runtime-dir", &control])
+        .output()?;
+    assert_eq!(invoked["outcome"]["exit_code"], 0, "{invoked}");
+    assert_eq!(
+        invoked["outcome"]["stdout"],
+        String::from_utf8(one_shot.stdout)?
+    );
+    assert!(!String::from_utf8_lossy(&bytes).contains("lease"));
+    // End of input closed the window.
+    let airk_core::service::ControlResponse::AssistanceWindows { windows } =
+        service.request(airk_core::service::ControlMethod::AssistanceWindows {})
+    else {
+        anyhow::bail!("missing window listing");
+    };
+    assert!(windows.is_empty(), "{windows:?}");
+    Ok(())
+}

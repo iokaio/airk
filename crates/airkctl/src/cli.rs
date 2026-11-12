@@ -118,6 +118,15 @@ enum Command {
     Init,
     /// Print the offline model catalog and the CPU choice for this host.
     ModelCatalog,
+    /// Serve one editor window's framed session (protocol 2) on stdin/stdout.
+    Session {
+        /// The window label shown to agents (at most 128 bytes).
+        #[arg(long)]
+        label: Option<String>,
+        /// Exit when the parent process (the editor's extension host) exits.
+        #[arg(long)]
+        owner_watch: bool,
+    },
     /// Local HTTPS connections for agents: endpoint, info and revoke.
     Agents {
         #[command(subcommand)]
@@ -2393,6 +2402,18 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
         Command::Service { action } => service(cx, selection, action),
         Command::Init => init(cx, selection),
         Command::Explorer { action } => explorer_command(cx, selection, action),
+        Command::Session { label, owner_watch } => {
+            let mut options =
+                crate::session::Options::new(VERSION, own_digest().unwrap_or_default());
+            options.control_root = selection.control.clone();
+            options.capabilities = CAPABILITIES.iter().map(|&name| name.into()).collect();
+            if let Some(label) = label {
+                options.label = label;
+            }
+            options.owner_watch = owner_watch;
+            options.full_responses = cx.io.full_responses;
+            crate::session::serve(options)
+        }
         Command::Agents { action } => {
             let (runtime_dir, connection) = match &action {
                 AgentsCommand::Endpoint { runtime_dir } => (runtime_dir.clone(), None),
