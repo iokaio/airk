@@ -1152,7 +1152,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::AgentConnectionOwnership { .. }
         | ControlMethod::AgentConnectionVerify { .. }
         | ControlMethod::HttpIssuerRotation { .. }
-        | ControlMethod::AdminLaunchCode {} => {
+        | ControlMethod::AdminLaunchCode {}
+        | ControlMethod::AdminScopeGrant { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

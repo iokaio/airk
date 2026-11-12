@@ -9,6 +9,7 @@
 //! to its own control endpoint, so the browser reaches the same canonical
 //! handlers as the pipe. See `CONTRACT.md`.
 mod assets;
+mod mutations;
 mod operations;
 mod peer;
 mod secrets;
@@ -20,18 +21,22 @@ pub(crate) use peer::ConnectionPeer;
 use crate::admin_contract::{
     self as contract, AdminCode, Admission, CLEAR_SESSION_COOKIE, CSRF_HEADER, Effect, ErrorBody,
     ErrorClass, ExchangeResponse, FailureEnvelope, MAX_EXCHANGE_BODY_BYTES, MAX_REQUEST_BODY_BYTES,
-    PathMatch, PeerProof, RequestFacts, ResponseKind, Route, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS,
-    SuccessEnvelope,
+    PathMatch, PeerProof, RequestFacts, RequestProgress, ResponseKind, Route, SESSION_ABSOLUTE_MS,
+    SESSION_IDLE_MS, SuccessEnvelope,
 };
 use airk_core::{
-    identity::Incarnation,
-    service::{AdminLaunchSecret, ControlMethod, ControlResponse},
+    identity::{Incarnation, Sha256Digest},
+    index_catalog::CatalogRevision,
+    service::{
+        AdminLaunchSecret, ControlMethod, ControlResponse, ToolSelection, WindowScopeSelection,
+    },
 };
 use airk_mcp::remote::http::HttpResponse;
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response};
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::BodyExt;
+use operations::Served;
 use serde_json::Value;
 use std::{
     convert::Infallible,
@@ -54,10 +59,26 @@ pub(crate) type Dispatch = Arc<
         + Sync,
 >;
 
+/// The A2 catalog check (the one W4 uses; `service_runtime::scope_grant`):
+/// the selection's scope identity and catalog revision, or the refusal code.
+pub(crate) type ScopeCheck = Arc<
+    dyn Fn(
+            WindowScopeSelection,
+        )
+            -> Pin<Box<dyn Future<Output = Result<(Sha256Digest, CatalogRevision), String>> + Send>>
+        + Send
+        + Sync,
+>;
+/// `https.trust_status`: the read-only trust inspection, run in the service.
+pub(crate) type TrustInspect =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>> + Send + Sync>;
+
 /// Bodies are read under this deadline (the listener's header deadline).
 const BODY_SECONDS: u64 = 15;
 /// Response frames stay well under the listener's 1 MiB frame bound.
 const CHUNK_BYTES: usize = 256 * 1024;
+/// A native failure message in an envelope, bounded as the CLI's error line.
+const MAX_MESSAGE_CHARS: usize = 4096;
 
 struct Secrets {
     codes: secrets::LaunchCodes,
@@ -72,6 +93,10 @@ pub(crate) struct AdminPlane {
     clock: Clock,
     random: Random,
     secrets: Mutex<Secrets>,
+    /// Without it `search.select_scope` answers `not_yet_served`.
+    scope_check: Option<ScopeCheck>,
+    /// Without it `https.trust_status` answers `not_yet_served`.
+    trust_inspect: Option<TrustInspect>,
 }
 
 fn system_clock() -> u64 {
@@ -112,7 +137,21 @@ impl AdminPlane {
                 codes: secrets::LaunchCodes::new(instance),
                 sessions: secrets::Sessions::new(instance),
             }),
+            scope_check: None,
+            trust_inspect: None,
         }
+    }
+
+    /// Serve A2 grants with the shared catalog check.
+    pub(crate) fn with_scope_check(mut self, check: ScopeCheck) -> Self {
+        self.scope_check = Some(check);
+        self
+    }
+
+    /// Serve `https.trust_status` with the service's trust inspection.
+    pub(crate) fn with_trust_inspect(mut self, inspect: TrustInspect) -> Self {
+        self.trust_inspect = Some(inspect);
+        self
     }
 
     fn secrets(&self) -> std::sync::MutexGuard<'_, Secrets> {
@@ -224,10 +263,17 @@ impl AdminPlane {
                     Some(CLEAR_SESSION_COOKIE),
                 )
             }
-            Route::Call { operation } => match self.call(&operation, request.into_body()).await {
-                Ok(response) => response,
-                Err(code) => refusal(code),
-            },
+            Route::Call { operation } => {
+                // Admission named exactly one admin cookie for this session.
+                let cookie = match cookies.as_slice() {
+                    [cookie] => Some(cookie.as_str()),
+                    _ => None,
+                };
+                match self.call(&operation, cookie, request.into_body()).await {
+                    Ok(response) => response,
+                    Err(code) => refusal(code),
+                }
+            }
             // The bounded event stream (§4.8) is not served yet.
             Route::Events => refusal(AdminCode::NotYetServed),
         }
@@ -263,7 +309,12 @@ impl AdminPlane {
     }
 
     /// One reviewed operation through the canonical control handler.
-    async fn call<B>(&self, operation: &str, body: B) -> Result<HttpResponse, AdminCode>
+    async fn call<B>(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+        body: B,
+    ) -> Result<HttpResponse, AdminCode>
     where
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -273,25 +324,171 @@ impl AdminPlane {
             .admin_row(operation)
             .ok_or(AdminCode::AdminOperationUnknown)?;
         let body = read_body(body, MAX_REQUEST_BODY_BYTES).await?;
-        let method: ControlMethod =
+        let mut body: Value =
             serde_json::from_slice(&body).map_err(|_| AdminCode::AdminMalformedRequest)?;
-        let encoded = serde_json::to_value(&method).map_err(|_| AdminCode::AdminInternal)?;
         // Defense in depth: the validated table already names none of these.
-        if table.never_over_http(&encoded) {
+        if table.never_over_http(&body) {
             return Err(AdminCode::AdminOperationUnknown);
         }
-        if !operations::names(&row.method, &encoded) {
+        let target = match operations::served(&row.method) {
+            Served::Direct => row.method.as_str(),
+            Served::Equivalent(method) => method,
+            Served::TrustInspect => return self.trust_status(operation, &body).await,
+            Served::Deferred => return Err(AdminCode::NotYetServed),
+        };
+        if !operations::names(target, &body) {
             return Err(AdminCode::AdminMalformedRequest);
         }
-        // Mutations need the service journal with a server-generated key
-        // (§4.4, §2.4); they are not served until that path lands.
-        if row.effect != Effect::Read {
-            return Err(AdminCode::NotYetServed);
+        match row.effect {
+            Effect::Read => {
+                let method: ControlMethod =
+                    serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+                self.read(operation, cookie, method).await
+            }
+            // Destructive rows need the native draft, preview and digest
+            // plus a typed confirmation (§4.3); the contract does not define
+            // the confirmation's wire form yet.
+            Effect::Destructive => Err(AdminCode::NotYetServed),
+            Effect::Mutation => {
+                // §2.4: the key is generated here, never by the browser.
+                let key = match mutations::fill_key(&self.dispatch, &self.random, &mut body).await?
+                {
+                    Ok(key) => key,
+                    Err(refused) => return Ok(native(operation, refused)),
+                };
+                let method: ControlMethod =
+                    serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+                if let ControlMethod::AdminScopeGrant { selection } = method {
+                    return self.grant(operation, cookie, selection).await;
+                }
+                match mutations::execute(&self.dispatch, &self.random, method, key).await? {
+                    mutations::Executed::Answered(response, request) => {
+                        Ok(native_request(operation, *response, request))
+                    }
+                    mutations::Executed::Unknown => Ok(outcome_unknown()),
+                }
+            }
+        }
+    }
+
+    /// A read row. Search runs only unselected (help) or under the
+    /// session's A2 grant; a browser never names a project, catalog grant,
+    /// combined session or window.
+    async fn read(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+        method: ControlMethod,
+    ) -> Result<HttpResponse, AdminCode> {
+        if let ControlMethod::ToolsCall { selection, .. } = &method {
+            match selection {
+                ToolSelection::Unselected => {}
+                ToolSelection::Admin => return self.granted_read(operation, cookie).await,
+                _ => return Err(AdminCode::AdminMalformedRequest),
+            }
         }
         let response = (self.dispatch)(method)
             .await
             .map_err(|_| AdminCode::AdminInternal)?;
         Ok(native(operation, response))
+    }
+
+    /// M3 under the session's A2 grant. The grant is rechecked against the
+    /// current catalog first; the read itself needs a scoped-read admission
+    /// for in-memory grants, which does not exist yet (`CONTRACT.md`).
+    async fn granted_read(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+    ) -> Result<HttpResponse, AdminCode> {
+        let now = (self.clock)();
+        let grant = cookie.and_then(|cookie| self.secrets().sessions.grant(cookie, now));
+        let Some(grant) = grant else {
+            let response = ControlResponse::Failure {
+                code: "admin_scope_not_granted".into(),
+            };
+            return Ok(native(operation, response));
+        };
+        let check = self.scope_check.as_ref().ok_or(AdminCode::NotYetServed)?;
+        match check(grant.selection.clone()).await {
+            Ok(current) if current == (grant.scope_identity, grant.catalog_revision) => {
+                Err(AdminCode::NotYetServed)
+            }
+            Ok(_) => Ok(native(
+                operation,
+                ControlResponse::Failure {
+                    code: "scoped_read_unavailable".into(),
+                },
+            )),
+            Err(code) => Ok(native(operation, ControlResponse::Failure { code })),
+        }
+    }
+
+    /// A2: check the selection, then bind the grant to this session and
+    /// instance. A failed check leaves the previous grant (W4's rule).
+    async fn grant(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+        selection: WindowScopeSelection,
+    ) -> Result<HttpResponse, AdminCode> {
+        let check = self.scope_check.as_ref().ok_or(AdminCode::NotYetServed)?;
+        let cookie = cookie.ok_or(AdminCode::AdminSessionInvalid)?;
+        let (scope_identity, catalog_revision) = match check(selection.clone()).await {
+            Ok(checked) => checked,
+            Err(code) => return Ok(native(operation, ControlResponse::Failure { code })),
+        };
+        let grant = secrets::Grant {
+            selection,
+            scope_identity,
+            catalog_revision,
+            instance: self.instance,
+        };
+        let now = (self.clock)();
+        // The session may have ended while the catalog was read.
+        let expires_at_ms = self
+            .secrets()
+            .sessions
+            .set_grant(cookie, grant, now)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        Ok(native(
+            operation,
+            ControlResponse::AdminScopeGranted {
+                scope_identity,
+                catalog_revision,
+                expires_at_ms,
+            },
+        ))
+    }
+
+    /// `https.trust_status` (mapping `HttpTrust.Inspect`): the inspection's
+    /// complete status document.
+    async fn trust_status(&self, operation: &str, body: &Value) -> Result<HttpResponse, AdminCode> {
+        if *body != serde_json::json!({"http_trust": {"action": "inspect"}}) {
+            return Err(AdminCode::AdminMalformedRequest);
+        }
+        let inspect = self.trust_inspect.as_ref().ok_or(AdminCode::NotYetServed)?;
+        Ok(match inspect().await {
+            Ok(status) => success(operation, status, None),
+            Err(error) => {
+                let message: String = format!("{error:#}")
+                    .chars()
+                    .take(MAX_MESSAGE_CHARS)
+                    .collect();
+                let envelope = FailureEnvelope {
+                    schema: contract::ENVELOPE_SCHEMA.to_owned(),
+                    ok: false,
+                    error: ErrorBody {
+                        code: "operation_failed".into(),
+                        class: ErrorClass::Refused,
+                        retryable: false,
+                        retry_after_ms: None,
+                        native: Some(serde_json::json!({ "message": message })),
+                    },
+                };
+                api(ErrorClass::Refused.status(), &envelope, None)
+            }
+        })
     }
 
     #[cfg(test)]
@@ -456,14 +653,41 @@ pub(crate) fn refusal(code: AdminCode) -> HttpResponse {
 }
 
 fn success(operation: &str, result: Value, set_cookie: Option<&str>) -> HttpResponse {
+    success_request(operation, result, set_cookie, None)
+}
+
+fn success_request(
+    operation: &str,
+    result: Value,
+    set_cookie: Option<&str>,
+    request: Option<RequestProgress>,
+) -> HttpResponse {
     let envelope = SuccessEnvelope {
         schema: contract::ENVELOPE_SCHEMA.to_owned(),
         ok: true,
         operation: operation.to_owned(),
         result,
-        request: None,
+        request,
     };
     api(200, &envelope, set_cookie)
+}
+
+/// A mutation whose reply was lost twice: it may have been accepted, so it
+/// is neither refused nor retryable with a new key (§2.4). A journaled
+/// request stays listed by `requests.list`.
+fn outcome_unknown() -> HttpResponse {
+    let envelope = FailureEnvelope {
+        schema: contract::ENVELOPE_SCHEMA.to_owned(),
+        ok: false,
+        error: ErrorBody {
+            code: "service_request_outcome_unknown".into(),
+            class: ErrorClass::Unavailable,
+            retryable: false,
+            retry_after_ms: None,
+            native: None,
+        },
+    };
+    api(ErrorClass::Unavailable.status(), &envelope, None)
 }
 
 fn static_asset(name: &str, kind: ResponseKind) -> HttpResponse {
@@ -493,6 +717,16 @@ fn snake_code(code: &str) -> bool {
 /// The complete native response: success with the whole result, or a
 /// typed refusal (409, class `refused`) that keeps the native response.
 fn native(operation: &str, response: ControlResponse) -> HttpResponse {
+    native_request(operation, response, None)
+}
+
+/// `native`, with the request a successful mutation belongs to; a refusal
+/// carries no request (nothing was accepted under it).
+fn native_request(
+    operation: &str,
+    response: ControlResponse,
+    request: Option<RequestProgress>,
+) -> HttpResponse {
     let Ok(value) = serde_json::to_value(&response) else {
         return refusal(AdminCode::AdminInternal);
     };
@@ -505,7 +739,7 @@ fn native(operation: &str, response: ControlResponse) -> HttpResponse {
         || status.ends_with("_refused")
         || status.ends_with("_failed");
     if !refused {
-        return success(operation, value, None);
+        return success_request(operation, value, None, request);
     }
     let code = match status {
         "failure" => value

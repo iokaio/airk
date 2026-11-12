@@ -622,8 +622,10 @@ fn relay_rule(method: &ControlMethod) -> Relay {
         | M::WindowScopeRelease { .. }
         | M::AssistanceDrain { .. }
         | M::HandoffPublish { .. }
-        // A1 is owner pipe only (contracts §2.7, §3.8).
-        | M::AdminLaunchCode {} => Relay::Refuse,
+        // A1 is owner pipe only (contracts §2.7, §3.8); A2 belongs to an
+        // admin session, which a window session never is.
+        | M::AdminLaunchCode {}
+        | M::AdminScopeGrant { .. } => Relay::Refuse,
         _ => Relay::Forward,
     }
 }

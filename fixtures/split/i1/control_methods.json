@@ -127,6 +127,12 @@
           "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]},\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"index_ids\":[\"idx_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"member_availability\":\"require\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
           "request_frame_budget": 131072,
           "response_frame_budget": 4194304
+        },
+        {
+          "name": "admin_selection",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":\"admin\",\"response_mode\":\"terse\",\"usage_client\":\"unknown\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
         }
       ],
       "rejected_methods": [
@@ -181,6 +187,10 @@
         {
           "name": "combined_extra_field",
           "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]},\"explorer\":true}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "admin_selection_with_fields",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"admin\":{\"session\":\"x\"}},\"response_mode\":\"terse\",\"usage_client\":\"unknown\"}}"
         }
       ],
       "responses": [
@@ -925,6 +935,54 @@
         {
           "name": "without_port",
           "bytes": "{\"status\":\"admin_launch_code\",\"code\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\",\"expires_in_ms\":60000}"
+        }
+      ]
+    },
+    {
+      "variant": "admin_scope_grant",
+      "method": "A2",
+      "methods": [
+        {
+          "name": "grant",
+          "bytes": "{\"admin_scope_grant\":{\"selection\":{\"namespace\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"expected_catalog_revision\":12,\"index_ids\":[\"idx_01010101010101010101010101010101\"],\"project_ids\":[\"prj_02020202020202020202020202020202\"]}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "several_indexes",
+          "bytes": "{\"admin_scope_grant\":{\"selection\":{\"namespace\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"expected_catalog_revision\":12,\"index_ids\":[\"idx_01010101010101010101010101010101\",\"idx_03030303030303030303030303030303\"],\"project_ids\":[\"prj_02020202020202020202020202020202\"]}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "with_lease",
+          "bytes": "{\"admin_scope_grant\":{\"lease\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"selection\":{\"namespace\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"expected_catalog_revision\":12,\"index_ids\":[\"idx_01010101010101010101010101010101\"],\"project_ids\":[\"prj_02020202020202020202020202020202\"]}}}"
+        },
+        {
+          "name": "with_grant_id",
+          "bytes": "{\"admin_scope_grant\":{\"selection\":{\"namespace\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"expected_catalog_revision\":12,\"grant_id\":\"grt_01010101010101010101010101010101\",\"index_ids\":[\"idx_01010101010101010101010101010101\"],\"project_ids\":[\"prj_02020202020202020202020202020202\"]}}}"
+        },
+        {
+          "name": "missing_selection",
+          "bytes": "{\"admin_scope_grant\":{}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "granted",
+          "bytes": "{\"status\":\"admin_scope_granted\",\"scope_identity\":\"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c\",\"catalog_revision\":12,\"expires_at_ms\":1800000}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_expiry",
+          "bytes": "{\"status\":\"admin_scope_granted\",\"scope_identity\":\"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c\",\"catalog_revision\":12}"
+        },
+        {
+          "name": "with_selection",
+          "bytes": "{\"status\":\"admin_scope_granted\",\"scope_identity\":\"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c\",\"catalog_revision\":12,\"expires_at_ms\":1800000,\"selection\":{\"namespace\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"expected_catalog_revision\":12,\"index_ids\":[\"idx_01010101010101010101010101010101\"],\"project_ids\":[\"prj_02020202020202020202020202020202\"]}}"
         }
       ]
     }

@@ -25,6 +25,7 @@ mod lifecycle;
 mod registration;
 mod resolve;
 mod rotation;
+mod scope_grant;
 mod tools_call;
 mod usage;
 mod window_plane;
@@ -116,9 +117,15 @@ struct State {
 
 /// The window plane with the system clock (Unix milliseconds) and the OS
 /// random source for window, draft and handoff ids and 256-bit leases. W4
-/// scope grants are refused at dispatch until step 3f.4, so the validator
-/// is never reached before then.
-fn windows(instance: airk_core::identity::Incarnation) -> window_plane::WindowPlane {
+/// is checked by the catalog check it shares with the admin grant
+/// (`scope_grant`), but W4 itself is still refused at dispatch until reads
+/// under in-memory grants are admitted, so the validator is not reached
+/// yet. Before W4 is served, the blocking check must move out of the
+/// `windows` lock (check first, then store the grant under the lock).
+fn windows(
+    instance: airk_core::identity::Incarnation,
+    control: std::path::PathBuf,
+) -> window_plane::WindowPlane {
     let random = || new_instance_id().expect("the OS random source is available");
     window_plane::WindowPlane::new(
         instance,
@@ -135,8 +142,44 @@ fn windows(instance: airk_core::identity::Incarnation) -> window_plane::WindowPl
             bytes[16..].copy_from_slice(random().as_bytes());
             airk_core::service::WindowLease::from_bytes(bytes)
         }),
-        Box::new(|_| Err("not_yet_served".into())),
+        Box::new(move |selection| scope_grant::check(&control, selection)),
     )
+}
+
+/// The admin plane's A2 catalog check: the shared `scope_grant` check, off
+/// the async workers.
+fn admin_scope_check(control: std::path::PathBuf) -> crate::admin_plane::ScopeCheck {
+    Arc::new(move |selection: airk_core::service::WindowScopeSelection| {
+        let control = control.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || scope_grant::check(&control, &selection))
+                .await
+                .unwrap_or_else(|_| Err(scope_grant::SCOPE_UNAVAILABLE.to_owned()))
+        })
+    })
+}
+
+/// The admin plane's `https.trust_status`: the status `airk runtime
+/// http-trust --action inspect` printed, through the same callers
+/// (`http_endpoint::trust::saved_identity` and `manage(Inspect)`), which
+/// read the saved endpoint and the OS trust store and change nothing.
+fn admin_trust_inspect(control: std::path::PathBuf) -> crate::admin_plane::TrustInspect {
+    Arc::new(move || {
+        let control = control.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+                let (binding, endpoint) = crate::http_endpoint::trust::saved_identity(&control)?;
+                let status = crate::http_endpoint::trust::manage(
+                    &control.join("http-1"),
+                    binding,
+                    endpoint.ca_sha256,
+                    crate::http_endpoint::trust::Action::Inspect,
+                )?;
+                Ok(serde_json::to_value(status)?)
+            })
+            .await?
+        })
+    })
 }
 
 /// The real outer NativeRead seam. A fixture may supply the producer for race
@@ -542,10 +585,17 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                 }
             }
-            // W4 grants land with their catalog check and the M3 window
-            // read in step 3f.4; until then the typed refusal.
+            // W4 has its catalog check (`scope_grant`), but reads under an
+            // in-memory grant need a scoped-read admission that does not
+            // exist yet (a reviewed catalog grant is required today); until
+            // then the typed refusal.
             ControlMethod::WindowScopeGrant { .. } => ControlResponse::Failure {
                 code: "not_yet_served".into(),
+            },
+            // A2 belongs to an admin session, which the pipe never has; the
+            // admin plane serves it without this endpoint.
+            ControlMethod::AdminScopeGrant { .. } => ControlResponse::Failure {
+                code: "admin_session_required".into(),
             },
             // W1-W3, W4b, W5-W8 and M12 (split step 3f.2): in memory.
             method @ (ControlMethod::WindowOpen { .. }
@@ -916,11 +966,15 @@ async fn serve_with_admission(
         native_administrative: Default::default(),
         native_caller: local_ipc::caller_identity()?,
         lifecycle: Mutex::new(None),
-        windows: Mutex::new(windows(instance)),
-        admin: Arc::new(crate::admin_plane::AdminPlane::new(
-            admin_dispatch(root.canonicalize()?, instance),
-            instance,
-        )),
+        windows: Mutex::new(windows(instance, root.canonicalize()?)),
+        admin: Arc::new(
+            crate::admin_plane::AdminPlane::new(
+                admin_dispatch(root.canonicalize()?, instance),
+                instance,
+            )
+            .with_scope_check(admin_scope_check(root.canonicalize()?))
+            .with_trust_inspect(admin_trust_inspect(root.canonicalize()?)),
+        ),
     });
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
     {

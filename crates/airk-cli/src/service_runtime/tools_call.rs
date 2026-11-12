@@ -95,6 +95,12 @@ pub(super) async fn response(
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
 ) -> ControlResponse {
+    // The A2 grant belongs to an admin session; the pipe has none.
+    if selection == ToolSelection::Admin {
+        return ControlResponse::Failure {
+            code: "admin_scope_not_granted".into(),
+        };
+    }
     match run(control, tool, arguments, selection, mode, client).await {
         Ok(result) => ControlResponse::ToolResult { result },
         Err(error) => failed(&error),
@@ -147,6 +153,10 @@ async fn run(
         }
         // A window's W4 scope grant is read in step 3f.2.
         ToolSelection::Window { .. } => anyhow::bail!("window scope reads are not yet served"),
+        // Answered by `response` before this point.
+        ToolSelection::Admin => {
+            anyhow::bail!("admin scope reads are served only by the admin plane")
+        }
         ToolSelection::Project { binding } => {
             let project = crate::service_frontend::resolve_control(control, binding).await?;
             let registration = project.registration;

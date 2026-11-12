@@ -636,6 +636,14 @@ pub enum ControlMethod {
     /// service's `/admin` plane. Owner pipe only: never relayed by a session
     /// and never over HTTP. A struct variant, so an unknown field is refused.
     AdminLaunchCode {},
+    /// A2 (contracts §2.7, §4.6; U77): the admin session's read grant over
+    /// existing indexes, the W4 selection without a lease. Served only by
+    /// the service's admin plane, which binds the grant to the calling
+    /// session and service instance in memory; the pipe has no admin
+    /// session and refuses it (`admin_session_required`).
+    AdminScopeGrant {
+        selection: WindowScopeSelection,
+    },
 }
 
 impl ControlMethod {
@@ -694,7 +702,8 @@ impl ControlMethod {
             | Self::AgentConnectionInfo { .. }
             | Self::AgentConnectionOwnership { .. }
             | Self::AgentConnectionVerify { .. }
-            | Self::HttpIssuerRotation { .. } => {
+            | Self::HttpIssuerRotation { .. }
+            | Self::AdminScopeGrant { .. } => {
                 return Some("console_method_not_reviewed");
             }
             // Exhaustive review: a new service method must be considered here before
@@ -944,6 +953,10 @@ pub enum ToolSelection {
         window_id: Incarnation,
         lease: WindowLease,
     },
+    /// The calling admin session's A2 grant. Only the service's admin plane
+    /// resolves it, from the session the request was admitted under; on the
+    /// pipe there is no admin session (`admin_scope_not_granted`).
+    Admin,
     /// `--combined-session <request>` with its narrowing defaults, which the
     /// service adds to the arguments (a conflicting argument is refused).
     Combined {
@@ -1629,6 +1642,13 @@ pub enum ControlResponse {
         code: AdminLaunchSecret,
         port: u16,
         expires_in_ms: u64,
+    },
+    /// A2: the admin grant's identity, catalog revision and the calling
+    /// session's current expiry (the grant ends with the session).
+    AdminScopeGranted {
+        scope_identity: Sha256Digest,
+        catalog_revision: crate::index_catalog::CatalogRevision,
+        expires_at_ms: u64,
     },
 }
 

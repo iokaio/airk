@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `/admin` plane against a live reviewed service (split Phase 5): A1 via
 //! `airkctl admin url`, the launch-code exchange over real TLS pinned to the
-//! service's issuer, admin reads through the canonical handlers, and the
-//! cross-plane refusals.
+//! service's issuer, admin reads through the canonical handlers, a keyed
+//! mutation round trip, the admin read grant (A2), and the cross-plane
+//! refusals.
 mod common;
-use airk_core::service::ControlMethod;
+use airk_core::{
+    service::{ControlMethod, ControlResponse, ToolResponseMode, ToolSelection},
+    service_http::HttpSelection,
+    usage::ClientFamily,
+};
 use anyhow::{Context, Result, ensure};
 use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use serde_json::{Value, json};
@@ -330,6 +335,87 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     )?;
     assert_eq!(mcp.status, 403);
     assert_eq!(mcp.json()["error"]["code"], "cookie_on_bearer_plane");
+
+    // Phase 5b: pause and resume through the canonical handler. The
+    // service generates the request nonce; the browser never sends one.
+    let binding = service.project.binding.to_string();
+    for paused in [true, false] {
+        let body = json!({"pause": {"project": binding, "paused": paused}}).to_string();
+        let reply = api("/admin/api/v1/call/indexes.pause", &authenticated, &body)?;
+        assert_eq!(
+            reply.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&reply.body)
+        );
+        let envelope = reply.json();
+        assert_eq!(envelope["operation"], "indexes.pause");
+        assert_eq!(envelope["result"]["status"], "registered");
+        assert_eq!(envelope["result"]["project"]["paused"], json!(paused));
+        assert_eq!(envelope["request"]["state"], "completed");
+        let nonce = envelope["request"]["nonce"]
+            .as_str()
+            .context("request nonce")?;
+        assert!(
+            nonce.len() == 32
+                && nonce
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{nonce}"
+        );
+    }
+
+    // A2: the admin read grant over the reviewed fixture's index at the
+    // current catalog revision, bound to this session.
+    let HttpSelection::Scoped { selection } = service.http_selection() else {
+        anyhow::bail!("the reviewed fixture's selection is scoped");
+    };
+    let ControlResponse::Health { observation } = service.request(ControlMethod::Health) else {
+        anyhow::bail!("health unavailable");
+    };
+    let clock = observation.catalog_clock.context("catalog clock")?;
+    let grant = json!({"admin_scope_grant": {"selection": {
+        "namespace": clock.namespace,
+        "expected_catalog_revision": clock.revision,
+        "index_ids": [selection.index_id],
+        "project_ids": selection.project_ids,
+    }}})
+    .to_string();
+    let granted = api(
+        "/admin/api/v1/call/search.select_scope",
+        &authenticated,
+        &grant,
+    )?;
+    assert_eq!(
+        granted.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&granted.body)
+    );
+    let granted = granted.json();
+    assert_eq!(granted["result"]["status"], "admin_scope_granted");
+    assert_eq!(granted["result"]["catalog_revision"], json!(clock.revision));
+    // Reads under an in-memory grant wait for their scoped-read admission
+    // (admin_plane/CONTRACT.md); the pipe never resolves an admin selection.
+    let search = json!({"tools_call": {"tool": "airk_status", "arguments": {},
+        "selection": "admin", "response_mode": "terse", "usage_client": "unknown"}})
+    .to_string();
+    let searched = api("/admin/api/v1/call/search.call", &authenticated, &search)?;
+    assert_eq!(
+        (searched.status, searched.code().as_str()),
+        (503, "not_yet_served")
+    );
+    let pipe = service.request(ControlMethod::ToolsCall {
+        tool: "airk_status".into(),
+        arguments: Default::default(),
+        selection: ToolSelection::Admin,
+        response_mode: ToolResponseMode::Terse,
+        usage_client: ClientFamily::Unknown,
+    });
+    assert_eq!(
+        serde_json::to_value(pipe)?,
+        json!({"status": "failure", "code": "admin_scope_not_granted"})
+    );
 
     // Logout ends the session.
     let logout = api("/admin/api/v1/session/logout", &authenticated, "{}")?;

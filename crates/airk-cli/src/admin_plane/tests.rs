@@ -6,7 +6,10 @@ use crate::admin_contract::{COOKIE_NAME, MAX_SESSIONS, session_cookie};
 use http_body_util::Full;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::{
+    collections::VecDeque,
+    sync::atomic::{AtomicU8, AtomicU64, Ordering},
+};
 
 const PORT: u16 = 41234;
 const ADMIN_LAUNCH: &str = include_str!("../../../../fixtures/split/i1/admin_launch_code.json");
@@ -563,7 +566,8 @@ async fn calls_need_the_cookie_the_token_and_a_reviewed_operation() {
         (status, code_of(&reply).as_str()),
         (404, "admin_operation_unknown")
     );
-    // Mutations wait for the journaled admin path.
+    // A mutation whose reply never arrives has an unknown outcome; it is
+    // neither refused nor retryable under a new key.
     let revoke = json!({"http_revoke": {"connection_id": "1c".repeat(16)}}).to_string();
     let (status, _, reply) = answer(
         &plane,
@@ -575,7 +579,10 @@ async fn calls_need_the_cookie_the_token_and_a_reviewed_operation() {
         PeerProof::SameUser,
     )
     .await;
-    assert_eq!((status, code_of(&reply).as_str()), (503, "not_yet_served"));
+    assert_eq!(
+        (status, code_of(&reply).as_str()),
+        (503, "service_request_outcome_unknown")
+    );
     // A valid cookie and token from a foreign peer are refused (H1).
     let (status, _, reply) = answer(
         &plane,
@@ -675,4 +682,418 @@ fn native_answers_keep_the_complete_response() {
     );
     let envelope: SuccessEnvelope = serde_json::from_value(envelope).unwrap();
     envelope.validate().unwrap();
+}
+
+/// The index the fake catalog check grants.
+const GRANTED_INDEX: &str = "idx_01010101010101010101010101010101";
+
+/// A plane whose dispatch records every method and answers from `script`
+/// (`None` is a lost reply), and whose catalog check grants exactly
+/// `GRANTED_INDEX` at the revision `catalog` holds, with identity `[0x5c; 32]`.
+fn scripted_plane(
+    script: Vec<Option<ControlResponse>>,
+) -> (AdminPlane, Arc<Mutex<Vec<Value>>>, Arc<AtomicU64>) {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let script = Arc::new(Mutex::new(VecDeque::from(script)));
+    let log = sent.clone();
+    let dispatch: Dispatch = Arc::new(move |method: ControlMethod| {
+        log.lock()
+            .unwrap()
+            .push(serde_json::to_value(&method).unwrap());
+        let answer = script.lock().unwrap().pop_front().flatten();
+        Box::pin(async move { answer.ok_or_else(|| anyhow::anyhow!("reply lost")) })
+    });
+    let catalog = Arc::new(AtomicU64::new(12));
+    let current = catalog.clone();
+    let check: ScopeCheck = Arc::new(move |selection: WindowScopeSelection| {
+        let revision = current.load(Ordering::SeqCst);
+        Box::pin(async move {
+            let granted = selection.index_ids.len() == 1
+                && selection.index_ids[0].to_string() == GRANTED_INDEX
+                && selection.expected_catalog_revision.get() == revision;
+            if granted {
+                Ok((
+                    Sha256Digest::from_bytes([0x5c; 32]),
+                    selection.expected_catalog_revision,
+                ))
+            } else {
+                Err("scoped_read_unavailable".to_owned())
+            }
+        })
+    });
+    let counter = Arc::new(AtomicU8::new(0));
+    let plane = AdminPlane::with_sources(
+        dispatch,
+        Incarnation::from_bytes([1; 16]),
+        Arc::new(|| 0),
+        Arc::new(move || Some([counter.fetch_add(1, Ordering::SeqCst) + 1; 32])),
+    )
+    .with_scope_check(check);
+    (plane, sent, catalog)
+}
+
+fn api_call(cookie: &str, csrf: &str, operation: &str, body: &str) -> Request<Full<Bytes>> {
+    let cookie = format!("{COOKIE_NAME}={cookie}");
+    request(
+        "POST",
+        &format!("/admin/api/v1/call/{operation}"),
+        &[
+            HOST,
+            ORIGIN,
+            SAME_ORIGIN,
+            JSON,
+            ("cookie", cookie.as_str()),
+            ("x-airk-csrf", csrf),
+        ],
+        body,
+    )
+}
+
+async fn envelope(plane: &AdminPlane, request: Request<Full<Bytes>>) -> (u16, Value) {
+    let (status, _, body) = answer(plane, request, PeerProof::SameUser).await;
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+fn error_code(reply: &Value) -> String {
+    reply["error"]["code"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn grant_body(index: &str, revision: u64) -> String {
+    json!({"admin_scope_grant": {"selection": {
+        "namespace": "0a".repeat(16),
+        "expected_catalog_revision": revision,
+        "index_ids": [index],
+        "project_ids": ["prj_02020202020202020202020202020202"],
+    }}})
+    .to_string()
+}
+
+fn search_body() -> String {
+    json!({"tools_call": {"tool": "airk_search", "arguments": {"query": "q"},
+        "selection": "admin", "response_mode": "terse", "usage_client": "unknown"}})
+    .to_string()
+}
+
+#[tokio::test]
+async fn mutations_answer_with_a_server_generated_request() {
+    let (plane, sent, _) = scripted_plane(vec![Some(ControlResponse::ClientErrorRecorded {})]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let pause = json!({"pause": {"project": "ab".repeat(32), "paused": true}});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "indexes.pause", &pause.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    let reply: SuccessEnvelope = serde_json::from_value(reply).unwrap();
+    reply.validate().unwrap();
+    let request = reply.request.unwrap();
+    // The launch code, cookie and token drew 1-3; the request nonce is 4.
+    assert_eq!(request.nonce, "04".repeat(16));
+    assert_eq!(request.state, contract::RequestState::Completed);
+    assert_eq!(*sent.lock().unwrap(), [pause]);
+    // A browser never supplies a key: refused before anything is sent.
+    let lifecycle = json!({"lifecycle": {"action": "stop", "caller": "c1".repeat(16)}});
+    let retry = json!({"retry": {"id": "3b".repeat(32),
+        "key": {"namespace": "0a".repeat(16), "epoch": 1, "nonce": "c2".repeat(16)}}});
+    for (operation, body) in [("service.stop", lifecycle), ("jobs.retry", retry)] {
+        let (status, reply) = envelope(
+            &plane,
+            api_call(&cookie, &csrf, operation, &body.to_string()),
+        )
+        .await;
+        assert_eq!(
+            (status, error_code(&reply).as_str()),
+            (400, "admin_malformed_request")
+        );
+    }
+    assert_eq!(sent.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn keyed_mutations_fill_the_key_from_the_service_epoch() {
+    let (plane, sent, _) = scripted_plane(vec![
+        Some(ControlResponse::RequestEpoch {
+            namespace: Incarnation::from_bytes([0x0a; 16]),
+            epoch: 7,
+        }),
+        // A refusal under the key: no request in the envelope.
+        Some(ControlResponse::Failure {
+            code: "lifecycle_request_in_progress".into(),
+        }),
+    ]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "service.stop",
+            r#"{"lifecycle":{"action":"stop"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, 409, "{reply}");
+    assert_eq!(error_code(&reply), "lifecycle_request_in_progress");
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent[0], json!("request_epoch"));
+    // Caller 4 and nonce 5 come from the service's random source.
+    assert_eq!(
+        sent[1],
+        json!({"lifecycle": {"action": "stop", "caller": "04".repeat(16),
+            "key": {"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)}}})
+    );
+}
+
+#[tokio::test]
+async fn the_admin_grant_belongs_to_its_session() {
+    let (plane, sent, catalog) = scripted_plane(Vec::new());
+    let (cookie, csrf) = sign_in(&plane).await;
+    let search = |cookie: &str, csrf: &str| api_call(cookie, csrf, "search.call", &search_body());
+    // No grant yet: the search is refused, typed.
+    let (status, reply) = envelope(&plane, search(&cookie, &csrf)).await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (409, "admin_scope_not_granted")
+    );
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "search.select_scope",
+            &grant_body(GRANTED_INDEX, 12),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["result"],
+        json!({"status": "admin_scope_granted", "scope_identity": "5c".repeat(32),
+            "catalog_revision": 12, "expires_at_ms": SESSION_IDLE_MS})
+    );
+    // A failed grant leaves the previous one.
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "search.select_scope",
+            &grant_body("idx_0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f", 12),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (409, "scoped_read_unavailable")
+    );
+    // Granted: the read under it waits for the in-memory grant admission.
+    let (status, reply) = envelope(&plane, search(&cookie, &csrf)).await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (503, "not_yet_served")
+    );
+    // A catalog change since the grant makes it stale.
+    catalog.store(13, Ordering::SeqCst);
+    let (status, reply) = envelope(&plane, search(&cookie, &csrf)).await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (409, "scoped_read_unavailable")
+    );
+    catalog.store(12, Ordering::SeqCst);
+    // Another session has no grant.
+    let (other_cookie, other_csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(&plane, search(&other_cookie, &other_csrf)).await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (409, "admin_scope_not_granted")
+    );
+    // The browser never names a project, catalog grant or window instead.
+    let project = json!({"tools_call": {"tool": "airk_search", "arguments": {},
+        "selection": {"project": {"binding": "ab".repeat(32)}},
+        "response_mode": "terse", "usage_client": "unknown"}});
+    let (status, _) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "search.call", &project.to_string()),
+    )
+    .await;
+    assert_eq!(status, 400);
+    // Logout drops the session and its grant. Nothing reached the pipe.
+    let session_cookie = format!("{COOKIE_NAME}={cookie}");
+    let logout = request(
+        "POST",
+        "/admin/api/v1/session/logout",
+        &[
+            HOST,
+            ORIGIN,
+            SAME_ORIGIN,
+            JSON,
+            ("cookie", session_cookie.as_str()),
+            ("x-airk-csrf", csrf.as_str()),
+        ],
+        "{}",
+    );
+    assert_eq!(answer(&plane, logout, PeerProof::SameUser).await.0, 200);
+    assert!(plane.secrets().sessions.grant(&cookie, 0).is_none());
+    assert!(sent.lock().unwrap().is_empty());
+}
+
+#[test]
+fn grants_end_with_their_session_and_never_cross_instances() {
+    let instance = Incarnation::from_bytes([1; 16]);
+    let mut sessions = secrets::Sessions::new(instance);
+    let minted = sessions.create(&[1; 32], &[2; 32], 0);
+    let grant = |instance| secrets::Grant {
+        selection: WindowScopeSelection {
+            namespace: Incarnation::from_bytes([0x0a; 16]),
+            expected_catalog_revision: CatalogRevision::try_from(12).unwrap(),
+            index_ids: vec![GRANTED_INDEX.parse().unwrap()],
+            project_ids: Vec::new(),
+        },
+        scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+        catalog_revision: CatalogRevision::try_from(12).unwrap(),
+        instance,
+    };
+    // A grant checked by another instance is never stored.
+    assert_eq!(
+        sessions.set_grant(&minted.cookie, grant(Incarnation::from_bytes([2; 16])), 1),
+        None
+    );
+    assert!(sessions.grant(&minted.cookie, 1).is_none());
+    assert_eq!(
+        sessions.set_grant(&minted.cookie, grant(instance), 1),
+        Some(SESSION_IDLE_MS)
+    );
+    assert!(sessions.grant(&minted.cookie, 2).is_some());
+    // Idle expiry ends the session and its grant.
+    assert!(
+        sessions
+            .grant(&minted.cookie, 1 + SESSION_IDLE_MS)
+            .is_none()
+    );
+    // An unknown session has nothing to bind to.
+    let unknown = secrets::secret_text(&[9; 32]);
+    assert_eq!(sessions.set_grant(&unknown, grant(instance), 2), None);
+    // A restarted service (a new instance) knows no session or grant.
+    let mut restarted = secrets::Sessions::new(Incarnation::from_bytes([2; 16]));
+    assert!(restarted.grant(&minted.cookie, 2).is_none());
+}
+
+/// The reviewed mapping (contracts §4.3 amendment), written out by hand.
+#[test]
+fn rows_without_a_control_method_follow_the_reviewed_mapping() {
+    use operations::{MAPPINGS, Served, served};
+    let expected: [(&str, Served); 9] = [
+        (
+            "HttpConnectionInfo",
+            Served::Equivalent("AgentConnectionInfo"),
+        ),
+        (
+            "HttpConnectionOwnership",
+            Served::Equivalent("AgentConnectionOwnership"),
+        ),
+        ("LogsExport", Served::Equivalent("Logs")),
+        ("HttpTrust.Inspect", Served::TrustInspect),
+        ("StorageInventory", Served::Deferred),
+        ("StoragePurge", Served::Deferred),
+        ("LoginStartup.Status", Served::Deferred),
+        ("LoginStartup.Install", Served::Deferred),
+        ("LoginStartup.Uninstall", Served::Deferred),
+    ];
+    assert_eq!(MAPPINGS, expected);
+    // A name is a `ControlMethod` variant when decoding it fails for a
+    // reason other than an unknown variant.
+    let is_variant = |method: &str| {
+        let variant = operations::snake(method.split('.').next().unwrap());
+        let mut object = serde_json::Map::new();
+        object.insert(variant.clone(), json!({}));
+        [Value::String(variant), Value::Object(object)]
+            .into_iter()
+            .any(|body| match serde_json::from_value::<ControlMethod>(body) {
+                Ok(_) => true,
+                Err(error) => !error.to_string().contains("unknown variant"),
+            })
+    };
+    let table = operations::table().unwrap();
+    for row in &table.operations {
+        if !row.surfaces.contains(&contract::Surface::Admin) {
+            continue;
+        }
+        match served(&row.method) {
+            Served::Direct => assert!(is_variant(&row.method), "{}", row.operation),
+            Served::Equivalent(method) => {
+                assert!(!is_variant(&row.method), "{}", row.operation);
+                assert!(is_variant(method), "{}", row.operation);
+            }
+            Served::TrustInspect | Served::Deferred => {
+                assert!(!is_variant(&row.method), "{}", row.operation)
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn mapped_rows_are_served_by_their_mapping() {
+    let (plane, sent, _) = scripted_plane(vec![Some(ControlResponse::Failure {
+        code: "agent_connection_unknown".into(),
+    })]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    // agents.connection is AgentConnectionInfo.
+    let info = json!({"agent_connection_info": {"connection_id": "1c".repeat(16)}});
+    let (status, _) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "agents.connection", &info.to_string()),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(*sent.lock().unwrap(), [info]);
+    // Phase 7 rows and destructive rows are not served yet.
+    let execute = json!({"plan_execute": {"id": "3b".repeat(32), "preview": "3c".repeat(32),
+        "allow_fallback": false}})
+    .to_string();
+    for (operation, body) in [
+        ("storage.inventory", r#"{"storage_inventory":{}}"#),
+        (
+            "service.login_startup_status",
+            r#"{"login_startup":{"action":"status"}}"#,
+        ),
+        ("recovery.plan_execute", execute.as_str()),
+    ] {
+        let (status, reply) = envelope(&plane, api_call(&cookie, &csrf, operation, body)).await;
+        assert_eq!(
+            (status, error_code(&reply).as_str()),
+            (503, "not_yet_served"),
+            "{operation}"
+        );
+    }
+    // Trust inspection takes exactly its body; this plane has no inspector.
+    let (status, _) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "https.trust_status",
+            r#"{"http_trust":{"action":"install"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, 400);
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "https.trust_status",
+            r#"{"http_trust":{"action":"inspect"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (503, "not_yet_served")
+    );
+    assert_eq!(sent.lock().unwrap().len(), 1);
 }

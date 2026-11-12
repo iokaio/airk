@@ -107,7 +107,7 @@ current classes, `session_commands.rs:102` [V]).
 |---|---|---|---|---|---|
 | M1 [3c.1: binding and registration; 3c.4c: catalog session, served; amended] | `ResolveProject { target: Binding{project} \| Registration{root, data_root, collection} \| Catalog{request: ScopedConnectRequest} }` (absolute paths; `airkctl` supplies `data_root`, by default the install record's `locations.data`, U39) | `Resolved { registration }` | `service_frontend::saved` :444 (read-only registry lookup; `planned_registration` for a registration); `service_frontend::resolve_scoped` :287 for a catalog session (the `CatalogDetail` read and its readiness checks; the index's backing project, as the CLI resolved it before `tools shell`; a session that does not resolve answers `RegistrationRefused { message }` with the CLI's error chain, since the reason is the user's next step); the service never starts or elects another. `RootScope{root}` and the `observation`/`planned` fields land with their first caller, `runtime source-scope`'s consumer (Phase 6; no `airkctl` command, commands.md); `init` needs only M4 (3c.4) | R | Read |
 | M2 [landed: `airk_core::service`, fixture `fixtures/split/i1/control_methods.json`] | `ToolsCatalog { detail: List{schemas: bool} \| Help{tool}, combined?: CombinedConnectRequest }` (3a.2d: a combined session's catalog, served after the session resolves) | `ToolsCatalog { document: String }`: the exact pretty JSON text `tools list --json` / `tools help --json` printed, carried as text so a client keeps the help document's field order (list documents are key-sorted values); an unknown tool → `unknown_tool` | `tools::inspect_catalog` `tools.rs:225`; `airk_mcp::unified::tools` | R | Read |
-| M3 [contract landed 3a.2a: `airk_core::service`, group `tools_call` in `fixtures/split/i1/control_methods.json`] | `ToolsCall { tool, arguments: Map, selection: Unselected \| Project{binding} \| Catalog{request: ScopedConnectRequest} \| Combined{request: CombinedConnectRequest, project_ids?, index_ids?, member_availability?} (3a.2d; the service adds the narrowing defaults to the arguments and refuses a conflicting argument): Terse \| Full, usage_client }`. Without a catalog session the help tool is answered in process before any resolution, as `main.rs:1536` does (`Unselected` serves only it; another tool fails `project binding required`). `Window{..}` with W4 (3f), `Admin{..}` with the admin plane (Phase 5). No `read_budget`: the service runs the CLI's own call path, whose per-exchange `ReadAttemptBudget` and selection-admission retry stay inside `project_client` unchanged | `ToolResult { result: Value }` (the complete unified envelope the CLI printed) or `ToolCallFailed { message }` (the CLI's `operation_failed` message, full error chain ≤ 4,096 characters) | `tools::run_remote_selected` :391 with `public_project_backend` :435, `RemoteSession::call` (response-mode insertion, `remote::call_observed`); `Catalog` via `service_frontend::resolve_scoped` :287; status cache `project_client.rs:756` | R | Read; read-retry rules unchanged |
+| M3 [contract landed 3a.2a: `airk_core::service`, group `tools_call` in `fixtures/split/i1/control_methods.json`] | `ToolsCall { tool, arguments: Map, selection: Unselected \| Project{binding} \| Catalog{request: ScopedConnectRequest} \| Combined{request: CombinedConnectRequest, project_ids?, index_ids?, member_availability?} (3a.2d; the service adds the narrowing defaults to the arguments and refuses a conflicting argument): Terse \| Full, usage_client }`. Without a catalog session the help tool is answered in process before any resolution, as `main.rs:1536` does (`Unselected` serves only it; another tool fails `project binding required`). `Window{..}` with W4 (3f), `Admin` (a unit selection, `"admin"`; the calling admin session's A2 grant, resolved only by the admin plane; on the pipe `admin_scope_not_granted`; amended Phase 5b). No `read_budget`: the service runs the CLI's own call path, whose per-exchange `ReadAttemptBudget` and selection-admission retry stay inside `project_client` unchanged | `ToolResult { result: Value }` (the complete unified envelope the CLI printed) or `ToolCallFailed { message }` (the CLI's `operation_failed` message, full error chain ≤ 4,096 characters) | `tools::run_remote_selected` :391 with `public_project_backend` :435, `RemoteSession::call` (response-mode insertion, `remote::call_observed`); `Catalog` via `service_frontend::resolve_scoped` :287; status cache `project_client.rs:756` | R | Read; read-retry rules unchanged |
 | N1 [contract landed 3c.5c-1; amended] | `UsageDocument { project, catalog?: ScopedConnectRequest, read: Settings{view} \| ValidateSettingsFile{view, path} \| Report{days, format} \| ReportFile{days, format, price_scenario_path} \| Policy }`: one complete document instead of per-page scoped reads, so the CLI's pager and reassembly (`usage_client::collect_selected`) run once, in the service, unchanged, and `airkctl` mirrors nothing; paths absolute | `UsageDocument { document }` (the value `airk` printed; a CSV or Markdown report is a string) or `UsageReadFailed { message, native? }` (error chain ≤ 4,096 characters; `native` is a failed native read's complete result, which `airk` printed on stdout before its error line) | `usage_client::{settings_selected, validate_settings_file_selected, render_selected, render_file_selected}` and the `UsagePolicy` read (`main.rs:1799`) | R | Read |
 | M4a [served 3c.4b; amended] | `PlanRegistration { root, data_root, collection, storage: Planned \| Existing }` (absolute paths; `airkctl` supplies `data_root` as for M1, U39; `Planned` for `init`/`service prepare-registration`, `Existing` for `service register`, as the CLI chose) | `RegistrationPlan { registration }`, or `RegistrationRefused { message }` (full error chain ≤ 4,096 characters, as the CLI's `operation_failed` line) | `service_registration::prepare` :7 (`planned_registration`); `service_projects::registration` | R | Read |
 | M4b [served 3c.4b; amended] | `PrepareStorage { project: ProjectBinding }` (the binding the CLI's `--project` named; the registry supplies the reservation) | `StoragePrepared { registration }` or `RegistrationRefused { message }`; no `created` flag (the canonical function does not observe it) | `service_registration::prepare_storage` :13 | M, X | Idempotent: a repeat finds the storage and answers the same registration |
@@ -305,6 +305,26 @@ short or empty codes all get `admin_launch_code_invalid`. A1 takes no fields
 appears in logs, `Debug` output or errors; the code appears only in the A1
 reply, in the one-shot `airkctl admin url|open` URL fragment and in the §4.5
 exchange body.
+
+**A2 (amendment, Phase 5b; §4.6, U77).** `AdminScopeGrant { selection:
+WindowScopeSelection }` → `AdminScopeGranted { scope_identity,
+catalog_revision, expires_at_ms }` [contract landed: `airk_core::service`,
+group `admin_scope_grant` in `fixtures/split/i1/control_methods.json`; M3
+case `admin_selection`]. The W4 selection without a lease: served only by
+the service's admin plane, which checks it with the catalog check W4 shares
+(`service_runtime::scope_grant`: existing, non-retired indexes; the current
+catalog revision exactly, an older one is stale; with projects selected,
+every index a member of one; refusal `scoped_read_unavailable`) and binds the
+grant in memory to the calling session and service instance. `expires_at_ms`
+is the session's current expiry; logout, expiry, eviction and restart drop
+the grant, and a failed check leaves the previous one. The pipe has no admin
+session: `AdminScopeGrant` → `admin_session_required`; the metadata relay
+refuses it (`console_method_not_reviewed`) and `airkctl session`'s `control`
+relay refuses it by method. Reads under an A2 (or W4) grant are not served
+yet: under the catalog gate a read is admitted only against a persisted,
+user-reviewed catalog grant, so an in-memory grant needs a new scoped-read
+authority in the kernel's admission (its own reviewed contract step); a
+current grant's admin search answers `not_yet_served`.
 
 ### 2.8 Per-method byte budgets [P]
 
@@ -557,6 +577,43 @@ Tests: every `ControlMethod` variant appears exactly once (exhaustive match,
 not a registry walk); every `admin` row has a handler and a conformance entry;
 no `never_over_http` row has a route.
 
+#### 4.3a Amendments (Phase 5b, admin mutations and search)
+
+- **Rows whose `method` names no `ControlMethod`** are served through one
+  reviewed mapping in the admin module (`admin_plane::operations::MAPPINGS`,
+  tested against a hand-written copy): `HttpConnectionInfo` →
+  `AgentConnectionInfo` (M15); `HttpConnectionOwnership` →
+  `AgentConnectionOwnership` (M16); `LogsExport` → `Logs`;
+  `HttpTrust.Inspect` → the read-only trust inspection `airk runtime
+  http-trust --action inspect` ran, through the same callers, in the service
+  (body exactly `{"http_trust":{"action":"inspect"}}`; failure 409
+  `operation_failed` with `native: {message}`); `StorageInventory`,
+  `StoragePurge` and `LoginStartup.*` → `not_yet_served` (Phase 7: no service
+  handler; login startup is offline in `airkctl`, U75). Every other admin
+  row's `method` is a `ControlMethod` variant (checked by the same test).
+- **Keys.** For `Enqueue`, `ConfigureProject`, `Retry`, `PlanCreate`,
+  `CatalogPolicyResume` and `Lifecycle` the admin handler reads
+  `RequestEpoch` and generates `caller` and `nonce`; a body naming `caller`
+  or `key` is 400 `admin_malformed_request`. `Enqueue` and
+  `ConfigureProject` go through M5 → M7 → M8 as `airkctl` sends them; the
+  other keyed methods carry their key directly. A lost reply is resent once
+  with the same key or nonce; a second loss is 503
+  `service_request_outcome_unknown` (`retryable: false`).
+- **`request` in the success envelope** is present on every successful
+  mutation: the key's nonce for keyed methods, the named journal nonce for
+  `requests.submit`/`requests.forget`, and otherwise a server-generated nonce
+  that names the admin request only (no journal entry). `state` is
+  `accepted` for a job without an outcome or `LifecycleAccepted`, else
+  `completed`; a refusal carries no `request`.
+- **Lifecycle (U85).** `service.stop`/`service.restart` answer the complete
+  `LifecycleAccepted` record; the service then exits, ending every admin
+  session. A restart is completed by the client that starts the service; the
+  result carries no added note.
+- **Destructive rows** answer `not_yet_served` until the typed confirmation's
+  wire form is specified.
+- **Search** (`search.call`) accepts only the `unselected` (help) and `admin`
+  selections from the browser; any other is 400.
+
 ### 4.4 Envelopes [P]
 
 - Success: `{"schema":"airk-admin/1","ok":true,"operation":…,"result":<complete native result>,"request"?:{nonce,state}}`.
@@ -604,7 +661,9 @@ no `never_over_http` row has a route.
   stay byte-for-byte [V `http_gateway.rs:358-394`].
 - Admin read grant: the browser's index selection becomes a W4-style grant
   bound to the session id and instance; never sent to the browser; revoked at
-  logout, expiry or restart. Q6 applies.
+  logout, expiry or restart. Q6 applies. Landed as A2 (§2.7 amendment):
+  the grant is checked and stored; reads under it wait for the in-memory
+  grant admission and answer `not_yet_served`.
 - Review item: cookies are not port-scoped, so any other HTTPS server on
   `127.0.0.1` the browser visits receives this cookie. The review decides
   whether the anti-forgery token requirement on every API call is sufficient.

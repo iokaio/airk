@@ -37,12 +37,24 @@ local user (Windows: the connection's owning process; Linux:
 
 Reads go through the same service handlers as `airkctl`: service health and
 resources, the index list, workers, events, requests, jobs, recovery plans,
-logs, HTTPS trust and rotation status, and agent connection details. The pages
-show the exact `airkctl` command for changes they cannot make yet.
+logs, HTTPS trust and rotation status, and agent connection details.
 
-**Not yet served** (the API answers `not_yet_served`): every mutation (pause,
-retry, cancel, revoke, stop, restart), the live event stream, and search,
-which needs the admin read grant. Indexed evidence is always shown as text.
+Ordinary changes run as `airkctl` runs them: indexing, configuration, retry,
+pause and resume, plan creation, policy resume, revoke, stop and restart. The
+service generates each request's identity (never the browser), journals it
+where `airkctl` journals it, and the reply carries `request: {nonce, state}`.
+If the service's answer is lost twice the page reports the outcome as unknown
+instead of retrying. After **Restart** the service exits and every admin
+session ends; open the pages again once it is running.
+
+A search scope can be chosen among existing indexes (`search.select_scope`);
+the grant lives only in the browser session.
+
+**Not yet served** (the API answers `not_yet_served`): searching under that
+scope (it needs a new scoped-read authority in the service), destructive
+actions (catalog apply and split apply, recovery plan execution, storage
+purge), storage inventory and login-startup rows (Phase 7), and the live event
+stream. Indexed evidence is always shown as text.
 
 The pages are built from `packages/admin` (`npm run build`; `npm run check`
 fails when the committed bundle in `crates/airk-cli/admin-assets/` differs

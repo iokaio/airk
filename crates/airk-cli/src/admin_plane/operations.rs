@@ -50,8 +50,57 @@ impl Table {
     }
 }
 
+/// How a reviewed row is served when its `method` is not itself a
+/// `ControlMethod` variant (contracts §4.3 amendment, Phase 5b). Reviewed
+/// here and recorded in `CONTRACT.md`; a row not listed is served by its own
+/// `method`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Served {
+    /// The row's `method` is the `ControlMethod` (or `Variant.Action`).
+    Direct,
+    /// The implemented `ControlMethod` with the same result; the request body
+    /// is that method's JSON.
+    Equivalent(&'static str),
+    /// `https.trust_status`: the read-only trust inspection `airk runtime
+    /// http-trust --action inspect` ran, through the same callers, in the
+    /// service. Its body is exactly `{"http_trust":{"action":"inspect"}}`.
+    TrustInspect,
+    /// Not served in this phase (`not_yet_served`); the reason is beside
+    /// each entry and in `CONTRACT.md`.
+    Deferred,
+}
+
+/// The reviewed mapping of table methods that name no `ControlMethod`.
+pub(super) const MAPPINGS: &[(&str, Served)] = &[
+    (
+        "HttpConnectionInfo",
+        Served::Equivalent("AgentConnectionInfo"),
+    ),
+    (
+        "HttpConnectionOwnership",
+        Served::Equivalent("AgentConnectionOwnership"),
+    ),
+    ("LogsExport", Served::Equivalent("Logs")),
+    ("HttpTrust.Inspect", Served::TrustInspect),
+    // No service handler for the storage inventory or purge yet (Phase 7).
+    ("StorageInventory", Served::Deferred),
+    ("StoragePurge", Served::Deferred),
+    // Login startup is managed offline by `airkctl` until Phase 7 (U75).
+    ("LoginStartup.Status", Served::Deferred),
+    ("LoginStartup.Install", Served::Deferred),
+    ("LoginStartup.Uninstall", Served::Deferred),
+];
+
+/// How the row whose table `method` is `method` is served.
+pub(super) fn served(method: &str) -> Served {
+    MAPPINGS
+        .iter()
+        .find(|(name, _)| *name == method)
+        .map_or(Served::Direct, |(_, served)| *served)
+}
+
 /// `ControlMethod` variant names are serde `snake_case` of the Rust names.
-fn snake(name: &str) -> String {
+pub(super) fn snake(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 4);
     for (index, character) in name.chars().enumerate() {
         if character.is_ascii_uppercase() {

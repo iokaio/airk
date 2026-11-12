@@ -9,7 +9,11 @@ use crate::admin_contract::{
     LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_SESSIONS, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS,
     SessionFacts,
 };
-use airk_core::identity::Incarnation;
+use airk_core::{
+    identity::{Incarnation, Sha256Digest},
+    index_catalog::CatalogRevision,
+    service::WindowScopeSelection,
+};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use subtle::ConstantTimeEq;
@@ -107,18 +111,38 @@ impl LaunchCodes {
     }
 }
 
+/// An admin session's read grant (A2; contracts §4.6, U77): the checked
+/// selection, held only in memory inside its session, so logout, expiry,
+/// eviction and restart drop it. It never leaves the service.
+#[derive(Clone)]
+pub(super) struct Grant {
+    pub(super) selection: WindowScopeSelection,
+    pub(super) scope_identity: Sha256Digest,
+    pub(super) catalog_revision: CatalogRevision,
+    /// The service instance that checked it.
+    pub(super) instance: Incarnation,
+}
+
 struct Session {
     cookie: [u8; 32],
     csrf: [u8; 32],
     created_at_ms: u64,
     last_used_at_ms: u64,
     instance: Incarnation,
+    grant: Option<Grant>,
 }
 
 impl Session {
     fn expired(&self, now_ms: u64) -> bool {
         now_ms.saturating_sub(self.last_used_at_ms) >= SESSION_IDLE_MS
             || now_ms.saturating_sub(self.created_at_ms) >= SESSION_ABSOLUTE_MS
+    }
+
+    /// When the session (and so its grant) ends without further use.
+    fn expires_at(&self) -> u64 {
+        self.last_used_at_ms
+            .saturating_add(SESSION_IDLE_MS)
+            .min(self.created_at_ms.saturating_add(SESSION_ABSOLUTE_MS))
     }
 }
 
@@ -158,6 +182,7 @@ impl Sessions {
             created_at_ms: now_ms,
             last_used_at_ms: now_ms,
             instance: self.instance,
+            grant: None,
         });
         minted
     }
@@ -205,6 +230,35 @@ impl Sessions {
         {
             session.last_used_at_ms = session.last_used_at_ms.max(now_ms);
         }
+    }
+
+    /// Replace the grant of the live session `cookie`; the session's expiry,
+    /// or `None` when the session ended meanwhile. A grant of another
+    /// service instance is never stored.
+    pub(super) fn set_grant(&mut self, cookie: &str, grant: Grant, now_ms: u64) -> Option<u64> {
+        self.purge(now_ms);
+        if grant.instance != self.instance {
+            return None;
+        }
+        let digest = digest(cookie);
+        let session = self
+            .sessions
+            .iter_mut()
+            .find(|session| bool::from(session.cookie[..].ct_eq(&digest[..])))?;
+        if session.instance != self.instance {
+            return None;
+        }
+        session.grant = Some(grant);
+        Some(session.expires_at())
+    }
+
+    /// The grant of the live session `cookie`, if this instance checked it.
+    pub(super) fn grant(&mut self, cookie: &str, now_ms: u64) -> Option<Grant> {
+        self.purge(now_ms);
+        let session = self.find(cookie)?;
+        let grant = session.grant.as_ref()?;
+        (session.instance == self.instance && grant.instance == self.instance)
+            .then(|| grant.clone())
     }
 
     /// End one session; whether it existed.
