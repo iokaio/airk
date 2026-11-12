@@ -792,8 +792,10 @@ fn bounded_cli_read_never_starts_after_the_observation_deadline() -> Result<()> 
             .kind(),
         std::io::ErrorKind::TimedOut
     );
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_airk"));
-    command.arg("--version");
+    // A leaf that exits at once (`airk --version` is a user-style argument
+    // after the split): this test's own idle child entry.
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command.args(["--exact", "bounded_cli_timeout_child", "--nocapture"]);
     assert!(
         read_retry::once_until(&command, Instant::now() + Duration::from_secs(10))?
             .status

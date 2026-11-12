@@ -8,8 +8,24 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-fn command(root: &Path, state: &Path) -> Command {
+fn command(root: &Path, state: &Path) -> common::ctl::Ctl {
     common::evidence_command(root, state, "tools-test")
+}
+
+/// A read with no project fixture. `airkctl` asks a service for the catalog
+/// and the help tool (the pre-split CLI answered them in process), so a
+/// project-less service stands in for the absent installation.
+fn offline(root: &Path, state: &Path, service: &common::BareService) -> common::ctl::Ctl {
+    let mut command = common::ctl::Ctl::new();
+    command
+        .arg("--root")
+        .arg(root)
+        .arg("--data-dir")
+        .arg(state)
+        .args(["--collection", "tools-test", "--service-runtime-dir"])
+        .arg(&service.control)
+        .env("AIRK_MCP_RESPONSE_MODE", "full");
+    command
 }
 
 fn success(output: Output) -> Value {
@@ -32,6 +48,8 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
     let base = tempfile::tempdir().unwrap();
     let root = base.path().join("missing root");
     let state = base.path().join("missing state");
+    let service = common::BareService::start();
+    let command = |root: &Path, state: &Path| offline(root, state, &service);
     let list = success(
         command(&root, &state)
             .args(["tools", "list", "--json"])
@@ -80,7 +98,9 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             "missing authority must not produce successful discovery"
         );
         assert!(
-            String::from_utf8_lossy(&discovery.stderr).contains("runtime installation is missing")
+            String::from_utf8_lossy(&discovery.stderr).contains("project_unresolved"),
+            "{}",
+            String::from_utf8_lossy(&discovery.stderr)
         );
         assert!(
             !root.exists() && !state.exists(),
@@ -101,7 +121,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
                 "call",
                 "airk_help",
                 "--args",
-                r#"{"command":"runtime retire-previous"}"#,
+                r#"{"command":"airkctl agents connect"}"#,
             ])
             .output()
             .unwrap(),
@@ -110,7 +130,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
         help["content"]
             .as_str()
             .unwrap()
-            .contains("--expected-active")
+            .contains("--selection-file")
     );
     assert!(!root.exists() && !state.exists());
     let status = tools.iter().find(|tool| tool["name"] == "status").unwrap();
@@ -240,7 +260,7 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
         expected_image
     );
     let version =
-        common::read_retry::once_until(common::native_command().arg("--version"), deadline)
+        common::read_retry::once_until(&*common::ctl::Ctl::new().arg("--version"), deadline)
             .unwrap();
     assert!(version.status.success());
     assert!(
@@ -382,16 +402,12 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let _service = common::Service::reviewed(root.path(), state.path(), "tools-test");
     let query = root.path().join("arguments with spaces.json");
     fs::write(&query, r#"{"reply_detail":"rich","adapter":"text"}"#).unwrap();
-    let mut child = command(root.path(), state.path())
+    // Interactive failure must not end the session.
+    let output = command(root.path(), state.path())
         .args(["tools", "shell"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .input(format!("help\nhelp airk_search\ncall not_a_tool\ncall airk_search []\ncall airk_capabilities --args-file {}\nexit\n", query.file_name().unwrap().to_str().unwrap()))
+        .output()
         .unwrap();
-    // Small input/output avoids pipe backpressure; interactive failure must not end the session.
-    writeln!(child.stdin.take().unwrap(), "help\nhelp airk_search\ncall not_a_tool\ncall airk_search []\ncall airk_capabilities --args-file {}\nexit", query.file_name().unwrap().to_str().unwrap()).unwrap();
-    let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -417,6 +433,8 @@ fn native_help_cli_reports_detail_selector_field_without_opening_a_workspace() {
     let base = tempfile::tempdir().unwrap();
     let root = base.path().join("missing root");
     let state = base.path().join("missing state");
+    let service = common::BareService::start();
+    let command = |root: &Path, state: &Path| offline(root, state, &service);
     let args = json!({"topic":"workbench","detail":"full"});
     let output = command(&root, &state)
         .args(["tools", "call", "airk_help", "--args", &args.to_string()])
@@ -565,7 +583,7 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     for (tool, arguments) in &calls {
         let arguments_text = arguments.to_string();
         let scoped = cli_outcome(
-            common::scoped_command(root.path(), state.path(), "tools-call")
+            common::legacy_airk_scoped_command(root.path(), state.path(), "tools-call")
                 .args(["tools", "call", tool, "--args", &arguments_text])
                 .output()?,
         );
@@ -580,7 +598,7 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
         assert_eq!(control, scoped, "catalog selection {tool}");
         envelopes += usize::from(matches!(control, Outcome::Envelope(_)));
         let project = cli_outcome(
-            common::command(root.path(), state.path(), "tools-call")
+            common::legacy_airk_command(root.path(), state.path(), "tools-call")
                 .args(["tools", "call", tool, "--args", &arguments_text])
                 .output()?,
         );
@@ -756,8 +774,9 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
     let control = service.control.to_str().unwrap().to_owned();
     let mut compared = 0;
     for read in &reads {
-        let old =
-            airk_outcome(common::scoped_command(root.path(), state.path(), "ctl-reads").args(read));
+        let old = airk_outcome(
+            common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-reads").args(read),
+        );
         let mut line = vec![
             "--service-runtime-dir",
             &control,
@@ -766,7 +785,9 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
         ];
         line.extend(read.iter().copied());
         assert_eq!(airkctl_outcome(&line), old, "catalog selection {read:?}");
-        let old = airk_outcome(common::command(root.path(), state.path(), "ctl-reads").args(read));
+        let old = airk_outcome(
+            common::legacy_airk_command(root.path(), state.path(), "ctl-reads").args(read),
+        );
         let mut line = vec![
             "--service-runtime-dir",
             &control,
@@ -807,8 +828,9 @@ fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
         vec!["files"],
         vec!["read", "notes.md", "--start-line", "1", "--end-line", "3"],
     ] {
-        let old =
-            airk_outcome(common::command(root.path(), state.path(), "ctl-resolve").args(&read));
+        let old = airk_outcome(
+            common::legacy_airk_command(root.path(), state.path(), "ctl-resolve").args(&read),
+        );
         let mut line = vec![
             "--service-runtime-dir",
             &control,
@@ -865,7 +887,7 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
         vec!["watch", "on"],
         vec!["projects", "--runtime-dir", &control],
     ] {
-        let old = common::command(root.path(), state.path(), "ctl-admin")
+        let old = common::legacy_airk_command(root.path(), state.path(), "ctl-admin")
             .args(&command)
             .output()?;
         let mut line = vec![
@@ -1073,7 +1095,7 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
     };
     let nonce = regex_free_nonce;
     for command in ["inspect", "index"] {
-        let old = common::command(root.path(), state.path(), "ctl-jobs")
+        let old = common::legacy_airk_command(root.path(), state.path(), "ctl-jobs")
             .arg(command)
             .output()?;
         assert!(
@@ -1506,7 +1528,7 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
     for (name, old, new) in [
         (
             "project",
-            common::command(root.path(), state.path(), "ctl-shell"),
+            common::legacy_airk_command(root.path(), state.path(), "ctl-shell"),
             vec![
                 "--service-runtime-dir",
                 &control,
@@ -1516,7 +1538,7 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
         ),
         (
             "catalog",
-            common::scoped_command(root.path(), state.path(), "ctl-shell"),
+            common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-shell"),
             vec![
                 "--service-runtime-dir",
                 &control,
@@ -1585,7 +1607,7 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
         )
     };
     let old = |arguments: &[&str], stdin: &str| -> anyhow::Result<(bool, String, String)> {
-        let mut child = common::command(root.path(), state.path(), "ctl-config")
+        let mut child = common::legacy_airk_command(root.path(), state.path(), "ctl-config")
             .args(arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1782,7 +1804,7 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
         for (name, old, selection) in [
             (
                 "project",
-                common::command(root.path(), state.path(), "ctl-usage"),
+                common::legacy_airk_command(root.path(), state.path(), "ctl-usage"),
                 vec![
                     "--service-runtime-dir",
                     control.as_str(),
@@ -1792,7 +1814,7 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
             ),
             (
                 "catalog",
-                common::scoped_command(root.path(), state.path(), "ctl-usage"),
+                common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-usage"),
                 vec![
                     "--service-runtime-dir",
                     control.as_str(),
@@ -2591,7 +2613,7 @@ fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Re
     assert!(hello["outcome"]["window_id"].is_string(), "{hello}");
     let invoked = reply(&"02".repeat(16));
     let control = service.control.to_str().unwrap().to_owned();
-    let one_shot = Command::new(env!("CARGO_BIN_EXE_airk"))
+    let one_shot = common::ctl::Ctl::new()
         .args(["projects", "--runtime-dir", &control])
         .output()?;
     assert_eq!(invoked["outcome"]["exit_code"], 0, "{invoked}");

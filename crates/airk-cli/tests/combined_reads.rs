@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Actual native readers and CLI/MCP transports over an isolated authority-1
 //! component-format fixture. This is not Genesis or installer qualification.
-#[path = "common/http.rs"]
-mod http;
-#[path = "common/read_retry.rs"]
-mod read_retry;
+mod common;
+use common::{ctl::Ctl, http, read_retry};
 #[path = "combined_reads/single_member_retry.rs"]
 mod single_member_retry;
 
@@ -412,8 +410,9 @@ impl Fixture {
     async fn start(&self) -> Result<OwnedProcess> {
         let log = self.owner.path().join("service.log");
         let mut command = Command::new(&self.candidate);
+        // The private foreground service role (split Phase 4; was `airk serve`).
         command
-            .args(["serve", "--runtime-dir"])
+            .args(["__airk_role", "service-foreground", "--runtime-dir"])
             .arg(&self.control)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -486,7 +485,7 @@ impl Fixture {
     }
 
     async fn cli(&self, tool: &str, arguments: &Value) -> Result<Value> {
-        let mut command = Command::new(&self.candidate);
+        let mut command = Ctl::new();
         command
             .arg("--combined-session")
             .arg(serde_json::to_string(&self.session)?)
@@ -525,7 +524,7 @@ impl Fixture {
     }
 
     async fn cli_search(&self) -> Result<Value> {
-        let mut command = Command::new(&self.candidate);
+        let mut command = Ctl::new();
         command
             .arg("--combined-session")
             .arg(serde_json::to_string(&self.session)?)
@@ -556,7 +555,7 @@ impl Fixture {
 
     #[cfg(feature = "local-inference")]
     async fn native_cli(&self, index: usize, arguments: Vec<String>) -> Result<Value> {
-        let mut command = Command::new(&self.candidate);
+        let mut command = Ctl::new();
         command
             .arg("--service-runtime-dir")
             .arg(&self.control)
@@ -3124,7 +3123,7 @@ async fn installed_single_index_scope_disclosure_matches_native_cli_mcp_and_work
             "mode":"execute","verification":"off","plan":{"steps":[{"id":"scope","tool":"query_scope","args":args}]}}),
             ),
         ] {
-            let mut command = Command::new(&f.candidate);
+            let mut command = Ctl::new();
             command
                 .arg("--catalog-session")
                 .arg(serde_json::to_string(&selected)?)

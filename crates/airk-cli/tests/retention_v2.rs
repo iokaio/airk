@@ -33,7 +33,9 @@ fn current_maintenance_replaces_retention_and_preserves_sources_and_token() -> R
     ] {
         let output = run(root.path(), state.path(), &args)?;
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized"));
+        // Removed commands answer airkctl's `not_yet_served` refusal (exit 5).
+        assert_eq!(output.status.code(), Some(5));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("not served"));
     }
     assert_eq!(
         fs::read_to_string(root.path().join("note.txt"))?,

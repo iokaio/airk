@@ -41,7 +41,7 @@ pub(super) fn policy_revision(f: &Fixture) -> Result<CatalogRevision> {
 pub(super) async fn policy_rpc_cli(f: &Fixture, method: ControlMethod) -> Result<Value> {
     let request = tempfile::NamedTempFile::new_in(f.owner.path())?;
     fs::write(request.path(), serde_json::to_vec(&method)?)?;
-    let mut command = Command::new(&f.candidate);
+    let mut command = Ctl::new();
     command
         .args(["service", "rpc", "--runtime-dir"])
         .arg(&f.control)

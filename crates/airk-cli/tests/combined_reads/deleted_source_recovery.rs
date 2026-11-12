@@ -1718,7 +1718,7 @@ async fn retire_default_union_and_review_same_project(
     old_native.shutdown().await?;
     // A fresh CLI cannot even construct the old scoped backend. Its documented
     // setup refusal is a terminal code on stderr, not a reduced evidence reply.
-    let mut command = Command::new(&f.candidate);
+    let mut command = Ctl::new();
     command
         .arg("--combined-session")
         .arg(serde_json::to_string(&old_session)?)

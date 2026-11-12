@@ -3,6 +3,7 @@
 //! transports; reviewed fixtures use a real private managed installation and
 //! canonical catalog setup. Neither qualifies release signatures or predecessors.
 #![allow(dead_code)]
+pub mod ctl;
 pub mod http;
 pub mod read_retry;
 mod reviewed;
@@ -13,7 +14,7 @@ use airk_core::service::{
 use anyhow::Context;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock, Weak},
@@ -306,9 +307,9 @@ impl Service {
         let diagnostics = std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some();
         let mut command = native_command();
         diagnostic("service process starting");
+        // The private foreground service role (split Phase 4; was `airk serve`).
         command
-            .arg("serve")
-            .arg("--runtime-dir")
+            .args(["__airk_role", "service-foreground", "--runtime-dir"])
             .arg(&control)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -611,14 +612,21 @@ impl Service {
         if self.reviewed.is_none() {
             return Ok(());
         }
+        let mut last = None::<String>;
         loop {
-            anyhow::ensure!(Instant::now() < until, "reviewed Index work did not settle");
+            // Report the last observation, never a bare deadline (split Phase 4).
+            anyhow::ensure!(
+                Instant::now() + Duration::from_secs(2) < until,
+                "reviewed Index work did not settle; last progress: {}",
+                last.as_deref().unwrap_or("none observed")
+            );
             let progress = self.metadata(
                 Method::Progress {
                     project: self.project.binding,
                 },
                 until,
             );
+            last = serde_json::to_string(&progress).ok();
             let Response::Progress {
                 project,
                 observation,
@@ -716,6 +724,10 @@ impl Service {
                     && value.snapshot.publication.is_some()
             });
             if !idle || watch.completed_revision != watch.requested_revision || !indexed {
+                last = Some(format!(
+                    "idle={idle} indexed={indexed} watch={watch:?} inspection={}",
+                    serde_json::to_string(&inspection)?
+                ));
                 anyhow::ensure!(
                     Instant::now() + Duration::from_millis(25) < until,
                     "native initial Index did not settle: progress={},watch={watch:?},inspection={}",
@@ -726,6 +738,7 @@ impl Service {
                 continue;
             }
             if self.background_pending_until(self.project.binding, until)? {
+                last = Some("background phase pending".into());
                 anyhow::ensure!(
                     Instant::now() + Duration::from_millis(25) < until,
                     "native background phase did not settle"
@@ -859,24 +872,16 @@ impl Service {
         self.job(JobKind::Inspect);
         // The service authenticates the native engine image. The test harness
         // has a different image, so exercise the actual CLI preparation path
-        // rather than weakening that identity check for in-process fixtures.
-        let mut child = native_command()
+        // (`airkctl service prepare-configuration`) rather than weakening that
+        // identity check for in-process fixtures.
+        let prepared = ctl::Ctl::new()
             .args(["service", "prepare-configuration", "--runtime-dir"])
             .arg(&self.control)
             .arg("--project")
             .arg(self.project.binding.to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .input(serde_json::to_vec(&draft).unwrap())
+            .output()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&serde_json::to_vec(&draft).unwrap())
-            .unwrap();
-        let prepared = child.wait_with_output().unwrap();
         assert!(
             prepared.status.success(),
             "native configuration preparation failed: stdout={} stderr={}",
@@ -965,6 +970,84 @@ pub fn bind_data(control: &Path, data: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A foreground service on a private control root with no project: the
+/// service an `airkctl` command needs when the pre-split `airk` command ran
+/// offline (model catalog, Explorer drafts). Dropping it stops the child.
+pub struct BareService {
+    child: Child,
+    owner: tempfile::TempDir,
+    pub control: PathBuf,
+}
+
+impl BareService {
+    pub fn start() -> Self {
+        let owner = tempfile::tempdir().unwrap();
+        let control = owner.path().join("control");
+        let log = std::fs::File::create(owner.path().join("stderr")).unwrap();
+        let child = native_command()
+            .args(["__airk_role", "service-foreground", "--runtime-dir"])
+            .arg(&control)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(log))
+            .spawn()
+            .unwrap();
+        let mut service = Self {
+            child,
+            owner,
+            control,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(60);
+        loop {
+            if matches!(
+                runtime.block_on(airk_cli::service_runtime::request(
+                    &service.control,
+                    Method::Health
+                )),
+                Ok(Response::Health { .. })
+            ) {
+                return service;
+            }
+            assert!(
+                Instant::now() < until && service.child.try_wait().unwrap().is_none(),
+                "bare fixture service did not start: {}",
+                std::fs::read_to_string(service.owner.path().join("stderr")).unwrap_or_default()
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+impl Drop for BareService {
+    fn drop(&mut self) {
+        if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            let _ = runtime.block_on(airk_cli::service_runtime::request(
+                &self.control,
+                Method::Shutdown,
+            ));
+        }
+        let until = Instant::now() + Duration::from_secs(15);
+        loop {
+            if self.child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            if Instant::now() >= until {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
 impl Drop for Service {
     fn drop(&mut self) {
         let retain_http = self.control.join("http-fixture-failure.json").exists();
@@ -1033,7 +1116,87 @@ pub fn http_fixture(root: &Path, data: &Path, collection: &str) -> Arc<Service> 
     service
 }
 
-pub fn command(root: &Path, data: &Path, collection: &str) -> Command {
+/// An `airkctl` invocation (in process) for this scope's fixture: its control
+/// root and project binding, or, without a fixture, a control root that does
+/// not exist so the command is refused as the absent installation was.
+pub fn command(root: &Path, data: &Path, collection: &str) -> ctl::Ctl {
+    let service = fixture(root, data, collection);
+    let mut command = ctl::Ctl::new();
+    if let Some(service) = &service {
+        command
+            .arg("--root")
+            .arg(&service.project.root)
+            .arg("--data-dir")
+            .arg(&service.project.data_root)
+            .args([
+                "--collection",
+                &service.project.collection,
+                "--service-runtime-dir",
+            ])
+            .arg(&service.control)
+            .arg("--service-project")
+            .arg(service.project.binding.to_string());
+    } else {
+        command
+            .arg("--root")
+            .arg(root)
+            .arg("--data-dir")
+            .arg(data)
+            .args(["--collection", collection])
+            .arg("--service-runtime-dir")
+            .arg(data.join("not-an-installed-runtime"));
+    }
+    command
+        .env("AIRK_MCP_RESPONSE_MODE", "full")
+        .env("AIRK_USAGE_MODE", "disabled");
+    command
+}
+
+pub fn http_selection(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> anyhow::Result<airk_core::service_http::HttpSelection> {
+    let service = fixture(root, data, collection).context("HTTP fixture binding missing")?;
+    let managed = service
+        .reviewed
+        .as_ref()
+        .context("HTTP read requires an explicit reviewed fixture")?;
+    Ok(managed.selection.clone())
+}
+
+pub fn reviewed_http_selection(
+    control: &Path,
+    project: &ProjectRegistration,
+) -> airk_core::service_http::HttpSelection {
+    reviewed::reviewed_http_selection(control, project)
+        .expect("canonical reviewed HTTP selection failed")
+}
+
+pub fn scoped_command(root: &Path, data: &Path, collection: &str) -> ctl::Ctl {
+    let service = fixture(root, data, collection).expect("scoped read has no owned fixture");
+    let managed = service
+        .reviewed
+        .as_ref()
+        .expect("scoped read requires explicit reviewed fixture");
+    let airk_core::service_http::HttpSelection::Scoped { selection } = &managed.selection else {
+        panic!("fresh fixture selection is not scoped")
+    };
+    let mut command = ctl::Ctl::new();
+    command
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .arg("--catalog-session")
+        .arg(serde_json::to_string(selection).unwrap())
+        .env("AIRK_MCP_RESPONSE_MODE", "full")
+        .env("AIRK_USAGE_MODE", "disabled");
+    command
+}
+
+/// The pre-split `airk` user command line for this scope, kept only for the
+/// Phase 3 parity tests that run the old command beside `airkctl` (split
+/// Phase 4 deletes them with the user tree). Every other test uses `command`.
+pub fn legacy_airk_command(root: &Path, data: &Path, collection: &str) -> Command {
     let service = fixture(root, data, collection);
     let mut command = if let Some(managed) = service.as_ref().and_then(|s| s.reviewed.as_ref()) {
         let mut command = Command::new(&managed.executable);
@@ -1083,28 +1246,9 @@ pub fn command(root: &Path, data: &Path, collection: &str) -> Command {
     command
 }
 
-pub fn http_selection(
-    root: &Path,
-    data: &Path,
-    collection: &str,
-) -> anyhow::Result<airk_core::service_http::HttpSelection> {
-    let service = fixture(root, data, collection).context("HTTP fixture binding missing")?;
-    let managed = service
-        .reviewed
-        .as_ref()
-        .context("HTTP read requires an explicit reviewed fixture")?;
-    Ok(managed.selection.clone())
-}
-
-pub fn reviewed_http_selection(
-    control: &Path,
-    project: &ProjectRegistration,
-) -> airk_core::service_http::HttpSelection {
-    reviewed::reviewed_http_selection(control, project)
-        .expect("canonical reviewed HTTP selection failed")
-}
-
-pub fn scoped_command(root: &Path, data: &Path, collection: &str) -> Command {
+/// The pre-split `airk` scoped-read command line; Phase 3 parity tests only
+/// (see `legacy_airk_command`).
+pub fn legacy_airk_scoped_command(root: &Path, data: &Path, collection: &str) -> Command {
     let service = fixture(root, data, collection).expect("scoped read has no owned fixture");
     let managed = service
         .reviewed
@@ -1138,7 +1282,7 @@ pub fn scoped_command(root: &Path, data: &Path, collection: &str) -> Command {
 
 /// Evidence reads use the exact reviewed grant; owner mutations retain their
 /// independent native control arguments. Legacy fixtures remain explicit.
-pub fn evidence_command(root: &Path, data: &Path, collection: &str) -> Command {
+pub fn evidence_command(root: &Path, data: &Path, collection: &str) -> ctl::Ctl {
     if fixture(root, data, collection).is_some_and(|service| service.reviewed.is_some()) {
         scoped_command(root, data, collection)
     } else {
@@ -1258,7 +1402,7 @@ fn call_until(
         } else {
             command(root, data, collection)
         };
-        let output = read_retry::once_until(native.args(args), deadline)?;
+        let output = read_retry::once_until(&*native.args(args), deadline)?;
         if !invocation_returned {
             diagnostic("native CLI invocation returned");
             invocation_returned = true;

@@ -171,7 +171,7 @@ fn shared_quota_configuration_rejects_a_stale_project_preview_and_preserves_lega
         &draft_b,
         json!({"operation":"quota_policy","path":policy_b}).to_string(),
     )?;
-    let prepared = common::native_command()
+    let prepared = common::ctl::Ctl::new()
         .args(["service", "requests", "--runtime-dir"])
         .arg(&service.control)
         .args([
@@ -189,7 +189,7 @@ fn shared_quota_configuration_rejects_a_stale_project_preview_and_preserves_lega
     );
     let prepared: Value = serde_json::from_slice(&prepared.stdout)?;
     let nonce = prepared["prepared"].as_str().unwrap();
-    let changed = common::native_command()
+    let changed = common::ctl::Ctl::new()
         .arg("--service-runtime-dir")
         .arg(&service.control)
         .args([
@@ -212,7 +212,7 @@ fn shared_quota_configuration_rejects_a_stale_project_preview_and_preserves_lega
             .state,
         JobState::Succeeded
     );
-    let retried = common::native_command()
+    let retried = common::ctl::Ctl::new()
         .args(["service", "requests", "--runtime-dir"])
         .arg(&service.control)
         .args(["retry", nonce])

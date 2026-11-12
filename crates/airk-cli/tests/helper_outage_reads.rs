@@ -18,9 +18,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{Read, Write},
     path::PathBuf,
-    process::{Child, Command, Output, Stdio},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -142,10 +140,10 @@ impl Fixture {
             .block_on(airk_cli::service_runtime::request(&self.control, method))
     }
 
-    fn command(&self) -> Command {
+    fn command(&self) -> common::ctl::Ctl {
         common::scoped_command(&self.root, &self.data, COLLECTION)
     }
-    fn admin_command(&self) -> Command {
+    fn admin_command(&self) -> common::ctl::Ctl {
         common::command(&self.root, &self.data, COLLECTION)
     }
 
@@ -386,69 +384,19 @@ fn command_value(fixture: &Fixture, args: &[&str]) -> Result<(bool, Value)> {
     Ok((output.status.success(), payload(&value)?))
 }
 
-struct OwnedShell(Child);
-impl Drop for OwnedShell {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn shell_value(fixture: &Fixture, args: &Value) -> Result<Value> {
     let input = format!("call airk_search {args}\nexit\n");
     ensure!(
         input.len() < 4096,
         "fixture input must fit the bounded pipe write"
     );
-    let mut owned = OwnedShell(
-        fixture
-            .command()
-            .args(["tools", "shell"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?,
-    );
-    let child = &mut owned.0;
-    let stdout = child.stdout.take().context("shell stdout")?;
-    let stderr = child.stderr.take().context("shell stderr")?;
-    let read = |stream: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            stream
-                .take(1_048_577)
-                .read_to_end(&mut bytes)
-                .map(|_| bytes)
-        })
-    };
-    let out = read(Box::new(stdout));
-    let err = read(Box::new(stderr));
-    child
-        .stdin
-        .take()
-        .context("shell stdin")?
-        .write_all(input.as_bytes())?;
     let deadline = Instant::now() + Duration::from_secs(60);
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            anyhow::bail!("owned shell read deadline expired")
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    };
-    let output = Output {
-        status,
-        stdout: out
-            .join()
-            .map_err(|_| anyhow::anyhow!("shell output reader panicked"))??,
-        stderr: err
-            .join()
-            .map_err(|_| anyhow::anyhow!("shell error reader panicked"))??,
-    };
+    let output = fixture
+        .command()
+        .args(["tools", "shell"])
+        .input(input)
+        .output_until(deadline)
+        .context("owned shell read deadline expired")?;
     ensure!(
         output.status.success() && output.stdout.len() <= 1_048_576,
         "{output:?}"

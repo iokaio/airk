@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Process-level compatibility checks in disposable control state only. The
 //! in-place catalog upgrade commands remain parseable but are refused.
-#[path = "common/read_retry.rs"]
-mod read_retry;
+mod common;
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     index_catalog::IndexId,
@@ -10,6 +9,7 @@ use airk_core::{
 };
 use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
+use common::{ctl::Ctl, read_retry};
 use rusqlite::{Connection, params};
 use std::{
     collections::BTreeMap,
@@ -150,8 +150,9 @@ fn activated_format_serves_actual_control_and_post_start_writes_refuse_restore()
     )?;
     let log = owner.path().join("service.log");
     let mut command = Command::new(candidate());
+    // The private foreground service role (split Phase 4; was `airk serve`).
     command
-        .args(["serve", "--runtime-dir"])
+        .args(["__airk_role", "service-foreground", "--runtime-dir"])
         .arg(&control)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -426,23 +427,14 @@ fn exercise_native_catalog_transports(
     runtime: &tokio::runtime::Runtime,
 ) -> Result<()> {
     use airk_core::{catalog_management::*, index_catalog::*, service::RequestKey};
-    use std::io::Write;
     let direct = |method| runtime.block_on(airk_cli::service_runtime::request(control, method));
     let cli = |method: &ControlMethod| -> Result<ControlResponse> {
-        let mut child = Command::new(candidate())
+        let output = Ctl::new()
             .args(["service", "rpc", "--runtime-dir"])
             .arg(control)
             .arg("--stdin")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        child
-            .stdin
-            .take()
-            .context("missing RPC stdin")?
-            .write_all(&serde_json::to_vec(method)?)?;
-        let output = child.wait_with_output()?;
+            .input(serde_json::to_vec(method)?)
+            .output()?;
         ensure!(
             output.status.success(),
             "catalog RPC failed: {}",

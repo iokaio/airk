@@ -202,7 +202,7 @@ fn native_selection_rejects_invalid_bounded_inputs_and_supports_explicit_reset()
     );
     let wrong = "fe".repeat(32);
     assert!(
-        !common::native_command()
+        !common::ctl::Ctl::new()
             .arg("--service-runtime-dir")
             .arg(&service.control)
             .args(["--service-project", &wrong, "settings", "vector_selection"])

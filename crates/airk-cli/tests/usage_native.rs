@@ -122,7 +122,7 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     service.job(JobKind::Inspect);
     let draft_file = data.path().join("clear-draft.json");
     std::fs::write(&draft_file, br#"{"operation":"clear_usage"}"#)?;
-    let prepared = common::native_command()
+    let prepared = common::ctl::Ctl::new()
         .args(["service", "requests", "--runtime-dir"])
         .arg(&service.control)
         .args([
@@ -161,7 +161,7 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         )
     })?;
     drop(writer);
-    let repeated = common::native_command()
+    let repeated = common::ctl::Ctl::new()
         .args(["service", "requests", "--runtime-dir"])
         .arg(&service.control)
         .args(["retry", nonce])

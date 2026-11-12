@@ -79,7 +79,7 @@ fn positive_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value>
 }
 
 async fn cli_catalog(f: &Fixture) -> Result<Value> {
-    let mut command = Command::new(&f.candidate);
+    let mut command = Ctl::new();
     command
         .arg("--combined-session")
         .arg(serde_json::to_string(&f.session)?)
@@ -94,42 +94,30 @@ async fn console(f: &Fixture, args: &Value) -> Result<Value> {
     let stdout = f.owner.path().join("profile-families-console.out");
     let stderr = f.owner.path().join("profile-families-console.err");
     fs::write(&input, format!("call airk_file_info {args}\nexit\n"))?;
-    let mut command = Command::new(&f.candidate);
+    let mut command = Ctl::new();
     command
         .arg("--combined-session")
         .arg(serde_json::to_string(&f.session)?)
         .arg("--service-runtime-dir")
         .arg(&f.control)
         .args(["tools", "shell"])
-        .stdin(fs::File::open(input)?)
-        .stdout(
-            fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&stdout)?,
-        )
-        .stderr(
-            fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&stderr)?,
-        );
-    let mut process = OwnedProcess::start(command)?;
+        .input(fs::read(&input)?);
     let deadline = Instant::now() + Duration::from_secs(60);
-    let status = loop {
-        if let Some(status) = process.child.try_wait()? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            drop(process);
-            let (out, err) = console_output(&stdout, &stderr)?;
-            anyhow::bail!(
-                "native console timeout; complete bounded stdout: {out}; complete bounded stderr: {err}"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+    let Ok(output) = tokio::task::spawn_blocking(move || command.output_until(deadline)).await?
+    else {
+        anyhow::bail!("native console timeout; no output before the deadline");
     };
-    drop(process);
+    // Keep the established bounded file parser for the console's streams.
+    for (path, bytes) in [(&stdout, &output.stdout), (&stderr, &output.stderr)] {
+        std::io::Write::write_all(
+            &mut fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(path)?,
+            bytes,
+        )?;
+    }
+    let status = output.status;
     let (text, errors) = console_output(&stdout, &stderr)?;
     let diagnostics = || {
         format!(
@@ -163,7 +151,7 @@ async fn console(f: &Fixture, args: &Value) -> Result<Value> {
     Ok(value)
 }
 async fn convenience(f: &Fixture) -> Result<Value> {
-    let mut command = Command::new(&f.candidate);
+    let mut command = Ctl::new();
     command
         .arg("--combined-session")
         .arg(serde_json::to_string(&f.session)?)

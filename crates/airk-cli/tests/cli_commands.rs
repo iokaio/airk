@@ -31,17 +31,22 @@ fn run(args: &[&str]) -> Result<Output> {
     Ok(airk().args(args).stdin(Stdio::null()).output()?)
 }
 
-fn json_ok(args: &[&str]) -> Result<Value> {
-    let output = run(args)?;
+/// An in-process `airkctl` run (split Phase 4) for a command `airkctl` serves.
+fn ctl_run(args: &[&str]) -> Result<Output> {
+    Ok(common::ctl::Ctl::new().args(args).output()?)
+}
+
+fn ctl_json_ok(args: &[&str]) -> Result<Value> {
+    let output = ctl_run(args)?;
     ensure!(
         output.status.success(),
-        "airk {} failed: {}{}",
+        "airkctl {} failed: {}{}",
         args.join(" "),
         String::from_utf8_lossy(&output.stderr),
         String::from_utf8_lossy(&output.stdout)
     );
     serde_json::from_slice(&output.stdout)
-        .with_context(|| format!("airk {} printed no JSON", args.join(" ")))
+        .with_context(|| format!("airkctl {} printed no JSON", args.join(" ")))
 }
 
 fn replacement_json(owner: &Path, args: &[&str]) -> Result<Value> {
@@ -477,7 +482,6 @@ fn installed_init_acknowledges_only_existing_reviewed_mapping() -> Result<()> {
 
 #[test]
 fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<()> {
-    use std::io::Write;
     let diagnostic = |stage: &str, alias: &str, output: &Output| {
         format!(
             "{stage} {alias}: exit={:?}, stdout={:?}, stderr={:?}",
@@ -518,7 +522,7 @@ fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<
             body,
             airk_core::combined_reads::query_scope::installed_body(&args, &observation)?
         );
-        let raw = airk()
+        let raw = common::ctl::Ctl::new()
             .arg("--service-runtime-dir")
             .arg(&service.control)
             .arg("--service-project")
@@ -538,8 +542,16 @@ fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<
             ])
             .output()?;
         // A fresh reviewed grant cannot be inferred from registration alone.
-        let installed = service
-            .installed_command(source.path(), data.path(), "scope-cli")
+        // airkctl has no private-installation override: the installed route
+        // is the folder-resolved project (M1) on the installation's control root.
+        let installed = common::ctl::Ctl::new()
+            .arg("--service-runtime-dir")
+            .arg(&service.control)
+            .arg("--root")
+            .arg(source.path())
+            .arg("--data-dir")
+            .arg(data.path())
+            .args(["--collection", "scope-cli"])
             .args(["tools", "call", alias, "--args", r#"{"view":"projects"}"#])
             .output()?;
         for (route, denied) in [("raw denial", raw), ("installed denial", installed)] {
@@ -560,17 +572,10 @@ fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<
             assert_eq!(&body, expected);
         }
         expected = Some(body.clone());
-        let mut child = common::scoped_command(source.path(), data.path(), "scope-cli")
+        let shell = common::scoped_command(source.path(), data.path(), "scope-cli")
             .args(["tools", "shell"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        writeln!(
-            child.stdin.take().context("shell stdin")?,
-            "call {alias} {{\"view\":\"projects\"}}\nexit"
-        )?;
-        let shell = child.wait_with_output()?;
+            .input(format!("call {alias} {{\"view\":\"projects\"}}\nexit\n"))
+            .output()?;
         ensure!(
             shell.status.success() && shell.stderr.is_empty(),
             "scope shell failed: {}",
@@ -1012,7 +1017,7 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
         "demo",
         &["service", "register", "--runtime-dir", &control_text],
     )?;
-    let projects = json_ok(&["projects", "--runtime-dir", &control_text])?;
+    let projects = ctl_json_ok(&["projects", "--runtime-dir", &control_text])?;
     ensure!(
         projects["projects"][0]["project"] == binding
             && projects["projects"][0]["collection"] == "demo",
@@ -1065,8 +1070,34 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
     ] {
         common::call(&source, &data, "demo", args)
             .with_context(|| format!("owner command airk {}", args.join(" ")))?;
+        if args == ["watch", "on"] {
+            // Observe the enabled watch's reconciliation before disabling it.
+            // A disable that overtakes it leaves requested > completed (ledger
+            // follow-up, Phase 4); the pre-split CLI's start-up time hid that.
+            let until = Instant::now() + Duration::from_secs(30);
+            loop {
+                let airk_core::service::ControlResponse::Watch { observation, .. } = service
+                    .metadata(
+                        airk_core::service::ControlMethod::Watch {
+                            project: service.project.binding,
+                        },
+                        until,
+                    )
+                else {
+                    anyhow::bail!("watch observation unavailable");
+                };
+                if observation.completed_revision == observation.requested_revision {
+                    break;
+                }
+                ensure!(
+                    Instant::now() + Duration::from_millis(50) < until,
+                    "enabled watch did not reconcile: {observation:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
     }
-    json_ok(&[
+    ctl_json_ok(&[
         "service",
         "logs",
         "--runtime-dir",
@@ -1074,7 +1105,7 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
         "--limit",
         "4",
     ])?;
-    json_ok(&["model-catalog"])?;
+    ctl_json_ok(&["--service-runtime-dir", &control_text, "model-catalog"])?;
     // Usage feedback needs a recorded request ID from a real response.
     common::call(
         &source,
@@ -1112,7 +1143,7 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
     common::call(&source, &data, "demo", &["usage", "clear"])?;
     // Durable client requests: prepare saves without submitting; list, forget and retry act on it.
     let requests = ["service", "requests", "--runtime-dir", &control_text];
-    let request = |args: &[&str]| json_ok(&[&requests[..], args].concat());
+    let request = |args: &[&str]| ctl_json_ok(&[&requests[..], args].concat());
     let saved = request(&["prepare", "--project", &binding, "--kind", "inspect"])?;
     let nonce = saved["prepared"]
         .as_str()
@@ -1127,19 +1158,10 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
     service.settle_reviewed_index(&source, &data, Instant::now() + Duration::from_secs(90))?;
     // A legacy unregister request cannot bypass the current catalog's source
     // review/fence. Submit it once and retain its saved CLI key on refusal.
-    let mut unregister = common::command(&source, &data, "demo")
+    let refused = common::command(&source, &data, "demo")
         .args(["configure", "--stdin"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    use std::io::Write;
-    unregister
-        .stdin
-        .take()
-        .context("unregister stdin missing")?
-        .write_all(br#"{"operation":"unregister"}"#)?;
-    let refused = unregister.wait_with_output()?;
+        .input(br#"{"operation":"unregister"}"#.to_vec())
+        .output()?;
     ensure!(
         !refused.status.success()
             && String::from_utf8_lossy(&refused.stderr).contains("source_change_review_required"),
@@ -1173,7 +1195,7 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
     if retired.stdout.is_empty() {
         assert_eq!(
             String::from_utf8_lossy(&retired.stderr).trim(),
-            "Error: selected catalog index metadata is not ready"
+            "airkctl: selected catalog index metadata is not ready"
         );
     } else {
         let retired_reply: Value = serde_json::from_slice(&retired.stdout)?;
@@ -1200,12 +1222,21 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
 fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let out = |name: &str| directory.path().join(name).to_string_lossy().into_owned();
+    // airkctl runs the Explorer operations in the service (M11); a bare
+    // service without projects stands in for the pre-split offline run.
+    let service = common::BareService::start();
+    let control = service.control.to_string_lossy().into_owned();
+    let run =
+        |args: &[&str]| ctl_run(&[&["--service-runtime-dir", control.as_str()][..], args].concat());
+    let json_ok = |args: &[&str]| {
+        ctl_json_ok(&[&["--service-runtime-dir", control.as_str()][..], args].concat())
+    };
     // --output is mandatory for every Explorer command.
     ensure!(!run(&["explorer", "list-templates"])?.status.success());
     let listed = json_ok(&[
         "explorer",
         "list-templates",
-        "--output",
+        "--output-file",
         &out("templates.json"),
     ])?;
     ensure!(listed["ok"] == true);
@@ -1218,7 +1249,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
         "get-template",
         "--args",
         &json!({"template_id":id}).to_string(),
-        "--output",
+        "--output-file",
         &out("template.json"),
     ])?;
     // An existing output file is never overwritten.
@@ -1226,7 +1257,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
         !run(&[
             "explorer",
             "list-templates",
-            "--output",
+            "--output-file",
             &out("templates.json")
         ])?
         .status
@@ -1238,7 +1269,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
         "draft-search",
         "--args",
         &draft.to_string(),
-        "--output",
+        "--output-file",
         &out("search.json"),
     ])?;
     let written: Value = serde_json::from_slice(&fs::read(out("search.json"))?)?;
@@ -1251,7 +1282,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
         "proposal-status",
         "--draft",
         &out("search.json"),
-        "--output",
+        "--output-file",
         &out("status.json"),
     ])?;
     ensure!(status["ok"] == true);
@@ -1262,7 +1293,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
             "draft-plan",
             "--args",
             "{\"unexpected\":1}",
-            "--output",
+            "--output-file",
             &out("plan.json")
         ])?
         .status
@@ -1275,7 +1306,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
             "draft-strategy",
             "--args",
             "{}",
-            "--output",
+            "--output-file",
             &out("strategy.json")
         ])?
         .status
@@ -1287,7 +1318,7 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
             "suggest-view",
             "--args",
             "{\"kind\":\"search\",\"draft\":{}}",
-            "--output",
+            "--output-file",
             &out("view.json")
         ])?
         .status
@@ -1298,19 +1329,17 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
         "validate-draft",
         "--args",
         &json!({"kind":"search","draft":draft}).to_string(),
-        "--output",
+        "--output-file",
         &out("valid.json"),
     ])?;
-    // A handoff needs a running editor; a missing descriptor fails before creating output.
+    // A handoff needs a running editor; one no window published fails before creating output.
     ensure!(
         !run(&[
             "explorer",
             "get-handoff",
-            "--token",
-            &format!("ex-share-{}", "a".repeat(64)),
-            "--explorer-descriptor",
-            &out("missing/launch-1.json"),
-            "--output",
+            "--handoff-id",
+            &"a".repeat(32),
+            "--output-file",
             &out("handoff.json")
         ])?
         .status

@@ -225,7 +225,8 @@ fn main() {
         // Starting a service exercises durable group-absence recovery before admission.
         let mut service = Owned(
             Command::new(std::env::var_os("AIRK_GUARDIAN_MAIN").context("main executable")?)
-                .args(["serve", "--runtime-dir"])
+                // The private foreground service role (was `airk serve`).
+                .args(["__airk_role", "service-foreground", "--runtime-dir"])
                 .arg(&runtime)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())

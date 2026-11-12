@@ -4,7 +4,8 @@ use airk_kernel::Kernel;
 use airk_store::{FileStore, current::CurrentScope, quota::Quota};
 use anyhow::Result;
 use serde_json::Value;
-use std::{fs, process::Command};
+use std::fs;
+mod common;
 
 #[test]
 fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent_errors()
@@ -31,8 +32,8 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
         (vec!["index"], "full"),
         (vec!["outline", "fixture.txt"], "1"),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--service-install-dir")
+        let output = common::ctl::Ctl::new()
+            .arg("--service-runtime-dir")
             .arg(data.path().join("missing-runtime"))
             .arg("--root")
             .arg(root.path())
@@ -43,16 +44,22 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
             .env("RUST_BACKTRACE", backtrace)
             .env("RUST_LIB_BACKTRACE", backtrace)
             .output()?;
-        assert_eq!(output.status.code(), Some(1));
+        // airkctl's I2 error line (contracts §3.4): a missing service is class
+        // `service_missing`, exit 3, retryable; it starts and opens nothing.
+        assert_eq!(output.status.code(), Some(3));
         assert!(output.stdout.is_empty());
         let outcome: Value = serde_json::from_slice(&output.stderr)?;
-        assert_eq!(outcome["airk_error"], 1);
+        assert_eq!(outcome["airkctl_error"], 1);
         assert_eq!(
-            outcome["code"], "operation_failed",
+            outcome["class"], "service_missing",
             "{arguments:?}: {outcome}"
         );
-        assert_eq!(outcome["retryable"], false);
-        assert!(outcome["message"].as_str().unwrap().contains("runtime"));
+        assert_eq!(
+            outcome["code"], "service_unavailable",
+            "{arguments:?}: {outcome}"
+        );
+        assert_eq!(outcome["retryable"], true);
+        assert!(outcome["message"].as_str().unwrap().contains("not running"));
         assert!(
             !outcome["message"]
                 .as_str()
@@ -72,8 +79,8 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
         store.directory().join("current-owner.json"),
         "invalid owner",
     )?;
-    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--service-install-dir")
+    let output = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
         .arg(data.path().join("missing-runtime"))
         .arg("--root")
         .arg(root.path())
@@ -83,12 +90,14 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
         .env("AIRK_ERROR_FORMAT", "json")
         .env("RUST_LIB_BACKTRACE", "1")
         .output()?;
-    assert_eq!(output.status.code(), Some(1));
+    // airkctl never opens project storage, so an invalid owner file cannot
+    // become a busy or storage result: the answer is the missing service.
+    assert_eq!(output.status.code(), Some(3));
     let outcome: Value = serde_json::from_slice(&output.stderr)?;
-    assert_eq!(outcome["code"], "operation_failed");
-    assert_eq!(outcome["retryable"], false);
-    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--service-install-dir")
+    assert_eq!(outcome["class"], "service_missing");
+    assert_eq!(outcome["code"], "service_unavailable");
+    let output = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
         .arg(data.path().join("missing-runtime"))
         .arg("--root")
         .arg(root.path())
@@ -99,7 +108,7 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
         .env("RUST_BACKTRACE", "0")
         .env("RUST_LIB_BACKTRACE", "0")
         .output()?;
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).starts_with("Error: "));
+    assert_eq!(output.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with("airkctl: "));
     Ok(())
 }

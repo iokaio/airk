@@ -141,7 +141,7 @@ fn invalid_bounded_policy_files_and_foreign_bindings_preserve_configuration() ->
             .success()
     );
     let wrong = "ef".repeat(32);
-    let output = common::native_command()
+    let output = common::ctl::Ctl::new()
         .arg("--service-runtime-dir")
         .arg(&service.control)
         .args(["--service-project", &wrong, "settings", "extraction_policy"])

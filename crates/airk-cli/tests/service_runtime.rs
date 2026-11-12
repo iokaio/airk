@@ -231,7 +231,7 @@ fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health()
     );
     let cached = airk_cli::service_logs::recent(&root, 32)?;
     for selection in [Vec::<&str>::new(), vec!["--all"]] {
-        let exported = command()
+        let exported = common::ctl::Ctl::new()
             .args(["service", "logs", "--runtime-dir"])
             .arg(&root)
             .args(["--format", "json"])
@@ -243,7 +243,7 @@ fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health()
             "CLI recent/retained page differs from the complete canonical native page"
         );
     }
-    let readable = Command::new(env!("CARGO_BIN_EXE_airk"))
+    let readable = common::ctl::Ctl::new()
         .args([
             "--root",
             "/missing-source-must-not-open",
@@ -1225,9 +1225,9 @@ fn start_command(root: &Path, mut process: Command) -> Result<Child> {
         use std::os::windows::process::CommandExt;
         process.creation_flags(0x08000000);
     }
+    // The private foreground service role (split Phase 4; was `airk serve`).
     Ok(process
-        .arg("serve")
-        .arg("--runtime-dir")
+        .args(["__airk_role", "service-foreground", "--runtime-dir"])
         .arg(root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1693,7 +1693,7 @@ fn start_qualified(service: &common::Service) -> Result<Child> {
     )?;
     let (_, path) = log.keep()?;
     Ok(command
-        .args(["serve", "--runtime-dir"])
+        .args(["__airk_role", "service-foreground", "--runtime-dir"])
         .arg(&service.control)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1721,7 +1721,7 @@ fn finish_qualified_process_fixture(service: &common::Service) -> Result<()> {
 }
 
 fn control(root: &Path, action: &str) -> Result<Value> {
-    let result = command()
+    let result = common::ctl::Ctl::new()
         .args(["service", action, "--runtime-dir"])
         .arg(root)
         .output()?;
@@ -1784,8 +1784,7 @@ fn on_demand_idle_exit_does_not_require_login_manager_and_health_does_not_extend
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("runtime");
     let child = command()
-        .arg("serve")
-        .arg("--runtime-dir")
+        .args(["__airk_role", "service-foreground", "--runtime-dir"])
         .arg(&root)
         .args(["--idle-exit-seconds", "3"])
         .stdin(Stdio::null())
@@ -1827,8 +1826,7 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
     fs::create_dir(&data)?;
     let project = airk_kernel::service_projects::registration(&source, &data, "idle-watch")?;
     let child = command()
-        .arg("serve")
-        .arg("--runtime-dir")
+        .args(["__airk_role", "service-foreground", "--runtime-dir"])
         .arg(&runtime)
         .args(["--idle-exit-seconds", "3"])
         .stdin(Stdio::null())
@@ -4236,7 +4234,6 @@ fn failed_project_start_circuit_requires_explicit_restart_and_preserves_unknown_
 fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds() -> Result<()> {
     use airk_cli::console_client::{Request, Response as ConsoleResponse};
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
-    use std::io::Write;
     let owner = tempfile::tempdir()?;
     let runtime = owner.path().join("runtime");
     let source = owner.path().join("source");
@@ -4350,7 +4347,13 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
             fs::read_dir(&data)?.next().is_none(),
             "console opened project state"
         );
-        let mut rpc = Command::new(env!("CARGO_BIN_EXE_airk"))
+        let mut body = serde_json::to_vec(&Method::Console {
+            after: None,
+            revision: None,
+            limit: 32,
+        })?;
+        body.resize(airk_core::service::MAX_FRAME_BYTES, b' ');
+        let result = common::ctl::Ctl::new()
             .args([
                 "--root",
                 "/rpc-must-not-open-source",
@@ -4360,18 +4363,8 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
             ])
             .arg(&runtime)
             .arg("--stdin")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let mut body = serde_json::to_vec(&Method::Console {
-            after: None,
-            revision: None,
-            limit: 32,
-        })?;
-        body.resize(airk_core::service::MAX_FRAME_BYTES, b' ');
-        rpc.stdin.take().unwrap().write_all(&body)?;
-        let result = rpc.wait_with_output()?;
+            .input(body)
+            .output()?;
         ensure!(
             result.status.success(),
             "bounded stdin RPC failed: {}",
@@ -4381,21 +4374,14 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
             serde_json::from_slice::<Value>(&result.stdout)?["status"] == "console",
             "stdin RPC returned wrong result"
         );
-        let mut oversized = Command::new(env!("CARGO_BIN_EXE_airk"))
+        let oversized = common::ctl::Ctl::new()
             .args(["service", "rpc", "--runtime-dir"])
             .arg(&runtime)
             .arg("--stdin")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        oversized
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&vec![b' '; airk_core::service::MAX_FRAME_BYTES + 1])?;
+            .input(vec![b' '; airk_core::service::MAX_FRAME_BYTES + 1])
+            .output()?;
         ensure!(
-            !oversized.wait()?.success(),
+            !oversized.status.success(),
             "oversized stdin management request accepted"
         );
         let rejected = tokio::runtime::Builder::new_current_thread()

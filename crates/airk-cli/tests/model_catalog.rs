@@ -2,14 +2,19 @@
 //! Capability selection works offline before any workspace/model state exists.
 use anyhow::{Result, ensure};
 use serde_json::Value;
-use std::{fs, process::Command};
+use std::fs;
+mod common;
 
 #[test]
 fn model_catalog_never_opens_collection_state_and_only_selects_int8() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let missing_root = directory.path().join("not-a-workspace");
     let missing_state = directory.path().join("not-created");
-    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+    // airkctl asks the service for the catalog (M10); the service has no project.
+    let service = common::BareService::start();
+    let output = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
         .args([
             "--root",
             missing_root.to_str().unwrap(),

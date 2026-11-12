@@ -6,8 +6,7 @@ mod source_runtime;
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::Write,
-    process::{Command, Stdio},
+    process::Command,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -451,18 +450,13 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         stable(&mut expected);
         assert_eq!(actual, expected);
     }
-    let mut shell = common::scoped_command(root.path(), state.path(), "project-a")
+    let shell = common::scoped_command(root.path(), state.path(), "project-a")
         .args(["tools", "shell"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    writeln!(
-        shell.stdin.take().unwrap(),
-        "call airk_file_info {}\nquit",
-        serde_json::to_string(&require)?
-    )?;
-    let shell = shell.wait_with_output()?;
+        .input(format!(
+            "call airk_file_info {}\nquit\n",
+            serde_json::to_string(&require)?
+        ))
+        .output()?;
     assert!(shell.status.success());
     let shell_text = String::from_utf8(shell.stdout)?;
     assert!(
@@ -1666,12 +1660,18 @@ fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references(
     let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(root.path().join("a.txt"), "fixture")?;
     for client in ["claude", "codex", "vscode"] {
-        let value = common::scoped_call(
-            root.path(),
-            state.path(),
-            "project-a",
-            &["setup", "--client", client],
+        // `setup` is the pre-split command under test (no airkctl equivalent).
+        let output = common::read_retry::output(
+            common::legacy_airk_scoped_command(root.path(), state.path(), "project-a")
+                .args(["setup", "--client", client]),
         )?;
+        anyhow::ensure!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout)?;
         let connection: airk_core::service_http::HttpConnectionInfo =
             serde_json::from_value(value["connection"].clone())?;
         connection.validate()?;
@@ -1729,7 +1729,7 @@ fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references(
             airk_cli::http_endpoint::ConnectionOwnership::Active
         ));
         let authority_before = catalog_authority(&service)?;
-        let unreviewed = common::command(root.path(), state.path(), "project-a")
+        let unreviewed = common::legacy_airk_command(root.path(), state.path(), "project-a")
             .args(["setup", "--client", client])
             .args(["--connection-id", &unreviewed_id.to_string()])
             .output()?;
@@ -1770,7 +1770,7 @@ fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references(
         );
     }
     for client in ["cursor", "opencode", "opencode-v2", "copilot-cli", "kilo"] {
-        let output = common::scoped_command(root.path(), state.path(), "project-a")
+        let output = common::legacy_airk_scoped_command(root.path(), state.path(), "project-a")
             .args(["setup", "--client", client])
             .output()?;
         assert!(!output.status.success());
@@ -1841,7 +1841,9 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))?;
     let listed = session.receive(2)?;
     let tools = listed["result"]["tools"].as_array().expect("tools");
-    let catalog = Command::new(env!("CARGO_BIN_EXE_airk"))
+    let catalog = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
         .args(["tools", "list", "--json"])
         .output()?;
     assert!(catalog.status.success());

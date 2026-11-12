@@ -54,7 +54,7 @@ async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native
         ),
     )
     .await??;
-    let mut command = Command::new(&f.candidate);
+    let mut command = Ctl::new();
     command
         .arg("--combined-session")
         .arg(serde_json::to_string(&f.session)?)

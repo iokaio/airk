@@ -221,11 +221,12 @@ pub fn within_for_scope(
 
 /// Only the test-owned `tools call` evidence-read form supplies an implicit
 /// expected scope. Mutation commands, mixed selectors and duplicate flags do not.
-pub fn original_cli_scope(
-    command: &std::process::Command,
+pub fn original_cli_scope<C: Invocation + ?Sized>(
+    command: &C,
 ) -> Option<airk_core::service::ScopedConnectRequest> {
     let arguments = command
-        .get_args()
+        .invocation_args()
+        .into_iter()
         .map(|value| value.to_str())
         .collect::<Option<Vec<_>>>()?;
     let mut offset = 0;
@@ -291,22 +292,41 @@ pub fn from_output(output: &std::process::Output, deadline: Instant) -> Option<R
         .and_then(|value| within(&value, deadline))
 }
 
-pub fn output(command: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+/// One CLI invocation a deadline-bounded read can repeat unchanged: a child
+/// process (`std::process::Command`) or, for the split's `airkctl` reads, the
+/// in-process `common::ctl::Ctl` (which implements this trait in its module).
+pub trait Invocation {
+    /// The arguments after the program name.
+    fn invocation_args(&self) -> Vec<&std::ffi::OsStr>;
+    /// One run that gives up at `deadline` (`ErrorKind::TimedOut`).
+    fn run_until(&self, deadline: Instant) -> std::io::Result<std::process::Output>;
+}
+
+impl Invocation for std::process::Command {
+    fn invocation_args(&self) -> Vec<&std::ffi::OsStr> {
+        self.get_args().collect()
+    }
+    fn run_until(&self, deadline: Instant) -> std::io::Result<std::process::Output> {
+        process_once_until(self, deadline)
+    }
+}
+
+pub fn output<C: Invocation + ?Sized>(command: &mut C) -> std::io::Result<std::process::Output> {
     let deadline = Instant::now() + Duration::from_secs(60);
     output_until(command, deadline)
 }
 
-pub fn output_until(
-    command: &mut std::process::Command,
+pub fn output_until<C: Invocation + ?Sized>(
+    command: &mut C,
     deadline: Instant,
 ) -> std::io::Result<std::process::Output> {
     loop {
-        let output = once_until(command, deadline)?;
+        let output = once_until(&*command, deadline)?;
         let retry = from_output(&output, deadline).or_else(|| {
             if output.status.code() != Some(1) {
                 return None;
             }
-            let expected = original_cli_scope(command)?;
+            let expected = original_cli_scope(&*command)?;
             let envelope: Value = serde_json::from_slice(&output.stdout).ok()?;
             within_for_scope(&envelope, &expected, deadline)
         });
@@ -317,11 +337,19 @@ pub fn output_until(
     }
 }
 
+/// One deadline-bounded run of a fixture-owned CLI read (see `Invocation`).
+pub fn once_until<C: Invocation + ?Sized>(
+    command: &C,
+    deadline: Instant,
+) -> std::io::Result<std::process::Output> {
+    command.run_until(deadline)
+}
+
 /// A fixture-owned leaf CLI read, preserving its arguments, explicit environment
 /// overrides and working directory (callers do not use env_clear/raw_arg/stdio).
 /// Timeout kills and awaits only this client, never its separately owned service.
 #[cfg(not(unix))]
-pub fn once_until(
+fn process_once_until(
     command: &std::process::Command,
     deadline: Instant,
 ) -> std::io::Result<std::process::Output> {
@@ -392,7 +420,7 @@ pub fn once_until(
 /// driver installs a process-wide handler, so even a blocking-thread wrapper
 /// cannot coexist with GroupChild. Keep this leaf under the same native owner.
 #[cfg(unix)]
-pub fn once_until(
+fn process_once_until(
     command: &std::process::Command,
     deadline: Instant,
 ) -> std::io::Result<std::process::Output> {
