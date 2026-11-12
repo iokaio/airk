@@ -496,6 +496,8 @@ export interface ManagementView {
     readonly lifecycle?: string;
     readonly responseMode: string;
     readonly message?: string;
+    /** Version from the service's own health observation; absent when not reported. */
+    readonly serviceVersion?: string;
     readonly service: readonly FactRow[];
     readonly runtime: readonly FactRow[];
     readonly runtimeVersions: readonly FactRow[];

@@ -334,6 +334,7 @@ export function managementView(state: ServiceConsoleState): ManagementView {
         ...(state.trusted&&state.capturedLifecycle?{capturedLifecycle:structuredClone(state.capturedLifecycle)}:{}),
         ...(state.trusted&&state.capturedLifecycleUnavailable?{capturedLifecycleUnavailable:state.capturedLifecycleUnavailable}:{}),
         ...(state.lifecycle ? { lifecycle: state.lifecycle } : {}), responseMode: state.responseMode ?? 'terse', ...(state.message ? { message: state.message } : {}),
+        ...(typeof health.version === 'string' ? { serviceVersion: health.version } : {}),
         service: [observed('Service', state.health), ...rows([['Service instance', health.instance], ['Native version', health.version], ['Index format', obj(health.storage_formats).index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Service-state format', obj(health.storage_formats).service_state], ['Protocol', health.protocol],
             ['Service process', health.process_id], ['Uptime (ms)', health.uptime_ms], ['Accepting work', obj(health.policy).accepting],
             ['Executable identity', health.executable_sha256], ['Runtime identity', health.runtime_sha256], ['Native log available', obj(health.logs).available],

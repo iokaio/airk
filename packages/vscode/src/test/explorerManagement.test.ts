@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { managementView, panelDetails } from '../explorerManagement';
 import { ServiceConsoleState, diagnosticPreview } from '../serviceConsoleView';
-import { statusSummary } from '../explorerStatus';
+import { installedVersions, statusSummary } from '../explorerStatus';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
 
@@ -235,6 +235,18 @@ test('executable versions distinguish approved payloads from running health obse
     assert.ok(versions.some(([name, value]) => name.startsWith('Service') && value.startsWith('1.5.0')));
     current.bootstrap.value.payloadVerified = false;
     assert.ok(managementView(current).runtimeVersions.some(([name, value]) => name.includes('airk-embed') && value === 'Not observed'));
+});
+
+test('Management always names the extension version and reports the service version only from a connected health observation', () => {
+    assert.equal(installedVersions('1.8.26', managementView(state())), 'VS Code extension 1.8.26 · AIRK Service 1.5.0');
+    const missing = state({ connected: false, version: '', message: 'AIRK Service is not installed.', health: { state: 'unavailable', checkedAt: 1, code: 'not_installed' } });
+    assert.equal(managementView(missing).serviceVersion, undefined);
+    assert.equal(installedVersions('1.8.26', managementView(missing)), 'VS Code extension 1.8.26 · AIRK Service not connected');
+    const stale = state({ connected: false });
+    assert.equal(installedVersions('1.8.26', managementView(stale)), 'VS Code extension 1.8.26 · AIRK Service not connected', 'a retained health observation is not a current service version');
+    const unreported = state(); unreported.health.value = { observation: { instance: 'ab'.repeat(16) } };
+    assert.equal(installedVersions('1.8.26', managementView(unreported)), 'VS Code extension 1.8.26 · AIRK Service version not reported');
+    assert.equal(installedVersions('1.8.26'), 'VS Code extension 1.8.26 · AIRK Service not observed');
 });
 
 test('exhausted worker startup exposes the project restart beside a retained running job', () => {

@@ -198,3 +198,11 @@ export function scalarWithRetainedDetails(scalar: StatusSummary, details?: Statu
     return { ...runtime, ...publicationDetails, ...scalar,
         ...(retained ? { detailsObservedAt: details.detailsObservedAt ?? details.observedAt } : {}) };
 }
+
+/** The Management version line, shown even when no service is found. The
+ * extension version is this bundle's; the service version is only what a live
+ * health observation of a connected service reported. */
+export function installedVersions(extensionVersion: string, service?: { readonly connected: boolean; readonly serviceVersion?: string }): string {
+    const observed = !service ? 'not observed' : !service.connected ? 'not connected' : service.serviceVersion ?? 'version not reported';
+    return `VS Code extension ${extensionVersion} · AIRK Service ${observed}`;
+}

@@ -9,7 +9,7 @@ import type { Route } from '../explorerRoutes';
 import { ago, byteSize, duration, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 import { UsageReport } from './usage';
-import { indexContents, semanticExplanation, sourceWorkExplanation, workProgressDisplay } from '../explorerStatus';
+import { indexContents, installedVersions, semanticExplanation, sourceWorkExplanation, workProgressDisplay } from '../explorerStatus';
 import { Markdown } from './help';
 
 type Action = typeof MANAGE_ACTIONS[number];
@@ -41,11 +41,14 @@ export function Act(props: { actions: ReturnType<typeof useActions>; action: Act
     return <button type="button" class={props.ghost ? 'ghost' : ''} disabled={disabled} onClick={() => { void props.actions.act(props.action, props.fields); }}>{props.actions.busy===props.action?props.action==='refresh'?'Refreshing status…':'Working…':props.children}</button>;
 }
 
-function Frame(props: { view?: ManagementView; trusted: boolean; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
-    if (!props.trusted || props.view?.trusted === false) { return <p class="callout">AIRK client authority is unavailable. Review the window's trust or client notice before making management requests.</p>; }
-    if (!props.view) { return <p class="muted">Reading the AIRK service state…</p>; }
+function Frame(props: { view?: ManagementView; trusted: boolean; extensionVersion: string; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
+    const authorized = props.trusted && props.view?.trusted !== false;
+    const versions = <p class="muted" data-testid="installed-versions">{installedVersions(props.extensionVersion, authorized ? props.view : undefined)}</p>;
+    if (!authorized) { return <>{versions}<p class="callout">AIRK client authority is unavailable. Review the window's trust or client notice before making management requests.</p></>; }
+    if (!props.view) { return <>{versions}<p class="muted">Reading the AIRK service state…</p></>; }
     return (
         <div class="manage">
+            {versions}
             <p class="muted">{props.intro} {props.view.authority} · {props.view.connected ? 'connected' : props.view.busy?'connecting':'disconnected'}{props.view.busy&&props.view.connected ? ' · checking status' : ''} · Last service check: {ago(props.view.checkedAt)}</p>
             {props.actions.outcome && <Notice noticeKey={noticeKey("control-outcome", props.actions.outcome)}><p>{props.actions.outcome}</p></Notice>}
             {props.view.message && !props.actions.outcome && <Notice noticeKey={noticeKey("control-outcome", props.view.message)}><p>Last control outcome: <code>{props.view.message}</code></p></Notice>}
@@ -203,7 +206,7 @@ export function ProjectsScreen(props: ScreenProps) {
     if (tab === 'agents') return <AgentsScreen {...props} />;
     if (tab === 'usage') return <UsageScreen {...props} />;
     if (tab === 'logs') return <LogsScreen {...props} />;
-    return <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Manage indexing on">
+    return <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="Manage indexing on">
         {view && <>
             <div class="section-head"><div class="inline-form"><label>Project <ProjectPicker view={view} value={entry?.summary.project} onChange={setOpened} /></label>
                 <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Set up index…</Act></div>
@@ -290,7 +293,7 @@ export function RepairScreen(props: ScreenProps) {
     const planTitle=plan?.paused?'Repair plan paused':plan?.phase==='ready'?'Review and start repair':plan?.phase==='planning'?'Checking the project before repair'
         :plan?.phase==='running'?plan.items.some(item=>item.phase==='running')?'Repair running':'Repair queued':plan?.phase==='finished'?plan.outcome==='failed'?'Repair failed':plan.outcome==='succeeded'?'Repair succeeded':plan.outcome==='cleanup_pending'?'Repair succeeded; cleanup pending':'Repair ended without completing all projects':plan?.phase==='canceling'?'Canceling repair':'Repair status';
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Repair plans inspect state before choosing actions. Nothing runs until you approve the exact preview.">
+        <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="Repair plans inspect state before choosing actions. Nothing runs until you approve the exact preview.">
             {view && <>
                 <div class="inline-form">
                     <label>Operation <select value={operation} onChange={event => setOperation((event.target as HTMLSelectElement).value as typeof operation)}>
@@ -346,7 +349,7 @@ export function RepairScreen(props: ScreenProps) {
 export function StorageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Storage location, project registration and reviewed cleanup. Sources and saved settings are always preserved.">
+        <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="Storage location, project registration and reviewed cleanup. Sources and saved settings are always preserved.">
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="refresh" enabled={view.enabled.refresh} ghost>Refresh</Act>
@@ -399,7 +402,7 @@ export function ServiceScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     const on = (name: string) => view?.enabled[name] === true;
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="The per-user native service on">
+        <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="The per-user native service on">
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="connect" enabled={on('connect')}>Connect / reconnect</Act>
@@ -549,7 +552,7 @@ export function AgentsScreen(props: ScreenProps) {
     useEffect(()=>setCopied(undefined),[check?.startedAt]);
     useEffect(()=>{if(!checking)return;const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[checking]);
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Connect coding agents to AIRK on">
+        <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="Connect coding agents to AIRK on">
             {view && <>
                 <div class="cards two">
                     <article class="card"><h2>AIRK agent connection</h2>
@@ -592,7 +595,7 @@ export function AgentsScreen(props: ScreenProps) {
 export function UsageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Local usage records on">
+        <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="Local usage records on">
             <p class="muted">Usage follows the project selected in the Explorer header.</p>
             <UsageReport available={props.state.trusted && !!props.state.selectedProject} />
         </Frame>
@@ -603,7 +606,7 @@ export function LogsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     const [paths, setPaths] = useState(false);
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
+        <Frame view={view} trusted={props.state.trusted} extensionVersion={props.state.extensionVersion} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
             {view && <>
                 <article class="card">
                     <h2>Raw diagnostic log</h2>

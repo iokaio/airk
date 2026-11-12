@@ -12,6 +12,8 @@ Open this section from the tabs across the top of Management. Everyday controls 
 
 Management › Service details shows the native service's health, runtime selection, resource admission and the local inference helper.
 
+Every Management tab starts with a version line: the installed VS Code extension version, and the AIRK Service version as the connected service reports it. When no service is installed, running or reachable, the line still shows the extension version and reports the service as not connected.
+
 ## Actions
 
 - Connect, start, restart or stop the service. Stop and restart ask first and name the instance.
