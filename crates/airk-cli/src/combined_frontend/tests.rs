@@ -451,3 +451,162 @@ async fn exhausted_final_verification_records_all_32_members_without_native_subm
     }
     Ok(())
 }
+
+/// A two-index window selection (selection authority §3.6) whose nonce and
+/// service instance are distinctive, so a leak is visible in any body.
+fn selection_fixture() -> Backend<SelectionScope> {
+    let selection = json!({
+        "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "expected_catalog_revision": 12,
+        "index_ids": ["idx_01010101010101010101010101010101",
+            "idx_03030303030303030303030303030303"],
+        "project_ids": ["prj_02020202020202020202020202020202"],
+    });
+    let window_selection: WindowScopeSelection = serde_json::from_value(selection).unwrap();
+    Backend {
+        control: PathBuf::new(),
+        selection: SelectionScope {
+            selection_ref: SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: Incarnation::from_bytes([0x91; 16]),
+                service_instance: Incarnation::from_bytes([0xe1; 16]),
+                scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+                catalog_revision: window_selection.expected_catalog_revision,
+            },
+            window_selection,
+            connect: Arc::new(
+                |_: SelectionRequest| -> crate::project_client::SelectionGrantFuture {
+                    Box::pin(async {
+                        Result::<airk_core::service::ConnectionGrant>::Err(anyhow::anyhow!(
+                            "unused"
+                        ))
+                    })
+                },
+            ),
+            issue: Arc::new(
+                |_: &SelectionScopeRef,
+                 _: Sha256Digest,
+                 _: Sha256Digest|
+                 -> Result<CombinedDeliveryReceipt> {
+                    Err(ScopeReadRefused.into())
+                },
+            ),
+        },
+        children: Mutex::new(BTreeMap::new()),
+        closed: std::sync::atomic::AtomicBool::new(false),
+        client: Mutex::new(airk_core::usage::ClientFamily::Cli),
+        service_instance: tokio::sync::OnceCell::new(),
+    }
+}
+
+fn assert_no_selection_secret(text: &str) {
+    for secret in [
+        "91".repeat(16),
+        "e1".repeat(16),
+        "grant_nonce".into(),
+        "service_instance".into(),
+    ] {
+        assert!(!text.contains(&secret), "{secret}: {text}");
+    }
+}
+
+/// N3 and §3.2 step 5: the combined facade's own refusals under a selection
+/// echo the window selection and its scope identity only, through the same
+/// dispatch the catalog session uses.
+#[tokio::test]
+async fn selection_combined_refusals_echo_only_the_selection_and_its_identity() -> Result<()> {
+    let backend = selection_fixture();
+    let expected_scope = json!({"confirmed": false, "selection": {
+        "window_scope_selection": backend.selection.window_selection,
+        "scope_identity": "5c".repeat(32)}});
+    for (tool, arguments, code) in [
+        (
+            "airk_search",
+            json!({"query": "x", "project": "legacy"}),
+            "invalid_combined_selection",
+        ),
+        (
+            "__airk_verify_projection",
+            json!({}),
+            "unknown_combined_tool",
+        ),
+        (
+            "airk_search",
+            json!({"query": "x", "__airk_plan_remaining_ms": 5}),
+            "invalid_combined_argument",
+        ),
+    ] {
+        let reply = backend
+            .call(tool.into(), arguments.as_object().unwrap().clone())
+            .await?;
+        assert_no_selection_secret(&reply.to_string());
+        let body = canonical_body(&reply);
+        assert_eq!(body["error"]["code"], code, "{body}");
+        assert_eq!(body["requested_scope"], expected_scope);
+        assert_eq!(reply["isError"], true);
+    }
+    // The facade recognizes the selection as a combined session without a
+    // catalog request; its public scope names no nonce either.
+    assert!(backend.combined_selection().is_none());
+    let scope = backend.combined_scope().expect("a combined session");
+    assert_eq!(
+        scope.project_ids,
+        backend.selection.window_selection.project_ids
+    );
+    assert_eq!(
+        scope.index_ids.as_ref(),
+        Some(&backend.selection.window_selection.index_ids)
+    );
+    assert_eq!(
+        json!({"confirmed": false, "selection": scope.requested}),
+        expected_scope
+    );
+    assert_no_selection_secret(
+        &airk_mcp::remote::combined_scope_failure(&scope, "combined_observation_unavailable")
+            .to_string(),
+    );
+    // An unnarrowed call reads the whole selection, as a catalog session
+    // reads its frozen selection.
+    let defaults = backend.request_selection(&mut Map::new())?;
+    assert_eq!(
+        defaults.project_ids,
+        backend.selection.window_selection.project_ids
+    );
+    assert_eq!(
+        defaults.index_ids,
+        Some(backend.selection.window_selection.index_ids.clone())
+    );
+    // Discovery pages carry no invented grant.
+    assert_eq!(
+        backend.selection.discovery_grant(),
+        ("selected_scope", Value::Null)
+    );
+    Ok(())
+}
+
+/// Catalog-grant bodies are unchanged by the shared session seam: the
+/// requested scope is the whole `CombinedConnectRequest`, discovery keeps its
+/// reviewed grant, and the generic scope equals the catalog one.
+#[test]
+fn catalog_session_bodies_keep_their_request_and_grant() {
+    let backend = fixture();
+    let request = &backend.selection;
+    assert_eq!(
+        failure("combined_scope_expired", None, &request.requested()),
+        json!({"content":[{"type":"text","text":json!({"error":{"code":"combined_scope_expired","retryable":false,"query_submitted":null,"query_replay_safe":false},"requested_scope":{"confirmed":false,"selection":request}}).to_string()}],
+            "structuredContent":{"error":{"code":"combined_scope_expired","retryable":false,"query_submitted":null,"query_replay_safe":false},"requested_scope":{"confirmed":false,"selection":request}},
+            "isError":true})
+    );
+    assert_eq!(
+        request.discovery_grant(),
+        (
+            "reviewed_grant",
+            json!({"id": request.grant_id, "revision": request.expected_grant_revision})
+        )
+    );
+    assert!(backend.combined_selection().is_some());
+    assert_eq!(
+        backend.combined_scope().unwrap().requested,
+        serde_json::to_value(request).unwrap()
+    );
+}

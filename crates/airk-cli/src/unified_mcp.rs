@@ -734,6 +734,9 @@ impl RemoteTools for Native {
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
         self.backend.combined_selection()
     }
+    fn combined_scope(&self) -> Option<airk_mcp::remote::CombinedScope> {
+        self.backend.combined_scope()
+    }
     fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
         self.backend.catalog()
     }
@@ -799,7 +802,7 @@ impl RemoteTools for Native {
     ) -> RemoteFuture<'_> {
         Box::pin(async move {
             if matches!(tool.as_str(), "status" | "airk_status")
-                && let Some(selection) = self.backend.combined_selection()
+                && let Some(selection) = self.backend.combined_scope()
             {
                 if let Some(install) = &self.install {
                     match wait_with_read_context(
@@ -815,7 +818,7 @@ impl RemoteTools for Native {
                                 return Ok(serde_json::to_value(reply)?);
                             }
                             return Ok(combined_status_unavailable(
-                                selection,
+                                &selection,
                                 if error.is::<airk_mcp::remote::PreparationExpired>() {
                                     "combined_status_prepare_timeout"
                                 } else {
@@ -841,7 +844,7 @@ impl RemoteTools for Native {
                 {
                     Ok(result) => Ok(result),
                     Err(error) => Ok(combined_status_unavailable(
-                        selection,
+                        &selection,
                         if error.is::<airk_mcp::remote::PreparationExpired>() {
                             "combined_status_timeout"
                         } else {
@@ -868,7 +871,7 @@ impl RemoteTools for Native {
 }
 
 fn combined_status_unavailable(
-    selection: &airk_core::service::CombinedConnectRequest,
+    selection: &airk_mcp::remote::CombinedScope,
     code: &str,
     stage: &str,
     submitted: Option<bool>,
@@ -876,7 +879,7 @@ fn combined_status_unavailable(
     let body = json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unknown","publication":null,"publication_vector":null,"files":null,"chunks":null,
         "member_observations":{"state":"unknown","members":null,"selection_confirmed":false},
         "error":{"code":code,"stage":stage,"retryable":true,"query_submitted":submitted,"query_replay_safe":false,"fresh_brokerage_required":true},
-        "requested_scope":{"confirmed":false,"selection":selection}});
+        "requested_scope":{"confirmed":false,"selection":selection.requested}});
     json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
 }
 

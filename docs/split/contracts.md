@@ -303,8 +303,17 @@ same `ToolResult`; only `scope_observation` names the selection instead of a
 reviewed grant. A successful read renews the window (U99 Q5). Refusals are
 `ControlResponse::Failure` with the existing codes; failure bodies echo only
 the selection and its scope identity, never the nonce, the lease or the
-service instance. A selection of more than one index answers
-`not_yet_served` until the combined fan-out (spec §3.6) lands.
+service instance. A selection of more than one index reads through the
+combined fan-out (spec §3.6) that `selection: Combined` uses: one in-process
+selection connection per selected index (each admitted at exactly the
+grant's revision), the same budgets, member reports, continuations and
+retry data, and a final delivery receipt issued in process under the gate's
+issue ticket with the nonce still live. Its selection observation carries
+`selection` instead of `grant_id`/`grant_revision`, its query-scope pages
+carry `"mode": "selected_scope"` and `"grant": null`, and its combined
+authority identity uses the domain `airk/combined-selection-authority/1`.
+An index of the selection without a non-empty membership of a selected
+project refuses the whole read (`scoped_read_unavailable`).
 
 ### 2.6 Event subscription basis (C3)
 
@@ -344,11 +353,13 @@ the grant, and a failed check leaves the previous one. The pipe has no admin
 session: `AdminScopeGrant` → `admin_session_required`; the metadata relay
 refuses it (`console_method_not_reviewed`) and `airkctl session`'s `control`
 relay refuses it by method. Reads under a W4 grant are served (§2.5
-amendment, step S1b). Reads under an A2 grant are not served
-yet (step S2): under the catalog gate a read is admitted only against a persisted,
-user-reviewed catalog grant, so an in-memory grant needs a new scoped-read
-authority in the kernel's admission (its own reviewed contract step); a
-current grant's admin search answers `not_yet_served`.
+amendment, step S1b). Each stored A2 grant now carries an in-memory
+selection authority (step S2a): a fresh nonce registered live with the
+scoped-read admission gate inside the admin plane's lock, revoked after that
+lock is released on replacement, logout, expiry, eviction, a store whose
+session ended, and service end. Reads under an A2 grant are served (step
+S2b): the admin plane's injected `SelectionReader` runs the same
+`selection_read` path W4 uses, in process, with the session's selection ref.
 
 ### 2.8 Per-method byte budgets [P]
 
@@ -762,8 +773,8 @@ Two optional columns, both in the reviewed fixture:
 - Admin read grant: the browser's index selection becomes a W4-style grant
   bound to the session id and instance; never sent to the browser; revoked at
   logout, expiry or restart. Q6 applies. Landed as A2 (§2.7 amendment):
-  the grant is checked and stored; reads under it wait for the in-memory
-  grant admission and answer `not_yet_served`.
+  the grant is checked and stored, and reads under it are served through the
+  in-memory selection admission (S2).
 - Review item: cookies are not port-scoped, so any other HTTPS server on
   `127.0.0.1` the browser visits receives this cookie. The review decides
   whether the anti-forgery token requirement on every API call is sufficient.

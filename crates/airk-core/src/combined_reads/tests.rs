@@ -486,3 +486,67 @@ fn cursor_identity_binds_publications_scope_controls_positions_but_not_observati
     assert_eq!(rank_contribution(1), 1.0 / 62.0);
     Ok(())
 }
+
+#[test]
+fn selection_resolution_keeps_the_grant_rules_and_changes_only_its_source() -> Result<()> {
+    use crate::scoped_reads::{ScopeSelectionObservation, SelectionOwnerKind};
+    let memberships = vec![
+        member(1, 1, "app"),
+        member(2, 1, "shared"),
+        member(1, 2, "docs"),
+    ];
+    let query = selection(vec![project(1), project(2)], None);
+    let catalog = query.resolve(&grant(memberships.clone()))?;
+    let source = ScopeSelectionObservation {
+        owner: SelectionOwnerKind::Window,
+        scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
+        catalog_revision: CatalogRevision::try_from(5_u64)?,
+    };
+    let selected = query.resolve_selection(&memberships, source)?;
+    assert_eq!(selected.project_ids, catalog.project_ids);
+    assert_eq!(selected.members, catalog.members);
+    assert_eq!(
+        (
+            selected.grant_id,
+            selected.grant_revision,
+            selected.selection
+        ),
+        (None, None, Some(source))
+    );
+    assert_ne!(selected.identity()?, catalog.identity()?);
+    // A catalog grant's bytes keep exactly their former keys.
+    let encoded = serde_json::to_value(&catalog)?;
+    assert_eq!(
+        encoded["grant_id"],
+        json!(GrantId::from_identity(Incarnation::from_bytes([1; 16])))
+    );
+    assert_eq!(encoded["grant_revision"], json!(1));
+    assert!(encoded.get("selection").is_none());
+    let observed = serde_json::to_value(selected.observation()?)?;
+    assert!(observed.get("grant_id").is_none());
+    assert_eq!(
+        observed["selection"],
+        json!({"owner":"window","scope_identity":"0c".repeat(32),"catalog_revision":5})
+    );
+    // The resolver's refusals are the grant's: an unknown project, an index
+    // outside the project union.
+    assert!(
+        selection(vec![project(3)], None)
+            .resolve_selection(&memberships, source)
+            .is_err()
+    );
+    assert!(
+        selection(vec![project(2)], Some(vec![index(2)]))
+            .resolve_selection(&memberships, source)
+            .is_err()
+    );
+    // Exactly one source.
+    let mut both = selected.clone();
+    both.grant_id = catalog.grant_id;
+    both.grant_revision = catalog.grant_revision;
+    assert!(both.validate().is_err());
+    let mut neither = selected;
+    neither.selection = None;
+    assert!(neither.validate().is_err());
+    Ok(())
+}

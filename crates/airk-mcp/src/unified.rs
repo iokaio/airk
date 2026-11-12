@@ -261,13 +261,14 @@ impl Unified {
         explorer: Option<Arc<dyn ExplorerTools>>,
     ) -> Result<Self> {
         ensure!(
-            backend.combined_selection().is_some(),
+            backend.combined_scope().is_some(),
             "combined session selection required"
         );
-        backend
-            .combined_selection()
-            .expect("checked combined selector")
-            .validate()?;
+        // An in-memory window/admin selection has no catalog request; its
+        // native owner validated it before this facade was built.
+        if let Some(selection) = backend.combined_selection() {
+            selection.validate()?;
+        }
         Ok(Self {
             projects: BTreeMap::from([(
                 "combined".into(),
@@ -293,15 +294,13 @@ impl Unified {
             .values()
             .next()
             .map(|project| &project.backend)
-            .filter(|backend| backend.combined_selection().is_some())
+            .filter(|backend| backend.combined_scope().is_some())
     }
     fn validate_combined_search_draft(&self, args: &Map<String, Value>) -> Result<()> {
         let backend = self
             .combined_backend()
             .ok_or_else(|| anyhow::anyhow!("combined selection required"))?;
-        let frozen = backend
-            .combined_selection()
-            .expect("selected combined backend");
+        let frozen = backend.combined_scope().expect("selected combined backend");
         ensure!(
             !args.contains_key("project"),
             "combined draft cannot select a legacy binding"
@@ -433,10 +432,8 @@ impl Unified {
                         Some(reply) => {
                             serde_json::to_value(reply).expect("typed native help refusal")
                         }
-                        None => crate::remote::combined_observation_failure(
-                            backend
-                                .combined_selection()
-                                .expect("selected combined backend"),
+                        None => crate::remote::combined_scope_failure(
+                            &backend.combined_scope().expect("selected combined backend"),
                             "combined_observation_unavailable",
                         ),
                     },
@@ -580,6 +577,10 @@ impl RemoteTools for Unified {
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
         self.combined_backend()
             .and_then(|backend| backend.combined_selection())
+    }
+    fn combined_scope(&self) -> Option<crate::remote::CombinedScope> {
+        self.combined_backend()
+            .and_then(|backend| backend.combined_scope())
     }
     fn query_concurrency(&self) -> usize {
         self.projects
@@ -740,10 +741,8 @@ impl RemoteTools for Unified {
                             Some(reply) => {
                                 serde_json::to_value(reply).expect("typed native read refusal")
                             }
-                            None => crate::remote::combined_observation_failure(
-                                backend
-                                    .combined_selection()
-                                    .expect("selected combined backend"),
+                            None => crate::remote::combined_scope_failure(
+                                &backend.combined_scope().expect("selected combined backend"),
                                 "combined_observation_unavailable",
                             ),
                         }),

@@ -88,9 +88,12 @@ location's path. Indexes are removed in the Index library, never here.
 off login startup. Turning it off is refused while the service itself was
 started at sign-in; stop it and run `airkctl service login uninstall`.
 
-**Not yet served** (the API answers `not_yet_served`): searching under that
-scope (it needs a new scoped-read authority in the service) and the live
-event stream. Indexed evidence is always shown as text.
+**Search** under the chosen scope is served: the service holds the scope as
+an in-memory read authority, revoked on sign-out, expiry and re-selection,
+and searches through the same canonical handlers as `airkctl` and VS Code.
+
+**Not yet served** (the API answers `not_yet_served`): the live event
+stream. Indexed evidence is always shown as text.
 
 The pages are built from `packages/admin` (`npm run build`; `npm run check`
 fails when the committed bundle in `crates/airk-cli/admin-assets/` differs

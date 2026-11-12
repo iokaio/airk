@@ -119,10 +119,53 @@ impl QuerySelection {
         // cloning selected memberships, including for direct native callers.
         encoded_size(grant, 32 * 1024 * 1024)?;
         ensure!(!grant.revoked, "reviewed grant is revoked");
+        let (project_ids, members) = self.resolve_memberships(&grant.memberships)?;
+        Ok(ResolvedSelection {
+            project_ids,
+            members,
+            grant_id: Some(grant.id),
+            grant_revision: Some(grant.revision),
+            selection: None,
+            member_availability: self.member_availability,
+        })
+    }
+
+    /// Resolve against an in-memory window/admin selection grant (selection
+    /// authority spec §3.6): `memberships` are the current non-empty
+    /// memberships of the selection's projects and indexes, read by the native
+    /// owner at exactly the selection's catalog revision. The same rules as
+    /// [`Self::resolve`] apply; no grant identity is created.
+    pub fn resolve_selection(
+        &self,
+        memberships: &[GrantedMembership],
+        selection: crate::scoped_reads::ScopeSelectionObservation,
+    ) -> Result<ResolvedSelection> {
+        self.validate()?;
+        ensure!(
+            memberships.len() <= MAX_SELECTION * MAX_SELECTION,
+            "selection membership capacity exceeded"
+        );
+        let (project_ids, members) = self.resolve_memberships(memberships)?;
+        let resolved = ResolvedSelection {
+            project_ids,
+            members,
+            grant_id: None,
+            grant_revision: None,
+            selection: Some(selection),
+            member_availability: self.member_availability,
+        };
+        resolved.validate()?;
+        Ok(resolved)
+    }
+
+    fn resolve_memberships(
+        &self,
+        memberships: &[GrantedMembership],
+    ) -> Result<(Vec<QueryProjectId>, Vec<ResolvedMember>)> {
         let projects = self.project_ids.iter().copied().collect::<BTreeSet<_>>();
         let mut permitted = BTreeMap::<IndexId, Vec<GrantedMembership>>::new();
         let mut seen_projects = BTreeSet::new();
-        for membership in &grant.memberships {
+        for membership in memberships {
             if projects.contains(&membership.membership.project_id) {
                 seen_projects.insert(membership.membership.project_id);
                 permitted
@@ -166,13 +209,7 @@ impl QuerySelection {
                 scope,
             });
         }
-        Ok(ResolvedSelection {
-            project_ids: projects.into_iter().collect(),
-            members,
-            grant_id: grant.id,
-            grant_revision: grant.revision,
-            member_availability: self.member_availability,
-        })
+        Ok((projects.into_iter().collect(), members))
     }
 }
 
@@ -182,8 +219,16 @@ pub struct ResolvedSelection {
     pub project_ids: Vec<QueryProjectId>,
     /// Sorted by unique index ID, independently of caller or Project order.
     pub members: Vec<ResolvedMember>,
-    pub grant_id: GrantId,
-    pub grant_revision: CatalogRevision,
+    /// Exactly one authority source: a catalog grant (`grant_id` and
+    /// `grant_revision`) or an in-memory selection. A `Some` field
+    /// serializes as the bare value did, so catalog-grant bytes and the
+    /// selection identity of a catalog grant are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<GrantId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_revision: Option<CatalogRevision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<crate::scoped_reads::ScopeSelectionObservation>,
     pub member_availability: MemberAvailability,
 }
 
@@ -221,14 +266,21 @@ impl ResolvedSelection {
         Ok(SelectedScopeObservation {
             project_ids: self.project_ids.clone(),
             index_ids: self.members.iter().map(|member| member.index_id).collect(),
-            grant_id: Some(self.grant_id),
-            grant_revision: Some(self.grant_revision),
-            selection: None,
+            grant_id: self.grant_id,
+            grant_revision: self.grant_revision,
+            selection: self.selection,
             member_availability: self.member_availability,
             identity: self.identity()?,
         })
     }
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            matches!(
+                (self.grant_id, self.grant_revision, self.selection),
+                (Some(_), Some(_), None) | (None, None, Some(_))
+            ),
+            "selected scope requires exactly one authority source"
+        );
         unique_bounded(&self.project_ids, MAX_SELECTION)?;
         ensure!(
             !self.project_ids.is_empty()

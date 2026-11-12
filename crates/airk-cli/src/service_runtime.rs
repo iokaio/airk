@@ -191,6 +191,33 @@ fn revoke_dropped(state: &State, dropped: window_plane::Dropped) {
     }
 }
 
+/// The A2 grants' side of the scoped-read admission gate (selection
+/// authority §3.1, §3.3): a stored grant's nonce is registered live (nested
+/// inside the admin plane's lock), and the nonces of dropped grants are
+/// revoked after that lock is released, with `RevokeScope` to each affected
+/// worker on a blocking thread, as for windows.
+fn admin_selection_authority(
+    gate: crate::catalog_admission::NativeCatalogAdmission,
+    control: Option<crate::project_supervisor::CatalogControlHandle>,
+) -> crate::admin_plane::SelectionAuthority {
+    let register = gate.clone();
+    crate::admin_plane::SelectionAuthority {
+        register: Arc::new(
+            move |selection: &airk_core::scoped_reads::SelectionScopeRef| {
+                register.register_selection(selection).is_ok()
+            },
+        ),
+        revoke: Arc::new(move |nonces: Vec<airk_core::identity::Incarnation>| {
+            let pairs = gate.revoke_selection(&nonces).unwrap_or_default();
+            if let (false, Some(control)) = (pairs.is_empty(), control.clone())
+                && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            {
+                drop(runtime.spawn_blocking(move || control.revoke_selection_scopes(pairs)));
+            }
+        }),
+    }
+}
+
 /// The W4 catalog check off the async workers.
 async fn blocking_scope_check(
     control: std::path::PathBuf,
@@ -199,6 +226,44 @@ async fn blocking_scope_check(
     tokio::task::spawn_blocking(move || scope_grant::check(&control, &selection))
         .await
         .unwrap_or_else(|_| Err(scope_grant::SCOPE_UNAVAILABLE.to_owned()))
+}
+
+/// The admin plane's A2 read (selection authority S2): the W4 selection read
+/// path under the session's grant, in process.
+fn admin_selection_reader(
+    state: Arc<std::sync::OnceLock<std::sync::Weak<State>>>,
+) -> crate::admin_plane::SelectionReader {
+    Arc::new(move |read: crate::admin_plane::SelectedRead| {
+        let state = state.clone();
+        Box::pin(async move {
+            let Some(state) = state.get().and_then(std::sync::Weak::upgrade) else {
+                return ControlResponse::Failure {
+                    code: "service_draining".into(),
+                };
+            };
+            let grant = tools_call::SelectionGrant {
+                selection: read.selection,
+                scope_identity: read.scope_identity,
+                selection_ref: read.selection_ref,
+            };
+            match tools_call::selection_read(
+                &state,
+                &grant,
+                read.tool,
+                read.arguments,
+                read.mode,
+                read.client,
+            )
+            .await
+            {
+                Ok(result) => ControlResponse::ToolResult { result },
+                Err(tools_call::SelectionRead::Refused(code)) => {
+                    ControlResponse::Failure { code: code.into() }
+                }
+                Err(tools_call::SelectionRead::Failed(error)) => tools_call::failed(&error),
+            }
+        })
+    })
 }
 
 /// The admin plane's A2 catalog check: the shared `scope_grant` check, off
@@ -1120,6 +1185,21 @@ async fn serve_with_admission(
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
     let plane = windows(instance, root.canonicalize()?, catalog_gate.clone());
+    // The A2 read runs in process; `State` is bound once it exists.
+    let reader_state: Arc<std::sync::OnceLock<std::sync::Weak<State>>> =
+        Arc::new(std::sync::OnceLock::new());
+    let admin = crate::admin_plane::AdminPlane::new(
+        admin_dispatch(root.canonicalize()?, instance),
+        instance,
+    )
+    .with_scope_check(admin_scope_check(root.canonicalize()?))
+    .with_trust_inspect(admin_trust_inspect(root.canonicalize()?));
+    let admin = match catalog_gate.clone() {
+        Some(gate) => admin
+            .with_selection_authority(admin_selection_authority(gate, selection_control.clone()))
+            .with_selection_reader(admin_selection_reader(reader_state.clone())),
+        None => admin,
+    };
     let state = Arc::new(State {
         http: std::sync::OnceLock::new(),
         checkpoint: Arc::new(checkpoint::Coordinator::new(root)?),
@@ -1143,15 +1223,9 @@ async fn serve_with_admission(
         lifecycle: Mutex::new(None),
         windows: Mutex::new(plane),
         selection_control,
-        admin: Arc::new(
-            crate::admin_plane::AdminPlane::new(
-                admin_dispatch(root.canonicalize()?, instance),
-                instance,
-            )
-            .with_scope_check(admin_scope_check(root.canonicalize()?))
-            .with_trust_inspect(admin_trust_inspect(root.canonicalize()?)),
-        ),
+        admin: Arc::new(admin),
     });
+    let _ = reader_state.set(Arc::downgrade(&state));
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
     {
         state
@@ -1238,6 +1312,9 @@ async fn serve_with_admission(
         Ok(mut windows) => Some(windows.end()),
         Err(_) => None,
     };
+    // Every admin session and its A2 grant ends with the service; the plane
+    // revokes their nonces once its lock is released.
+    state.admin.end();
     if let Some(ended) = ended {
         let pairs = revoke_in_gate(state.catalog_gate.as_ref(), ended);
         if let (false, Some(control)) = (pairs.is_empty(), state.selection_control.clone()) {

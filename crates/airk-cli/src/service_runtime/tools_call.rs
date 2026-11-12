@@ -40,7 +40,7 @@ pub(super) fn failure_message(error: &anyhow::Error) -> String {
         .collect()
 }
 
-fn failed(error: &anyhow::Error) -> ControlResponse {
+pub(super) fn failed(error: &anyhow::Error) -> ControlResponse {
     ControlResponse::ToolCallFailed {
         message: failure_message(error),
     }
@@ -137,12 +137,17 @@ pub(super) async fn window_response(
         Ok(read) => read,
         Err(code) => return ControlResponse::Failure { code },
     };
-    let result = match window_read(state, &read.grant, tool, arguments, mode, client).await {
+    let grant = SelectionGrant {
+        selection: read.grant.selection.clone(),
+        scope_identity: read.grant.scope_identity,
+        selection_ref: read.grant.selection_ref,
+    };
+    let result = match selection_read(state, &grant, tool, arguments, mode, client).await {
         Ok(result) => result,
-        Err(WindowRead::Refused(code)) => {
+        Err(SelectionRead::Refused(code)) => {
             return ControlResponse::Failure { code: code.into() };
         }
-        Err(WindowRead::Failed(error)) => return failed(&error),
+        Err(SelectionRead::Failed(error)) => return failed(&error),
     };
     if result["isError"].as_bool() != Some(true)
         && let Ok(mut windows) = state.windows.lock()
@@ -152,64 +157,37 @@ pub(super) async fn window_response(
     ControlResponse::ToolResult { result }
 }
 
-enum WindowRead {
+/// An in-memory selection grant (a window's W4 or an admin session's A2) as
+/// its owning plane resolved and rechecked it. The nonce inside
+/// `selection_ref` reaches only the in-process admission and gate calls.
+pub(super) struct SelectionGrant {
+    pub(super) selection: airk_core::service::WindowScopeSelection,
+    pub(super) scope_identity: airk_core::identity::Sha256Digest,
+    pub(super) selection_ref: airk_core::scoped_reads::SelectionScopeRef,
+}
+
+pub(super) enum SelectionRead {
     Refused(&'static str),
     Failed(anyhow::Error),
 }
 
-/// One read under the grant. One index reads through one in-process
-/// selection connection whose every connect re-runs admission (exact
-/// revision, live nonce, authority build). Several indexes need the
-/// combined fan-out (§3.6), which is not served yet.
-async fn window_read(
+/// One read under a selection grant, through the canonical handlers. One
+/// index reads through one in-process selection connection whose every
+/// connect re-runs admission (exact revision, live nonce, authority build).
+/// Several indexes read through the combined facade (§3.6), whose members
+/// are such connections and whose final receipt is issued in process.
+pub(super) async fn selection_read(
     state: &Arc<super::State>,
-    grant: &super::window_plane::WindowGrant,
+    grant: &SelectionGrant,
     tool: String,
     arguments: Map<String, Value>,
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
-) -> std::result::Result<Value, WindowRead> {
-    let [index_id] = grant.selection.index_ids.as_slice() else {
-        return Err(WindowRead::Refused("not_yet_served"));
+) -> std::result::Result<Value, SelectionRead> {
+    let backend = match grant.selection.index_ids.as_slice() {
+        [index_id] => single_selection_backend(state, grant, *index_id, client).await?,
+        _ => combined_selection_backend(state, grant, client).await?,
     };
-    let registration = selection_backing(&state.control_root, grant, *index_id)
-        .await
-        .map_err(|_| WindowRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
-    let request = crate::catalog_authority::SelectionConnectRequest {
-        selection_ref: grant.selection_ref,
-        window_selection: grant.selection.clone(),
-        index_id: *index_id,
-    };
-    let owner = Arc::clone(state);
-    let connect: crate::project_client::SelectionConnector =
-        Arc::new(move || -> crate::project_client::SelectionGrantFuture {
-            let (owner, request) = (Arc::clone(&owner), request.clone());
-            Box::pin(async move {
-                owner
-                    .management
-                    .connect_selection(request)
-                    .await?
-                    .take_in_process()
-            })
-        });
-    let inner = crate::project_client::selection_tools(
-        state.control_root.clone(),
-        registration.binding,
-        crate::project_client::SelectionSession {
-            window_selection: grant.selection.clone(),
-            scope_identity: grant.scope_identity,
-            index_id: *index_id,
-            connect,
-        },
-    )
-    .map_err(WindowRead::Failed)?;
-    inner.client(client);
-    let backend = project_backend(
-        inner,
-        registration.binding.to_string(),
-        &registration.collection,
-    )
-    .map_err(WindowRead::Failed)?;
     let result = async {
         let result = call(backend.as_ref(), tool, arguments, response_mode(mode)).await?;
         require_envelope(&result)?;
@@ -218,7 +196,129 @@ async fn window_read(
     .await;
     released(backend.as_ref(), result)
         .await
-        .map_err(WindowRead::Failed)
+        .map_err(SelectionRead::Failed)
+}
+
+/// The service's in-process admission of one selection member: a fresh
+/// `connect_selection` then `take_in_process` on every call.
+fn selection_connect(state: &Arc<super::State>) -> crate::combined_frontend::SelectionConnect {
+    use crate::{catalog_authority::SelectionConnectRequest, project_client::SelectionGrantFuture};
+    let owner = Arc::clone(state);
+    Arc::new(
+        move |request: SelectionConnectRequest| -> SelectionGrantFuture {
+            let owner = Arc::clone(&owner);
+            Box::pin(async move {
+                owner
+                    .management
+                    .connect_selection(request)
+                    .await?
+                    .take_in_process()
+            })
+        },
+    )
+}
+
+async fn single_selection_backend(
+    state: &Arc<super::State>,
+    grant: &SelectionGrant,
+    index_id: airk_core::index_catalog::IndexId,
+    client: airk_core::usage::ClientFamily,
+) -> std::result::Result<Arc<dyn RemoteTools>, SelectionRead> {
+    let registration = selection_backing(&state.control_root, grant, index_id)
+        .await
+        .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    let request = crate::catalog_authority::SelectionConnectRequest {
+        selection_ref: grant.selection_ref,
+        window_selection: grant.selection.clone(),
+        index_id,
+    };
+    let admit = selection_connect(state);
+    let connect: crate::project_client::SelectionConnector =
+        Arc::new(move || -> crate::project_client::SelectionGrantFuture { admit(request.clone()) });
+    let inner = crate::project_client::selection_tools(
+        state.control_root.clone(),
+        registration.binding,
+        crate::project_client::SelectionSession {
+            window_selection: grant.selection.clone(),
+            scope_identity: grant.scope_identity,
+            index_id,
+            connect,
+        },
+    )
+    .map_err(SelectionRead::Failed)?;
+    inner.client(client);
+    project_backend(
+        inner,
+        registration.binding.to_string(),
+        &registration.collection,
+    )
+    .map_err(SelectionRead::Failed)
+}
+
+/// Several indexes: the combined facade over the selection (§3.6), the same
+/// one `--combined-session` reads through. Its current snapshot must be
+/// authorized at exactly the grant's revision, or the read refuses as a
+/// whole (`scoped_read_unavailable`).
+async fn combined_selection_backend(
+    state: &Arc<super::State>,
+    grant: &SelectionGrant,
+    client: airk_core::usage::ClientFamily,
+) -> std::result::Result<Arc<dyn RemoteTools>, SelectionRead> {
+    let Some(gate) = state.catalog_gate.clone() else {
+        return Err(SelectionRead::Refused(
+            super::scope_grant::SCOPE_UNAVAILABLE,
+        ));
+    };
+    let scope = crate::combined_frontend::SelectionScope {
+        selection_ref: grant.selection_ref,
+        window_selection: grant.selection.clone(),
+        connect: selection_connect(state),
+        issue: selection_issue(gate, state.instance),
+    };
+    let inner = crate::combined_frontend::resolve_selection(state.control_root.clone(), scope)
+        .await
+        .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    inner.client(client);
+    match airk_mcp::unified::Unified::combined(Arc::clone(&inner), None) {
+        Ok(backend) => Ok(Arc::new(backend)),
+        Err(error) => {
+            let _ = released(inner.as_ref(), Ok(())).await;
+            Err(SelectionRead::Failed(error))
+        }
+    }
+}
+
+/// The in-process final-delivery receipt of a combined selection read: the
+/// gate's clock at exactly the selection's revision, then an issue ticket
+/// and the live nonce checked together under the gate lock.
+fn selection_issue(
+    gate: crate::catalog_admission::NativeCatalogAdmission,
+    instance: airk_core::identity::Incarnation,
+) -> crate::combined_frontend::SelectionIssue {
+    use airk_core::scoped_reads::ScopeReadRefused;
+    Arc::new(
+        move |selection: &airk_core::scoped_reads::SelectionScopeRef,
+              scope_identity: airk_core::identity::Sha256Digest,
+              result_digest: airk_core::identity::Sha256Digest|
+              -> Result<airk_core::service::CombinedDeliveryReceipt> {
+            let clock = gate.catalog_clock().ok_or(ScopeReadRefused)?;
+            ensure!(
+                clock.revision == selection.catalog_revision,
+                ScopeReadRefused
+            );
+            let ticket = gate.begin_issue(clock.namespace, clock.revision)?;
+            gate.with_live_selection(ticket, selection, || {
+                airk_core::service::CombinedDeliveryReceipt {
+                    schema: 1,
+                    service_instance: instance,
+                    namespace: clock.namespace,
+                    catalog_revision: clock.revision,
+                    scope_identity,
+                    result_digest,
+                }
+            })
+        },
+    )
 }
 
 /// The selected index's backing project, read at exactly the grant's
@@ -226,7 +326,7 @@ async fn window_read(
 /// complete.
 async fn selection_backing(
     control: &Path,
-    grant: &super::window_plane::WindowGrant,
+    grant: &SelectionGrant,
     index_id: airk_core::index_catalog::IndexId,
 ) -> Result<airk_core::service::ProjectRegistration> {
     use airk_core::{
@@ -239,7 +339,7 @@ async fn selection_backing(
         control,
         ControlMethod::CatalogDetail {
             entity: CatalogEntity::Index { id: index_id },
-            expected_catalog_revision: Some(grant.catalog_revision),
+            expected_catalog_revision: Some(grant.selection_ref.catalog_revision),
         },
     )
     .await?;
@@ -247,7 +347,8 @@ async fn selection_backing(
         return Err(ScopeReadRefused.into());
     };
     ensure!(
-        detail.namespace == grant.selection.namespace && detail.revision == grant.catalog_revision,
+        detail.namespace == grant.selection.namespace
+            && detail.revision == grant.selection_ref.catalog_revision,
         ScopeReadRefused
     );
     let Some(CatalogItem::Index(index)) = detail.item else {

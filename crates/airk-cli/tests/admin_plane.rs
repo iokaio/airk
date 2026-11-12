@@ -396,16 +396,21 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     let granted = granted.json();
     assert_eq!(granted["result"]["status"], "admin_scope_granted");
     assert_eq!(granted["result"]["catalog_revision"], json!(clock.revision));
-    // Reads under an in-memory grant wait for their scoped-read admission
-    // (admin_plane/CONTRACT.md); the pipe never resolves an admin selection.
+    // S2: a read under the session's current grant is served through the
+    // canonical selection read; the pipe never resolves an admin selection.
     let search = json!({"tools_call": {"tool": "airk_status", "arguments": {},
         "selection": "admin", "response_mode": "terse", "usage_client": "unknown"}})
     .to_string();
     let searched = api("/admin/api/v1/call/search.call", &authenticated, &search)?;
     assert_eq!(
-        (searched.status, searched.code().as_str()),
-        (503, "not_yet_served")
+        searched.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&searched.body)
     );
+    assert_eq!(searched.json()["result"]["status"], "tool_result");
+    // N3: the grant's nonce never reaches the browser.
+    assert!(!String::from_utf8_lossy(&searched.body).contains("grant_nonce"));
     let pipe = service.request(ControlMethod::ToolsCall {
         tool: "airk_status".into(),
         arguments: Default::default(),

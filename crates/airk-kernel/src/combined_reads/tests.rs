@@ -642,9 +642,12 @@ fn thirty_two_selected_indexes_with_one_result_fit_the_unchanged_native_frame() 
     let mut request = request()?;
     let first = request.selection.members[0].memberships[0].clone();
     let grant = ReviewedGrant {
-        id: request.selection.grant_id,
+        id: request.selection.grant_id.expect("catalog-grant fixture"),
         host: Sha256Digest::from_bytes([1; 32]),
-        revision: request.selection.grant_revision,
+        revision: request
+            .selection
+            .grant_revision
+            .expect("catalog-grant fixture"),
         revoked: false,
         memberships: (1..=32)
             .map(|n| {
@@ -751,9 +754,12 @@ fn capability_common_fields_roundtrip_one_two_and_thirty_two_complete_members() 
         let mut request = request()?;
         let first = request.selection.members[0].memberships[0].clone();
         let grant = ReviewedGrant {
-            id: request.selection.grant_id,
+            id: request.selection.grant_id.expect("catalog-grant fixture"),
             host: Sha256Digest::from_bytes([1; 32]),
-            revision: request.selection.grant_revision,
+            revision: request
+                .selection
+                .grant_revision
+                .expect("catalog-grant fixture"),
             revoked: false,
             memberships: (1..=count)
                 .map(|n| {
@@ -873,9 +879,12 @@ fn thirty_two_full_native_shaped_search_members_fit_and_materialize_without_drop
         memberships.push(member);
     }
     let grant = ReviewedGrant {
-        id: request.selection.grant_id,
+        id: request.selection.grant_id.expect("catalog-grant fixture"),
         host: Sha256Digest::from_bytes([1; 32]),
-        revision: request.selection.grant_revision,
+        revision: request
+            .selection
+            .grant_revision
+            .expect("catalog-grant fixture"),
         revoked: false,
         memberships,
     };

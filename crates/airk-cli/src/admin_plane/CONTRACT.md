@@ -18,6 +18,14 @@ observations and carries out the admitted route.
   `service_runtime` (`service_runtime::scope_grant::check`, the same check
   W4 uses, run on a blocking thread). Without it `search.select_scope`
   answers `not_yet_served`.
+- `with_selection_authority(SelectionAuthority)`: the scoped-read
+  admission gate's side of an A2 grant (selection authority spec §3.1,
+  §3.3), injected by `service_runtime` when the catalog gate exists:
+  `register` (`NativeCatalogAdmission::register_selection`) and `revoke`
+  (`revoke_selection`, then `RevokeScope` to each affected worker on a
+  blocking thread). Without it a grant holds no read authority.
+- `AdminPlane::end()`: service end; every session ends and every grant's
+  nonce is revoked.
 - `with_trust_inspect(TrustInspect)`: `https.trust_status`, injected by
   `service_runtime` (`http_endpoint::trust::saved_identity` then
   `trust::manage(Inspect)`, the callers `airk runtime http-trust --action
@@ -69,8 +77,6 @@ observations and carries out the admitted route.
   | `agents.ownership` | `HttpConnectionOwnership` | `AgentConnectionOwnership` (M16) |
   | `logs.export` | `LogsExport` | `Logs` |
   | `https.trust_status` | `HttpTrust.Inspect` | the trust inspection above; body exactly `{"http_trust":{"action":"inspect"}}`; a failure is 409 `operation_failed` with `native: {message}` (the CLI's message, ≤ 4,096 characters) |
-  | `storage.inventory`, `storage.purge` | `StorageInventory`, `StoragePurge` | `not_yet_served`: no service handler (Phase 7) |
-  | `service.login_startup_status`, `…_install`, `…_uninstall` | `LoginStartup.*` | `not_yet_served`: login startup is managed offline by `airkctl` until Phase 7 (U75) |
 
 - **Request identities** (`mutations`; contracts §2.4, §4.3b, U98).
   - The browser never sends a request identity. Each row's reviewed
@@ -117,7 +123,8 @@ observations and carries out the admitted route.
   complete native record.
 - **Destructive rows** (`confirm`; U98): `catalog.apply`,
   `catalog.split_apply` and `recovery.plan_execute` are served after the typed
-  confirmation. `storage.purge` stays `not_yet_served` (no service handler).
+  confirmation; `storage.purge` (U100) after typing the location's path as
+  the inventory lists it.
   - The handler reads the target's current display name through `Dispatch`
     and compares `confirm_text` (≤ 256 bytes) exactly. A mismatch, a missing
     text, or a target the read no longer finds is 400
@@ -144,13 +151,30 @@ observations and carries out the admitted route.
   (the session's current expiry). Logout, expiry, eviction and restart drop
   it; a grant of another instance is never stored or used; the grant never
   reaches the browser or the pipe.
+- **A2 read authority (selection authority §3.1, §3.3, §3.7, N4):** with a
+  selection authority, each stored grant draws a fresh nonce (the first 16
+  bytes of one OS random draw) and carries a `SelectionScopeRef { owner:
+  Admin, grant_nonce, service_instance, scope_identity, catalog_revision }`
+  (`secrets::Grant::selection_ref`). The nonce is registered live with the
+  gate nested inside the plane's lock (owner, then gate); a refused
+  registration answers 409 `scoped_read_unavailable` and stores nothing.
+  Every path that drops a grant (replacement, logout, idle or absolute
+  expiry found by any session operation, eviction of the oldest session, a
+  store whose session ended meanwhile, service end) records its nonce in
+  `secrets::Sessions`; the plane's lock guard (`SecretsGuard`) takes those
+  nonces and revokes them after the lock is released, so no drop path can
+  skip its revocation. The nonce never reaches the browser, the pipe or a
+  log (`SelectionScopeRef`'s `Debug` redacts it).
 - **Search (`search.call`)** runs only with `selection: "unselected"` (the
   help tool, through `Dispatch`) or `"admin"`. Any other selection is 400.
   Under `"admin"`: no grant → 409 `admin_scope_not_granted`; the grant is
   rechecked against the current catalog (changed → 409
-  `scoped_read_unavailable`); a current grant answers 503 `not_yet_served`
-  (below). On the pipe, `ToolSelection::Admin` is `admin_scope_not_granted`
-  and `AdminScopeGrant` is `admin_session_required`.
+  `scoped_read_unavailable`); a current grant's read runs through the
+  injected `SelectionReader` (selection authority S2): the W4 selection read
+  path in process, one index or the combined facade, with the session's
+  `SelectionScopeRef`, whose nonce never reaches the answer (N3). On the
+  pipe, `ToolSelection::Admin` is `admin_scope_not_granted` and
+  `AdminScopeGrant` is `admin_session_required`.
 - Embedded assets: `crates/airk-cli/admin-assets/` files listed in its
   `manifest.json`, sealed by `build.rs` (missing or stale bytes fail the
   build); lookup by exact name only. `/admin/` and `/admin/launch` serve the
@@ -159,19 +183,6 @@ observations and carries out the admitted route.
 
 ## Not served yet
 
-- **Reads under an A2 grant (and W4).** Under the catalog gate every
-  evidence read is admitted against a persisted, user-reviewed catalog grant
-  (`GrantId`, `expected_grant_revision`, `UserReviewedProjectGrant`
-  provenance; `combined_frontend::read_snapshot`,
-  `catalog_coordinator::native_scoped_selection`,
-  `catalog_authority::build_catalog_read_authority`); a project-binding read
-  is refused there. An in-memory grant has no `GrantId`, so its read needs a
-  new scoped-read authority kind in the kernel's admission — a shared
-  contract change (kernel hooks, read descriptors) that is its own reviewed
-  step under the C5 security review, not part of this module. Until then a
-  current grant's `search.call` answers `not_yet_served`.
-- Destructive rows (typed confirmation wire form undefined) and the Phase 7
-  mapping rows above.
 - `/admin/api/v1/events` answers `not_yet_served`.
 - Peer proof qualification: the macOS own-socket observer is implemented
   but not yet qualified on a macOS host; other platforms (no observer) are

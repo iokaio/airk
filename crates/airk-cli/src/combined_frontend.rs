@@ -1,24 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Grant-bound combined reads. Native children retain their ordinary scoped IPC,
 //! admission, revision, retry and delivery checks. This owner never indexes.
+//!
+//! One implementation serves both authority sources (selection authority
+//! spec §3.6): a persisted reviewed catalog grant (`CombinedConnectRequest`)
+//! and an in-memory window/admin selection grant ([`SelectionScope`]). Only
+//! the [`Session`] steps differ; fan-out, budgets, composition,
+//! continuations, verification and failure shapes are shared.
 use airk_core::{
     catalog_management::{CatalogEntity, CatalogItem, CatalogSource},
     combined_reads::{MemberAvailability, QuerySelection, ResolvedSelection, SharedBudgets},
     grant_provenance::GrantProvenanceKind,
-    identity::{Sha256Digest, framed_digest},
-    index_catalog::{CatalogRevision, IndexDefinition, IndexId, QueryProject},
-    scoped_reads::ScopeReadRefused,
-    service::{CombinedConnectRequest, ScopedConnectRequest},
+    identity::{Incarnation, Sha256Digest, framed_digest},
+    index_catalog::{
+        CatalogRevision, GrantedMembership, IndexDefinition, IndexId, Membership, QueryProject,
+        QueryProjectId,
+    },
+    scoped_reads::{
+        ScopeReadRefused, ScopeSelectionObservation, SelectionScopeRef, SourceDescriptor,
+    },
+    service::{
+        CombinedConnectRequest, CombinedDeliveryReceipt, ScopedConnectRequest, WindowScopeSelection,
+    },
 };
-use airk_kernel::scoped_reads::ScopedReadAuthority;
-use airk_mcp::remote::{RemoteFuture, RemoteTools};
+use airk_kernel::scoped_reads::{ScopedReadAuthority, SelectionReadAuthority};
+use airk_mcp::remote::{CombinedScope, RemoteFuture, RemoteTools};
 use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -78,21 +93,532 @@ fn check_public_reply_budget(result: &Value, budget: ReplyBudget) -> Result<()> 
     Ok(())
 }
 
+/// One selected index: its read authority and the request its child
+/// connection is admitted with (`A`/`C` are the catalog grant's by default).
 #[derive(Clone)]
-struct Member {
+struct Member<A = ScopedReadAuthority, C = ScopedConnectRequest> {
     index: IndexDefinition,
-    authority: ScopedReadAuthority,
+    authority: A,
     sources: Vec<CatalogSource>,
-    selection: ScopedConnectRequest,
+    selection: C,
 }
 
 #[derive(Clone)]
-struct Snapshot {
+struct Snapshot<A = ScopedReadAuthority, C = ScopedConnectRequest> {
     revision: CatalogRevision,
     resolved: ResolvedSelection,
     projects: Vec<QueryProject>,
-    members: Vec<Member>,
+    members: Vec<Member<A, C>>,
     identity: Sha256Digest,
+}
+
+type Pending<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+type SelectionRequest = crate::catalog_authority::SelectionConnectRequest;
+
+/// A member's read authority: its fingerprint binds the child cache, the
+/// combined identity and the member's source projection.
+trait MemberAuthority: Clone + Send + Sync + 'static {
+    fn member_fingerprint(&self) -> Result<Sha256Digest>;
+}
+impl MemberAuthority for ScopedReadAuthority {
+    fn member_fingerprint(&self) -> Result<Sha256Digest> {
+        self.fingerprint()
+    }
+}
+impl MemberAuthority for SelectionReadAuthority {
+    fn member_fingerprint(&self) -> Result<Sha256Digest> {
+        self.fingerprint()
+    }
+}
+
+/// The final-delivery claim of one combined result.
+struct Delivery<'a> {
+    selected: &'a QuerySelection,
+    scope_identity: Sha256Digest,
+    result_digest: Sha256Digest,
+    deadline: Instant,
+}
+
+/// The steps that depend on where a combined session's authority comes from.
+trait Session: Send + Sync + 'static {
+    type Authority: MemberAuthority;
+    type Child: Clone + Send + Sync + 'static;
+    /// `requested_scope.selection` in every failure body.
+    fn requested(&self) -> Value;
+    /// The frozen `(project_ids, index_ids)` an unnarrowed call reads.
+    fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>);
+    fn scope(&self) -> CombinedScope;
+    fn catalog_request(&self) -> Option<&CombinedConnectRequest>;
+    /// The query-scope page's `mode` and `grant`.
+    fn discovery_grant(&self) -> (&'static str, Value);
+    /// The current snapshot, refused unless it is still authorized.
+    fn snapshot<'a>(
+        &'a self,
+        control: &'a Path,
+        selected: &'a QuerySelection,
+    ) -> Pending<'a, Snapshot<Self::Authority, Self::Child>>;
+    /// A new child connection for one member.
+    fn connect(
+        &self,
+        control: &Path,
+        member: &Member<Self::Authority, Self::Child>,
+    ) -> Result<Arc<crate::project_client::Backend>>;
+    /// The native final-delivery receipt of one result.
+    fn deliver<'a>(
+        &'a self,
+        control: &'a Path,
+        instance: &'a tokio::sync::OnceCell<Incarnation>,
+        delivery: Delivery<'a>,
+    ) -> Pending<'a, CombinedDeliveryReceipt>;
+}
+
+impl Session for CombinedConnectRequest {
+    type Authority = ScopedReadAuthority;
+    type Child = ScopedConnectRequest;
+    fn requested(&self) -> Value {
+        json!(self)
+    }
+    fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>) {
+        (&self.project_ids, self.index_ids.as_deref())
+    }
+    fn scope(&self) -> CombinedScope {
+        CombinedScope::catalog(self)
+    }
+    fn catalog_request(&self) -> Option<&CombinedConnectRequest> {
+        Some(self)
+    }
+    fn discovery_grant(&self) -> (&'static str, Value) {
+        (
+            "reviewed_grant",
+            json!({"id":self.grant_id,"revision":self.expected_grant_revision}),
+        )
+    }
+    fn snapshot<'a>(
+        &'a self,
+        control: &'a Path,
+        selected: &'a QuerySelection,
+    ) -> Pending<'a, Snapshot> {
+        Box::pin(snapshot(control, self, selected))
+    }
+    fn connect(
+        &self,
+        control: &Path,
+        member: &Member,
+    ) -> Result<Arc<crate::project_client::Backend>> {
+        crate::project_client::scoped_backend(
+            control.to_path_buf(),
+            member.index.backing.binding,
+            member.selection.clone(),
+        )
+    }
+    fn deliver<'a>(
+        &'a self,
+        control: &'a Path,
+        instance: &'a tokio::sync::OnceCell<Incarnation>,
+        delivery: Delivery<'a>,
+    ) -> Pending<'a, CombinedDeliveryReceipt> {
+        use airk_core::service::{ControlMethod, ControlResponse};
+        Box::pin(async move {
+            let Delivery {
+                selected,
+                scope_identity,
+                result_digest,
+                deadline,
+            } = delivery;
+            let instance = *tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                instance.get_or_try_init(|| async {
+                    let health =
+                        crate::service_runtime::request(control, ControlMethod::Health).await?;
+                    let ControlResponse::Health { observation } = health else {
+                        return Err(anyhow::Error::from(ScopeReadRefused));
+                    };
+                    Ok(observation.instance)
+                }),
+            )
+            .await
+            .map_err(|_| ScopeReadRefused)??;
+            let response = tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                crate::service_runtime::request_for_instance(
+                    control,
+                    ControlMethod::ValidateCombinedDelivery {
+                        selection: self.clone(),
+                        query_selection: selected.clone(),
+                        scope_identity,
+                        result_digest,
+                    },
+                    instance,
+                ),
+            )
+            .await
+            .map_err(|_| ScopeReadRefused)??;
+            let ControlResponse::CombinedDeliveryValidated { receipt } = response else {
+                return Err(ScopeReadRefused.into());
+            };
+            ensure!(
+                receipt.schema == 1
+                    && receipt.service_instance == instance
+                    && receipt.namespace == self.namespace
+                    && receipt.catalog_revision >= self.expected_catalog_revision
+                    && receipt.scope_identity == scope_identity
+                    && receipt.result_digest == result_digest,
+                ScopeReadRefused
+            );
+            Ok(receipt)
+        })
+    }
+}
+
+/// Admits one selection member's child connection in process: the service's
+/// `Management::connect_selection`, then `take_in_process` (§3.2 step 4).
+/// Called for the first connect and every reconnect of that child.
+pub(crate) type SelectionConnect =
+    Arc<dyn Fn(SelectionRequest) -> crate::project_client::SelectionGrantFuture + Send + Sync>;
+
+/// Issues a selection read's final delivery receipt in process for
+/// `(selection, scope_identity, result_digest)`: the gate's clock at exactly
+/// the selection's revision, an issue ticket and the nonce still live, under
+/// one gate lock. It is the selection analogue of `ValidateCombinedDelivery`,
+/// which no selection crosses a pipe for (F4).
+pub(crate) type SelectionIssue = Arc<
+    dyn Fn(&SelectionScopeRef, Sha256Digest, Sha256Digest) -> Result<CombinedDeliveryReceipt>
+        + Send
+        + Sync,
+>;
+
+/// An in-memory window/admin selection grant of several indexes, as the
+/// owning plane resolved it. Its nonce reaches only the in-process admission
+/// and gate calls; every body echoes the window selection and its scope
+/// identity only (§3.2 step 5, N3).
+pub(crate) struct SelectionScope {
+    pub(crate) selection_ref: SelectionScopeRef,
+    pub(crate) window_selection: WindowScopeSelection,
+    pub(crate) connect: SelectionConnect,
+    pub(crate) issue: SelectionIssue,
+}
+
+impl Session for SelectionScope {
+    type Authority = SelectionReadAuthority;
+    type Child = SelectionRequest;
+    fn requested(&self) -> Value {
+        json!({"window_scope_selection":self.window_selection,
+            "scope_identity":self.selection_ref.scope_identity})
+    }
+    fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>) {
+        (
+            &self.window_selection.project_ids,
+            Some(&self.window_selection.index_ids),
+        )
+    }
+    fn scope(&self) -> CombinedScope {
+        CombinedScope {
+            project_ids: self.window_selection.project_ids.clone(),
+            index_ids: Some(self.window_selection.index_ids.clone()),
+            requested: self.requested(),
+        }
+    }
+    fn catalog_request(&self) -> Option<&CombinedConnectRequest> {
+        None
+    }
+    fn discovery_grant(&self) -> (&'static str, Value) {
+        ("selected_scope", Value::Null)
+    }
+    fn snapshot<'a>(
+        &'a self,
+        control: &'a Path,
+        selected: &'a QuerySelection,
+    ) -> Pending<'a, Snapshot<SelectionReadAuthority, SelectionRequest>> {
+        let (root, selection_ref, window, selected) = (
+            control.to_path_buf(),
+            self.selection_ref,
+            self.window_selection.clone(),
+            selected.clone(),
+        );
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                read_selection_snapshot(&root, &selection_ref, &window, &selected)
+            })
+            .await?
+        })
+    }
+    fn connect(
+        &self,
+        control: &Path,
+        member: &Member<SelectionReadAuthority, SelectionRequest>,
+    ) -> Result<Arc<crate::project_client::Backend>> {
+        let (connect, request) = (Arc::clone(&self.connect), member.selection.clone());
+        crate::project_client::selection_tools(
+            control.to_path_buf(),
+            member.index.backing.binding,
+            crate::project_client::SelectionSession {
+                window_selection: member.selection.window_selection.clone(),
+                scope_identity: self.selection_ref.scope_identity,
+                index_id: member.index.id,
+                connect: Arc::new(move || connect(request.clone())),
+            },
+        )
+    }
+    fn deliver<'a>(
+        &'a self,
+        control: &'a Path,
+        _instance: &'a tokio::sync::OnceCell<Incarnation>,
+        delivery: Delivery<'a>,
+    ) -> Pending<'a, CombinedDeliveryReceipt> {
+        Box::pin(async move {
+            let Delivery {
+                selected,
+                scope_identity,
+                result_digest,
+                deadline,
+            } = delivery;
+            // The catalog path's `validate_delivery`: the same snapshot,
+            // still authorized at exactly the selection's revision.
+            let current = tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                self.snapshot(control, selected),
+            )
+            .await
+            .map_err(|_| ScopeReadRefused)??;
+            let revision = self.selection_ref.catalog_revision;
+            ensure!(
+                current.identity == scope_identity && current.revision == revision,
+                ScopeReadRefused
+            );
+            let receipt = (self.issue)(&self.selection_ref, scope_identity, result_digest)?;
+            ensure!(
+                receipt.schema == 1
+                    && receipt.service_instance == self.selection_ref.service_instance
+                    && receipt.namespace == self.window_selection.namespace
+                    && receipt.catalog_revision == revision
+                    && receipt.scope_identity == scope_identity
+                    && receipt.result_digest == result_digest,
+                ScopeReadRefused
+            );
+            Ok(receipt)
+        })
+    }
+}
+
+/// Each read project's current non-empty membership of the authority's
+/// index, in the shape the shared resolver reads a reviewed grant's frozen
+/// memberships in.
+fn granted_memberships(authority: &SelectionReadAuthority) -> Result<Vec<GrantedMembership>> {
+    authority
+        .project_ids
+        .iter()
+        .map(|project| {
+            let revision = authority
+                .membership_revisions
+                .iter()
+                .find(|(id, _)| id == project)
+                .map(|(_, revision)| *revision)
+                .ok_or(ScopeReadRefused)?;
+            Ok(GrantedMembership {
+                membership: Membership {
+                    project_id: *project,
+                    index_id: authority.index_id,
+                    revision,
+                    scope: authority
+                        .atoms
+                        .iter()
+                        .filter(|(id, _)| id == project)
+                        .map(|(_, atom)| atom.clone())
+                        .collect(),
+                },
+                source_revision: authority.source_revision,
+                policy_epoch: authority.policy_epoch,
+                policy_digest: authority.policy_digest,
+            })
+        })
+        .collect()
+}
+
+/// The saved definitions of the resolved projects.
+fn project_details(
+    registry: &mut ServiceRegistry,
+    revision: CatalogRevision,
+    resolved: &ResolvedSelection,
+) -> Result<Vec<QueryProject>> {
+    let mut projects = Vec::new();
+    for id in &resolved.project_ids {
+        let Some(CatalogItem::Project(project)) = registry
+            .catalog_detail(&CatalogEntity::Project { id: *id }, Some(revision))?
+            .item
+        else {
+            return Err(ScopeReadRefused.into());
+        };
+        project.validate()?;
+        projects.push(project);
+    }
+    Ok(projects)
+}
+
+/// A member's index definition and the enabled sources its authority names.
+fn member_detail(
+    registry: &mut ServiceRegistry,
+    revision: CatalogRevision,
+    index_id: IndexId,
+    descriptors: &[SourceDescriptor],
+) -> Result<(IndexDefinition, Vec<CatalogSource>)> {
+    let Some(CatalogItem::Index(index)) = registry
+        .catalog_detail(&CatalogEntity::Index { id: index_id }, Some(revision))?
+        .item
+    else {
+        return Err(ScopeReadRefused.into());
+    };
+    let mut sources = Vec::new();
+    for descriptor in descriptors {
+        let Some(CatalogItem::Source(source)) = registry
+            .catalog_detail(
+                &CatalogEntity::Source {
+                    id: descriptor.source_root_id,
+                },
+                Some(revision),
+            )?
+            .item
+        else {
+            return Err(ScopeReadRefused.into());
+        };
+        ensure!(
+            source.index_id == index_id
+                && source.enabled
+                && source.canonical_path == descriptor.original_root,
+            ScopeReadRefused
+        );
+        sources.push(source);
+    }
+    Ok((index, sources))
+}
+
+/// The selection snapshot (§3.6), read at exactly the selection's catalog
+/// revision, never rolled forward. Every selected index is first built over
+/// all selected projects, so an index without a non-empty membership refuses
+/// the whole read (§3.2 step 3). A selected project with no non-empty
+/// membership of any selected index adds nothing, as for one index. Each
+/// member's child authority covers only its resolved projects.
+fn read_selection_snapshot(
+    root: &Path,
+    selection_ref: &SelectionScopeRef,
+    window: &WindowScopeSelection,
+    selected: &QuerySelection,
+) -> Result<Snapshot<SelectionReadAuthority, SelectionRequest>> {
+    use crate::catalog_authority::build_selection_read_authority;
+    selected.validate()?;
+    let revision = selection_ref.catalog_revision;
+    ensure!(
+        window.expected_catalog_revision == revision
+            && !window.project_ids.is_empty()
+            && selected
+                .project_ids
+                .iter()
+                .all(|id| window.project_ids.contains(id))
+            && selected
+                .index_ids
+                .as_ref()
+                .is_none_or(|ids| ids.iter().all(|id| window.index_ids.contains(id))),
+        ScopeReadRefused
+    );
+    let mut registry =
+        ServiceRegistry::open_saved_before(root, Some(Instant::now() + Duration::from_secs(2)))?;
+    ensure!(
+        registry.catalog_pending_fence()?.is_none(),
+        ScopeReadRefused
+    );
+    let state = registry.catalog_state()?.ok_or(ScopeReadRefused)?;
+    ensure!(
+        state.activated
+            && state.authority_contract == 1
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
+            && state.namespace == window.namespace
+            && state.revision == revision,
+        ScopeReadRefused
+    );
+    let request = |index_id: IndexId, project_ids: Vec<QueryProjectId>| SelectionRequest {
+        selection_ref: *selection_ref,
+        window_selection: WindowScopeSelection {
+            project_ids,
+            ..window.clone()
+        },
+        index_id,
+    };
+    let mut memberships = Vec::new();
+    for index_id in &window.index_ids {
+        let authority = build_selection_read_authority(
+            &mut registry,
+            &request(*index_id, window.project_ids.clone()),
+        )?;
+        memberships.extend(granted_memberships(&authority)?);
+    }
+    let mut query = selected.clone();
+    query.project_ids.retain(|id| {
+        memberships
+            .iter()
+            .any(|membership| membership.membership.project_id == *id)
+    });
+    let resolved = query.resolve_selection(
+        &memberships,
+        ScopeSelectionObservation {
+            owner: selection_ref.owner,
+            scope_identity: selection_ref.scope_identity,
+            catalog_revision: revision,
+        },
+    )?;
+    let projects = project_details(&mut registry, state.revision, &resolved)?;
+    let mut members = Vec::new();
+    for member in &resolved.members {
+        let child = request(member.index_id, member.project_ids());
+        let authority = build_selection_read_authority(&mut registry, &child)?;
+        ensure!(
+            authority.project_ids == member.project_ids(),
+            ScopeReadRefused
+        );
+        let (index, sources) = member_detail(
+            &mut registry,
+            state.revision,
+            member.index_id,
+            &authority.sources,
+        )?;
+        members.push(Member {
+            index,
+            authority,
+            sources,
+            selection: child,
+        });
+    }
+    ensure!(
+        registry.catalog_state()?.as_ref() == Some(&state)
+            && registry.catalog_pending_fence()?.is_none(),
+        ScopeReadRefused
+    );
+    let fingerprints = members
+        .iter()
+        .map(|member| Ok((member.index.id, member.authority.fingerprint()?)))
+        .collect::<Result<Vec<_>>>()?;
+    // A new domain: a selection snapshot never equals a catalog one. The
+    // public selection identity stands where the grant does in the catalog
+    // identity; the nonce enters only through the member fingerprints.
+    let identity = framed_digest(
+        b"airk/combined-selection-authority/1",
+        &[
+            &serde_json::to_vec(&(
+                window.namespace,
+                selection_ref.owner,
+                selection_ref.scope_identity,
+                revision,
+            ))?,
+            &serde_json::to_vec(&fingerprints)?,
+            &serde_json::to_vec(&resolved)?,
+        ],
+    );
+    Ok(Snapshot {
+        revision,
+        resolved,
+        projects,
+        members,
+        identity,
+    })
 }
 
 fn now_ms() -> u64 {
@@ -169,17 +695,7 @@ fn read_snapshot(
             .all(|member| frozen.member(member.index_id).is_some()),
         ScopeReadRefused
     );
-    let mut projects = Vec::new();
-    for id in &resolved.project_ids {
-        let Some(CatalogItem::Project(project)) = registry
-            .catalog_detail(&CatalogEntity::Project { id: *id }, Some(state.revision))?
-            .item
-        else {
-            return Err(ScopeReadRefused.into());
-        };
-        project.validate()?;
-        projects.push(project);
-    }
+    let projects = project_details(&mut registry, state.revision, &resolved)?;
     let mut members = Vec::new();
     for member in &resolved.members {
         let child = ScopedConnectRequest {
@@ -195,38 +711,12 @@ fn read_snapshot(
         let native = crate::catalog_coordinator::native_scoped_selection(&mut registry, &child)?;
         let authority =
             crate::catalog_authority::build_catalog_read_authority(&mut registry, &native)?;
-        let Some(CatalogItem::Index(index)) = registry
-            .catalog_detail(
-                &CatalogEntity::Index {
-                    id: member.index_id,
-                },
-                Some(state.revision),
-            )?
-            .item
-        else {
-            return Err(ScopeReadRefused.into());
-        };
-        let mut sources = Vec::new();
-        for descriptor in &authority.sources {
-            let Some(CatalogItem::Source(source)) = registry
-                .catalog_detail(
-                    &CatalogEntity::Source {
-                        id: descriptor.source_root_id,
-                    },
-                    Some(state.revision),
-                )?
-                .item
-            else {
-                return Err(ScopeReadRefused.into());
-            };
-            ensure!(
-                source.index_id == member.index_id
-                    && source.enabled
-                    && source.canonical_path == descriptor.original_root,
-                ScopeReadRefused
-            );
-            sources.push(source);
-        }
+        let (index, sources) = member_detail(
+            &mut registry,
+            state.revision,
+            member.index_id,
+            &authority.sources,
+        )?;
         members.push(Member {
             index,
             authority,
@@ -335,21 +825,50 @@ pub async fn resolve(
     ))
 }
 
-struct Backend {
+/// The combined facade of an in-memory window/admin selection of more than
+/// one index (selection authority spec §3.6), for the service's own M3
+/// handler. The selection's current snapshot is checked first, as `resolve`
+/// checks a catalog session's; every member connects through
+/// `scope.connect` and every result is delivered through `scope.issue`.
+pub(crate) async fn resolve_selection(
     control: PathBuf,
-    selection: CombinedConnectRequest,
+    scope: SelectionScope,
+) -> Result<Arc<dyn RemoteTools>> {
+    let backend = Backend {
+        control: control.clone(),
+        selection: scope,
+        children: Mutex::new(BTreeMap::new()),
+        closed: std::sync::atomic::AtomicBool::new(false),
+        client: Mutex::new(airk_core::usage::ClientFamily::Cli),
+        service_instance: tokio::sync::OnceCell::new(),
+    };
+    let defaults = backend.request_selection(&mut Map::new())?;
+    backend.selection.snapshot(&control, &defaults).await?;
+    Ok(crate::unified_mcp::with_runtime_readiness(
+        None,
+        control,
+        Arc::new(backend),
+    ))
+}
+
+/// The combined facade over one session (`S` is a reviewed catalog grant by
+/// default).
+struct Backend<S = CombinedConnectRequest> {
+    control: PathBuf,
+    selection: S,
     children: Mutex<BTreeMap<Sha256Digest, Arc<crate::project_client::Backend>>>,
     closed: std::sync::atomic::AtomicBool,
     client: Mutex<airk_core::usage::ClientFamily>,
     service_instance: tokio::sync::OnceCell<airk_core::identity::Incarnation>,
 }
 
-fn failure(code: &str, submitted: Option<bool>, selection: &CombinedConnectRequest) -> Value {
-    let body = json!({"error":{"code":code,"retryable":false,"query_submitted":submitted,"query_replay_safe":false},"requested_scope":{"confirmed":false,"selection":selection}});
+/// `requested` is the session's `requested_scope.selection` (`Session::requested`).
+fn failure(code: &str, submitted: Option<bool>, requested: &Value) -> Value {
+    let body = json!({"error":{"code":code,"retryable":false,"query_submitted":submitted,"query_replay_safe":false},"requested_scope":{"confirmed":false,"selection":requested}});
     json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
 }
 
-impl Backend {
+impl<S: Session> Backend<S> {
     async fn finalize(
         &self,
         selected: &QuerySelection,
@@ -375,7 +894,6 @@ impl Backend {
         deadline: Instant,
         budget: ReplyBudget,
     ) -> Result<Value> {
-        use airk_core::service::{ControlMethod, ControlResponse};
         ensure!(
             !self.closed.load(std::sync::atomic::Ordering::Acquire),
             ScopeReadRefused
@@ -389,46 +907,19 @@ impl Backend {
             b"airk/combined-delivery-result/1",
             &[&serde_json::to_vec(&body)?],
         );
-        let instance = *tokio::time::timeout_at(
-            tokio::time::Instant::from_std(deadline),
-            self.service_instance.get_or_try_init(|| async {
-                let health =
-                    crate::service_runtime::request(&self.control, ControlMethod::Health).await?;
-                let ControlResponse::Health { observation } = health else {
-                    return Err(anyhow::Error::from(ScopeReadRefused));
-                };
-                Ok(observation.instance)
-            }),
-        )
-        .await
-        .map_err(|_| ScopeReadRefused)??;
-        let response = tokio::time::timeout_at(
-            tokio::time::Instant::from_std(deadline),
-            crate::service_runtime::request_for_instance(
+        let receipt = self
+            .selection
+            .deliver(
                 &self.control,
-                ControlMethod::ValidateCombinedDelivery {
-                    selection: self.selection.clone(),
-                    query_selection: selected.clone(),
+                &self.service_instance,
+                Delivery {
+                    selected,
                     scope_identity,
                     result_digest,
+                    deadline,
                 },
-                instance,
-            ),
-        )
-        .await
-        .map_err(|_| ScopeReadRefused)??;
-        let ControlResponse::CombinedDeliveryValidated { receipt } = response else {
-            return Err(ScopeReadRefused.into());
-        };
-        ensure!(
-            receipt.schema == 1
-                && receipt.service_instance == instance
-                && receipt.namespace == self.selection.namespace
-                && receipt.catalog_revision >= self.selection.expected_catalog_revision
-                && receipt.scope_identity == scope_identity
-                && receipt.result_digest == result_digest,
-            ScopeReadRefused
-        );
+            )
+            .await?;
         ensure!(
             !self.closed.load(std::sync::atomic::Ordering::Acquire),
             ScopeReadRefused
@@ -458,10 +949,11 @@ impl Backend {
             "member_availability requires project_ids"
         );
         let explicit_projects = projects.is_some();
+        let (default_projects, default_indexes) = self.selection.defaults();
         let project_ids = projects
             .map(serde_json::from_value)
             .transpose()?
-            .unwrap_or_else(|| self.selection.project_ids.clone());
+            .unwrap_or_else(|| default_projects.to_vec());
         let index_ids = indexes
             .map(serde_json::from_value)
             .transpose()?
@@ -469,7 +961,7 @@ impl Backend {
                 if explicit_projects {
                     None
                 } else {
-                    self.selection.index_ids.clone()
+                    default_indexes.map(<[IndexId]>::to_vec)
                 }
             });
         let member_availability = args
@@ -486,17 +978,16 @@ impl Backend {
         Ok(selection)
     }
 
-    fn child(&self, member: &Member) -> Result<Arc<crate::project_client::Backend>> {
-        let fingerprint = member.authority.fingerprint()?;
+    fn child(
+        &self,
+        member: &Member<S::Authority, S::Child>,
+    ) -> Result<Arc<crate::project_client::Backend>> {
+        let fingerprint = member.authority.member_fingerprint()?;
         let mut children = self.children.lock().map_err(|_| ScopeReadRefused)?;
         if let Some(child) = children.get(&fingerprint) {
             return Ok(child.clone());
         }
-        let child = crate::project_client::scoped_backend(
-            self.control.clone(),
-            member.index.backing.binding,
-            member.selection.clone(),
-        )?;
+        let child = self.selection.connect(&self.control, member)?;
         child.client(*self.client.lock().map_err(|_| ScopeReadRefused)?);
         // A bounded cache retains ordinary native channel pools. New request
         // combinations beyond it use an ephemeral pool, never evict live work.
@@ -510,7 +1001,7 @@ impl Backend {
         &self,
         args: Map<String, Value>,
         selected: &QuerySelection,
-        before: Snapshot,
+        before: Snapshot<S::Authority, S::Child>,
         deadline: Instant,
     ) -> Result<Value> {
         use airk_mcp::combined::{QueryScopeArgs, QueryScopeView};
@@ -538,7 +1029,7 @@ impl Backend {
             body["scope_identity"] = json!(before.identity);
             body["source_boundaries"] = json!(before.members.iter().flat_map(|member| member.sources.iter().map(move |source| json!({"index_id":member.index.id,"source_root_id":source.id,"original_root":source.canonical_path,"aliases":source.aliases}))).collect::<Vec<_>>());
             body["instructions"] = airk_mcp::scope_instructions::generate(&selected_scope, &body)?;
-            let after = snapshot(&self.control, &self.selection, selected).await?;
+            let after = self.selection.snapshot(&self.control, selected).await?;
             ensure!(
                 before.identity == after.identity && before.revision == after.revision,
                 ScopeReadRefused
@@ -648,6 +1139,7 @@ impl Backend {
         let mut page = Vec::new();
         let mut next = offset;
         let mut body;
+        let (mode, grant) = self.selection.discovery_grant();
         loop {
             let cursor = if next < records.len() {
                 Some(serde_json::to_string(&DiscoveryCursor {
@@ -658,7 +1150,7 @@ impl Backend {
             } else {
                 None
             };
-            body = json!({"schema":"airk.query-scope/1","mode":"reviewed_grant","view":view,"grant":{"id":self.selection.grant_id,"revision":self.selection.expected_grant_revision},"catalog_revision":before.revision,"scope_identity":before.identity,"selection":before.resolved.observation()?,"observed_unix_ms":now_ms(),"items":page,"count":records.len(),"count_precision":"exact_selected_scope","truncated":next<records.len(),"cursor":cursor});
+            body = json!({"schema":"airk.query-scope/1","mode":mode,"view":view,"grant":grant,"catalog_revision":before.revision,"scope_identity":before.identity,"selection":before.resolved.observation()?,"observed_unix_ms":now_ms(),"items":page,"count":records.len(),"count_precision":"exact_selected_scope","truncated":next<records.len(),"cursor":cursor});
             if next == records.len() || page.len() == args.limit() {
                 break;
             }
@@ -678,7 +1170,7 @@ impl Backend {
             "query_scope_reply_budget"
         );
         airk_core::index_catalog::encoded_size(&body, page_bytes)?;
-        let after = snapshot(&self.control, &self.selection, selected).await?;
+        let after = self.selection.snapshot(&self.control, selected).await?;
         ensure!(
             before.identity == after.identity && before.revision == after.revision,
             ScopeReadRefused
@@ -696,7 +1188,7 @@ impl Backend {
         &self,
         mut args: Map<String, Value>,
         selected: &QuerySelection,
-        before: Snapshot,
+        before: Snapshot<S::Authority, S::Child>,
         deadline: Instant,
         capacity: usize,
         context: airk_mcp::read_attempt::ReadAttemptContext,
@@ -742,7 +1234,7 @@ impl Backend {
             },
         )
         .await?;
-        let after = snapshot(&self.control, &self.selection, selected).await?;
+        let after = self.selection.snapshot(&self.control, selected).await?;
         ensure!(before.identity == after.identity, ScopeReadRefused);
         let failed = result.status == "failed" || result.status == "requirements_unmet";
         let output_max_bytes = result.plan.output.max_bytes;
@@ -764,7 +1256,7 @@ impl Backend {
         &self,
         mut args: Map<String, Value>,
         mut selected: QuerySelection,
-        before: Snapshot,
+        before: Snapshot<S::Authority, S::Child>,
         context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> RemoteFuture<'_> {
         Box::pin(async move {
@@ -790,7 +1282,7 @@ impl Backend {
         &self,
         mut args: Map<String, Value>,
         _selected: &QuerySelection,
-        before: Snapshot,
+        before: Snapshot<S::Authority, S::Child>,
         context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<Value> {
         use airk_core::verification::{VerificationAllocation, VerificationControls};
@@ -930,7 +1422,7 @@ impl Backend {
                 Ok(Err(_)) | Err(_) => failure(
                     "member_verification_observation_unavailable",
                     None,
-                    &self.selection,
+                    &self.selection.requested(),
                 ),
             };
             failed |= result_failed(&result);
@@ -950,7 +1442,7 @@ impl Backend {
         tool: &str,
         mut args: Map<String, Value>,
         selected: &QuerySelection,
-        before: Snapshot,
+        before: Snapshot<S::Authority, S::Child>,
         admission: ReadAdmission,
     ) -> Result<Value> {
         let ReadAdmission {
@@ -974,7 +1466,7 @@ impl Backend {
                 return Ok(failure(
                     "invalid_native_arguments",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
         };
@@ -986,7 +1478,7 @@ impl Backend {
             return Ok(failure(
                 "invalid_native_arguments",
                 Some(false),
-                &self.selection,
+                &self.selection.requested(),
             ));
         }
         let multi = matches!(
@@ -1005,7 +1497,7 @@ impl Backend {
             let mut body = canonical_body(&failure(
                 "originating_index_required",
                 Some(false),
-                &self.selection,
+                &self.selection.requested(),
             ));
             body["requires_input"] = json!({"field":"index_ids","choices":before.resolved.members.iter().map(|member|member.index_id).collect::<Vec<_>>(),"reason":"Choose one originating index from the selected Project union."});
             return Ok(native_envelope(body));
@@ -1015,7 +1507,7 @@ impl Backend {
             return Ok(failure(
                 "unknown_combined_tool",
                 Some(false),
-                &self.selection,
+                &self.selection.requested(),
             ));
         };
         let properties = definition
@@ -1027,7 +1519,7 @@ impl Backend {
             return Ok(failure(
                 "invalid_native_arguments",
                 Some(false),
-                &self.selection,
+                &self.selection.requested(),
             ));
         }
         let mut native_validation = args.clone();
@@ -1036,7 +1528,7 @@ impl Backend {
             return Ok(failure(
                 "invalid_native_arguments",
                 Some(false),
-                &self.selection,
+                &self.selection.requested(),
             ));
         }
         let verification: VerificationControls = serde_json::from_value(Value::Object(
@@ -1082,7 +1574,7 @@ impl Backend {
                 return Ok(failure(
                     "invalid_combined_cursor",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             };
             let ids = before
@@ -1096,7 +1588,7 @@ impl Backend {
                     return Ok(failure(
                         "combined_cursor_expired",
                         Some(false),
-                        &self.selection,
+                        &self.selection.requested(),
                     ));
                 }
             }
@@ -1129,7 +1621,7 @@ impl Backend {
                         return Ok(failure(
                             "combined_cursor_publication_unavailable",
                             None,
-                            &self.selection,
+                            &self.selection.requested(),
                         ));
                     }
                 };
@@ -1144,7 +1636,7 @@ impl Backend {
                     return Ok(failure(
                         "combined_cursor_expired",
                         Some(false),
-                        &self.selection,
+                        &self.selection.requested(),
                     ));
                 }
                 resume_status.insert(member.index.id, status);
@@ -1217,14 +1709,26 @@ impl Backend {
             .await
             {
                 Ok(Ok(result)) => result,
-                Ok(Err(_)) => failure("member_observation_unavailable", None, &self.selection),
-                Err(_) => failure("member_deadline_exhausted", None, &self.selection),
+                Ok(Err(_)) => failure(
+                    "member_observation_unavailable",
+                    None,
+                    &self.selection.requested(),
+                ),
+                Err(_) => failure(
+                    "member_deadline_exhausted",
+                    None,
+                    &self.selection.requested(),
+                ),
             };
             if let Some(expected) = &origin {
                 let body = canonical_body(&result);
                 let actual = publication_token(&body).map(str::to_owned);
                 if actual.as_deref() != Some(expected) {
-                    result = failure("origin_publication_expired", Some(true), &self.selection);
+                    result = failure(
+                        "origin_publication_expired",
+                        Some(true),
+                        &self.selection.requested(),
+                    );
                 }
             }
             if let Some(continuation) = &continuation {
@@ -1237,7 +1741,7 @@ impl Backend {
                     return Ok(failure(
                         "combined_cursor_expired",
                         Some(true),
-                        &self.selection,
+                        &self.selection.requested(),
                     ));
                 }
             }
@@ -1280,7 +1784,7 @@ impl Backend {
                                 if projection.validate().is_ok()
                                     && projection.publication.token == expected
                                     && projection.scope_fingerprint
-                                        == member.authority.fingerprint()? =>
+                                        == member.authority.member_fingerprint()? =>
                             {
                                 published_sources = projection
                                     .sources
@@ -1383,7 +1887,7 @@ impl Backend {
                 sources: published_sources,
             });
         }
-        let after = snapshot(&self.control, &self.selection, selected).await?;
+        let after = self.selection.snapshot(&self.control, selected).await?;
         ensure!(before.identity == after.identity, ScopeReadRefused);
         let request = CompositionRequest {
             selection: before.resolved,
@@ -1624,9 +2128,12 @@ fn source_projection_failure(result: &Value, observation: Option<Value>) -> Valu
     native_envelope(body)
 }
 
-impl RemoteTools for Backend {
+impl<S: Session> RemoteTools for Backend<S> {
     fn combined_selection(&self) -> Option<&CombinedConnectRequest> {
-        Some(&self.selection)
+        self.selection.catalog_request()
+    }
+    fn combined_scope(&self) -> Option<CombinedScope> {
+        Some(self.selection.scope())
     }
     fn local_help(&self) -> bool {
         false
@@ -1715,7 +2222,7 @@ impl RemoteTools for Backend {
     }
 }
 
-impl Backend {
+impl<S: Session> Backend<S> {
     fn dispatch(
         &self,
         tool: String,
@@ -1730,7 +2237,7 @@ impl Backend {
                 return Ok(failure(
                     "combined_admission_closed",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
             let internal_verification = tool == "__airk_verify_projection";
@@ -1738,14 +2245,14 @@ impl Backend {
                 return Ok(failure(
                     "unknown_combined_tool",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
             if args.contains_key("__airk_plan_remaining_ms") && !internal_allowed {
                 return Ok(failure(
                     "invalid_combined_argument",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
             let remaining_deadline_ms = args
@@ -1756,7 +2263,7 @@ impl Backend {
                 return Ok(failure(
                     "combined_plan_deadline_exhausted",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
             let native = if tool.starts_with("airk_") || internal_verification {
@@ -1778,7 +2285,7 @@ impl Backend {
                 return Ok(failure(
                     "invalid_query_scope_arguments",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
             let selected = match self.request_selection(&mut args) {
@@ -1787,17 +2294,17 @@ impl Backend {
                     return Ok(failure(
                         "invalid_combined_selection",
                         Some(false),
-                        &self.selection,
+                        &self.selection.requested(),
                     ));
                 }
             };
-            let before = match snapshot(&self.control, &self.selection, &selected).await {
+            let before = match self.selection.snapshot(&self.control, &selected).await {
                 Ok(before) => before,
                 Err(_) => {
                     return Ok(failure(
                         "combined_scope_unavailable",
                         Some(false),
-                        &self.selection,
+                        &self.selection.requested(),
                     ));
                 }
             };
@@ -1835,7 +2342,7 @@ impl Backend {
                 return Ok(failure(
                     "combined_plan_deadline_exhausted",
                     Some(false),
-                    &self.selection,
+                    &self.selection.requested(),
                 ));
             }
             if native == "airk_help" {
@@ -1881,10 +2388,16 @@ impl Backend {
                 Err(error) if error.is::<airk_kernel::combined_reads::CombinedReplyBudget>() => Ok(
                     native_envelope(airk_kernel::combined_reads::CombinedReplyBudget.receipt()),
                 ),
-                Err(error) if error.is::<ScopeReadRefused>() => {
-                    Ok(failure("combined_scope_expired", None, &self.selection))
-                }
-                Err(_) => Ok(failure("combined_read_unavailable", None, &self.selection)),
+                Err(error) if error.is::<ScopeReadRefused>() => Ok(failure(
+                    "combined_scope_expired",
+                    None,
+                    &self.selection.requested(),
+                )),
+                Err(_) => Ok(failure(
+                    "combined_read_unavailable",
+                    None,
+                    &self.selection.requested(),
+                )),
             }
         })
     }

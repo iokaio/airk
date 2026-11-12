@@ -3477,3 +3477,225 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
     parity.finish();
     f.assert_sources_unchanged()
 }
+
+/// One M3 read on the service pipe, retried only as the shared typed retry
+/// classifier allows; a refusal is returned as its failure frame.
+async fn pipe_read(
+    f: &Fixture,
+    selection: airk_core::service::ToolSelection,
+    tool: &str,
+    arguments: &Value,
+) -> Result<std::result::Result<Value, Value>> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let response = airk_cli::service_runtime::request(
+            &f.control,
+            ControlMethod::ToolsCall {
+                tool: tool.into(),
+                arguments: arguments
+                    .as_object()
+                    .context("object arguments required")?
+                    .clone(),
+                selection: selection.clone(),
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Unknown,
+            },
+        )
+        .await?;
+        let ControlResponse::ToolResult { result } = response else {
+            return Ok(Err(serde_json::to_value(&response)?));
+        };
+        let Some(retry) = read_retry::within(&result, deadline) else {
+            return Ok(Ok(result));
+        };
+        tokio::time::sleep(retry.delay).await;
+    }
+}
+
+/// W1 then W4 over the fixture session's projects and both of its member
+/// indexes, at the service's current catalog revision.
+async fn window_selecting_the_session(f: &Fixture) -> Result<airk_core::service::ToolSelection> {
+    let ControlResponse::Health { observation } =
+        airk_cli::service_runtime::request(&f.control, ControlMethod::Health).await?
+    else {
+        anyhow::bail!("service health unavailable");
+    };
+    let clock = observation.catalog_clock.context("catalog clock")?;
+    let ControlResponse::WindowOpened {
+        window_id, lease, ..
+    } = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::WindowOpen {
+            label: "selection parity".into(),
+            owner_pid: std::process::id(),
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("window did not open");
+    };
+    let granted = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::WindowScopeGrant {
+            window_id,
+            lease: lease.clone(),
+            selection: airk_core::service::WindowScopeSelection {
+                namespace: clock.namespace,
+                expected_catalog_revision: clock.revision,
+                index_ids: vec![f.indexes[0], f.indexes[1]],
+                project_ids: f.session.project_ids.clone(),
+            },
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(granted, ControlResponse::WindowScopeGranted { .. }),
+        "window scope was not granted: {}",
+        serde_json::to_string(&granted)?
+    );
+    Ok(airk_core::service::ToolSelection::Window { window_id, lease })
+}
+
+/// The documented selection-dependent fields (selection authority spec §2.1,
+/// §3.6): the selection observation's authority source and identity, the
+/// combined authority identity it binds (publication vector, delivery
+/// receipt), each member's scope-observation source and fingerprint, the
+/// requested-scope echo of a failure and the scope-bound cursors. Every
+/// other field stays literal.
+fn without_selection_source(mut value: Value) -> Value {
+    fn walk(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                if let Some(observation) = fields
+                    .get_mut("scope_observation")
+                    .and_then(Value::as_object_mut)
+                {
+                    for key in ["fingerprint", "provenance", "grant", "selection"] {
+                        observation.remove(key);
+                    }
+                }
+                if let Some(requested) = fields
+                    .get_mut("requested_scope")
+                    .and_then(Value::as_object_mut)
+                {
+                    requested.insert("selection".into(), json!("<requested selection>"));
+                }
+                if fields.get("cursor").is_some_and(Value::is_string) {
+                    fields.insert("cursor".into(), json!("<scope-bound cursor>"));
+                }
+                for entry in fields.values_mut() {
+                    walk(entry);
+                }
+            }
+            Value::Array(values) => values.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    if let Some(selection) = value.get_mut("selection").and_then(Value::as_object_mut) {
+        for key in ["grant_id", "grant_revision", "selection", "identity"] {
+            selection.remove(key);
+        }
+    }
+    if let Some(vector) = value
+        .get_mut("publication_vector")
+        .and_then(Value::as_object_mut)
+    {
+        vector.insert("authority".into(), json!("<combined authority>"));
+    }
+    if let Some(receipt) = value
+        .pointer_mut("/delivery_observation/receipt")
+        .and_then(Value::as_object_mut)
+    {
+        receipt.insert("scope_identity".into(), json!("<combined authority>"));
+    }
+    walk(&mut value);
+    value
+}
+
+/// Spec §5 parity: a window selection of two indexes reads through the same
+/// combined fan-out, budgets, member reports and delivery proof as the
+/// reviewed catalog grant over the same membership atoms. Only the
+/// documented selection fields differ, and no body names a nonce (N3).
+async fn assert_window_matches_catalog(f: &Fixture, label: &str) -> Result<Value> {
+    let window = window_selecting_the_session(f).await?;
+    let catalog = airk_core::service::ToolSelection::Combined {
+        request: f.session.clone(),
+        project_ids: None,
+        index_ids: None,
+        member_availability: None,
+    };
+    let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":12,"max_bytes":8192,"verification":"off"});
+    let from_catalog = pipe_read(f, catalog, "airk_search", &arguments)
+        .await?
+        .map_err(|refused| anyhow::anyhow!("catalog read refused: {refused}"))?;
+    let from_window = pipe_read(f, window, "airk_search", &arguments)
+        .await?
+        .map_err(|refused| anyhow::anyhow!("window read refused: {refused}"))?;
+    let raw = from_window.to_string();
+    ensure!(!raw.contains("grant_nonce"), "N3: {raw}");
+    let (catalog_body, window_body) = (body(&from_catalog)?, body(&from_window)?);
+    ensure!(
+        window_body["selection"]["selection"]["owner"] == "window"
+            && window_body["selection"].get("grant_id").is_none()
+            && catalog_body["selection"]["grant_id"] == json!(f.session.grant_id),
+        "selection sources: {window_body} / {catalog_body}"
+    );
+    assert_eq!(from_window["isError"], from_catalog["isError"]);
+    // `assert_parity` reconstructs its inputs itself; the selection-source
+    // normalization applies only after that reconstruction, so compare the
+    // normalized logical copies directly.
+    let catalog_copy = without_selection_source(stable(logical_comparison_copy(&catalog_body)?)?);
+    let window_copy = without_selection_source(stable(logical_comparison_copy(&window_body)?)?);
+    if let Some(difference) = first_difference(&catalog_copy, &window_copy, "") {
+        let path = save_replies(label, &json!({"left": catalog_body, "right": window_body}))?;
+        anyhow::bail!(
+            "{label}: {difference}; complete replies: {}",
+            path.display()
+        );
+    }
+    Ok(window_body)
+}
+
+#[tokio::test]
+async fn window_selection_of_two_indexes_reads_what_the_catalog_grant_reads() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let window_body = assert_window_matches_catalog(&f, "window selection parity").await?;
+    assert_eq!(
+        window_body["members"]
+            .as_array()
+            .context("members absent")?
+            .len(),
+        2,
+        "{window_body}"
+    );
+    assert!(
+        !window_body["ranking"]
+            .as_array()
+            .context("ranking absent")?
+            .is_empty(),
+        "{window_body}"
+    );
+    f.assert_sources_unchanged()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn window_selection_reports_a_failed_member_as_the_catalog_grant_does() -> Result<()> {
+    let f = Fixture::new(false)?;
+    let _service = f.start().await?;
+    let window_body = assert_window_matches_catalog(&f, "window selection partial").await?;
+    assert_eq!(window_body["partial"], true, "{window_body}");
+    // The failed member's own report names no nonce either (N3).
+    for member in window_body["members"]
+        .as_array()
+        .context("members absent")?
+    {
+        ensure!(
+            !member.to_string().contains("grant_nonce"),
+            "N3 member report: {member}"
+        );
+    }
+    f.assert_sources_unchanged()?;
+    Ok(())
+}

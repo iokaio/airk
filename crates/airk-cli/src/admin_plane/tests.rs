@@ -985,6 +985,7 @@ fn grants_end_with_their_session_and_never_cross_instances() {
         scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
         catalog_revision: CatalogRevision::try_from(12).unwrap(),
         instance,
+        selection_ref: None,
     };
     // A grant checked by another instance is never stored.
     assert_eq!(
@@ -1303,4 +1304,196 @@ fn redaction_removes_only_the_issued_identity() {
         json!({"draft": {"request": {"name": "Docs"}, "review_digest": "3c".repeat(32)},
             "history": [{"caller": "08".repeat(16), "key": other}]})
     );
+}
+
+/// A fake gate side of the A2 read authority: records every registered ref
+/// and every revoked nonce; `accept` decides registration.
+#[allow(clippy::type_complexity)]
+fn recorded_authority() -> (
+    SelectionAuthority,
+    Arc<Mutex<Vec<SelectionScopeRef>>>,
+    Arc<Mutex<Vec<Incarnation>>>,
+    Arc<std::sync::atomic::AtomicBool>,
+) {
+    let registered = Arc::new(Mutex::new(Vec::new()));
+    let revoked = Arc::new(Mutex::new(Vec::new()));
+    let accept = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let (register_log, revoke_log, accepting) =
+        (registered.clone(), revoked.clone(), accept.clone());
+    let authority = SelectionAuthority {
+        register: Arc::new(move |selection: &SelectionScopeRef| {
+            register_log.lock().unwrap().push(*selection);
+            accepting.load(Ordering::SeqCst)
+        }),
+        revoke: Arc::new(move |nonces: Vec<Incarnation>| {
+            revoke_log.lock().unwrap().extend(nonces);
+        }),
+    };
+    (authority, registered, revoked, accept)
+}
+
+fn logout(cookie: &str, csrf: &str) -> Request<Full<Bytes>> {
+    let session_cookie = format!("{COOKIE_NAME}={cookie}");
+    request(
+        "POST",
+        "/admin/api/v1/session/logout",
+        &[
+            HOST,
+            ORIGIN,
+            SAME_ORIGIN,
+            JSON,
+            ("cookie", session_cookie.as_str()),
+            ("x-airk-csrf", csrf),
+        ],
+        "{}",
+    )
+}
+
+/// Selection authority §3.1, §3.3 (N4) for A2: each stored grant registers
+/// a fresh live nonce nested in the plane's lock; replacing it, logging out
+/// and service end revoke the dropped nonce once the lock is released; a
+/// failed check registers and revokes nothing.
+#[tokio::test]
+async fn admin_grants_hold_a_live_nonce_until_their_session_drops_them() {
+    let (plane, sent, _) = scripted_plane(Vec::new());
+    let (authority, registered, revoked, _) = recorded_authority();
+    let plane = plane.with_selection_authority(authority);
+    // The launch code, cookie and token draw random 1-3.
+    let (cookie, csrf) = sign_in(&plane).await;
+    let select = |cookie: &str, csrf: &str, index: &str| {
+        api_call(cookie, csrf, "search.select_scope", &grant_body(index, 12))
+    };
+    let (status, reply) = envelope(&plane, select(&cookie, &csrf, GRANTED_INDEX)).await;
+    assert_eq!(status, 200, "{reply}");
+    let first = SelectionScopeRef {
+        owner: SelectionOwnerKind::Admin,
+        grant_nonce: Incarnation::from_bytes([4; 16]),
+        service_instance: Incarnation::from_bytes([1; 16]),
+        scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+        catalog_revision: CatalogRevision::try_from(12).unwrap(),
+    };
+    assert_eq!(*registered.lock().unwrap(), [first]);
+    assert!(revoked.lock().unwrap().is_empty());
+    // The nonce never reaches the browser.
+    assert!(!reply.to_string().contains(&"04".repeat(16)), "{reply}");
+    // A re-selection gets a new nonce and revokes the replaced one.
+    let (status, _) = envelope(&plane, select(&cookie, &csrf, GRANTED_INDEX)).await;
+    assert_eq!(status, 200);
+    let second = SelectionScopeRef {
+        grant_nonce: Incarnation::from_bytes([5; 16]),
+        ..first
+    };
+    assert_eq!(*registered.lock().unwrap(), [first, second]);
+    assert_eq!(*revoked.lock().unwrap(), [first.grant_nonce]);
+    // A failed check keeps the current grant: nothing registered or revoked.
+    let other = "idx_0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f";
+    let (status, _) = envelope(&plane, select(&cookie, &csrf, other)).await;
+    assert_eq!(status, 409);
+    assert_eq!(registered.lock().unwrap().len(), 2);
+    assert_eq!(revoked.lock().unwrap().len(), 1);
+    // Logout revokes the session's grant.
+    assert_eq!(
+        answer(&plane, logout(&cookie, &csrf), PeerProof::SameUser)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        *revoked.lock().unwrap(),
+        [first.grant_nonce, second.grant_nonce]
+    );
+    // Service end revokes every remaining grant.
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, _) = envelope(&plane, select(&cookie, &csrf, GRANTED_INDEX)).await;
+    assert_eq!(status, 200);
+    let third = registered.lock().unwrap()[2];
+    plane.end();
+    assert_eq!(revoked.lock().unwrap()[2..], [third.grant_nonce]);
+    assert_eq!(plane.sessions(), 0);
+    assert!(sent.lock().unwrap().is_empty());
+}
+
+/// A nonce the gate refuses is never stored: the grant answers
+/// `scoped_read_unavailable` and the session stays without a grant.
+#[tokio::test]
+async fn an_admin_grant_the_gate_refuses_is_not_stored() {
+    let (plane, _, _) = scripted_plane(Vec::new());
+    let (authority, registered, revoked, accept) = recorded_authority();
+    accept.store(false, Ordering::SeqCst);
+    let plane = plane.with_selection_authority(authority);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "search.select_scope",
+            &grant_body(GRANTED_INDEX, 12),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (409, "scoped_read_unavailable")
+    );
+    assert_eq!(registered.lock().unwrap().len(), 1);
+    assert!(revoked.lock().unwrap().is_empty());
+    assert!(plane.secrets().sessions.grant(&cookie, 0).is_none());
+}
+
+/// N4 at the session store: replacement, a store that found no session,
+/// idle expiry, eviction, logout and service end each hand back the nonce
+/// of the grant they dropped, once.
+#[test]
+fn every_dropped_admin_grant_hands_back_its_nonce() {
+    let instance = Incarnation::from_bytes([1; 16]);
+    let grant = |nonce: u8| secrets::Grant {
+        selection: WindowScopeSelection {
+            namespace: Incarnation::from_bytes([0x0a; 16]),
+            expected_catalog_revision: CatalogRevision::try_from(12).unwrap(),
+            index_ids: vec![GRANTED_INDEX.parse().unwrap()],
+            project_ids: Vec::new(),
+        },
+        scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+        catalog_revision: CatalogRevision::try_from(12).unwrap(),
+        instance,
+        selection_ref: Some(SelectionScopeRef {
+            owner: SelectionOwnerKind::Admin,
+            grant_nonce: Incarnation::from_bytes([nonce; 16]),
+            service_instance: instance,
+            scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+            catalog_revision: CatalogRevision::try_from(12).unwrap(),
+        }),
+    };
+    let nonce = |n: u8| Incarnation::from_bytes([n; 16]);
+    let mut sessions = secrets::Sessions::new(instance);
+    let first = sessions.create(&[1; 32], &[2; 32], 0);
+    assert!(sessions.set_grant(&first.cookie, grant(10), 0).is_some());
+    assert!(sessions.take_dropped().is_empty());
+    assert!(sessions.set_grant(&first.cookie, grant(11), 0).is_some());
+    assert_eq!(sessions.take_dropped(), [nonce(10)]);
+    let unknown = secrets::secret_text(&[9; 32]);
+    assert_eq!(sessions.set_grant(&unknown, grant(12), 0), None);
+    assert_eq!(sessions.take_dropped(), [nonce(12)]);
+    // Idle expiry, observed by the next session operation.
+    assert!(sessions.grant(&first.cookie, SESSION_IDLE_MS).is_none());
+    assert_eq!(sessions.take_dropped(), [nonce(11)]);
+    // Eviction of the oldest session at the bound.
+    let oldest = sessions.create(&[3; 32], &[4; 32], 1);
+    assert!(sessions.set_grant(&oldest.cookie, grant(13), 1).is_some());
+    for index in 1..MAX_SESSIONS {
+        let index = u8::try_from(index).unwrap();
+        sessions.create(&[20 + index; 32], &[60 + index; 32], 1);
+    }
+    assert!(sessions.take_dropped().is_empty());
+    let last = sessions.create(&[90; 32], &[91; 32], 1);
+    assert_eq!(sessions.take_dropped(), [nonce(13)]);
+    assert!(sessions.set_grant(&last.cookie, grant(14), 1).is_some());
+    assert!(sessions.remove(&last.cookie));
+    assert_eq!(sessions.take_dropped(), [nonce(14)]);
+    let kept = secrets::secret_text(&[21; 32]);
+    assert!(sessions.set_grant(&kept, grant(15), 1).is_some());
+    sessions.end();
+    assert_eq!(sessions.take_dropped(), [nonce(15)]);
+    assert_eq!(sessions.len(), 0);
 }

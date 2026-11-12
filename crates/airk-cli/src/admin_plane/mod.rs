@@ -30,6 +30,7 @@ use crate::admin_contract::{
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     index_catalog::CatalogRevision,
+    scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
     service::{
         AdminLaunchSecret, ControlMethod, ControlResponse, ToolSelection, WindowScopeSelection,
     },
@@ -76,6 +77,37 @@ pub(crate) type ScopeCheck = Arc<
 pub(crate) type TrustInspect =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>> + Send + Sync>;
 
+/// The scoped-read admission gate's side of an A2 grant's in-memory read
+/// authority (selection authority §3.1, §3.3), injected by
+/// `service_runtime`. `register` makes a new grant's nonce live; it is
+/// called nested inside the plane's lock (owner, then gate; §3.7) and
+/// answers whether the gate accepted it. `revoke` revokes dropped nonces and
+/// is called only after the plane's lock is released.
+#[derive(Clone)]
+pub(crate) struct SelectionAuthority {
+    pub(crate) register: Arc<dyn Fn(&SelectionScopeRef) -> bool + Send + Sync>,
+    pub(crate) revoke: Arc<dyn Fn(Vec<Incarnation>) + Send + Sync>,
+}
+
+/// One A2 read (selection authority S2): the session's checked grant and
+/// the browser's tools call. The nonce inside `selection_ref` reaches only
+/// the in-process admission; the answer never carries it (N3).
+pub(crate) struct SelectedRead {
+    pub(crate) selection: WindowScopeSelection,
+    pub(crate) scope_identity: Sha256Digest,
+    pub(crate) selection_ref: SelectionScopeRef,
+    pub(crate) tool: String,
+    pub(crate) arguments: serde_json::Map<String, Value>,
+    pub(crate) mode: airk_core::service::ToolResponseMode,
+    pub(crate) client: airk_core::usage::ClientFamily,
+}
+
+/// The A2 read itself, run in process by `service_runtime` through the same
+/// selection read path as W4 (one index, or the combined facade).
+pub(crate) type SelectionReader = Arc<
+    dyn Fn(SelectedRead) -> Pin<Box<dyn Future<Output = ControlResponse> + Send>> + Send + Sync,
+>;
+
 /// Bodies are read under this deadline (the listener's header deadline).
 const BODY_SECONDS: u64 = 15;
 /// Response frames stay well under the listener's 1 MiB frame bound.
@@ -100,6 +132,46 @@ pub(crate) struct AdminPlane {
     scope_check: Option<ScopeCheck>,
     /// Without it `https.trust_status` answers `not_yet_served`.
     trust_inspect: Option<TrustInspect>,
+    /// Without it an A2 grant holds no read authority.
+    selection: Option<SelectionAuthority>,
+    /// Without it a search under an A2 grant answers `not_yet_served`.
+    selection_reader: Option<SelectionReader>,
+}
+
+/// The plane's lock. On release it revokes the selection nonces its holder
+/// dropped (grant replacement, logout, expiry, eviction, service end), after
+/// the lock itself is released (§3.3, §3.7, N4), so no path that drops a
+/// grant can skip its revocation.
+struct SecretsGuard<'a> {
+    guard: Option<std::sync::MutexGuard<'a, Secrets>>,
+    selection: Option<&'a SelectionAuthority>,
+}
+
+impl std::ops::Deref for SecretsGuard<'_> {
+    type Target = Secrets;
+    fn deref(&self) -> &Secrets {
+        self.guard.as_ref().expect("held until drop")
+    }
+}
+
+impl std::ops::DerefMut for SecretsGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Secrets {
+        self.guard.as_mut().expect("held until drop")
+    }
+}
+
+impl Drop for SecretsGuard<'_> {
+    fn drop(&mut self) {
+        let dropped = self
+            .guard
+            .as_mut()
+            .map(|secrets| secrets.sessions.take_dropped())
+            .unwrap_or_default();
+        self.guard = None;
+        if let (false, Some(selection)) = (dropped.is_empty(), self.selection) {
+            (selection.revoke)(dropped);
+        }
+    }
 }
 
 fn system_clock() -> u64 {
@@ -142,7 +214,28 @@ impl AdminPlane {
             }),
             scope_check: None,
             trust_inspect: None,
+            selection: None,
+            selection_reader: None,
         }
+    }
+
+    /// Serve searches under A2 grants (selection authority S2).
+    pub(crate) fn with_selection_reader(mut self, reader: SelectionReader) -> Self {
+        self.selection_reader = Some(reader);
+        self
+    }
+
+    /// Give each A2 grant an in-memory read authority whose nonce is live
+    /// with the scoped-read admission gate while the grant is stored.
+    pub(crate) fn with_selection_authority(mut self, selection: SelectionAuthority) -> Self {
+        self.selection = Some(selection);
+        self
+    }
+
+    /// Service end (§3.3): every session ends and every grant's nonce is
+    /// revoked once the lock is released.
+    pub(crate) fn end(&self) {
+        self.secrets().sessions.end();
     }
 
     /// Serve A2 grants with the shared catalog check.
@@ -157,10 +250,15 @@ impl AdminPlane {
         self
     }
 
-    fn secrets(&self) -> std::sync::MutexGuard<'_, Secrets> {
-        self.secrets
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+    fn secrets(&self) -> SecretsGuard<'_> {
+        SecretsGuard {
+            guard: Some(
+                self.secrets
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()),
+            ),
+            selection: self.selection.as_ref(),
+        }
     }
 
     /// A1 (contracts §2.7): issue one launch code for the listener on `port`.
@@ -468,7 +566,7 @@ impl AdminPlane {
         if let ControlMethod::ToolsCall { selection, .. } = &method {
             match selection {
                 ToolSelection::Unselected => {}
-                ToolSelection::Admin => return self.granted_read(operation, cookie).await,
+                ToolSelection::Admin => return self.granted_read(operation, cookie, method).await,
                 _ => return Err(AdminCode::AdminMalformedRequest),
             }
         }
@@ -485,6 +583,7 @@ impl AdminPlane {
         &self,
         operation: &str,
         cookie: Option<&str>,
+        method: ControlMethod,
     ) -> Result<HttpResponse, AdminCode> {
         let now = (self.clock)();
         let grant = cookie.and_then(|cookie| self.secrets().sessions.grant(cookie, now));
@@ -497,7 +596,32 @@ impl AdminPlane {
         let check = self.scope_check.as_ref().ok_or(AdminCode::NotYetServed)?;
         match check(grant.selection.clone()).await {
             Ok(current) if current == (grant.scope_identity, grant.catalog_revision) => {
-                Err(AdminCode::NotYetServed)
+                let (Some(reader), Some(selection_ref)) =
+                    (self.selection_reader.as_ref(), grant.selection_ref)
+                else {
+                    return Err(AdminCode::NotYetServed);
+                };
+                let ControlMethod::ToolsCall {
+                    tool,
+                    arguments,
+                    response_mode,
+                    usage_client,
+                    ..
+                } = method
+                else {
+                    return Err(AdminCode::AdminMalformedRequest);
+                };
+                let response = reader(SelectedRead {
+                    selection: grant.selection,
+                    scope_identity: grant.scope_identity,
+                    selection_ref,
+                    tool,
+                    arguments,
+                    mode: response_mode,
+                    client: usage_client,
+                })
+                .await;
+                Ok(native(operation, response))
             }
             Ok(_) => Ok(native(
                 operation,
@@ -523,19 +647,50 @@ impl AdminPlane {
             Ok(checked) => checked,
             Err(code) => return Ok(native(operation, ControlResponse::Failure { code })),
         };
+        // A fresh nonce per stored grant (§3.1); a re-selection gets a new one.
+        let selection_ref = match &self.selection {
+            Some(_) => {
+                let random = (self.random)().ok_or(AdminCode::AdminInternal)?;
+                let mut nonce = [0u8; 16];
+                nonce.copy_from_slice(&random[..16]);
+                Some(SelectionScopeRef {
+                    owner: SelectionOwnerKind::Admin,
+                    grant_nonce: Incarnation::from_bytes(nonce),
+                    service_instance: self.instance,
+                    scope_identity,
+                    catalog_revision,
+                })
+            }
+            None => None,
+        };
         let grant = secrets::Grant {
             selection,
             scope_identity,
             catalog_revision,
             instance: self.instance,
+            selection_ref,
         };
         let now = (self.clock)();
-        // The session may have ended while the catalog was read.
-        let expires_at_ms = self
-            .secrets()
+        let mut secrets = self.secrets();
+        // Registered nested inside the plane's lock (owner, then gate), so a
+        // concurrent replacement or logout revokes it after this store.
+        if let (Some(selection), Some(selection_ref)) = (&self.selection, &selection_ref)
+            && !(selection.register)(selection_ref)
+        {
+            return Ok(native(
+                operation,
+                ControlResponse::Failure {
+                    code: "scoped_read_unavailable".into(),
+                },
+            ));
+        }
+        // The session may have ended while the catalog was read; a grant
+        // that is not stored is revoked when the lock is released.
+        let expires_at_ms = secrets
             .sessions
             .set_grant(cookie, grant, now)
             .ok_or(AdminCode::AdminSessionInvalid)?;
+        drop(secrets);
         Ok(native(
             operation,
             ControlResponse::AdminScopeGranted {

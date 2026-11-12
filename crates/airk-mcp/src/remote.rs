@@ -35,10 +35,37 @@ impl std::fmt::Display for PreparationExpired {
     }
 }
 impl std::error::Error for PreparationExpired {}
+/// A combined session's frozen selectors and the `requested_scope.selection`
+/// its failure bodies echo. A catalog session's is derived from its
+/// `CombinedConnectRequest` (unchanged bytes); an in-memory window or admin
+/// selection supplies its own, which never names its nonce or service
+/// instance (selection authority spec §3.2 step 5, §3.6).
+#[derive(Clone, Debug)]
+pub struct CombinedScope {
+    pub project_ids: Vec<airk_core::index_catalog::QueryProjectId>,
+    pub index_ids: Option<Vec<airk_core::index_catalog::IndexId>>,
+    pub requested: serde_json::Value,
+}
+impl CombinedScope {
+    pub fn catalog(selection: &airk_core::service::CombinedConnectRequest) -> Self {
+        Self {
+            project_ids: selection.project_ids.clone(),
+            index_ids: selection.index_ids.clone(),
+            requested: serde_json::json!(selection),
+        }
+    }
+}
+
 pub trait RemoteTools: Send + Sync + 'static {
     /// Frozen explicit selection only; live grant admission remains native.
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
         None
+    }
+    /// Whether this is a combined session, for a catalog grant or an
+    /// in-memory selection. Wrappers that forward `combined_selection` must
+    /// forward this too.
+    fn combined_scope(&self) -> Option<CombinedScope> {
+        self.combined_selection().map(CombinedScope::catalog)
     }
     /// Requested native selector only; this is not installed read authority.
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
@@ -148,10 +175,16 @@ pub fn combined_observation_failure(
     selection: &airk_core::service::CombinedConnectRequest,
     code: &str,
 ) -> serde_json::Value {
+    combined_scope_failure(&CombinedScope::catalog(selection), code)
+}
+
+/// [`combined_observation_failure`] for any combined session; a catalog
+/// session's body is byte-identical to it.
+pub fn combined_scope_failure(scope: &CombinedScope, code: &str) -> serde_json::Value {
     scoped_failure_envelope(serde_json::json!({
         "error":{"code":code,"retryable":true,"query_submitted":null,
             "fresh_brokerage_required":true,"query_replay_safe":false},
-        "requested_scope":{"confirmed":false,"selection":selection}
+        "requested_scope":{"confirmed":false,"selection":scope.requested}
     }))
 }
 
@@ -517,7 +550,7 @@ impl ReadSession {
         let local_help = name == "airk_help"
             && self.backend.local_help()
             && self.backend.scoped_selection().is_none()
-            && self.backend.combined_selection().is_none();
+            && self.backend.combined_scope().is_none();
         if !local_help && self.backend.uses_response_mode(&name) {
             arguments.entry("response_mode").or_insert_with(|| {
                 serde_json::to_value(self.response_mode).expect("scalar display mode")
@@ -729,10 +762,8 @@ async fn call_at_capacity(
             "scoped_observation_unavailable",
             true,
         ),
-        Err(_) if backend.combined_selection().is_some() => combined_observation_failure(
-            backend
-                .combined_selection()
-                .expect("checked combined selector"),
+        Err(_) if backend.combined_scope().is_some() => combined_scope_failure(
+            &backend.combined_scope().expect("checked combined selector"),
             "combined_observation_unavailable",
         ),
         Err(_) => direct_observation_failure("direct_observation_unavailable"),

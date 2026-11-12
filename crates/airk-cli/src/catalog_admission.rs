@@ -648,6 +648,25 @@ impl NativeCatalogAdmission {
         state.check_issue(ticket)?;
         Ok(effect())
     }
+    /// [`Self::with_issue`] for a selection read's final in-process receipt
+    /// (selection authority §3.6): the issue ticket and the selection's live
+    /// nonce of this service are checked under the same gate lock, so a
+    /// revoked or replaced grant never receives a receipt.
+    pub(crate) fn with_live_selection<T>(
+        &self,
+        ticket: IssueTicket,
+        selection: &SelectionScopeRef,
+        effect: impl FnOnce() -> T,
+    ) -> Result<T> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        state.check_issue(ticket)?;
+        ensure!(
+            selection.service_instance == state.service
+                && state.live_selections.get(&selection.grant_nonce) == Some(&selection.owner),
+            ScopeReadRefused
+        );
+        Ok(effect())
+    }
     /// Deliver the final bounded native receipt while checking the shared
     /// admission fence at each actual nonblocking write/flush poll.
     pub(crate) async fn deliver_issue<S: tokio::io::AsyncWrite + Unpin>(

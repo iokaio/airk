@@ -46,6 +46,9 @@ impl RemoteTools for BoundNative {
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
         self.backend.combined_selection()
     }
+    fn combined_scope(&self) -> Option<crate::remote::CombinedScope> {
+        self.backend.combined_scope()
+    }
     fn query_concurrency(&self) -> usize {
         self.limit
     }
