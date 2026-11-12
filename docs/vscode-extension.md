@@ -1,13 +1,20 @@
 # Native VS Code extension
 
-> **Split Phase 4 (non-shippable interim).** The extension and its management
-> of the service are being reworked under the [split plan](split/split-plan.md)
-> (Phase 6; the installer in Phase 7). This page describes the pre-split
-> extension. On this branch the extension source still starts `airk service
-> session` and `airk service console` and names pre-split `airk runtime …`
-> commands; after Phase 4 `airk` is the service only and no longer accepts
-> them as user commands. `airkctl` is the CLI: the window helper becomes
-> `airkctl session`, and credential helpers become `airkctl agents credential`.
+> **Split Phase 6 (first slice, on this branch).** The extension no longer
+> installs, updates or removes anything native. It finds the AIRK Service from
+> its install pointer and record (I4), verifies `airkctl` (Windows Authenticode
+> through a fixed PowerShell observation, macOS `codesign`, Linux record digest;
+> unsigned `airkctl` only in development and test modes), checks the version
+> handshake, and reaches the service only through `airkctl`: one `airkctl
+> session --owner-watch` per window (protocol 2) and one-shot commands. Reads
+> use `airkctl tools call`; the VS Code MCP definition resolves its bearer with
+> `airkctl agents credential`; agent entries are listed, repaired and removed
+> with `airkctl agents …`, and without a service a removal-only recognizer
+> sweeps the workspace's pre-split entries. Management screens moved to the
+> admin pages (**Open AIRK Admin**). **Not yet:** window-scope reads (W4),
+> Assistance drafts over the session, the UI-only VSIX packaging rework, and
+> the installed-editor journey suite. The text below describes the pre-split
+> extension and is kept for history.
 
 **1.8.16 source implementation; unpublished, with final native/installed-platform
 qualification pending.** The extension presents the native Artifact Indexing and

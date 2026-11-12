@@ -147,22 +147,14 @@ async function build() {
     });
     // Node built-ins only: no packages, no host modules, no VS Code API.
     checkInputs('Assistance', assistance.metafile, [/^src\/explorerAssistance\//, ...CONTRACTS, /^airk-explorer-help:/]);
-    // This process must survive removal of the extension and its node_modules.
-    // Bundle the uninstall worker separately; normal host modules stay unbundled.
+    // This process must survive removal of the extension: bundle the hook alone.
+    // It removes only editor-owned storage and imports Node built-ins only (plan §8.5).
     const uninstall = await esbuild.build({
-        absWorkingDir: root, bundle: true, metafile: true, sourcemap: false, legalComments: 'inline', logLevel: 'warning',
+        absWorkingDir: root, bundle: true, metafile: true, sourcemap: false, legalComments: 'none', logLevel: 'warning',
         entryPoints: ['src/uninstallHook.ts'], outfile: 'out/uninstallHook.js', format: 'cjs', platform: 'node', target: 'node20', mainFields: ['module', 'main'],
-        banner: { js: `/*! AIRK standalone uninstall worker. Includes jsonc-parser (MIT).\n${read('node_modules/jsonc-parser/LICENSE.md').trim()}\n*/` },
+        banner: { js: `/*! AIRK uninstall hook ${catalog.extensionVersion}: removes editor-owned storage only. No third-party code. */` },
     });
-    checkInputs('Uninstall', uninstall.metafile, ['src/uninstallHook.ts', 'src/extensionUninstall.ts', 'src/serviceBootstrap.ts',
-        // Node-only; window-less callers take its explicit one-shot path.
-        'src/native.ts', 'src/nativeGate.ts', 'src/nativeSession.ts', 'src/mcpHttpSession.ts', 'src/serviceHttp.ts', 'src/httpIssuerRotation.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/nativeOutcome.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
-        // Shared inert validators and selector DTOs have only pure contract imports and no startup work;
-        // neither the Indexing controller nor any browser/UI module belongs in the standalone worker.
-        'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/readRetry.ts', 'src/referenceRefresh.ts', 'src/runtimeRebuild.ts',
-        'src/agentMigration.ts', 'src/agentToml.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
-        'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
-        /^node_modules\/jsonc-parser\//]);
+    checkInputs('Uninstall', uninstall.metafile, ['src/uninstallHook.ts']);
 }
 
 module.exports = { helpCatalog, engineTopics };

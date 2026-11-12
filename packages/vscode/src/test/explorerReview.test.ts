@@ -10,7 +10,6 @@ import { FactHandles } from '../explorerFacts';
 import { RefRegistry } from '../explorerSearch';
 import { EvidenceClient, EvidenceFailure } from '../explorerEvidence';
 import { explorerError } from '../explorerErrors';
-import { NativeServiceFixture } from './nativeServiceFixture';
 
 const uri = (fsPath: string) => ({ fsPath });
 function load(repositories: unknown[], setting?: string) {
@@ -222,29 +221,6 @@ test('changed tests are visible even when the index has no declarations', async 
     assert.equal(result.declarations, 0);
     assert.deepEqual(result.candidates, [{ path: 'tests/fresh.test.ts', mentions: '', text: '', reason: 'changed_test_file' }]);
     assert.ok(result.notes.some(note => note.includes('No usable indexed declarations')));
-});
-
-test('Review finds source impact and tests through real native minimal symbols and nested reference publications', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
-    const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
-    let session: EvidenceClient | undefined;
-    try {
-        const spec = await fixture.register('review-real');
-        await fs.promises.mkdir(path.join(spec.root, 'src')); await fs.promises.mkdir(path.join(spec.root, 'tests')); await fs.promises.mkdir(path.join(spec.root, 'docs'));
-        await fs.promises.writeFile(path.join(spec.root, 'src', 'contract.ts'), 'export function ChangedContract(value: number) { return value + 1; }\n');
-        await fs.promises.writeFile(path.join(spec.root, 'tests', 'contract.test.ts'), 'import { ChangedContract } from "../src/contract";\nconst expected = ChangedContract(1) === 2;\n');
-        const files = [...Array.from({ length: 15 }, (_, at) => `docs/${at}.md`), 'src/contract.ts', 'tests/contract.test.ts'];
-        for (const file of files.filter(file => file.endsWith('.md'))) { await fs.promises.writeFile(path.join(spec.root, file), '# Fictional review fixture\n'); }
-        await fixture.configure(spec, { operation: 'vectors', enabled: false }); await fixture.job(spec); await fixture.publishedStatus(spec);
-        const review = load([{ rootUri: uri(spec.root), state: { indexChanges: [], workingTreeChanges: files.map(file => ({ uri: uri(path.join(spec.root, file)), status: 5 })), mergeChanges: [] } }]);
-        session = new EvidenceClient(spec, 'review-native-test', { timeout: 60000 });
-        const context = { root: spec.root, session, handles: new FactHandles(new RefRegistry()), project: spec.service!.project };
-        const impact = await review.reviewImpact(context);
-        assert.ok(impact.items.some(item => item.name === 'ChangedContract' && item.testReferences >= 1), JSON.stringify(impact));
-        const tests = await review.reviewTests(context);
-        assert.ok(tests.candidates.some(item => item.path === 'tests/contract.test.ts' && item.reason === 'changed_test_file'));
-        assert.ok(tests.candidates.some(item => item.path === 'tests/contract.test.ts' && item.line && item.text.includes('ChangedContract')));
-        assert.equal(tests.publication, impact.publication);
-    } catch(error) {await fixture.retainFailure(error);throw error;} finally { session?.dispose(); await fixture.dispose(); }
 });
 
 test('Review preserves failed lookups and refuses mixed declarations/reference publications', async () => {

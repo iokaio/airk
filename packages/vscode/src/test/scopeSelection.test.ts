@@ -3,9 +3,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import * as path from 'node:path';
 import { observedScopeSelectionIdentity, reviewScopeSelection, scopePreferenceKey, scopeSelectionIdentity, scopeSelectionPreference, validateCatalogSession, WindowScopeSelection } from '../scopeSelection';
-import { nativeScopeLaunchSpec } from '../serviceWorkspace';
 import { launchArgs, unifiedEntry } from '../model';
-import type { RuntimeBinding } from '../serviceBootstrap';
 import { validateCatalogSession as pureValidator } from '../catalogSession';
 
 function fixture(){
@@ -21,26 +19,6 @@ function fixture(){
     const choice={grant_id:grant,expected_grant_revision:2,index_id:index,project_ids:[project]};
     return {context,grantDetail,indexDetail,choice};
 }
-
-test('explicit selection uses exact native index display origins and catalog-only launch arguments',()=>{
-    assert.equal(validateCatalogSession,pureValidator,'host reexport shares the exact pure wire validator');
-    const f=fixture(),selection=reviewScopeSelection(f.choice,f.context,f.grantDetail,f.indexDetail);
-    const binding:RuntimeBinding={installDir:path.resolve('install'),controlDir:path.resolve('control'),executable:path.resolve('main'),
-        launcher:path.resolve('launcher'),runtimeSha256:'09'.repeat(32),version:'1.9.0',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
-    const spec=nativeScopeLaunchSpec(binding,selection);
-    assert.equal(spec.root,f.indexDetail.item.value.backing.root);assert.equal(spec.dataDir,f.indexDetail.item.value.backing.data_root);
-    assert.equal(spec.service?.project,f.indexDetail.item.value.backing.binding);
-    for(const command of ['mcp','tools','status','usage']){
-        for(const pinned of [false,true]){
-            const args=launchArgs(spec,command,pinned),at=args.indexOf('--catalog-session');
-            assert.deepEqual(JSON.parse(args[at+1]),selection.session);assert.equal(args.at(-1),command);
-            for(const flag of ['--root','--data-dir','--collection','--service-project'])assert.ok(!args.includes(flag));
-        }
-    }
-    assert.throws(()=>unifiedEntry(spec,undefined,[{...spec,catalogSession:undefined}]),/one selected Index/);
-    assert.throws(()=>launchArgs({...spec,catalogSession:null} as unknown as typeof spec),/catalog_object/);
-    assert.equal(reviewScopeSelection(f.choice,f.context,f.grantDetail,f.indexDetail).label,'Native index · 1 selected index set');
-});
 
 test('selection refuses crossed namespace/revision/host, revoked/imported and changed source policy',()=>{
     const f=fixture();

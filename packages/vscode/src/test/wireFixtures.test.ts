@@ -11,9 +11,7 @@ import * as path from 'node:path';
 import {readRetryDelay,singleRequiredMemberRetry} from '../readRetry';
 import {ServiceClient} from '../serviceClient';
 import type {CatalogRequest} from '../indexingCatalog';
-import {MAX_IN_FLIGHT,MAX_INVOKE_ARGS,MAX_INVOKE_ARG_BYTES,MAX_INVOKE_DEADLINE_MS,MAX_INVOKE_STDERR_BYTES,MAX_INVOKE_STDIN_BYTES,MAX_REQUEST_FRAME_BYTES,MAX_RESPONSE_FRAME_BYTES,NativeSessionError,SESSION_PROTOCOL,checkSessionRequest,decodeSessionResponse,encodeSessionRequest,sessionRequestJson,sessionRequests} from '../nativeSession';
 import {ServiceError,isLocalTrackingFailure,isNativeReplyValidationFailure,retainNativeOutcome,retainUnvalidatedNativeReply,validateNativeReply} from '../nativeOutcome';
-import {NativeProcessError} from '../native';
 
 const fixtures=path.resolve(__dirname,'../../../../fixtures/wire');
 type DecisionCase={name:string;rule:string;input:Record<string,unknown>;expected:unknown;expected_ts?:unknown;divergence?:string};
@@ -87,66 +85,8 @@ test('catalog receipt divergence: an absent receipt field is refused although na
     assert.throws(()=>client().validateCatalogObservation({status:'catalog_receipt'},catalogRequest(item),item.inputs.request_digest,'0f'.repeat(32)));
 });
 
-// Per-window native session frames. The reviewed Rust definition
-// (crates/airk-cli/src/session_protocol.rs) round-trips the same cases.
-type SessionCase={name:string;json:Record<string,any>};
-const session=JSON.parse(fs.readFileSync(path.join(fixtures,'session_frames.json'),'utf8')) as {schema:string;protocol:number;budgets:Record<string,number>;requests:SessionCase[];invalid_requests:SessionCase[];responses:SessionCase[]};
-const sessionCases=(key:'requests'|'invalid_requests'|'responses')=>{assert.ok(session[key].length>0,`${key}: zero selected session cases is a failure`);return session[key];};
-
-test('session frame fixture is the reviewed schema and protocol',()=>{
-    assert.equal(session.schema,'airk.wire-fixture.session-frames/1');
-    assert.equal(session.protocol,SESSION_PROTOCOL);
-});
-
-test('session requests: the extension encoder produces exactly each reviewed request',()=>{
-    // Inputs are the fixture's own values; the expected bytes are the fixture.
-    const build=(item:SessionCase)=>{
-        const [kind]=Object.keys(item.json.request),body=item.json.request[kind];
-        switch(kind){
-            case 'hello':return sessionRequests.hello();
-            case 'control':return sessionRequests.control(body.runtime_dir,body.method,body.runtime_sha256);
-            case 'invoke':return sessionRequests.invoke(body.argv,body.deadline_ms,body.stdin);
-            case 'cancel':return sessionRequests.cancel(body.target);
-            default:throw new Error(`unreviewed session request ${kind}`);
-        }
-    };
-    const kinds=new Set<string>();
-    for(const item of sessionCases('requests')){
-        kinds.add(Object.keys(item.json.request)[0]);
-        const encoded=sessionRequestJson(item.json.id,build(item));
-        assert.equal(encoded,JSON.stringify(item.json),item.name);
-        const frame=encodeSessionRequest(item.json.id,build(item));
-        assert.equal(frame.readUInt32BE(),frame.length-4,item.name);assert.equal(frame.subarray(4).toString('utf8'),encoded,item.name);
-    }
-    assert.deepEqual([...kinds].sort(),['cancel','control','hello','invoke'],'every request kind has a reviewed case');
-});
-
-test('session requests: reviewed invalid requests are never produced or sent',()=>{
-    for(const item of sessionCases('requests'))assert.doesNotThrow(()=>checkSessionRequest(item.json),item.name);
-    for(const item of sessionCases('invalid_requests')){
-        assert.throws(()=>checkSessionRequest(item.json),/native_session_invalid_request/,item.name);
-        const request=item.json.request;
-        // The encoder only ever writes {id, request}; other top-level shapes cannot be produced.
-        if(Object.keys(item.json).sort().join(',')==='id,request'&&request&&typeof request==='object'&&typeof item.json.id==='string')
-            assert.throws(()=>encodeSessionRequest(item.json.id,request),/native_session_invalid_request/,item.name);
-    }
-});
-
-test('session responses: every reviewed response decodes to its exact value',()=>{
-    for(const item of sessionCases('responses'))assert.deepEqual(decodeSessionResponse(structuredClone(item.json)),item.json,item.name);
-    const failure=sessionCases('responses').find(item=>item.json.outcome.status==='invoked'&&item.json.outcome.success===false);
-    assert.ok(failure,'a reviewed failed invocation is present');
-    const error=NativeProcessError.fromSession('airk',failure.json.outcome.stderr,1,60000);
-    assert.equal(error.nativeMessage,'fixture');assert.equal(error.retryableGateContention,false);
-    for(const item of sessionCases('responses'))if(item.json.outcome.status==='failed')assert.equal(item.json.outcome.retryable,item.json.outcome.code==='session_busy',`${item.name}: only session_busy is retryable`);
-});
-
-test('session budgets: every extension constant equals the reviewed native budget',()=>{
-    assert.deepEqual({max_request_frame_bytes:MAX_REQUEST_FRAME_BYTES,max_invoke_stdin_bytes:MAX_INVOKE_STDIN_BYTES,max_invoke_args:MAX_INVOKE_ARGS,
-        max_invoke_arg_bytes:MAX_INVOKE_ARG_BYTES,max_response_frame_bytes:MAX_RESPONSE_FRAME_BYTES,max_invoke_stderr_bytes:MAX_INVOKE_STDERR_BYTES,
-        max_in_flight:MAX_IN_FLIGHT,max_invoke_deadline_ms:MAX_INVOKE_DEADLINE_MS},session.budgets,'exact key set and values');
-    assert.equal(Object.keys(session.budgets).length,8);
-});
+// Session protocol 1 (`airk service session`) retired with the split; protocol 2
+// frames are checked in airkctlSession.test.ts against airkctl_session_frames.json.
 
 // Top-level read-retry envelopes (split C8). The native test client
 // (crates/airk-cli/tests/native_read_retry.rs) and the production emitters are
@@ -186,7 +126,7 @@ for(const item of outcomes.cases){
         const client=new ServiceClient({dispose(){},async request(method:unknown){
             sent+=1;assert.deepEqual(method,{[item.method]:{}});
             if(item.transport==='reply'&&item.reply)return structuredClone(item.reply);
-            throw new NativeSessionError(String(item.code),item.transport==='lost_after_send');
+            throw new ServiceError(String(item.code),item.transport==='lost_after_send');
         }});
         let response:Record<string,unknown>|undefined,failure:unknown;
         try{response=await client.rpc({[item.method]:{}},item.expected_status);}catch(error){failure=error;}

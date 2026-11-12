@@ -33,12 +33,6 @@ test('installed parse parity retains complete copies and the existing public wir
     small.result.structuredContent.payload='crossed';assert.throws(()=>declaredPlanBody(small,planRequest()),/copies agree/);
     assert.throws(()=>installedToolBody({...planWire({payload:'exact'}),extra:'x'.repeat(1048576)}),/wire bound/);
 });
-test('both actual installed Workbench parse transport callers supply their original request budget',()=>{
-    const source=require('node:fs').readFileSync(path.resolve(__dirname,'../../src/test/installedEditor.ts'),'utf8');
-    assert.ok(/installedToolBody\(wire,\{tool:'airk_parse',request:turn\.request\}\)/.test(source),'Actual MCP parse caller supplies the original request');
-    assert.ok(/installedToolBody\(\{result:cliEnvelope\},\{tool:'airk_parse',request:turn\.request\}\)/.test(source),'Actual CLI parse caller supplies the original request');
-});
-
 function policyFixture(){
     const index=id('idx_','a'),policy={index_id:index,owner_binding:hash('b'),epoch:1,roots:[{id:id('src_','c'),canonical_path:'/fixture',owner:true}],denies:[{path:'hidden'}]};
     const operation={operation:'change_index_policy',id:index,expected_source_revision:2,configuration:{configuration:{operation:'apply_source_policy',operation_id:'d'.repeat(32),policy}}};

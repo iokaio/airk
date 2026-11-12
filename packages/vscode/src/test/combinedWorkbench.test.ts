@@ -4,9 +4,7 @@ import { test } from 'node:test';
 import * as path from 'node:path';
 import { validateCombinedCatalogSession } from '../catalogSession';
 import { combinedScopeSelectionIdentity, reviewCombinedScopeSelection, scopeSelectionPreference, WindowScopeSelection } from '../scopeSelection';
-import { nativeScopeLaunchSpec } from '../serviceWorkspace';
 import { launchArgs, unifiedEntry } from '../model';
-import type { RuntimeBinding } from '../serviceBootstrap';
 import { comparePublicationVector } from '../publications';
 import { combinedReadDetails, discoveryDetails, discoveryFollowupPlan, evidenceCards, evidenceRows, renderExport, workbenchStepReportOmissions } from '../workbenchRender';
 import { object, type Value, type WorkbenchTurn } from '../workbenchContracts';
@@ -64,21 +62,6 @@ test('combined review deduplicates shared indexes and never adds an unselected P
     assert.throws(()=>reviewCombinedScopeSelection(f.choice,context,f.grant,[f.indexes[0],f.indexes[0]]),/crossed_scope_selection_metadata/);
     const stale=structuredClone(f);stale.indexes[1].revision=8;assert.throws(()=>reviewCombinedScopeSelection(stale.choice,context,stale.grant,stale.indexes));
     const revoked=structuredClone(f);revoked.grant.item.value.grant.revoked=true;assert.throws(()=>reviewCombinedScopeSelection(revoked.choice,context,revoked.grant,revoked.indexes));
-});
-
-test('combined launch and saved choices retain the exact selection without source-root authority',()=>{
-    const f=fixture(),selection=reviewCombinedScopeSelection({...f.choice,index_ids:[index(2)]},context,f.grant,[f.indexes[1]]);
-    const binding:RuntimeBinding={installDir:path.resolve('install'),controlDir:path.resolve('control'),executable:path.resolve('main'),launcher:path.resolve('launcher'),runtimeSha256:'09'.repeat(32),version:'1.8.8',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
-    const spec=nativeScopeLaunchSpec(binding,selection);
-    for(const command of ['mcp','tools','status']){
-        const args=launchArgs(spec,command),at=args.indexOf('--combined-session');assert.ok(at>=0);assert.deepEqual(JSON.parse(args[at+1]),selection.session);
-        for(const flag of ['--root','--data-dir','--collection','--service-project','--catalog-session'])assert.ok(!args.includes(flag));
-    }
-    assert.throws(()=>unifiedEntry(spec,undefined,[spec]));
-    assert.throws(()=>launchArgs({...spec,catalogSession:{schema:1,context_key:contextKey,namespace,expected_catalog_revision:7,grant_id:grantId,expected_grant_revision:2,index_id:index(2),project_ids:[project(2)]}}));
-    const window=new WindowScopeSelection(),preference=scopeSelectionPreference(selection);assert.equal(window.current,undefined);
-    assert.ok(!Object.hasOwn(preference,'expected_catalog_revision'));assert.ok(!Object.hasOwn(preference,'root'));
-    window.use(selection);selection.session.project_ids.length=0;assert.equal(window.current!.session.project_ids.length,2);
 });
 
 test('combined identity changes on scope changes but preserves a mere catalog clock refresh',()=>{

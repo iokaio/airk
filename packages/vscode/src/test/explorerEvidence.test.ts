@@ -27,7 +27,9 @@ function harness(handler: Handler, options: { maxInFlight?: number } = {}) {
 const failure = (code: string) => (error: unknown) => error instanceof EvidenceFailure && error.error.code === code;
 
 test('missing reviewed scope has actionable scope guidance even while the service is running',async()=>{
-    const client=new EvidenceClient(spec,'1.8.14',{resolveConnection:async()=>spec});
+    // A spec naming no project and no reviewed session has nothing to read with.
+    const unscoped:LaunchSpec={...spec,service:undefined};
+    const client=new EvidenceClient(spec,'1.8.14',{resolveConnection:async()=>unscoped,transport:()=>{throw new Error('a transport must not open without a selection');}});
     try{await assert.rejects(client.call('airk_status',{}),error=>error instanceof EvidenceFailure&&error.error.code==='SCOPE_NOT_GRANTED'&&/scope/i.test(error.error.message));}
     finally{client.dispose();}
 });

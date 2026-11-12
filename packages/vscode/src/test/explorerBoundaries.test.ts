@@ -33,19 +33,11 @@ const relative = (specifier: string) => specifier.startsWith('./') || specifier.
 const contract = (from: string, specifier: string) => relative(specifier) && CONTRACTS.has(target(from, specifier));
 const within = (from: string, specifier: string, directory: string) => relative(specifier) && target(from, specifier).startsWith(directory + '/');
 
-test('standalone uninstall configuration transforms do not pull in host config discovery',async()=>{
-    const pure=path.join(source,'unifiedAgentConfig.ts');
-    assert.deepEqual(imports(pure).sort(),['./agentToml','./model','jsonc-parser']);
+test('the standalone uninstall hook bundles only itself and Node built-ins (plan §8.5)',async()=>{
     const result=await bundle({absWorkingDir:path.dirname(source),entryPoints:['src/uninstallHook.ts'],bundle:true,write:false,metafile:true,
         platform:'node',format:'cjs',target:'node20',mainFields:['module','main'],logLevel:'silent'});
     const inputs=Object.keys(result.metafile!.inputs).map(name=>name.replaceAll('\\','/'));
-    assert.ok(inputs.includes('src/unifiedAgentConfig.ts'),'the real uninstall bundle exercises the shared pure transforms');
-    assert.ok(inputs.includes('src/nativeOutcome.ts'),'uninstall retains the shared error class and complete native outcome');
-    assert.deepEqual(imports(path.join(source,'nativeOutcome.ts')),[],'shared error metadata must remain inert and transport-free');
-    for(const forbidden of ['privateIntentStore','serviceIntents','intentAcceptedEvidence','serviceConsoleController'])
-        assert.equal(inputs.includes(`src/${forbidden}.ts`),false,`${forbidden} must not enter the standalone worker`);
-    assert.equal(inputs.includes('src/globalAgentInventory.ts'),false,'host inventory must not become a standalone uninstall dependency');
-    assert.equal(inputs.includes('src/serviceExtension.ts'),false);
+    assert.deepEqual(inputs,['src/uninstallHook.ts'],'the hook removes editor-owned storage only; no native runner, agent or service module');
 });
 
 test('Explorer contract modules depend only on other contract modules', () => {
@@ -105,11 +97,7 @@ test('the standalone uninstall bundle retains no Indexing controller, Preact or 
 test('native read retry validators retain a pure shared dependency boundary',()=>{
     const file=path.join(source,'readRetry.ts');
     assert.deepEqual(imports(file),['node:util','./catalogSession']);
-    for(const name of ['native','explorerEvidence']){
-        const dependencies=imports(path.join(source,name+'.ts'));
-        assert.ok(dependencies.includes('./readRetry'));
-        if(name==='native')assert.ok(!dependencies.includes('./explorerEvidence'));
-    }
+    assert.ok(imports(path.join(source,'explorerEvidence.ts')).includes('./readRetry'));
     const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
     for(const statement of tree.statements)assert.ok(ts.isImportDeclaration(statement)||ts.isFunctionDeclaration(statement),
         'shared retry validators perform no startup work');
@@ -168,23 +156,15 @@ test('Built Explorer bundles contain no host implementation copies', { skip: !fs
     }
 });
 
-// One-process boundary (docs/simplify/one-process-ledger.md, step D): an editor
-// window starts AIRK only through its one `service session` child. Every other
-// process start in production TypeScript is listed here, reviewed, with its reason.
+// Process starts (split plan §4.4 "one spawning module"): only src/airkctl/
+// starts a process. Every production site is listed here, reviewed, with its reason.
 const PROCESS_STARTS: Record<string,string> = {
-    'nativeSession.ts#launchSession:spawn': 'the one per-window `airk service session` child',
-    'nativeSession.ts#windowlessOneShot:runText': 'no editor window (the uninstall worker): one temporary command',
-    'nativeSession.ts#differentBuildOneShot:runText': 'explicit fallback for a different-build predecessor image',
-    'serviceClient.ts#NativeControlTransport.constructor:spawn': 'per-client console for a different-build runtime, or outside a window',
-    'native.ts#runText:runSystemText': 'the gated one-shot primitive itself',
-    'native.ts#runSystemText:execFile': 'the one-shot primitive itself',
-    'native.ts#prepareHelper:runText': 'dead primitive without a production caller; pending evidence-based deletion',
-    'native.ts#runJson:runText': 'dead primitive without a production caller; pending evidence-based deletion',
-    'uninstallHook.ts#startUninstallWorker:spawn': 'window-less uninstall worker (Node, not AIRK)',
-    'serviceExtension.ts#ServiceExtension.openTools:createTerminal': 'the user-opened `tools shell` terminal',
-    'cliInstall.ts#installPath:runSystemText': 'PowerShell for the user PATH, never AIRK',
-    'cliRemove.ts#removeShellIntegration:runSystemText': 'PowerShell for the user PATH, never AIRK',
-    'privateDirectory.ts#run:execFile': 'fixed operating-system ACL tool, never AIRK',
+    'airkctl/runner.ts#spawnBounded:spawn': 'verified airkctl one-shots, and the platform verification tools run before the first airkctl execution (Windows PowerShell for Authenticode and ACLs, macOS codesign)',
+    'airkctl/session.ts#launchSession:spawn': 'the one per-window `airkctl session --owner-watch` child',
+    // Not constructed by the split composition root; they leave with the Explorer
+    // management and Assistance untangling (follow-up of split Phase 6).
+    'serviceClient.ts#NativeControlTransport.constructor:spawn': 'unreachable at run time: legacy per-client console transport',
+    'privateDirectory.ts#run:execFile': 'unreachable at run time: ACL tool of the retired window-hosted Assistance pipe',
 };
 const CHILD_PROCESS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']);
 function processStarts(): string[] {
@@ -237,17 +217,14 @@ test('production TypeScript starts processes only at the reviewed one-process si
     assert.deepEqual(sites, Object.keys(PROCESS_STARTS).sort(), 'a new process start needs review: route AIRK commands through the window session');
 });
 
-test('dead one-shot primitives and the raw one-shot runner keep no other production importer', () => {
-    for (const file of sources(source).filter(name => !path.relative(source, name).startsWith('test' + path.sep))) {
-        const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-        for (const statement of tree.statements) {
-            if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== './native') { continue; }
-            const bindings = statement.importClause?.namedBindings;
-            const imported = bindings && ts.isNamedImports(bindings) ? bindings.elements.map(element => (element.propertyName ?? element.name).text) : [];
-            // nativeSession.ts alone keeps the explicit one-shot fallbacks listed above.
-            for (const dead of ['prepareHelper', 'runJson', 'joinScheduledIndex', ...(path.basename(file) === 'nativeSession.ts' ? [] : ['runText'])]) {
-                assert.ok(!imported.includes(dead), `${path.relative(source, file)} imports ${dead}; native commands go through the window session (nativeText)`);
-            }
+test('the composition root and the airkctl facade open no network transport and read no service credential', () => {
+    const files = [path.join(source, 'serviceExtension.ts'), ...sources(path.join(source, 'airkctl'))];
+    assert.ok(files.length >= 10, 'zero or few selected files is a failure');
+    for (const file of files) {
+        const text = fs.readFileSync(file, 'utf8');
+        for (const specifier of imports(file)) {
+            assert.ok(!/^(?:node:)?(?:net|tls|http|https|http2)$/.test(specifier), `${path.relative(source, file)} imports ${specifier}`);
         }
+        assert.doesNotMatch(text, /\\\\\.\\pipe|127\.0\.0\.1:\d|http-1[\\/]|issuer\.pem|ca\.pem|AIRK_MCP_TOKEN_[0-9A-F]/, path.relative(source, file));
     }
 });

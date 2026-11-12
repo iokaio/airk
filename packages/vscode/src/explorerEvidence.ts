@@ -3,9 +3,8 @@ import * as path from 'node:path';
 import { readRetryDelay } from './readRetry';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { McpSessionError, McpStdioOptions, McpStdioSession } from './mcpStdioSession';
-import { McpHttpSession } from './mcpHttpSession';
-import { httpMaterial, sameHttpAuthority } from './serviceHttp';
 import { LaunchSpec, launchArgs } from './model';
+import { ToolCallError, type ToolTransport } from './airkctl/tools';
 import { hasNativeMetadataReferences, materializeNativeMetadata } from './nativeMetadata';
 
 /** Read-only native tool catalog. The Explorer calls nothing else on AIRK Retrieval. */
@@ -88,15 +87,20 @@ function toolFailure(text: string, nativeResponse:Record<string,unknown>): Evide
 
 interface Task { tool: EvidenceTool; args: Record<string, unknown>; options: CallOptions; generation?: number; resolve(value: ToolResult): void; reject(error: Error): void }
 type Opener = (options: McpStdioOptions, handshakeTimeout: number) => Promise<{ session: McpStdioSession }>;
+/** Opens the window's evidence transport for one reviewed selection. */
+export type EvidenceTransportFactory = (spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench') => ToolTransport;
+let defaultTransport: EvidenceTransportFactory | undefined;
+/** Installed by the composition root: reads go through the window's `airkctl session` (plan §8.1). */
+export function setEvidenceTransport(factory: EvidenceTransportFactory | undefined): void { defaultTransport = factory; }
 
 /**
- * Explorer evidence uses the verified HTTPS MCP connection for its bound scope.
+ * Explorer evidence uses the window's `airkctl session` (`tools call`) for its bound scope.
  * This client keeps a bounded queue, with three calls outstanding by default;
  * native admission independently enforces the configured service capacity.
  */
 export class EvidenceClient {
-    private session?: McpStdioSession|McpHttpSession;
-    private opening?: Promise<McpStdioSession|McpHttpSession>;
+    private session?: McpStdioSession|ToolTransport;
+    private opening?: Promise<McpStdioSession|ToolTransport>;
     private readonly queue: Task[] = [];
     private readonly generations = new Map<string, number>();
     private active = 0;
@@ -106,6 +110,7 @@ export class EvidenceClient {
         open?: Opener; maxInFlight?: number; timeout?: number; retryBudget?: number; handshakeTimeout?: number;
         clientName?: 'airk-explorer' | 'airk-workbench'; workbench?: boolean;
         resolveConnection?:(spec:LaunchSpec,client:'airk-explorer'|'airk-workbench')=>Promise<LaunchSpec>;
+        transport?: EvidenceTransportFactory;
     } = {}) {
         if (!spec.service) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
     }
@@ -169,6 +174,10 @@ export class EvidenceClient {
                 if (error instanceof McpSessionError && error.code === 'overloaded') { throw new EvidenceFailure(explorerError('RATE_LIMITED')); }
                 if (error instanceof McpSessionError && error.code === 'timeout') { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT')); }
                 if (error instanceof McpSessionError && error.code === 'rpc') { throw new EvidenceFailure(explorerError('TOOL_ERROR', error.message)); }
+                if (error instanceof ToolCallError && error.code === 'overloaded') { throw new EvidenceFailure(explorerError('RATE_LIMITED')); }
+                if (error instanceof ToolCallError && error.code === 'timeout') { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT')); }
+                // The complete airkctl result (exit class, stdout, stderr, error line) stays with the failure.
+                if (error instanceof ToolCallError && error.code === 'rpc') { throw new EvidenceFailure(explorerError('TOOL_ERROR', error.message), error.result ? { ...error.result } : undefined); }
                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
             }
             const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope,this.spec.catalogSession);
@@ -189,21 +198,22 @@ export class EvidenceClient {
         }
     }
 
-    private async connect(): Promise<McpStdioSession|McpHttpSession> {
+    private async connect(): Promise<McpStdioSession|ToolTransport> {
         if (this.session && !this.session.closed) { return this.session; }
         if (!this.opening) {
-            // Only an injected test transport opens stdio; production requires the HTTPS connection.
-            const open = this.options.open;
-            const httpOpen=async(spec:LaunchSpec)=>{
-                if(!spec.http)throw new Error('http_connection_requires_reviewed_scope');
-                const selection=spec.combinedSession?{kind:'combined' as const,selection:spec.combinedSession}:spec.catalogSession?{kind:'scoped' as const,selection:spec.catalogSession}:spec.http.selection.kind==='imported_legacy'?spec.http.selection:undefined;
-                if(!selection||!sameHttpAuthority(spec.http.selection,selection))throw new Error('http_connection_selection_changed');
-                if(selection.kind==='imported_legacy'&&(selection.selection.registration.binding!==spec.service?.project||selection.selection.registration.root!==spec.root||selection.selection.registration.data_root!==spec.dataDir||selection.selection.registration.collection!==spec.collection))throw new Error('crossed_imported_http_backing');
-                return McpHttpSession.open({...await httpMaterial(spec.http),clientName:this.options.clientName??EXPLORER_CLIENT_NAME,clientVersion:this.clientVersion},this.options.handshakeTimeout??90000);
-            };
-            const connected=this.options.resolveConnection?this.options.resolveConnection(this.spec,this.options.clientName??EXPLORER_CLIENT_NAME).then(httpOpen):this.spec.http||!open?httpOpen(this.spec):
-                open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
-                clientName: this.options.clientName ?? EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000);
+            // An injected test opener speaks MCP over stdio; production reads use the
+            // window session's `airkctl tools call` with the reviewed selection named.
+            const open = this.options.open, client = this.options.clientName ?? EXPLORER_CLIENT_NAME;
+            const transport = this.options.transport ?? defaultTransport;
+            const connected: Promise<{ session: McpStdioSession|ToolTransport }> = open
+                ? open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
+                    clientName: client, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000)
+                : (this.options.resolveConnection ? this.options.resolveConnection(this.spec, client) : Promise.resolve(this.spec)).then(spec => {
+                    if (!transport) { throw new Error('evidence_transport_unavailable'); }
+                    // A read always names its reviewed selection; nothing is read without one.
+                    if (!spec.service?.project && !spec.catalogSession && !spec.combinedSession) { throw new Error('evidence_selection_required'); }
+                    return { session: transport(spec, client) };
+                });
             this.opening = connected
                 .then(({ session }) => {
                     if (this.disposed) { session.close(); throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', 'The Explorer evidence session was closed.')); }
@@ -211,7 +221,7 @@ export class EvidenceClient {
                 }, error => {
                     if(error instanceof EvidenceFailure)throw error;
                     const detail=error instanceof Error?error.message:String(error);
-                    throw new EvidenceFailure(explorerError(detail==='http_connection_requires_reviewed_scope'?'SCOPE_NOT_GRANTED':'SERVICE_UNAVAILABLE',detail));
+                    throw new EvidenceFailure(explorerError(detail==='evidence_selection_required'?'SCOPE_NOT_GRANTED':'SERVICE_UNAVAILABLE',detail));
                 })
                 .finally(() => { this.opening = undefined; });
         }

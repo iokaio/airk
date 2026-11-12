@@ -1,69 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
+// `vscode:uninstall` removes only editor-owned storage (plan §8.5): no native
+// uninstall, no process, nothing outside `<user data>/User/globalStorage/iokaio.airk`.
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { prepareUninstallWorker, verifyUninstallWorker } from '../uninstallHook';
+import { editorUserData, EXTENSION_ID, removeEditorStorage } from '../uninstallHook';
 
-test('uninstall snapshots only approved main bytes and survives deletion of the extension directory',async()=>{
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-hook-snapshot-'));
-    let job:string|undefined;
-    try{
-        const runtime=path.join(root,'native','runtime');await fs.mkdir(runtime,{recursive:true});
-        const name=(process.platform==='darwin'?'AIRK.app/Contents/MacOS/':'')+(process.platform==='win32'?'airk.exe':'airk');
-        const image=path.join(runtime,name),body=Buffer.from('Approved, inert engine fixture.');
-        await fs.mkdir(path.dirname(image),{recursive:true});await fs.writeFile(image,body);
-        const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
-        const inventory=Buffer.from(JSON.stringify({schema:1,version:'1.6.1',files:{[name]:hash(body)}}));
-        await fs.writeFile(path.join(runtime,'airk-install.json'),inventory);
-        await fs.writeFile(path.join(root,'package.json'),JSON.stringify({version:'1.6.1'}));
-        await fs.writeFile(path.join(root,'native','manifest.json'),JSON.stringify({schema:2,version:'1.6.1',vsix_target:`${process.platform}-${process.arch}`,
-            runtime_dir:'runtime',install_manifest_sha256:hash(inventory),payload:{[name]:hash(body)}}));
-        const script=path.join(root,'hook.js');await fs.writeFile(script,'// Self-contained inert fixture.');
-        job=await prepareUninstallWorker(root,script);
-        const copied=await verifyUninstallWorker(job);
-        assert.deepEqual((await fs.readdir(job)).sort(),['approval.json',path.basename(image),'worker.js'].sort());
-        await fs.rm(root,{recursive:true,force:true});
-        assert.equal(await verifyUninstallWorker(job),copied);
-        await fs.writeFile(copied,'Modified snapshot');
-        await assert.rejects(verifyUninstallWorker(job),/differs from its approved distribution/);
-    }finally{await fs.rm(root,{recursive:true,force:true});if(job)await fs.rm(job,{recursive:true,force:true});}
+test('the editor user-data folder follows the standard per-user layouts only', () => {
+    assert.equal(editorUserData('/home/u/.vscode/extensions', '/home/u', 'linux'), '/home/u/.config/Code');
+    assert.equal(editorUserData('/home/u/.vscode-insiders/extensions', '/home/u', 'linux'), '/home/u/.config/Code - Insiders');
+    assert.equal(editorUserData('/Users/u/.vscode/extensions', '/Users/u', 'darwin'), '/Users/u/Library/Application Support/Code');
+    assert.equal(editorUserData('C:\\Users\\u\\.vscode\\extensions', 'C:\\Users\\u', 'win32', 'C:\\Users\\u\\AppData\\Roaming'), 'C:\\Users\\u\\AppData\\Roaming\\Code');
+    // Portable, custom or foreign layouts are left alone.
+    assert.equal(editorUserData('/opt/vscode/data/extensions', '/home/u', 'linux'), undefined);
+    assert.equal(editorUserData('/home/u/.cursor/extensions', '/home/u', 'linux'), undefined);
+    assert.equal(editorUserData('/home/other/.vscode/extensions', '/home/u', 'linux'), undefined);
+    assert.equal(editorUserData('C:\\Users\\u\\.vscode\\extensions', 'C:\\Users\\u', 'win32'), undefined, 'no APPDATA, no guess');
 });
 
-test('a detached cleanup worker outlives both its hook process and the five-second VS Code deadline',async()=>{
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-hook-handoff-')),job=path.join(root,'job');await fs.mkdir(job);
-    try{
-        const done=path.join(job,'done');
-        await fs.writeFile(path.join(job,'worker.js'),`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(done)},'complete'),5500);`);
-        const parent=path.join(root,'hook.js'),module=require.resolve('../uninstallHook');
-        await fs.writeFile(parent,`require(${JSON.stringify(module)}).startUninstallWorker(${JSON.stringify(job)}).catch(e=>{console.error(e);process.exitCode=1;});`);
-        const started=Date.now();
-        await promisify(execFile)(process.execPath,[parent],{timeout:4500,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});
-        assert.ok(Date.now()-started<5000,'the hook must finish within the editor deadline');
-        await fs.unlink(parent);
-        const deadline=Date.now()+10000;
-        while(!await fs.stat(done).then(()=>true,()=>false)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
-        assert.equal(await fs.readFile(done,'utf8'),'complete');
-        assert.ok(Date.now()-started>=5500,'cleanup continues after the hook is gone');
-    }finally{await fs.rm(root,{recursive:true,force:true});}
+test('only this extension\'s global storage folder is removed; a link is refused', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-uninstall-'));
+    try {
+        const storage = path.join(root, 'User', 'globalStorage', EXTENSION_ID), other = path.join(root, 'User', 'globalStorage', 'other.extension');
+        await fs.mkdir(path.join(storage, 'workbench'), { recursive: true }); await fs.mkdir(other, { recursive: true });
+        await fs.writeFile(path.join(storage, 'workbench', 'session.json'), '{}'); await fs.writeFile(path.join(other, 'keep.json'), '{}');
+        assert.equal(await removeEditorStorage(root), 'removed');
+        await assert.rejects(fs.lstat(storage));
+        assert.equal(await fs.readFile(path.join(other, 'keep.json'), 'utf8'), '{}');
+        assert.equal(await removeEditorStorage(root), 'absent');
+        const target = path.join(root, 'elsewhere'); await fs.mkdir(target);
+        try { await fs.symlink(target, storage, process.platform === 'win32' ? 'junction' : 'dir'); } catch { return; }
+        assert.equal(await removeEditorStorage(root), 'refused');
+        await fs.access(target);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('cleanup records started before work and never leaves a failed attempt looking complete',async()=>{
-    const {testing,mirrorUninstallResult}=await import('../uninstallHook');
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-hook-result-'));
-    try{
-        const job=path.join(root,'job');await fs.mkdir(job);
-        // No approved engine: verification fails after the started record is written.
-        await testing.cleanup(job,async()=>{throw new Error('native runner must not run');});
-        const result=JSON.parse(await fs.readFile(path.join(job,'result.json'),'utf8'));
-        assert.equal(result.state,'needs_attention');assert.equal(typeof result.startedAt,'string');assert.equal(result.pid,process.pid);
-        assert.match(await fs.readFile(path.join(job,'README.txt'),'utf8'),/A started result is never a success/);
-        const state=path.join(root,'state');
-        await mirrorUninstallResult([state],{schema:1,state:'started',pid:process.pid});
-        assert.equal(JSON.parse(await fs.readFile(path.join(state,'extension-uninstall','last-result.json'),'utf8')).state,'started');
-    }finally{process.exitCode=0;await fs.rm(root,{recursive:true,force:true});}
+test('the hook starts no process and names no native uninstall', async () => {
+    const source = await fs.readFile(path.resolve(__dirname, '..', '..', 'src', 'uninstallHook.ts'), 'utf8');
+    assert.doesNotMatch(source, /child_process|spawn\(|execFile|runtime uninstall|airkctl/);
 });

@@ -44,7 +44,7 @@ async function diskFixture() {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-update-payload-'));
     const files: Record<string, string> = {
         'package.json': JSON.stringify({ name: 'airk', publisher: 'iokaio', version: '1.8.12' }),
-        'native/manifest.json': JSON.stringify({ version: '1.8.12' }),
+        'out/airkctl/index.js': 'exports.facade=true;',
         'out/serviceExtension.js': 'exports.activate=async()=>({getServerDefinitions:async()=>[],whenReady:async()=>{}});',
         'out/explorerController.js': 'exports.controller=true;',
         'out/explorerWebview.js': '// fictional Explorer bundle',
@@ -217,7 +217,9 @@ test('update inventory rejects unlisted required files, unsafe paths and version
         f.files['out/explorerController.js'] = 'exports.controller=true;';
         f.files['out/../outside.js'] = 'exports.outside=true;'; await f.write();
         await assert.rejects(readUpdatePayload(f.root), /Invalid AIRK update inventory entry/);
-        delete f.files['out/../outside.js']; f.files['native/manifest.json'] = JSON.stringify({ version: '1.8.11' }); await f.write();
+        delete f.files['out/../outside.js']; f.files['native/manifest.json'] = JSON.stringify({ version: '1.8.12' }); await f.write();
+        await assert.rejects(readUpdatePayload(f.root), /Invalid AIRK update inventory entry/, 'the split VSIX carries no native entry');
+        delete f.files['native/manifest.json']; f.files['package.json'] = JSON.stringify({ name: 'airk', publisher: 'iokaio', version: '1.8.11' }); await f.write();
         await assert.rejects(readUpdatePayload(f.root), /versions do not agree/);
     } finally { await f.close(); }
 });

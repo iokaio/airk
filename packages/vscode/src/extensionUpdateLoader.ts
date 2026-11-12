@@ -97,7 +97,7 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
     if (entries.length < 3 || entries.length > 256) { throw new Error('Invalid AIRK update inventory size'); }
     const files = new Map<string, Buffer>(); let total = 0, generation: string | undefined;
     for (const [name, expected] of entries) {
-        if (!/^(?:package\.json|native\/manifest\.json|images\/airk\.svg|out\/[A-Za-z0-9_-]+\.(?:js|css)|node_modules\/jsonc-parser\/(?:package\.json|lib\/umd\/(?:main|impl\/[A-Za-z-]+)\.js))$/.test(name)
+        if (!/^(?:package\.json|images\/airk\.svg|out\/(?:airkctl\/(?:(?:agents|features|status)\/)?)?[A-Za-z0-9_-]+\.(?:js|css)|node_modules\/jsonc-parser\/(?:package\.json|lib\/umd\/(?:main|impl\/[A-Za-z-]+)\.js))$/.test(name)
             || typeof expected !== 'string' || !/^[0-9a-f]{64}$/.test(expected)) { throw new Error('Invalid AIRK update inventory entry'); }
         const content = await boundedFile(await contained(name), name === 'package.json' ? 256 * 1024 : MAX_FILE); total += content.length;
         if (total > MAX_TOTAL) { throw new Error('AIRK update payload exceeds its byte budget'); }
@@ -113,12 +113,12 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
             files.set(name, content);
         }
     }
-    for (const required of ['package.json', 'out/serviceExtension.js', 'out/explorerController.js', 'out/explorerWebview.js', 'out/explorerWebview.css', 'native/manifest.json']) {
+    // The split VSIX carries no native runtime (plan §8.5): the inventory has no native entry.
+    for (const required of ['package.json', 'out/serviceExtension.js', 'out/explorerController.js', 'out/explorerWebview.js', 'out/explorerWebview.css', 'out/airkctl/index.js']) {
         if (!files.has(required)) { throw new Error(`AIRK update is missing ${required}`); }
     }
     const manifest = JSON.parse(files.get('package.json')!.toString('utf8'));
-    const native = JSON.parse(files.get('native/manifest.json')!.toString('utf8'));
-    if (manifest.name !== 'airk' || manifest.publisher !== 'iokaio' || manifest.version !== inventory.version || native.version !== inventory.version) { throw new Error('AIRK update versions do not agree'); }
+    if (manifest.name !== 'airk' || manifest.publisher !== 'iokaio' || manifest.version !== inventory.version) { throw new Error('AIRK update versions do not agree'); }
     return { root: canonical, identity: digest(bytes), version: inventory.version, installationGeneration: generation, manifest, files };
 }
 
@@ -192,7 +192,6 @@ async function captureAssets(context: vscode.ExtensionContext, payload: UpdatePa
         }
     };
     for (const [name, bytes] of payload.files) {
-        if (name.startsWith('native/')) { continue; }
         const filename = path.join(root, ...name.split('/'));
         await directory(['interface-cache', payload.identity, ...name.split('/').slice(0, -1)].join('/'));
         let existing: Buffer | undefined;
