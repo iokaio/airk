@@ -1085,8 +1085,9 @@ pub enum ControlResponse {
     StoragePrepared {
         registration: ProjectRegistration,
     },
-    /// M4a/M4b refused. `message` is the full error chain bounded to 4,096
-    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    /// M4a/M4b, or M1's catalog target, refused. `message` is the full error
+    /// chain bounded to 4,096 characters, as the pre-split CLI's
+    /// `operation_failed` line carried it.
     RegistrationRefused {
         message: String,
     },

@@ -377,6 +377,10 @@
         {
           "name": "registered",
           "bytes": "{\"status\":\"resolved\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\"}}"
+        },
+        {
+          "name": "catalog_session_refused",
+          "bytes": "{\"status\":\"registration_refused\",\"message\":\"selected catalog index is unavailable; review Indexing before reconnecting\"}"
         }
       ],
       "rejected_responses": [
