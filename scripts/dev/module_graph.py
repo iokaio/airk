@@ -102,14 +102,47 @@ def cycles(lines, edges):
     return sorted(found, key=lambda component: -sum(lines[name] for name in component))
 
 
+def back_edges(lines, edges, groups):
+    """Module references that point from a group to one later in `order` (or a module
+    with no group): each one blocks extracting the earlier group as its own crate."""
+    order = groups['order']
+    owner = {module: group for group, members in groups['groups'].items() for module in members}
+    unassigned = sorted(module for module in lines if module not in owner)
+    found = []
+    for source_module, targets in edges.items():
+        source_group = owner.get(source_module)
+        for target_module, count in targets.items():
+            target_group = owner.get(target_module)
+            if source_group is None or target_group is None:
+                continue
+            if order.index(target_group) > order.index(source_group):
+                found.append((source_group, target_group, source_module, target_module, count))
+    sizes = {group: sum(lines.get(module, 0) for module in members)
+             for group, members in groups['groups'].items()}
+    return sorted(found), unassigned, sizes
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--crate', default='airk-cli')
     parser.add_argument('--json', type=Path)
+    parser.add_argument('--groups', type=Path,
+                        help='a module-group file (docs/simplify/airk-cli-groups.json); reports back edges')
     args = parser.parse_args(argv)
     source = ROOT / 'crates' / args.crate / 'src'
     lines, edges = measure(source)
     found = cycles(lines, edges)
+    if args.groups:
+        groups = json.loads(args.groups.read_text(encoding='utf-8'))
+        backward, unassigned, sizes = back_edges(lines, edges, groups)
+        for group in groups['order']:
+            print(f'group {group}: {sizes.get(group, 0)} lines')
+        for module in unassigned:
+            print(f'unassigned: {module} ({lines[module]} lines)')
+        for source_group, target_group, source_module, target_module, count in backward:
+            print(f'back edge {source_group} -> {target_group}: {source_module} -> {target_module} ({count})')
+        print(f'{len(backward)} back edges, {len(unassigned)} unassigned modules')
+        return 1 if backward or unassigned else 0
     if args.json:
         args.json.write_text(json.dumps({'lines': lines, 'edges': edges, 'cycles': found}, indent=1) + '\n',
                              encoding='utf-8')

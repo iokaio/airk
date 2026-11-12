@@ -1,0 +1,121 @@
+{
+ "schema": "airk.module-groups/1",
+ "crate": "airk-cli",
+ "note": "Target crates of docs/simplify/airk-cli-split.md, in dependency order (a group may depend only on groups listed before it). Checked by scripts/dev/module_graph.py --groups.",
+ "order": [
+  "os",
+  "endpoint",
+  "inference",
+  "catalog",
+  "supervisor",
+  "installer",
+  "frontend",
+  "https",
+  "service",
+  "cli"
+ ],
+ "groups": {
+  "os": [
+   "bundled_assets",
+   "checkpoint_fence",
+   "child_job",
+   "cli_io",
+   "install_files",
+   "install_layout",
+   "native_command",
+   "native_process",
+   "process_diagnostics",
+   "process_roles",
+   "read_attempt",
+   "request_journal",
+   "runtime_pair",
+   "service_configuration",
+   "service_locations",
+   "service_logs",
+   "service_registration",
+   "service_resource_policy",
+   "user_paths"
+  ],
+  "endpoint": [
+   "admin_contract",
+   "explorer_assistance",
+   "http_endpoint"
+  ],
+  "inference": [
+   "embedding_client",
+   "embedding_pool_bootstrap",
+   "embedding_pool_client",
+   "embedding_pool_process",
+   "embedding_pool_protocol",
+   "inference_completion_ledger",
+   "inference_engine",
+   "service_inference",
+   "unix_guardian"
+  ],
+  "catalog": [
+   "catalog_admission",
+   "catalog_authority",
+   "catalog_coordinator",
+   "catalog_grant_draft",
+   "catalog_host_context",
+   "catalog_index_setup",
+   "catalog_index_setup_control",
+   "catalog_source_change_control",
+   "catalog_split_control",
+   "catalog_test_fixture",
+   "reference_refresh_control"
+  ],
+  "supervisor": [
+   "derived_worker",
+   "project_protocol",
+   "project_supervisor",
+   "project_worker",
+   "project_worker_split",
+   "source_protocol",
+   "source_supervisor",
+   "source_worker",
+   "worker_host",
+   "worker_scope",
+   "worker_transport"
+  ],
+  "installer": [
+   "legacy_processes",
+   "legacy_startup",
+   "manual_start",
+   "runtime_install",
+   "runtime_legacy_origin",
+   "service_manager",
+   "universal_launcher"
+  ],
+  "frontend": [
+   "client_requests",
+   "combined_frontend",
+   "console_client",
+   "project_client",
+   "read_attempt_client",
+   "service_frontend",
+   "session",
+   "session_protocol",
+   "tool_call",
+   "tool_catalog",
+   "unified_mcp",
+   "usage_client"
+  ],
+  "https": [
+   "admin_plane",
+   "http_backend",
+   "http_gateway"
+  ],
+  "service": [
+   "native_admin_connections",
+   "runtime_metadata",
+   "service_management",
+   "service_runtime",
+   "setup_role"
+  ],
+  "cli": [
+   "role_admission",
+   "standalone_setup"
+  ]
+ }
+}
