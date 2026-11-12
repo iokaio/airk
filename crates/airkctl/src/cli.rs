@@ -256,7 +256,7 @@ enum AgentsCommand {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
         #[arg(long, value_enum)]
-        client: crate::launch::Client,
+        client: crate::agents::Client,
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
         /// Owner-private reviewed selection to enroll as --connection-id.
@@ -323,7 +323,7 @@ enum AgentsCommand {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
         #[arg(long, value_enum)]
-        client: crate::launch::Client,
+        client: crate::agents::Client,
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
         /// The client's working folder (default: the current directory).

@@ -70,14 +70,17 @@ STARTS = {
     ("crates/airk-cli/src/explorer_assistance.rs", "command"):
         "external: VS Code's own JavaScript runtime for the Explorer Assistance server "
         "named by an extension-written, hash-checked descriptor; not an airk process",
-    ("crates/airk-cli/src/native_command/mod.rs", "execute_native_observation"):
+    ("crates/airk-process/src/bounded_command.rs", "execute_native_observation"):
         "primitive: bounded native command with a caller-built invocation",
-    ("crates/airk-cli/src/native_command/mod.rs", "execute_native_program"):
+    ("crates/airk-process/src/bounded_command.rs", "execute_native_program"):
         "primitive: bounded native command with a caller-built invocation",
-    ("crates/airk-cli/src/native_command/mod.rs", "execute_with_timeout"):
+    ("crates/airk-process/src/bounded_command.rs", "execute_with_timeout"):
         "primitive: the bounded native command runner (no shell, output and time limits)",
-    ("crates/airk-cli/src/native_process.rs", "spawn"):
+    ("crates/airk-process/src/bounded_command.rs", "spawn"):
         "primitive: std spawn without error dialogs; callers build the command",
+    ("crates/airkctl/src/launch.rs", "launch"):
+        "external: the user's Claude Code, Codex or VS Code client in the foreground "
+        "(`airkctl agents launch`, U91); not an airk process",
     ("crates/airk-process/src/detached.rs", "spawn_detached"):
         "primitive: detached Windows service start that inherits no handles",
     ("crates/airk-cli/src/runtime_install.rs", "self_test_observation"):

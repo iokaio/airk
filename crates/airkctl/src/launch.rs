@@ -24,30 +24,7 @@ use std::{
 
 const MAX_CA_BYTES: usize = 16 * 1024 * 1024;
 
-/// The qualified clients (U91).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum Client {
-    Claude,
-    Codex,
-    Vscode,
-}
-
-impl Client {
-    fn executable_name(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Vscode => "code",
-        }
-    }
-    fn label(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Vscode => "vscode",
-        }
-    }
-}
+pub use crate::agents::Client;
 
 fn refused(message: impl std::fmt::Display) -> ErrorLine {
     ErrorLine::new(

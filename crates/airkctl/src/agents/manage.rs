@@ -29,11 +29,11 @@ fn refused(message: impl std::fmt::Display) -> ErrorLine {
 }
 
 /// The client `connect` writes for.
-pub fn agent(client: crate::launch::Client) -> Agent {
+pub fn agent(client: super::Client) -> Agent {
     match client {
-        crate::launch::Client::Claude => Agent::Claude,
-        crate::launch::Client::Codex => Agent::Codex,
-        crate::launch::Client::Vscode => Agent::Copilot,
+        super::Client::Claude => Agent::Claude,
+        super::Client::Codex => Agent::Codex,
+        super::Client::Vscode => Agent::Copilot,
     }
 }
 
@@ -144,7 +144,7 @@ fn enroll(
     inputs: &Inputs<'_>,
     id: Incarnation,
     selection: HttpSelection,
-    client: crate::launch::Client,
+    client: super::Client,
 ) -> Result<HttpConnectionInfo, ErrorLine> {
     let health =
         match crate::service::request(inputs.control, ControlMethod::Health, inputs.version)? {
@@ -155,9 +155,9 @@ fn enroll(
         return Err(refused("native service is draining"));
     }
     let label = match client {
-        crate::launch::Client::Claude => "claude",
-        crate::launch::Client::Codex => "codex",
-        crate::launch::Client::Vscode => "vscode",
+        super::Client::Claude => "claude",
+        super::Client::Codex => "codex",
+        super::Client::Vscode => "vscode",
     };
     let response = crate::service::request_fenced(
         inputs.control,
@@ -221,7 +221,7 @@ pub enum Source {
 /// `agents connect`: enroll or reuse a connection and write its entry.
 pub fn connect(
     inputs: &Inputs<'_>,
-    client: crate::launch::Client,
+    client: super::Client,
     source: Source,
     scope: Scope,
     server_key: &str,

@@ -182,3 +182,28 @@ pub(crate) fn private_file(path: &Path, limit: usize) -> Result<Option<Vec<u8>>,
     }
     crate::install::owned_bytes(path, limit).map(Some)
 }
+
+/// The qualified clients (U91).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Client {
+    Claude,
+    Codex,
+    Vscode,
+}
+
+impl Client {
+    pub(crate) fn executable_name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Vscode => "code",
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Vscode => "vscode",
+        }
+    }
+}
