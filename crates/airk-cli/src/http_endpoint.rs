@@ -5,7 +5,7 @@ use airk_core::{
     service_http::PREFERRED_HTTP_PORT,
 };
 use anyhow::{Result, ensure};
-use serde::{Deserialize, Serialize};
+
 use std::{
     io,
     net::{Ipv4Addr, TcpListener},
@@ -28,21 +28,11 @@ pub use store::{
 pub use tls::{TlsBundleIdentity, TlsIdentity};
 pub mod rotation;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InstallationBinding {
-    pub installation: Sha256Digest,
-    pub user: String,
-    pub namespace: Incarnation,
-}
-impl InstallationBinding {
-    fn validate(&self) -> Result<()> {
-        ensure!(
-            self.user == crate::local_ipc::current_user()?,
-            "HTTP identity owner mismatch"
-        );
-        Ok(())
-    }
+pub use airk_core::service_http_credentials::InstallationBinding;
+
+/// The binding belongs to the current user.
+pub(crate) fn validate_binding(binding: &InstallationBinding) -> Result<()> {
+    binding.require_user(&crate::local_ipc::current_user()?)
 }
 
 /// Reconstruct from the verified native control root, not from untrusted JSON.
@@ -50,15 +40,7 @@ pub fn installation_binding(control: &Path, namespace: Incarnation) -> Result<In
     crate::install_layout::validate_control_root(control)?;
     let control = control.canonicalize()?;
     let user = crate::local_ipc::current_user()?;
-    let bytes = serde_json::to_vec(&control)?;
-    Ok(InstallationBinding {
-        installation: airk_core::identity::framed_digest(
-            b"airk-http-installation/1",
-            &[&bytes, user.as_bytes(), namespace.as_bytes()],
-        ),
-        user,
-        namespace,
-    })
+    InstallationBinding::derive(&control, &user, namespace)
 }
 
 /// The socket remains owned throughout publication and conversion to async I/O.

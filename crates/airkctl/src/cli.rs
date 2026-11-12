@@ -127,7 +127,7 @@ enum Command {
         #[arg(long)]
         owner_watch: bool,
     },
-    /// Local HTTPS connections for agents: endpoint, info and revoke.
+    /// Local HTTPS connections for agents: endpoint, info, credential and revoke.
     Agents {
         #[command(subcommand)]
         action: AgentsCommand,
@@ -205,6 +205,20 @@ enum AgentsCommand {
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
+    },
+    /// Print an existing, unrevoked connection's bearer header for an agent's header helper.
+    ///
+    /// Offline: reads only the owner-private credential files; never starts the
+    /// service, enrolls, rotates or logs the token. `--format header-json` prints
+    /// {"Authorization":"Bearer <token>"}.
+    Credential {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        #[arg(long, value_parser = ["header-json"])]
+        format: String,
     },
     /// Revoke one local HTTPS connection while preserving its original receipt.
     Revoke {
@@ -2423,6 +2437,11 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                 | AgentsCommand::Revoke {
                     runtime_dir,
                     connection_id,
+                }
+                | AgentsCommand::Credential {
+                    runtime_dir,
+                    connection_id,
+                    ..
                 } => (runtime_dir.clone(), Some(*connection_id)),
             };
             let control = match runtime_dir.or(selection.control.clone()) {
@@ -2439,6 +2458,9 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                 }
                 (AgentsCommand::Revoke { .. }, Some(id)) => {
                     crate::agents::revoke(&control, VERSION, id)
+                }
+                (AgentsCommand::Credential { .. }, Some(id)) => {
+                    crate::agents::credential(&control, id)
                 }
                 _ => return ExitClass::Internal.code(),
             };

@@ -119,7 +119,7 @@ fn snapshot_with(
     ca: Sha256Digest,
     host: Host,
 ) -> Result<()> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(&binding)?;
     public_ca(active, ca)?;
     public_ca(old, ca)?;
     let _lock = receipt_lock(active)?;
@@ -179,7 +179,7 @@ fn commit_with(
     new_ca: Sha256Digest,
     host: Host,
 ) -> Result<()> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(&binding)?;
     ensure!(old_ca != new_ca, "rotation issuer did not change");
     let saved = preimage(old, &binding, old_ca, host)?;
     public_ca(new, new_ca)?;
@@ -235,7 +235,7 @@ fn finalize_with(
     host: Host,
     remove: &mut dyn FnMut(&Path, InstallationBinding, Sha256Digest) -> Result<TrustStatus>,
 ) -> Result<Option<TrustStatus>> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(&binding)?;
     let saved = preimage(old, &binding, ca, host)?;
     let current = archived_receipt(old, &saved, host)?;
     let Some(original) = saved.receipt else {
@@ -282,7 +282,7 @@ fn abort_with(
     host: Host,
     remove: &mut dyn FnMut(&Path, InstallationBinding, Sha256Digest) -> Result<TrustStatus>,
 ) -> Result<Option<TrustStatus>> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(&binding)?;
     public_ca(new, ca)?;
     let Some(bytes) = read_private(new, RECEIPT, LIMIT)? else {
         return Ok(None);

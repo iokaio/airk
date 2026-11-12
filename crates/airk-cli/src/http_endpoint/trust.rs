@@ -399,7 +399,7 @@ fn manage_with(
     host: Host,
     run: &mut Runner<'_>,
 ) -> Result<TrustStatus> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(&binding)?;
     // Serialize ordinary active-issuer mutations with Prepare/Commit before
     // taking the receipt lock. Staged roots are already owned by that rotation.
     let _rotation_lock =

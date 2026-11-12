@@ -105,7 +105,7 @@ fn regular(path: &Path) -> Result<std::fs::Metadata, String> {
 }
 
 /// An owner-private regular file read within `limit` bytes.
-fn owned_bytes(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn owned_bytes(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     regular(path)?;
     airk_ipc::endpoint::require_owner_private(path)
         .map_err(|error| format!("{}: {error:#}", path.display()))?;

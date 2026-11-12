@@ -2120,6 +2120,32 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
             .is_none(),
         "{stdout}"
     );
+    // The offline header helper (3e.3): same header, and the same refusals
+    // for an unknown connection and, below, a revoked one.
+    let credential = |id: &str| -> anyhow::Result<_> {
+        Ok((
+            runtime(
+                "http-credential",
+                &["--connection-id", id, "--format", "header-json"],
+            )?,
+            ctl(&[
+                "credential",
+                "--connection-id",
+                id,
+                "--format",
+                "header-json",
+            ]),
+        ))
+    };
+    let (old, new) = credential(&id)?;
+    assert!(
+        new.1.contains("\"Authorization\":\"Bearer airk1."),
+        "{}",
+        new.2
+    );
+    same("credential", old, new);
+    let (old, new) = credential(&unknown)?;
+    same("credential of an unknown connection", old, new);
     // Revoke through airkctl, then airk sees the same revoked connection.
     let (code, revoked, stderr) = ctl(&["revoke", "--connection-id", &id]);
     assert_eq!(code, 0, "{stderr}");
@@ -2136,6 +2162,9 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
         runtime("http-revoke", &["--connection-id", &id])?,
         ctl(&["revoke", "--connection-id", &id]),
     );
+    let (old, new) = credential(&id)?;
+    assert_ne!(new.0, 0);
+    same("credential after revoke", old, new);
     Ok(())
 }
 

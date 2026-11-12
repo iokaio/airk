@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{InstallationBinding, digest, private_file, read_private, write_private};
+pub use airk_core::service_http_credentials::AuthenticatedCredential;
+use airk_core::service_http_credentials::{
+    Ledger, MAX_CREDENTIALS, MAX_STORE, MAX_TOKEN, Record, RevocationReason, STORE, filename,
+    validate_attachment,
+};
 use airk_core::usage::ClientFamily;
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
@@ -11,55 +16,12 @@ use airk_core::{
 use anyhow::{Result, ensure};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 
-fn unknown_client() -> ClientFamily {
-    ClientFamily::Unknown
-}
-
-const MAX_STORE: usize = 1_048_576;
-const MAX_CREDENTIALS: usize = 128;
-const MAX_TOKEN: usize = 103;
 const MAX_RETIRED: usize = 2048;
 const MAX_CLEANUP_DIRECTORY_ENTRIES: usize = 2 * MAX_CREDENTIALS;
-const STORE: &str = "credentials.json";
 const DEFAULT_LIFETIME_MS: u64 = 365 * 86_400_000;
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Record {
-    #[serde(default = "unknown_client")]
-    client: ClientFamily,
-    id: Incarnation,
-    generation: u64,
-    selection: HttpSelection,
-    #[serde(default)]
-    explorer_descriptor: Option<PathBuf>,
-    expires_unix_ms: u64,
-    verifier: Sha256Digest,
-    revoked: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    revocation_reason: Option<RevocationReason>,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RevocationReason {
-    Explicit,
-    AttachmentRetired,
-    Expired,
-    Unknown,
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Ledger {
-    schema: u32,
-    binding: InstallationBinding,
-    records: Vec<Record>,
-}
 
 /// Stored at the original token path only after native revocation commits.
 /// This is issuance/retirement proof, unlike an orphan token from failed setup.
@@ -108,26 +70,12 @@ pub struct IssuedCredential {
     pub credential_file: PathBuf,
     pub explorer_descriptor: Option<PathBuf>,
 }
-#[derive(Clone)]
-pub struct AuthenticatedCredential {
-    pub client: ClientFamily,
-    pub connection_id: Incarnation,
-    pub generation: u64,
-    pub selection: HttpSelection,
-    pub expires_unix_ms: u64,
-    pub explorer_descriptor: Option<PathBuf>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionOwnership {
     NotOwned,
     Active,
     Revoked,
     Expired,
-}
-
-fn filename(id: Incarnation) -> String {
-    format!("credential-{id}.token")
 }
 
 fn cleanup_credential_files(root: &Path) -> Result<Vec<(Incarnation, String, u64)>> {
@@ -180,38 +128,17 @@ fn random_token(id: Incarnation) -> Result<String> {
     }
     Ok(token)
 }
-fn token_id(token: &str) -> Result<Incarnation> {
-    ensure!(
-        token.len() == MAX_TOKEN && token.starts_with("airk1.") && token.as_bytes()[38] == b'.',
-        "HTTP credential rejected"
-    );
-    ensure!(
-        token.as_bytes()[6..38]
-            .iter()
-            .chain(&token.as_bytes()[39..])
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)),
-        "HTTP credential rejected"
-    );
-    Incarnation::from_str(&token[6..38]).map_err(|_| anyhow::anyhow!("HTTP credential rejected"))
-}
 pub fn read_client_token(root: &Path, id: Incarnation) -> Result<String> {
     let bytes = read_private(root, &filename(id), MAX_TOKEN)?
         .ok_or_else(|| anyhow::anyhow!("HTTP client credential unavailable"))?;
-    let token =
-        String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("HTTP client credential invalid"))?;
-    ensure!(
-        token_id(&token)? == id,
-        "HTTP client credential identity mismatch"
-    );
-    Ok(token)
+    airk_core::service_http_credentials::client_token(bytes, id)
 }
 impl CredentialStore {
     pub fn open(root: &Path, binding: InstallationBinding) -> Result<Self> {
-        binding.validate()?;
+        crate::http_endpoint::validate_binding(&binding)?;
         crate::local_ipc::prepare_root(root)?;
         let ledger: Ledger = match read_private(root, STORE, MAX_STORE)? {
-            Some(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|_| anyhow::anyhow!("invalid HTTP credential ledger"))?,
+            Some(bytes) => Ledger::parse(&bytes)?,
             None => Ledger {
                 schema: 1,
                 binding: binding.clone(),
@@ -223,12 +150,11 @@ impl CredentialStore {
     /// Ownership lookup never creates a ledger or tightens filesystem ACLs. A
     /// missing/unreadable ledger is unknown, never proof that an ID is foreign.
     pub fn read_existing(root: &Path, binding: InstallationBinding) -> Result<Self> {
-        binding.validate()?;
+        crate::http_endpoint::validate_binding(&binding)?;
         crate::local_ipc::require_existing_root(root)?;
         let raw = read_private(root, STORE, MAX_STORE)?
             .ok_or_else(|| anyhow::anyhow!("HTTP credential ledger is unobserved"))?;
-        let ledger: Ledger = serde_json::from_slice(&raw)
-            .map_err(|_| anyhow::anyhow!("invalid HTTP credential ledger"))?;
+        let ledger = Ledger::parse(&raw)?;
         Self::validated(root, binding, ledger)
     }
     /// Establish the first durable empty ledger only from the actual service
@@ -291,24 +217,7 @@ impl CredentialStore {
         Ok(())
     }
     fn validated(root: &Path, binding: InstallationBinding, ledger: Ledger) -> Result<Self> {
-        ensure!(
-            ledger.schema == 1
-                && ledger.binding == binding
-                && ledger.records.len() <= MAX_CREDENTIALS,
-            "HTTP credential ledger binding or bound mismatch"
-        );
-        let mut ids = std::collections::BTreeSet::new();
-        for record in &ledger.records {
-            record.selection.validate()?;
-            validate_attachment(record.explorer_descriptor.as_deref())?;
-            ensure!(
-                record.selection.namespace() == binding.namespace
-                    && record.generation > 0
-                    && (record.revoked || record.revocation_reason.is_none())
-                    && ids.insert(record.id),
-                "invalid HTTP credential ledger record"
-            );
-        }
+        ledger.validate(&binding)?;
         Ok(Self {
             root: root.to_owned(),
             ledger,
@@ -867,32 +776,7 @@ impl CredentialStore {
         // A previously opened reader cannot retain authority after native
         // revocation has durably replaced the ledger.
         let current = Self::read_existing(&self.root, self.ledger.binding.clone())?;
-        let id = token_id(token)?;
-        let record = current
-            .ledger
-            .records
-            .iter()
-            .find(|record| record.id == id)
-            .ok_or_else(|| anyhow::anyhow!("HTTP credential rejected"))?;
-        ensure!(
-            !record.revoked
-                && now_unix_ms < record.expires_unix_ms
-                && bool::from(
-                    record
-                        .verifier
-                        .as_bytes()
-                        .ct_eq(digest(token.as_bytes()).as_bytes())
-                ),
-            "HTTP credential rejected"
-        );
-        Ok(AuthenticatedCredential {
-            client: record.client,
-            connection_id: id,
-            generation: record.generation,
-            selection: record.selection.clone(),
-            expires_unix_ms: record.expires_unix_ms,
-            explorer_descriptor: record.explorer_descriptor.clone(),
-        })
+        current.ledger.authenticate(token, now_unix_ms)
     }
     pub fn revoke(&mut self, id: Incarnation) -> Result<()> {
         *self = Self::open(&self.root, self.ledger.binding.clone())?;
@@ -930,22 +814,6 @@ impl CredentialStore {
         record.revocation_reason = Some(RevocationReason::Explicit);
         self.commit(next)
     }
-}
-
-fn validate_attachment(path: Option<&Path>) -> Result<()> {
-    if let Some(path) = path {
-        ensure!(
-            path.is_absolute()
-                && path.as_os_str().len() <= 4096
-                && !path
-                    .as_os_str()
-                    .to_string_lossy()
-                    .chars()
-                    .any(char::is_control),
-            "invalid protected Explorer attachment reference"
-        );
-    }
-    Ok(())
 }
 
 /// Domain-separated digest of the exact reviewed selection, except its saved

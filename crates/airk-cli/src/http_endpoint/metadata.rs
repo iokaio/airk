@@ -11,7 +11,7 @@ use std::path::Path;
 const DESCRIPTOR: &str = "endpoint.json";
 
 fn matches_binding(value: &EndpointDescriptor, binding: &InstallationBinding) -> Result<()> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(binding)?;
     value.validate()?;
     ensure!(
         value.installation == binding.installation
@@ -26,7 +26,7 @@ pub fn load_descriptor(
     root: &Path,
     binding: &InstallationBinding,
 ) -> Result<Option<EndpointDescriptor>> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(binding)?;
     let Some(bytes) = read_private(root, DESCRIPTOR, MAX_ENDPOINT_BYTES)? else {
         return Ok(None);
     };

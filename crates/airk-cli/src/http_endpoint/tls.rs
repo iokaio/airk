@@ -37,7 +37,7 @@ pub struct TlsBundleIdentity {
 }
 
 fn checked_bundle(bytes: &[u8], binding: &InstallationBinding) -> Result<Bundle> {
-    binding.validate()?;
+    crate::http_endpoint::validate_binding(binding)?;
     let bundle: Bundle = serde_json::from_slice(bytes)
         .map_err(|_| anyhow::anyhow!("invalid staged HTTP TLS identity record"))?;
     ensure!(
@@ -408,7 +408,7 @@ impl TlsIdentity {
         desired_new: bool,
         exclusion: &airk_store::service::ServiceLease,
     ) -> Result<()> {
-        expected_old.binding.validate()?;
+        crate::http_endpoint::validate_binding(&expected_old.binding)?;
         ensure!(
             expected_old.binding == expected_new.binding
                 && expected_old.ca_sha256 != expected_new.ca_sha256,
@@ -458,7 +458,7 @@ impl TlsIdentity {
         staged_old: &Path,
         expected: &TlsBundleIdentity,
     ) -> Result<()> {
-        expected.binding.validate()?;
+        crate::http_endpoint::validate_binding(&expected.binding)?;
         ensure!(expected.schema == 1, "unsupported staged HTTP TLS identity");
         staged_key_root(staged_old, expected)?;
         let ca = read_private(staged_old, CA_FILE, MAX_CA)?
@@ -491,7 +491,7 @@ impl TlsIdentity {
         binding: InstallationBinding,
         now_unix_ms: u64,
     ) -> Result<Self> {
-        binding.validate()?;
+        crate::http_endpoint::validate_binding(&binding)?;
         crate::local_ipc::prepare_root(root)?;
         let existing = read_private(root, BUNDLE, MAX_BUNDLE)?;
         let mut changed = existing.is_none();

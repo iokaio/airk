@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `agents endpoint`, `agents info` and `agents revoke` (split step 3e.2):
 //! the local HTTPS endpoint and connections, as `airk runtime http-endpoint`,
-//! `http-connection-info` and `http-revoke` printed them. No command here
-//! returns a credential.
+//! `http-connection-info` and `http-revoke` printed them. None returns a
+//! credential except `agents credential` (3e.3), the offline header helper.
 use crate::contract::{ErrorLine, ExitClass};
 use airk_core::{
     identity::Incarnation,
@@ -84,4 +84,66 @@ pub fn revoke(
         }
         other => Err(native_refusal(other)),
     }
+}
+
+/// `agents credential` (U75, U90, U92): the bearer header of an existing,
+/// unrevoked connection for an agent's header helper. It reads only the
+/// owner-private ledger and token under `<control>/http-1`, needs no running
+/// service, never enrolls, rotates or writes, and no error contains the token.
+/// The ledger must be bound to this control root, this user and its own
+/// namespace; the service still checks the token against its live namespace.
+pub fn credential(control: &Path, connection_id: Incarnation) -> Result<Value, ErrorLine> {
+    use airk_core::service_http_credentials::{self as credentials, InstallationBinding, Ledger};
+    let fail = |error: String| refused(&error);
+    let private = control.join("http-1");
+    airk_ipc::endpoint::require_existing_root(&private)
+        .map_err(|error| fail(format!("{error:#}")))?;
+    let ledger = private_file(&private.join(credentials::STORE), credentials::MAX_STORE)
+        .map_err(fail)?
+        .ok_or_else(|| fail("HTTP credential ledger is unobserved".into()))?;
+    let ledger = Ledger::parse(&ledger).map_err(|error| fail(format!("{error:#}")))?;
+    let user = airk_ipc::endpoint::current_user().map_err(|error| fail(format!("{error:#}")))?;
+    let canonical = control
+        .canonicalize()
+        .map_err(|error| fail(error.to_string()))?;
+    let binding = InstallationBinding::derive(&canonical, &user, ledger.binding.namespace)
+        .map_err(|error| fail(format!("{error:#}")))?;
+    ledger
+        .validate(&binding)
+        .map_err(|error| fail(format!("{error:#}")))?;
+    let bytes = private_file(
+        &private.join(credentials::filename(connection_id)),
+        credentials::MAX_TOKEN,
+    )
+    .map_err(fail)?
+    .ok_or_else(|| fail("HTTP client credential unavailable".into()))?;
+    let token = credentials::client_token(bytes, connection_id)
+        .map_err(|error| fail(format!("{error:#}")))?;
+    let now: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| fail(error.to_string()))?
+        .as_millis()
+        .try_into()
+        .map_err(|_| fail("clock out of range".into()))?;
+    let authenticated = ledger
+        .authenticate(&token, now)
+        .map_err(|error| fail(format!("{error:#}")))?;
+    if authenticated.connection_id != connection_id {
+        return Err(fail("native HTTP connection identity changed".into()));
+    }
+    Ok(serde_json::json!({ "Authorization": format!("Bearer {token}") }))
+}
+
+/// An owner-private file within `limit` bytes, `None` when absent, with the
+/// messages `airk`'s HTTPS private-record reader gives.
+fn private_file(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+        Ok(metadata) if metadata.is_file() && metadata.len() > limit as u64 => {
+            return Err("HTTP private record exceeds bound".into());
+        }
+        Ok(_) => {}
+    }
+    crate::install::owned_bytes(path, limit).map(Some)
 }
