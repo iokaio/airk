@@ -191,7 +191,9 @@ class PreSplitDecoderTests(unittest.TestCase):
         transfer = self.root / "transfer"
         self.write(transfer, "runtime.zip", b"PK\x05\x06" + bytes(18))
         self.write(transfer, "transfer.json", receipt)
-        with patch.object(transfer_module, "identity", return_value=identity):
+        # A pre-split decoder: pinned, so the case does not follow the checkout's version.
+        with patch.object(transfer_module, "identity", return_value=identity), \
+                patch.object(transfer_module, "current_version", return_value="1.8.23"):
             with self.assertRaisesRegex(ValueError, "Runtime transfer belongs to another source"):
                 transfer_module.restore(transfer, self.root / "runtime", receipt["target"])
 

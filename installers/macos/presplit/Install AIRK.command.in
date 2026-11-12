@@ -1,0 +1,38 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+umask 077
+
+installer_dir="$(cd "$(/usr/bin/dirname "$0")" && pwd -P)"
+runtime_dir="$installer_dir/runtime"
+airk="$runtime_dir/AIRK.app/Contents/MacOS/airk"
+
+if [[ "$(/usr/bin/uname -m)" != "@@ARCH@@" ]]; then
+    printf '%s\n' 'This AIRK installer is for @@ARCH@@. Download the installer for your Mac.' >&2
+    exit 1
+fi
+
+if [[ ! -f "$runtime_dir/airk-install.json" || -L "$runtime_dir/airk-install.json" || ! -f "$airk" || -L "$airk" ]]; then
+    printf '%s\n' 'AIRK installer requires its original regular, unlinked native payload files.' >&2
+    exit 1
+fi
+
+# This digest is supplied by the signed distributor, never trusted merely
+# because it was read from the payload that is about to be installed.
+read -r actual_manifest _ < <(/usr/bin/shasum -a 256 "$runtime_dir/airk-install.json")
+if [[ "$actual_manifest" != "@@MANIFEST_SHA256@@" ]]; then
+    printf '%s\n' 'AIRK installer payload changed. Download a fresh verified installer.' >&2
+    exit 1
+fi
+
+# Verify the executable itself before it can run the native inventory checker.
+# An unchanged manifest alone cannot authorize changed executable bytes.
+read -r actual_executable _ < <(/usr/bin/shasum -a 256 "$airk")
+if [[ "$actual_executable" != "@@EXECUTABLE_SHA256@@" ]]; then
+    printf '%s\n' 'AIRK installer executable changed. Download a fresh verified installer.' >&2
+    exit 1
+fi
+/usr/bin/codesign --verify --strict -R '=anchor apple generic and certificate leaf[subject.OU] = "5PX7D99PXA" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$runtime_dir/AIRK.app"
+
+printf '%s\n' 'AIRK native CLI and MCP server setup'
+exec "$airk" setup --runtime-source "$runtime_dir" --approved-sha256 '@@MANIFEST_SHA256@@'

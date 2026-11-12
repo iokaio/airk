@@ -22,6 +22,11 @@ use std::{
 pub(crate) const INVENTORY_FILE: &str = "payload-inventory.json";
 /// The Windows installer's ownership receipt of its user `PATH` entry.
 const PATH_RECEIPT: &str = "user-path-owner.txt";
+/// The macOS and Linux installers' ownership receipt of the `airkctl` link in
+/// `~/.local/bin` (§9.5), written beside the record after setup completes:
+/// `airk-airkctl-link/1`, the link path and its target, one per line.
+pub(crate) const LINK_RECEIPT: &str = "airkctl-link-owner.txt";
+const LINK_RECEIPT_SCHEMA: &str = "airk-airkctl-link/1";
 
 /// The platform whose adapters an action uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,7 +292,7 @@ pub(crate) fn location_conflicts(
 
 /// The files of a program folder (relative, `/`-separated) that neither the
 /// payload inventory lists nor setup or the platform installer own (its
-/// uninstaller files and `PATH` receipt). A chosen
+/// uninstaller files, `PATH` receipt or `airkctl` link receipt). A chosen
 /// program folder holding any of them is not adopted (U50).
 pub(crate) fn foreign_program_entries(
     entries: &[String],
@@ -312,6 +317,7 @@ pub(crate) fn foreign_program_entries(
                 && entry.as_str() != INVENTORY_FILE
                 && entry.as_str() != RECORD_FILE
                 && entry.as_str() != PATH_RECEIPT
+                && entry.as_str() != LINK_RECEIPT
                 && !uninstaller(entry)
         })
         .cloned()
@@ -336,4 +342,107 @@ pub(crate) fn program_file(program: &Path, relative: &str) -> PathBuf {
     relative
         .split('/')
         .fold(program.to_path_buf(), |path, part| path.join(part))
+}
+
+/// Whether a removal also deletes the placed program files. On macOS and
+/// Linux `airkctl service uninstall` is the uninstaller (§9.5), so setup
+/// removes them; on Windows the Inno uninstaller does after setup returns.
+pub(crate) fn removes_program_files(host: Host) -> bool {
+    host != Host::Windows
+}
+
+/// The link a link receipt owns, when the receipt is well formed and names
+/// exactly this installation's `airkctl` as its target. Only an absolute
+/// `…/.local/bin/airkctl` without `.`/`..` components is accepted.
+pub(crate) fn owned_link(receipt: &str, airkctl: &Path) -> Result<PathBuf, &'static str> {
+    let body = receipt.strip_suffix('\n').ok_or("link_receipt_malformed")?;
+    let lines: Vec<&str> = body.split('\n').collect();
+    let [schema, link, target] = lines.as_slice() else {
+        return Err("link_receipt_malformed");
+    };
+    let link = PathBuf::from(*link);
+    if *schema != LINK_RECEIPT_SCHEMA
+        || !link.is_absolute()
+        || !link.ends_with(".local/bin/airkctl")
+        || link
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err("link_receipt_malformed");
+    }
+    if Path::new(*target) != airkctl {
+        return Err("link_receipt_foreign");
+    }
+    Ok(link)
+}
+
+/// What is at a receipt's link path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LinkObservation {
+    Absent,
+    /// A symbolic link and its target as read (not followed).
+    Link(PathBuf),
+    /// Anything else: a file, a folder, or an unreadable link.
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkAction {
+    Remove,
+    AlreadyGone,
+    /// Left in place with the reason; the receipt's claim has lapsed.
+    Leave(&'static str),
+}
+
+/// Receipts only (§9.3): the link is removed only while it still points at
+/// exactly this installation's `airkctl`.
+pub(crate) fn link_action(observed: &LinkObservation, airkctl: &Path) -> LinkAction {
+    match observed {
+        LinkObservation::Absent => LinkAction::AlreadyGone,
+        LinkObservation::Link(target) if target == airkctl => LinkAction::Remove,
+        LinkObservation::Link(_) => {
+            LinkAction::Leave("the airkctl link now points elsewhere, so it was left")
+        }
+        LinkObservation::Other => {
+            LinkAction::Leave("the airkctl link path is no longer a link, so it was left")
+        }
+    }
+}
+
+/// The program files a removal deletes, in order: every listed file except
+/// the running `airk`, then the payload inventory, then the running `airk`
+/// last, so an interruption before the end leaves an image that can resume.
+pub(crate) fn program_removal(listed: &BTreeSet<String>, own: &str) -> Vec<String> {
+    let mut order: Vec<String> = listed
+        .iter()
+        .filter(|name| name.as_str() != own)
+        .cloned()
+        .collect();
+    order.push(INVENTORY_FILE.to_owned());
+    if listed.contains(own) {
+        order.push(own.to_owned());
+    }
+    order
+}
+
+/// The folders holding `files` (program-relative), deepest first; each is
+/// removed only when it is empty.
+pub(crate) fn program_folders(files: &[String]) -> Vec<String> {
+    let mut folders = BTreeSet::new();
+    for file in files {
+        let mut folder = file.as_str();
+        while let Some((parent, _)) = folder.rsplit_once('/') {
+            folders.insert(parent.to_owned());
+            folder = parent;
+        }
+    }
+    let mut folders: Vec<String> = folders.into_iter().collect();
+    folders.sort_by(|left, right| {
+        right
+            .matches('/')
+            .count()
+            .cmp(&left.matches('/').count())
+            .then_with(|| left.cmp(right))
+    });
+    folders
 }

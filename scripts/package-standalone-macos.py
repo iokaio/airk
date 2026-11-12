@@ -3,6 +3,15 @@
 
 Uses the existing Developer ID Application identity; no Installer certificate,
 VSIX, installed service, source directory or OS trust store is touched.
+
+Split versions (split_receipts.split_version) package the AIRK Service pair in the
+split plan section 9.5 layout: payload/AIRK.app (airk and airkctl in Contents/MacOS),
+payload/notices/ and payload/payload-inventory.json (`airk-service-payload/1`), beside
+installers/macos/Install AIRK.command.in, which verifies the payload and hands every other
+step to airk's private setup role. The notices sit beside the bundle, not inside it: the
+signed runtime seals AIRK.app before packaging. Staging runs on any host; the DMG,
+its signature and notarization only on the Mac runner. Earlier versions keep the
+pre-split installer (installers/macos/presplit/).
 """
 import argparse
 import hashlib
@@ -41,8 +50,9 @@ def run(arguments, timeout=180):
     return result.stdout
 
 
-def template(filename, **values):
-    text = (ROOT / "installers/macos" / filename).read_text(encoding="utf-8")
+def template(filename, presplit=True, **values):
+    folder = ROOT / "installers/macos" / ("presplit" if presplit else "")
+    text = (folder / filename).read_text(encoding="utf-8")
     for key, value in values.items():
         text = text.replace("@@" + key + "@@", value)
     if "@@" in text:
@@ -60,6 +70,80 @@ def installer_files(version, target, manifest_sha256, executable_sha256):
                                          MANIFEST_SHA256=manifest_sha256, EXECUTABLE_SHA256=executable_sha256),
         "README.txt": template("README.txt.in", VERSION=version, ARCH=TARGETS[target]),
     }
+
+
+SERVICE_IMAGES = {"airk": "AIRK.app/Contents/MacOS/airk", "airkctl": "AIRK.app/Contents/MacOS/airkctl"}
+PAIR_METADATA = frozenset({"airk-install.json", "airk-runtime.json", "airk-build.json"})
+LEGAL = frozenset({"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"})
+SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def split_version(version):
+    return module("standalone_macos_split", "split_receipts.py").split_version(version)
+
+
+def split_installer_files(version, target, inventory_sha256, roster_sha256, airk_sha256, file_count):
+    """The split wrapper and instructions with the distributor's pinned digests."""
+    if (not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or not split_version(version)
+            or target not in TARGETS):
+        raise ValueError("Unsupported split installer version or target")
+    if (any(not SHA256.fullmatch(value) for value in (inventory_sha256, roster_sha256, airk_sha256))
+            or type(file_count) is not int or not 1 <= file_count <= 4096):
+        raise ValueError("Installer requires the distributor's exact payload digests")
+    values = {"VERSION": version, "ARCH": TARGETS[target], "INVENTORY_SHA256": inventory_sha256,
+              "PAYLOAD_SUMS_SHA256": roster_sha256, "AIRK_SHA256": airk_sha256,
+              "PAYLOAD_FILE_COUNT": str(file_count)}
+    return {"Install AIRK.command": template("Install AIRK.command.in", presplit=False, **values),
+            "README.txt": template("README.txt.in", presplit=False, VERSION=version, ARCH=TARGETS[target])}
+
+
+def service_layout(runtime, files, layout):
+    """The section 9.5 macOS program layout from a validated (signed) split runtime: AIRK.app
+    as signed, the root legal files and notices/ beside it; pair metadata stays out."""
+    layout.mkdir(parents=True, exist_ok=False)
+    placed = {}
+    for name, expected in sorted(files.items()):
+        if name in PAIR_METADATA:
+            continue
+        if name.startswith("AIRK.app/") or name.startswith("notices/"):
+            target = name
+        elif name in LEGAL:
+            target = "notices/" + name
+        else:
+            raise ValueError("Unexpected split runtime file outside the service layout: " + name)
+        source = runtime / name
+        if source.is_symlink() or not source.resolve(strict=True).is_relative_to(runtime):
+            raise ValueError("Linked or escaped standalone runtime input")
+        path = layout / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, path)
+        path.chmod(0o755 if target.startswith("AIRK.app/Contents/MacOS/") else 0o644)
+        if digest(path) != expected:
+            raise ValueError("Native payload changed during standalone staging")
+        placed[target] = expected
+    if not set(SERVICE_IMAGES.values()) <= set(placed):
+        raise ValueError("Split runtime lacks the AIRK Service pair")
+    return placed
+
+
+def stage_service(runtime, contents, files, version, target, admin_assets):
+    """DMG contents: payload/ (the program layout and its inventory), payload.sha256 and the
+    pinned wrappers. Returns the inventory and the wrapper bytes."""
+    linux = module("standalone_macos_inventory", "package-standalone-linux.py")
+    contents.mkdir()
+    layout = contents / "payload"
+    service_layout(runtime, files, layout)
+    inventory = linux.payload_inventory(layout, version, admin_assets, target=target,
+                                        executables=SERVICE_IMAGES,
+                                        signing={"platform": "macos", "team_id": TEAM})
+    count = linux.write_inventory(layout, inventory, contents)
+    wrappers = split_installer_files(version, target, digest(layout / "payload-inventory.json"),
+                                     digest(contents / "payload.sha256"),
+                                     inventory["files"][SERVICE_IMAGES["airk"]]["sha256"], count)
+    for name, encoded in wrappers.items():
+        (contents / name).write_bytes(encoded)
+        (contents / name).chmod(0o755 if name.endswith(".command") else 0o644)
+    return inventory, wrappers
 
 
 def stage(runtime, destination, files, executables, wrappers):
@@ -106,13 +190,13 @@ def verify_image_signature(image, identity, team, keychain):
             "timestamp_present": True}
 
 
-def verify_mounted_payload(image, mount, files, wrappers, package):
+def verify_mounted_payload(image, mount, files, wrappers, package, payload="runtime"):
     mount.mkdir()
     attached = False
     try:
         run(["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", mount, image])
         attached = True
-        if package.inventory(mount / "runtime") != files:
+        if package.inventory(mount / payload) != files:
             raise ValueError("Disk image native payload differs from the verified runtime")
         for name, expected in wrappers.items():
             path = mount / name
@@ -137,7 +221,8 @@ def package_installer(args):
     source = args.runtime_dir.resolve(strict=True)
     signed = args.signed_dir.resolve(strict=True)
     descriptor = package.bounded_json(source / "airk-runtime.json", 4096)
-    if (descriptor.get("schema") != 2
+    split = split_version(descriptor.get("version", "0.0.0"))
+    if (descriptor.get("schema") != (3 if split else 2)
             or not package.runtime_builder().single_image_version(descriptor.get("version", ""))):
         raise ValueError("Standalone installer requires the native single-executable setup runtime")
     commit = run(["git", "rev-parse", "HEAD"]).strip()
@@ -148,7 +233,8 @@ def package_installer(args):
     version = metadata["version"]
     files, executables = package.validate_runtime(runtime, version, args.target, build["source"])
     manifest_sha256 = digest(runtime / "airk-install.json")
-    wrappers = installer_files(version, args.target, manifest_sha256, files["AIRK.app/Contents/MacOS/airk"])
+    if not split:
+        wrappers = installer_files(version, args.target, manifest_sha256, files["AIRK.app/Contents/MacOS/airk"])
     output = (args.output or ROOT / "artifacts/standalone" / args.target).resolve()
     artifacts = (ROOT / "artifacts").resolve()
     if not output.is_relative_to(artifacts) or output == artifacts:
@@ -157,8 +243,13 @@ def package_installer(args):
     publish = output / "publish"
     publish.mkdir()
     contents = output / "contents"
-    stage(runtime, contents, files, executables, wrappers)
-    if package.inventory(runtime) != files or package.inventory(contents / "runtime") != files:
+    if split:
+        inventory, wrappers = stage_service(runtime, contents, files, version, args.target, build["admin_assets"])
+        placed, payload = package.inventory(contents / "payload"), "payload"
+    else:
+        stage(runtime, contents, files, executables, wrappers)
+        placed, payload = files, "runtime"
+    if package.inventory(runtime) != files or package.inventory(contents / payload) != placed:
         raise ValueError("Signed native input changed during installer staging")
     image = publish / f"airk-{version}-{args.target}-installer.dmg"
     run(["/usr/bin/hdiutil", "create", "-quiet", "-format", "UDZO", "-fs", "HFS+",
@@ -175,7 +266,7 @@ def package_installer(args):
     run(["/usr/bin/xcrun", "stapler", "validate", image])
     verify_image_signature(image, args.identity, args.team_id, args.keychain)
     run(["/usr/sbin/spctl", "--assess", "--type", "open", "--context", "context:primary-signature", image])
-    verify_mounted_payload(image, output / "verify-mount", files, wrappers, package)
+    verify_mounted_payload(image, output / "verify-mount", placed, wrappers, package, payload)
     if package.inventory(runtime) != files:
         raise ValueError("Installer packaging changed its signed native input")
     verification["notarization"] = {"id": notarization["id"], "status": "Accepted", "stapled": True,
@@ -186,6 +277,8 @@ def package_installer(args):
         "artifact": image.name, "artifact_sha256": digest(image), "installer_kind": "macos_dmg",
         "signing": verification, "runtime_signing": signing,
         "payload": package.inventory(contents),
+        **({"payload_schema": "airk-service-payload/1",
+            "payload_inventory_sha256": digest(contents / "payload/payload-inventory.json")} if split else {}),
         "qualification": "signed and notarized installer payload; installed guided setup is a separate acceptance"}
     manifest = publish / "installer.json"
     manifest.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")

@@ -1,17 +1,40 @@
-AIRK @@VERSION@@ — @@ARCH@@
+AIRK Service @@VERSION@@ — macOS @@ARCH@@
 
-This installer contains the native AIRK command-line application, local MCP
-server, bundled models and license notices. It installs no VS Code extension.
+This disk image installs AIRK Service for your account: the airk service and
+the airkctl command-line client inside AIRK.app. It contains no VSIX and does
+not install or open VS Code; the VS Code extension is a separate download.
 
-Open "Install AIRK.command" to start the native setup in Terminal. Setup reviews
-the per-user installation or upgrade, then guides you through source selection
-and connecting a supported MCP client. No administrator password is required.
+Open "Install AIRK.command" to start setup in Terminal. No administrator
+password is required. It verifies the disk image payload and the Developer ID
+signature of AIRK.app before it runs anything, asks for the program folder and
+the index data, cache and log locations, and shows what AIRK setup found.
+Every earlier AIRK installation is stopped and removed with its indexes, which
+must be rebuilt; no source file is read, changed or deleted, and coding agents
+must be reconnected. Setup asks before it proceeds; an unattended run (--yes)
+needs --acknowledge-reset when an earlier installation is found.
 
-After successful setup, eject this disk image. Setup prints the installed AIRK
-executable path and instructions for adding it to PATH; it does not edit your
-shell startup files. Keep your original source folders in place. To remove AIRK,
-invoke the installed executable with "uninstall" and review the native cleanup.
-Index data and source preservation are reported separately.
+  Program folder  ~/Library/Application Support/AIRK/program
+                  (AIRK.app, notices/, the install record)
+  Index data      ~/Library/Application Support/AIRK/data/indexes
+  Service state   ~/Library/Application Support/AIRK/state/service
+  Cache           ~/Library/Caches/AIRK/service
+  Logs            ~/Library/Logs/AIRK/service
 
-The disk image and native application use Ioka LLC's Developer ID Application
-signature and Apple notarization. This package contains no account credentials.
+Login startup is not implemented in this build (the AIRK.app SMAppService
+agent is pending): setup starts AIRK Service once, and after you log in again
+you start it with "airkctl service start". Certificate trust for the HTTPS
+admin pages is offered through the macOS consent dialog. When ~/.local/bin
+exists, setup adds an airkctl link there and records that it owns it;
+otherwise it prints the airkctl path. No shell startup file is edited.
+
+Running "Install AIRK.command" again repairs or upgrades the installation in
+place and keeps the indexes. To uninstall, run:
+
+  airkctl service uninstall --yes                  # keeps index data
+  airkctl service uninstall --yes --purge-indexes  # also deletes it
+
+Uninstall removes the install record and pointer, owned certificate trust,
+the placed files and the owned airkctl link. Eject this disk image after setup.
+
+The disk image and AIRK.app use Ioka LLC's Developer ID Application signature
+and Apple notarization. This package contains no account credentials.

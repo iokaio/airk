@@ -848,13 +848,127 @@ impl Setup {
         self.record(SetupPhase::PointerRemoved, outcome, "")
     }
 
+    /// The record, then (macOS, Linux) the placed files and the owned
+    /// `airkctl` link: there `airkctl service uninstall` is the uninstaller.
     fn remove_record(&mut self) -> Result<()> {
         let outcome = if files::remove_record(&self.program())? {
             "removed"
         } else {
             "absent"
         };
-        self.record(SetupPhase::RecordRemoved, outcome, "")
+        let detail = if plan::removes_program_files(self.host) {
+            self.remove_program()?
+        } else {
+            String::new()
+        };
+        self.record(SetupPhase::RecordRemoved, outcome, detail)
+    }
+
+    /// Delete exactly the files the payload inventory lists while they still
+    /// match it (receipts only, §9.3), the inventory and the owned link, then
+    /// the folders they leave empty. Anything else is left and reported.
+    fn remove_program(&mut self) -> Result<String> {
+        let program = self.program();
+        if std::fs::symlink_metadata(&program).is_err() {
+            return Ok("the program folder is absent".into());
+        }
+        files::no_links(&program)?;
+        let airkctl = plan::program_file(&program, &self.inventory.executables.airkctl);
+        let link = self.remove_link(&program, &airkctl);
+        let listed: std::collections::BTreeSet<String> =
+            self.inventory.files.keys().cloned().collect();
+        let order = plan::program_removal(&listed, &self.inventory.executables.airk);
+        let mut removed = 0;
+        for relative in &order {
+            let path = plan::program_file(&program, relative);
+            if std::fs::symlink_metadata(&path).is_err() {
+                continue;
+            }
+            let observed = files::digest_file(&path).ok();
+            let unchanged = match self.inventory.files.get(relative) {
+                Some(listed) => observed == Some((listed.sha256, listed.bytes)),
+                // The inventory itself, as the operation pinned it.
+                None => observed
+                    .is_some_and(|(digest, _)| digest == self.operation.payload_inventory_sha256),
+            };
+            if !unchanged {
+                self.leave(
+                    path.display().to_string(),
+                    "it differs from the payload inventory, so it was not removed",
+                    false,
+                );
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                Err(error) => self.leave(
+                    path.display().to_string(),
+                    format!("it could not be removed: {error}"),
+                    false,
+                ),
+            }
+        }
+        for folder in plan::program_folders(&order) {
+            let _ = std::fs::remove_dir(plan::program_file(&program, &folder));
+        }
+        if std::fs::remove_dir(&program).is_err() {
+            self.leave(
+                program.display().to_string(),
+                "the program folder holds files this installation did not place; they were left",
+                false,
+            );
+        }
+        Ok(format!("{removed} program files removed; {link}"))
+    }
+
+    /// Remove the `airkctl` link named by the installer's link receipt when
+    /// it still points at this installation's `airkctl`, then the receipt.
+    fn remove_link(&mut self, program: &Path, airkctl: &Path) -> String {
+        let receipt = program.join(plan::LINK_RECEIPT);
+        if std::fs::symlink_metadata(&receipt).is_err() {
+            return "no airkctl link was owned".into();
+        }
+        let link = files::read_bounded(&receipt, 4096, false)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .map(|text| plan::owned_link(&text, airkctl));
+        let Some(Ok(link)) = link else {
+            self.leave(
+                receipt.display().to_string(),
+                "the airkctl link receipt does not name this installation's airkctl, so it and its link were left",
+                false,
+            );
+            return "the airkctl link receipt was left".into();
+        };
+        let observed = match std::fs::symlink_metadata(&link) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                plan::LinkObservation::Absent
+            }
+            Ok(metadata) if metadata.file_type().is_symlink() => std::fs::read_link(&link)
+                .map(plan::LinkObservation::Link)
+                .unwrap_or(plan::LinkObservation::Other),
+            _ => plan::LinkObservation::Other,
+        };
+        let outcome = match plan::link_action(&observed, airkctl) {
+            plan::LinkAction::Remove => match std::fs::remove_file(&link) {
+                Ok(()) => "the airkctl link was removed",
+                Err(error) => {
+                    self.leave(
+                        link.display().to_string(),
+                        format!("the airkctl link could not be removed: {error}"),
+                        false,
+                    );
+                    return "the airkctl link was left".into();
+                }
+            },
+            plan::LinkAction::AlreadyGone => "the airkctl link was already absent",
+            plan::LinkAction::Leave(reason) => {
+                self.leave(link.display().to_string(), reason, false);
+                "the airkctl link was left"
+            }
+        };
+        let _ = std::fs::remove_file(&receipt);
+        outcome.into()
     }
 
     fn purge_data(&mut self) -> Result<()> {

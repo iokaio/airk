@@ -26,12 +26,32 @@ and remove an AIRK Service installation (U33: no third executable):
 Removal kinds (`uninstall`, `purge`) take no `--prepare`.
 
 The payload inventory `payload-inventory.json` (`airk-service-payload/1`,
-written by `scripts/build-local-service-installer.py`) lists every placed
+written by `scripts/build-local-service-installer.py` for Windows and by the
+split modes of `scripts/package-standalone-linux.py` and
+`scripts/package-standalone-macos.py`) lists every placed
 file (`/`-separated program-relative path → `sha256`, `bytes`), the two
 executables, the admin asset digests, the signing identity (or `null`),
 version, channel and target. Its SHA-256 is the operation's
 `payload_inventory_sha256`. With `--plan`/`--prepare` it is read beside the
 operation file; otherwise from the program folder.
+
+## Platform wrappers (§9.4, §9.5)
+
+Each wrapper verifies its payload before the first native execution, writes
+one operation per step into a fresh owner-only folder (with the inventory
+copy), runs `--plan` (U13 disclosure; acknowledgement prompt or flag),
+`--prepare`, places the files, verifies the placed `airk` and runs the
+complete mode from it with the same operation.
+
+| Wrapper | `requested_by` | Verified first | Layout (program-relative) | `PATH` |
+|---|---|---|---|---|
+| `installers/windows/airk-service.iss` | `inno` | pinned `airk.exe` digest | `bin\airkctl.exe`, `service\airk.exe`, `notices\` | user `PATH` entry, `user-path-owner.txt` |
+| `installers/linux/install.sh.in` | `install-sh` | pinned roster, inventory and `airk` digests; no links, hard links or special files | `bin/airkctl`, `service/airk`, `notices/`; signing `{platform: linux, signed: false, integrity: record-sha256}` | `~/.local/bin/airkctl` link when that folder exists, `airkctl-link-owner.txt` |
+| `installers/macos/Install AIRK.command.in` | `dmg` | the same digests and the `AIRK.app` Developer ID signature | `AIRK.app/Contents/MacOS/{airk,airkctl}`, `notices/` beside the bundle (the signed runtime seals `AIRK.app` before packaging), signing `{platform: macos, team_id}` | same as Linux |
+
+The link receipt `airkctl-link-owner.txt` is three lines:
+`airk-airkctl-link/1`, the absolute `…/.local/bin/airkctl` link path, and its
+target (this installation's `airkctl`). No wrapper edits a shell startup file.
 
 Admin asset digests (I4 `admin_assets`) frame every embedded asset in name
 order with `airk_core::identity::framed_digest`: `inventory_sha256` over
@@ -78,7 +98,8 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   each existing folder (or nearest existing ancestor) is owned by this user
   and not writable by others; each chosen folder is absent, empty, the
   existing installation's, or (program, complete mode) holds only inventory
-  files, the record, the inventory and Inno's `unins###.{exe,dat,msg}`.
+  files, the record, the inventory, Inno's `unins###.{exe,dat,msg}` and the
+  wrappers' `user-path-owner.txt` or `airkctl-link-owner.txt`.
   Removing kinds: the operation's locations equal the installation's.
 - `retire_predecessors` (U13/U14): every existing pre-split install root is
   planned and retired through the existing receipts-only
@@ -124,16 +145,27 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   `http_endpoint::trust::manage(Install)` with the OS consent dialog; no
   issuer yet or a failure → `trust_declined` with the reason.
 - Removals: owned login registration, owned trust (its receipt) and the
-  pointer (only when it names this installation) and the record. Index data,
+  pointer (only when it names this installation) and the record. On macOS
+  and Linux, where `airkctl service uninstall` is the uninstaller, the
+  `record_removed` step also deletes the placed files: each inventory file
+  that still matches its size and SHA-256, then the inventory (matching the
+  operation's digest), then the running `airk` last; the link named by
+  `airkctl-link-owner.txt` only while it points at this `airkctl`, then the
+  receipt; then the folders left empty and the program folder. A changed or
+  foreign file is left and listed as a leftover (`plan::program_removal`,
+  `plan::owned_link`, `plan::link_action`). An interruption after the running
+  image is deleted cannot resume; its receipt stays open. Windows leaves the
+  files to the Inno uninstaller. Index data,
   state, cache and logs are deleted only by `purge` or `delete_indexes:
   purge` (U32; `ask` keeps); the state folder keeps `setup/`; a location
   containing the program or pointer folder is refused.
 
 ## Not implemented (reported, not hidden)
 
-macOS SMAppService login and the `AIRK.app` layout (U40/U78); removing a
-moved program folder; program-file removal for `airkctl service uninstall`
-on macOS/Linux; U74 roster widening (Inno `standalone`, extension CLI copies
+macOS SMAppService login (U40/U78: setup records `login_unsupported`); the
+U40 first-launch fallback inside `AIRK.app`; notices inside the bundle (they
+sit beside it until the signed runtime stages them before codesign); removing a
+moved program folder; U74 roster widening (Inno `standalone`, extension CLI copies
 and PATH, 1.3 schedulers beyond what `replace_installation` covers).
 
 ## Service locations (U89)

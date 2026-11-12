@@ -2,8 +2,11 @@
 import base64
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -162,6 +165,86 @@ class StandaloneMacInstaller(unittest.TestCase):
                     self.assertEqual(packaged.call_count, 1)
                     self.assertEqual(probed.call_count, int(not fail))
                     self.assertFalse(credentials.exists())
+
+
+native_tests = load("standalone_macos_native_tests", "scripts/tests/test_package_native.py")
+native = load("standalone_macos_native_package", "scripts/package-native.py")
+SPLIT_VERSION = "1.8.24"
+BASH = shutil.which("bash")
+
+
+class SplitServiceMacInstaller(unittest.TestCase):
+    def test_split_wrapper_pins_the_payload_and_verifies_it_before_the_setup_role_runs(self):
+        pins = ("a" * 64, "b" * 64, "c" * 64)
+        for target, architecture in package.TARGETS.items():
+            with self.subTest(target=target):
+                files = package.split_installer_files(SPLIT_VERSION, target, *pins, 12)
+                script = files["Install AIRK.command"].decode()
+                readme = files["README.txt"].decode()
+                self.assertNotIn("@@", script + readme)
+                for name, pin in zip(("inventory_sha256", "roster_sha256", "airk_sha256"), pins):
+                    self.assertIn(f"{name}='{pin}'", script)
+                self.assertIn("file_count='12'", script)
+                self.assertIn(f'"$(/usr/bin/uname -m)" == "{architecture}"', script)
+                self.assertIn('"requested_by":"dmg"', script)
+                first_native = script.index('run_setup "$image" --plan')
+                for check in ("/usr/bin/codesign --verify --strict", "/usr/bin/shasum -a 256 -c -s payload.sha256",
+                              '"$airk_sha256"', '"$inventory_sha256"', "-links +1"):
+                    self.assertLess(script.index(check), first_native, check)
+                self.assertLess(script.index("--prepare"), script.index("( place )"))
+                for absent in ("sudo", "python", ".vsix", ".zshrc", ".bash_profile", "runtime-source"):
+                    self.assertNotIn(absent, script)
+                self.assertIn("Login startup is not implemented", readme)
+                self.assertIn("airkctl service uninstall --yes", readme)
+        target = next(iter(package.TARGETS))
+        for arguments in ((SPLIT_VERSION, "unknown", *pins, 12), ("1.8.14", target, *pins, 12),
+                          (SPLIT_VERSION, target, "a;whoami", pins[1], pins[2], 12),
+                          (SPLIT_VERSION, target, *pins, "12"), (SPLIT_VERSION, target, *pins, 0)):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                package.split_installer_files(*arguments)
+
+    @unittest.skipIf(BASH is None, "bash is not available on this host")
+    def test_split_wrapper_is_valid_bash(self):
+        script = package.split_installer_files(SPLIT_VERSION, next(iter(package.TARGETS)), "a" * 64, "b" * 64,
+                                               "c" * 64, 3)["Install AIRK.command"]
+        # On stdin, so a bash that cannot open host paths (WSL's launcher) still checks it.
+        result = subprocess.run([BASH, "-n"], input=script, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
+    def test_split_staging_places_the_signed_bundle_notices_and_inventory(self):
+        target = "aarch64-apple-darwin"
+        source = {"sha256": "1" * 64, "files": 4}
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            _, build = native_tests.split_runtime(runtime, target, source)
+            files, _ = native.validate_runtime(runtime, SPLIT_VERSION, target, source)
+            contents = base / "contents"
+            inventory, wrappers = package.stage_service(runtime.resolve(), contents, files, SPLIT_VERSION, target,
+                                                        build["admin_assets"])
+            self.assertEqual({path.name for path in contents.iterdir()},
+                             {"Install AIRK.command", "README.txt", "payload.sha256", "payload"})
+            self.assertEqual((contents / "Install AIRK.command").read_bytes(), wrappers["Install AIRK.command"])
+            bundle = {name for name in files if name.startswith("AIRK.app/")}
+            legal = {"notices/" + name for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md")}
+            notices = {name for name in files if name.startswith("notices/")}
+            self.assertEqual(set(inventory["files"]), bundle | legal | notices)
+            self.assertEqual(inventory["executables"], {"airk": "AIRK.app/Contents/MacOS/airk",
+                                                        "airkctl": "AIRK.app/Contents/MacOS/airkctl"})
+            self.assertEqual(inventory["signing"], {"platform": "macos", "team_id": "5PX7D99PXA"})
+            self.assertEqual((inventory["schema"], inventory["target"]), ("airk-service-payload/1", target))
+            self.assertEqual(inventory["admin_assets"], {"inventory_sha256": build["admin_assets"]["inventory_sha256"],
+                                                         "bundle_sha256": build["admin_assets"]["bundle_sha256"]})
+            placed = contents / "payload/payload-inventory.json"
+            self.assertEqual(json.loads(placed.read_bytes()), inventory)
+            script = wrappers["Install AIRK.command"].decode()
+            self.assertIn(f"inventory_sha256='{hashlib.sha256(placed.read_bytes()).hexdigest()}'", script)
+            self.assertIn(f"file_count='{len(inventory['files']) + 1}'", script)
+            if os.name != "nt":
+                self.assertEqual((contents / "payload/AIRK.app/Contents/MacOS/airkctl").stat().st_mode & 0o777, 0o755)
+            with self.assertRaisesRegex(ValueError, "outside the service layout"):
+                package.service_layout(runtime.resolve(), {"airk-embed": "0" * 64}, base / "refused")
 
 
 if __name__ == "__main__":

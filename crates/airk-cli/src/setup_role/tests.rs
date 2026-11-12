@@ -260,3 +260,113 @@ fn program_relative_paths_stay_inside() {
 fn this_airk_pairs_with_airkctls_i2_contract() {
     assert_eq!(super::I2_CONTRACT, airkctl::contract::I2_CONTRACT);
 }
+
+#[test]
+fn the_unix_installers_link_receipt_is_owned_program_content() {
+    let listed: BTreeSet<String> = ["bin/airkctl", "service/airk"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let entries = vec![
+        "airkctl-link-owner.txt".to_owned(),
+        "bin/airkctl".to_owned(),
+    ];
+    assert!(plan::foreign_program_entries(&entries, &listed).is_empty());
+}
+
+#[test]
+fn only_macos_and_linux_removals_delete_program_files() {
+    assert!(!plan::removes_program_files(plan::Host::Windows));
+    assert!(plan::removes_program_files(plan::Host::Linux));
+    assert!(plan::removes_program_files(plan::Host::Macos));
+}
+
+#[test]
+fn a_link_receipt_owns_only_a_local_bin_link_to_this_airkctl() {
+    let base = base();
+    let airkctl = PathBuf::from(format!("{base}/.local/lib/airk-service/bin/airkctl"));
+    let link = format!("{base}/.local/bin/airkctl");
+    let receipt = |link: &str, target: &str| format!("airk-airkctl-link/1\n{link}\n{target}\n");
+    let target = airkctl.display().to_string();
+    assert_eq!(
+        plan::owned_link(&receipt(&link, &target), &airkctl),
+        Ok(PathBuf::from(&link))
+    );
+    assert_eq!(
+        plan::owned_link(&receipt(&link, "/elsewhere/bin/airkctl"), &airkctl),
+        Err("link_receipt_foreign")
+    );
+    for bad in [
+        receipt("relative/.local/bin/airkctl", &target),
+        receipt(&format!("{base}/.local/bin/other"), &target),
+        receipt(&format!("{base}/x/../.local/bin/airkctl"), &target),
+        format!("airk-airkctl-link/2\n{link}\n{target}\n"),
+        format!("airk-airkctl-link/1\n{link}\n{target}"),
+        format!("airk-airkctl-link/1\n{link}\n{target}\nextra\n"),
+        String::new(),
+    ] {
+        assert_eq!(
+            plan::owned_link(&bad, &airkctl),
+            Err("link_receipt_malformed"),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn a_link_is_removed_only_while_it_points_at_this_airkctl() {
+    use plan::{LinkAction, LinkObservation};
+    let airkctl = PathBuf::from(format!("{}/program/bin/airkctl", base()));
+    assert_eq!(
+        plan::link_action(&LinkObservation::Link(airkctl.clone()), &airkctl),
+        LinkAction::Remove
+    );
+    assert_eq!(
+        plan::link_action(&LinkObservation::Absent, &airkctl),
+        LinkAction::AlreadyGone
+    );
+    assert!(matches!(
+        plan::link_action(
+            &LinkObservation::Link(PathBuf::from("/usr/bin/airkctl")),
+            &airkctl
+        ),
+        LinkAction::Leave(_)
+    ));
+    assert!(matches!(
+        plan::link_action(&LinkObservation::Other, &airkctl),
+        LinkAction::Leave(_)
+    ));
+}
+
+#[test]
+fn program_removal_deletes_the_running_airk_last_and_folders_deepest_first() {
+    let listed: BTreeSet<String> = [
+        "AIRK.app/Contents/Info.plist",
+        "AIRK.app/Contents/MacOS/airk",
+        "AIRK.app/Contents/MacOS/airkctl",
+        "notices/LICENSE",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let order = plan::program_removal(&listed, "AIRK.app/Contents/MacOS/airk");
+    assert_eq!(
+        order,
+        vec![
+            "AIRK.app/Contents/Info.plist".to_owned(),
+            "AIRK.app/Contents/MacOS/airkctl".to_owned(),
+            "notices/LICENSE".to_owned(),
+            "payload-inventory.json".to_owned(),
+            "AIRK.app/Contents/MacOS/airk".to_owned(),
+        ]
+    );
+    assert_eq!(
+        plan::program_folders(&order),
+        vec![
+            "AIRK.app/Contents/MacOS".to_owned(),
+            "AIRK.app/Contents".to_owned(),
+            "AIRK.app".to_owned(),
+            "notices".to_owned(),
+        ]
+    );
+}

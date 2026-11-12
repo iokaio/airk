@@ -1,30 +1,253 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-# Offline unsigned installer. Release checksums establish integrity, not a signature.
+# AIRK Service @VERSION@ for Linux x86-64 (split plan section 9). Per user; no administrator rights.
+# This package is unsigned: integrity rests on the digests pinned below, the
+# release checksums and GitHub attestations, not on an OS code signature.
+#
+# The script verifies the package before any native program runs, places the
+# section 9.5 layout (bin/airkctl, service/airk, notices/, payload-inventory.json)
+# and hands every other step to the packaged airk's private setup role through
+# one airk-setup-operation/1 file: predecessor removal, login startup, the
+# install record and pointer, and the service start. When ~/.local/bin exists
+# it adds one receipt-owned airkctl link there. It never edits shell startup
+# files. Uninstall with "airkctl service uninstall --yes".
 set -eu
 umask 077
+LC_ALL=C
+export LC_ALL
 
-fail() { printf '%s\n' "AIRK installer: $*" >&2; exit 1; }
-[ "$(uname -s)" = Linux ] || fail 'this package is for Linux.'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail 'this package requires Linux x86-64.' ;; esac
-command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required.'
-command -v find >/dev/null 2>&1 || fail 'find is required.'
+version='@VERSION@'
+inventory_sha256='@INVENTORY_SHA256@'
+roster_sha256='@PAYLOAD_SUMS_SHA256@'
+airk_sha256='@AIRK_SHA256@'
+file_count='@PAYLOAD_FILE_COUNT@'
 
-package_dir=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd)
+fail() { printf 'AIRK installer: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    cat <<'EOF'
+Usage: ./install.sh [options]
+
+  --program-dir DIR   program folder (default ~/.local/lib/airk-service)
+  --data-dir DIR      index data (default ~/.local/share/airk/indexes)
+  --state-dir DIR     service state (default ~/.local/state/airk/service)
+  --cache-dir DIR     cache (default ~/.cache/airk/service)
+  --logs-dir DIR      logs (default ~/.local/state/airk/service-logs)
+  --acknowledge-reset confirm that earlier AIRK installations and their
+                      indexes are removed (required unattended when found)
+  --yes               unattended: no prompts; take the options and defaults
+  --no-login-startup  do not start AIRK Service at login
+  --no-start          do not start AIRK Service after installing
+  --help              show this help
+A later install defaults to the locations already in use.
+EOF
+}
+
+program='' data='' state='' cache='' logs=''
+acknowledged=false unattended=false login=true start=true
+while [ $# -gt 0 ]; do
+    case $1 in
+        --program-dir|--data-dir|--state-dir|--cache-dir|--logs-dir)
+            [ $# -ge 2 ] || fail "$1 needs a folder."
+            name=${1#--}; name=${name%-dir}; value=$2; shift 2 ;;
+        --program-dir=*|--data-dir=*|--state-dir=*|--cache-dir=*|--logs-dir=*)
+            name=${1%%=*}; name=${name#--}; name=${name%-dir}; value=${1#*=}; shift ;;
+        --acknowledge-reset) acknowledged=true; shift; continue ;;
+        --yes) unattended=true; shift; continue ;;
+        --no-login-startup) login=false; shift; continue ;;
+        --no-start) start=false; shift; continue ;;
+        -h|--help) usage; exit 0 ;;
+        *) fail "unknown option $1 (see --help)." ;;
+    esac
+    case $name in
+        program) program=$value ;; data) data=$value ;; state) state=$value ;;
+        cache) cache=$value ;; logs) logs=$value ;;
+    esac
+done
+
+for tool in sha256sum find od tr sed head cut cp mv chmod mkdir mktemp date id uname wc readlink ln rm; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required."
+done
+
+# ---------- Verify the package before the first native execution ----------
+package_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
 cd -- "$package_dir"
-[ -f payload.sha256 ] && [ ! -L payload.sha256 ] || fail 'the payload checksum roster is missing or linked.'
-printf '%s  %s\n' '@PAYLOAD_SUMS_SHA256@' payload.sha256 | sha256sum --check --strict --status \
+[ -f payload.sha256 ] && [ ! -L payload.sha256 ] \
+    || fail 'the payload checksum roster is missing or linked; extract the complete package again.'
+printf '%s  %s\n' "$roster_sha256" payload.sha256 | sha256sum --check --strict --status \
     || fail 'the payload checksum roster changed. Download the complete package again.'
-[ -d runtime ] && [ ! -L runtime ] || fail 'the runtime directory is missing or linked.'
-unsafe=$(find runtime \( -type l -o \( ! -type f ! -type d \) -o \( -type f -links +1 \) \) -print -quit)
-[ -z "$unsafe" ] || fail 'the runtime contains linked or special files.'
-count=$(find runtime -type f -printf '.\n' | wc -l | tr -d '[:space:]')
-[ "$count" = '@PAYLOAD_FILE_COUNT@' ] || fail 'the runtime file roster changed.'
+[ -d payload ] && [ ! -L payload ] || fail 'the payload folder is missing or linked.'
+unsafe=$(find payload \( -type l -o \( ! -type f ! -type d \) -o \( -type f -links +1 \) \) -print | head -n 1)
+[ -z "$unsafe" ] || fail "the payload contains a linked or special file: $unsafe"
+count=$(find payload -type f -print | wc -l | tr -d '[:space:]')
+[ "$count" = "$file_count" ] || fail 'the payload file roster changed. Download the complete package again.'
 sha256sum --check --strict --status payload.sha256 \
-    || fail 'runtime bytes differ from this installer. Download the complete package again.'
-[ -x runtime/airk ] || fail 'the native executable is not executable; extract the complete tar.gz package again.'
+    || fail 'payload bytes differ from this installer. Download the complete package again.'
+printf '%s  %s\n' "$inventory_sha256" payload/payload-inventory.json | sha256sum --check --strict --status \
+    || fail 'the payload inventory differs from this installer.'
+printf '%s  %s\n' "$airk_sha256" payload/service/airk | sha256sum --check --strict --status \
+    || fail 'the packaged AIRK service image changed. Download the complete package again.'
 
-printf '%s\n' 'AIRK @VERSION@ — unsigned Linux CLI/native-server installer.'
-printf '%s\n' 'The native setup guide reviews installation, saved indexes and coding-agent connections. No editor extension is installed.'
-exec "$package_dir/runtime/airk" setup --runtime-source "$package_dir/runtime" \
-    --approved-sha256 '@INSTALL_MANIFEST_SHA256@' "$@"
+[ "$(uname -s)" = Linux ] || fail 'this package is for Linux x86-64.'
+case $(uname -m) in x86_64|amd64) ;; *) fail 'this package is for Linux x86-64.' ;; esac
+[ -x payload/service/airk ] && [ -x payload/bin/airkctl ] \
+    || fail 'the packaged executables lost their mode; extract the complete tar.gz package again.'
+
+# ---------- Locations (U39) ----------
+# Defaults follow HOME; the install pointer is at the account's passwd home
+# (docs/split/contracts.md section 5.2), as setup reads it.
+passwd_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)
+home=${HOME:-}
+case $home in /?*) ;; *) home=$passwd_home ;; esac
+case $home in /?*) ;; *) fail 'the home folder of this account could not be determined.' ;; esac
+xdg() { case ${1:-} in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$home" "$2" ;; esac; }
+d_program="$home/.local/lib/airk-service"
+d_data="$(xdg "${XDG_DATA_HOME:-}" .local/share)/airk/indexes"
+d_state="$(xdg "${XDG_STATE_HOME:-}" .local/state)/airk/service"
+d_cache="$(xdg "${XDG_CACHE_HOME:-}" .cache)/airk/service"
+d_logs="$(xdg "${XDG_STATE_HOME:-}" .local/state)/airk/service-logs"
+
+# A later install keeps the locations already in use (section 9.2). The
+# pointer and record are canonical one-line JSON written by setup; setup
+# verifies them again, so a value read here is only a default.
+pointer="${passwd_home:-$home}/.config/airk/install-pointer/current.json"
+field() { printf '%s\n' "$2" | sed -n 's/.*"'"$1"'":"\([^"\\]*\)".*/\1/p' | head -n 1; }
+if [ -f "$pointer" ] && [ ! -L "$pointer" ]; then
+    previous=$(field program "$(head -c 4096 -- "$pointer")")
+    record="$previous/install-record.json"
+    if [ -n "$previous" ] && [ -f "$record" ] && [ ! -L "$record" ]; then
+        located=$(head -c 65536 -- "$record" | sed -n 's/.*"locations":{\([^}]*\)}.*/\1/p')
+        if [ -n "$located" ]; then
+            d_program=$previous
+            for role in data state cache logs; do
+                found=$(field "$role" "$located")
+                [ -z "$found" ] || eval "d_$role=\$found"
+            done
+        fi
+    fi
+fi
+
+interactive=false
+if [ "$unattended" = false ] && [ -t 0 ]; then interactive=true; fi
+ask() {
+    answer=''
+    if [ "$interactive" = true ]; then
+        printf '%s [%s]: ' "$2" "$3" >&2
+        IFS= read -r answer || answer=''
+    fi
+    [ -n "$answer" ] || answer=$3
+    eval "$1=\$answer"
+}
+[ -n "$program" ] || ask program 'Program folder' "$d_program"
+[ -n "$data" ] || ask data 'Index data' "$d_data"
+[ -n "$state" ] || state=$d_state
+[ -n "$cache" ] || ask cache 'Cache' "$d_cache"
+[ -n "$logs" ] || ask logs 'Logs' "$d_logs"
+
+# Setup refuses anything but canonical JSON; these characters keep each path
+# a plain JSON string. Setup validates ownership, links and nesting (U39/U50).
+for role in program data state cache logs; do
+    eval "value=\$$role"
+    while [ "$value" != / ] && [ "${value%/}" != "$value" ]; do value=${value%/}; done
+    case $value in /?*) ;; *) fail "the $role location must be an absolute folder: $value" ;; esac
+    case $value in *[![:print:]]*|*\"*|*\\*) fail "the $role location must use printable ASCII without quotes or backslashes: $value" ;; esac
+    eval "$role=\$value"
+done
+
+# ---------- Setup operations (airk-setup-operation/1) ----------
+work=$(mktemp -d "${TMPDIR:-/tmp}/airk-install.XXXXXXXXXX") || fail 'no temporary folder.'
+trap 'rm -rf -- "$work"' EXIT
+sequence=0
+write_operation() { # kind acknowledged login trust start
+    sequence=$((sequence + 1))
+    folder="$work/operation-$sequence"
+    mkdir -m 700 -- "$folder"
+    cp -- payload/payload-inventory.json "$folder/payload-inventory.json"
+    id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    [ "${#id}" -eq 32 ] || fail 'could not create an operation identity.'
+    created=$(( $(date +%s) * 1000 ))
+    operation="$folder/operation.json"
+    printf '{"schema":"airk-setup-operation/1","operation_id":"%s","kind":"%s","created_unix_ms":%s,"expires_unix_ms":%s,"requested_by":"install-sh","acknowledgements":{"predecessor_removal":%s,"index_reset":%s},"locations":{"program":"%s","data":"%s","state":"%s","cache":"%s","logs":"%s"},"payload_inventory_sha256":"%s","options":{"login_startup":%s,"trust":"%s","start":%s,"delete_indexes":"keep"}}\n' \
+        "$id" "$1" "$created" "$((created + 600000))" "$2" "$2" \
+        "$program" "$data" "$state" "$cache" "$logs" "$inventory_sha256" "$3" "$4" "$5" > "$operation"
+}
+setup_failure() {
+    if [ -s "$folder/error.txt" ]; then cat -- "$folder/error.txt" >&2; else cat -- "$work/setup.err" >&2; fi
+}
+run_setup() { # image [mode]
+    if "$1" __airk_role setup --operation "$operation" ${2:+"$2"} >"$work/setup.out" 2>"$work/setup.err"; then
+        return 0
+    fi
+    return 1
+}
+image="$package_dir/payload/service/airk"
+
+# U13 disclosure: setup --plan reports what it found; nothing changes.
+write_operation install false false skip false
+run_setup "$image" --plan || { setup_failure; fail 'setup could not review this installation.'; }
+plan=$(cat -- "$folder/plan.json")
+tr -d '\r' < "$folder/plan.txt"
+case $plan in *'"location_problems":[]'*) ;; *) fail 'choose other locations (see above).' ;; esac
+case $plan in *'"removed":true'*) needs_acknowledgement=true ;; *) needs_acknowledgement=false ;; esac
+printf 'AIRK Service %s will be installed in %s\n  index data %s\n  state %s\n  cache %s\n  logs %s\n' \
+    "$version" "$program" "$data" "$state" "$cache" "$logs"
+if [ "$needs_acknowledgement" = true ] && [ "$acknowledged" = false ]; then
+    [ "$interactive" = true ] \
+        || fail 'pass --acknowledge-reset to confirm that earlier AIRK installations and their indexes are removed.'
+    printf 'Type "yes" to remove the earlier AIRK installations and their indexes: ' >&2
+    IFS= read -r reply || reply=''
+    [ "$reply" = yes ] || fail 'cancelled; nothing was changed.'
+    acknowledged=true
+elif [ "$interactive" = true ]; then
+    printf 'Continue? [Y/n] ' >&2
+    IFS= read -r reply || reply=''
+    case $reply in ''|y|Y|yes) ;; *) fail 'cancelled; nothing was changed.' ;; esac
+fi
+
+# Retirement and the drain run before any file is replaced (section 9.6).
+write_operation install "$acknowledged" "$login" ask "$start"
+run_setup "$image" --prepare || { setup_failure; fail 'setup did not prepare the installation; nothing was placed.'; }
+
+# ---------- Place the section 9.5 layout ----------
+place() {
+    umask 022
+    while read -r _ path; do
+        relative=${path#payload/}
+        target="$program/$relative"
+        mkdir -p -- "$(dirname -- "$target")"
+        case $relative in service/airk|bin/airkctl) mode=755 ;; *) mode=644 ;; esac
+        # A new name, then a rename: a running image is never written in place.
+        cp -- "$path" "$target.airk-new" && chmod "$mode" "$target.airk-new" \
+            && mv -f -- "$target.airk-new" "$target" \
+            || { rm -f -- "$target.airk-new"; return 1; }
+    done < payload.sha256
+}
+place || fail "files could not be placed in $program; running install.sh again repairs the installation."
+printf '%s  %s\n' "$airk_sha256" "$program/service/airk" | sha256sum --check --strict --status \
+    || fail 'the installed service image changed; its files were preserved.'
+
+# The same operation resumes from its receipt with the placed image.
+if ! run_setup "$program/service/airk"; then
+    setup_failure
+    fail 'AIRK Service files are installed, but setup did not complete. Run "airkctl service status"; running install.sh again repairs the installation.'
+fi
+cat -- "$work/setup.out"
+
+# ---------- airkctl on PATH: one receipt-owned link, no shell startup edits ----------
+airkctl="$program/bin/airkctl"
+bin="$home/.local/bin"
+link="$bin/airkctl"
+receipt="$program/airkctl-link-owner.txt"
+if [ -d "$bin" ] && [ ! -L "$bin" ]; then
+    if [ -L "$link" ] && [ "$(readlink -- "$link")" = "$airkctl" ]; then
+        [ -f "$receipt" ] || printf '%s already links to %s; it is not claimed by this installation.\n' "$link" "$airkctl"
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+        printf '%s exists and was left unchanged. airkctl is %s\n' "$link" "$airkctl"
+    else
+        printf 'airk-airkctl-link/1\n%s\n%s\n' "$link" "$airkctl" > "$receipt"
+        ln -s -- "$airkctl" "$link" || { rm -f -- "$receipt"; printf 'airkctl is %s\n' "$airkctl"; }
+    fi
+else
+    printf 'airkctl is %s (add its folder to PATH yourself; no shell startup file was changed).\n' "$airkctl"
+fi
+printf 'AIRK Service %s is installed. Open the admin pages with: airkctl admin open\n' "$version"
