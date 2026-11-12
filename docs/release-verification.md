@@ -26,6 +26,8 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 
    The macOS and Linux targets are `darwin-arm64`/`aarch64-apple-darwin`, `darwin-x64`/`x86_64-apple-darwin` and `linux-x64`/`x86_64-unknown-linux-gnu`.
 
+   From 1.8.24 (the split service and extension) a release has one universal VSIX, so download `airk-<version>.vsix*` instead of the platform VSIX; the platform patterns then also fetch the stable channel's AIRK Service installer and its manifest. For a split release the verifier checks that the VSIX has no native code, that the pair ZIP's `airk` and `airkctl` match the native manifest, and that the installer manifest binds the installer bytes, this pair and its pinned service payload inventory; for Linux it also reads every installer archive member. It does not open Windows or macOS installers.
+
 2. Resolve the expected source commit from a clone you trust: `git rev-parse "v1.8.7^{commit}"`.
 
 3. Run the read-only verifier from a checkout of this repository:

@@ -28,6 +28,10 @@ TEAM = "5PX7D99PXA"
 # Public leaf certificate observed on the independently verified Neo app and
 # standalone launcher. Renewal/rotation requires a reviewed pin and P12 update.
 CERTIFICATE_SHA256 = "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1"
+# The split threshold's one owner (C7), loaded beside this file.
+_RECEIPTS = importlib.util.spec_from_file_location("ci_macos_split_receipts", Path(__file__).with_name("split_receipts.py"))
+receipts = importlib.util.module_from_spec(_RECEIPTS)
+_RECEIPTS.loader.exec_module(receipts)
 
 
 def runner_directory():
@@ -118,7 +122,7 @@ def verify_signed_output(output, paired, sha1):
         if receipt.get("schema") != "airk-service-pair-signing/1" or not isinstance(components, dict) or not 1 <= len(components) <= 8:
             raise ValueError("Invalid signed-pair certificate audit input")
         if any(not isinstance(name, str) or not re.fullmatch(
-                r"AIRK\.app/Contents/MacOS/(?:airk|airk-embed|airk-launcher-image|libonnxruntime\.dylib)", name)
+                r"AIRK\.app/Contents/MacOS/(?:airk|airkctl|airk-embed|airk-launcher-image|libonnxruntime\.dylib)", name)
                 for name in components):
             raise ValueError("Invalid signed-pair certificate audit component")
         paths = ["runtime/" + name for name in components] + ["runtime/AIRK.app"]
@@ -170,11 +174,14 @@ def qualify_signed_runtime(output, paired, target):
     modern = builder.single_image_version(version)
     if descriptor.get("schema") == 1 and not modern:
         return None
-    if descriptor.get("schema") != 2:
+    split = receipts.split_version(version)
+    if descriptor.get("schema") != (3 if split else 2):
         raise ValueError("Unsupported signed runtime schema for installation probes")
     if not modern or "apple" not in target:
         raise ValueError("Signed single-image probes require a modern Mac runtime")
     files, _ = package.validate_runtime(runtime, version, target, builder.source_identity())
+    if split:
+        return qualify_signed_pair(output, runtime, version, target, package, builder, files)
     report = {"schema": "airk-macos-post-sign-validation/1", "target": target, "version": version,
               "install_manifest_sha256": package.sha256(runtime / "airk-install.json"),
               "executable_sha256": files["AIRK.app/Contents/MacOS/airk"],
@@ -209,6 +216,49 @@ def qualify_signed_runtime(output, paired, target):
         report["status"] = "passed"
     except Exception as error:
         # Do not copy arbitrary child output or secrets into a signing receipt.
+        report["status"] = "failed"
+        report["failure_stage"] = stage
+        report["failure_type"] = type(error).__name__
+        save()
+        print("Signed Mac runtime execution failed: " + json.dumps(report, sort_keys=True))
+        raise
+    save()
+    print("Verified signed Mac runtime execution: " + json.dumps(report, sort_keys=True))
+    return report
+
+
+def qualify_signed_pair(output, runtime, version, target, package, builder, files):
+    """Split pair (schema 3): execute the signed service image's embedded-model probe and the
+    nested signed airkctl's --version inside the sealed app. Installation belongs to the setup
+    role through the installer (Install AIRK.command); check-service-install.py still drives the
+    pre-split `airk` user commands (ci.yml harness row), so it is not run on a split pair here."""
+    cli = "AIRK.app/Contents/MacOS/airkctl"
+    report = {"schema": "airk-macos-post-sign-validation/1", "target": target, "version": version,
+              "install_manifest_sha256": package.sha256(runtime / "airk-install.json"),
+              "executable_sha256": files["AIRK.app/Contents/MacOS/airk"], "airkctl_sha256": files[cli],
+              "scope": "signed embedded-model and nested airkctl execution; installation, GUI approval and agent trust are separate",
+              "stages": []}
+    receipt = output / "post-sign-validation.json"
+    def save():
+        receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    save()
+    stage = "signed_embedded_model"
+    try:
+        report["model_smoke"] = builder.verify_model_smoke(runtime, "macos", version)
+        report["stages"].append("signed_embedded_model_passed")
+        save()
+        stage = "signed_airkctl_version"
+        environment = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
+        result = subprocess.run([str(runtime / cli), "--version"], cwd=ROOT, env=environment, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=30)
+        if result.returncode or result.stdout.strip() != "airkctl " + version:
+            raise RuntimeError("Signed nested airkctl did not report its version")
+        report["stages"].append("signed_airkctl_version_passed")
+        stage = "signed_payload_inventory"
+        if package.inventory(runtime) != files:
+            raise RuntimeError("Signed payload changed during post-sign probes")
+        report["status"] = "passed"
+    except Exception as error:
         report["status"] = "failed"
         report["failure_stage"] = stage
         report["failure_type"] = type(error).__name__

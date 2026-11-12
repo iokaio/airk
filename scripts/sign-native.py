@@ -287,6 +287,9 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     pair["airk_sha256"] = digest(runtime / executables[0])
     if pair["schema"] == 1:
         pair["embed_sha256"] = digest(runtime / executables[1])
+    elif pair["schema"] == 3:
+        # Split pair (C7 schema 3): both signed images are recorded; nothing else in it changes.
+        pair["airkctl_sha256"] = digest(runtime / executables[1])
     (runtime / "airk-runtime.json").write_text(json.dumps(pair, indent=2) + "\n", encoding="utf-8")
     original_build["runtime"] = pair
     (runtime / "airk-build.json").write_text(json.dumps(original_build, indent=2) + "\n", encoding="utf-8")
@@ -391,7 +394,9 @@ def main():
     source = args.source_file or ROOT / "target" / args.target / "release" / ("airk.exe" if windows else "airk")
     if args.source_file:
         source = source.resolve(strict=True)
-        expected = ("airk.exe", "airk-embed.exe") if windows else ("airk", "airk-embed", "airk-launcher-image", "libonnxruntime.dylib")
+        # Split pairs (split_receipts.IMAGES) sign airkctl beside airk as nested code.
+        expected = (("airk.exe", "airk-embed.exe", "airkctl.exe") if windows
+                    else ("airk", "airk-embed", "airk-launcher-image", "libonnxruntime.dylib", "airkctl"))
         owner = source.parent
         if not windows and source.parent.name == "MacOS":
             owner = source.parents[3]

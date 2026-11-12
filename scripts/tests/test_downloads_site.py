@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Download links must select published AIRK packages without exposing other files."""
 import copy
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -24,6 +26,90 @@ def release(build=1, *, preview=True, published="2026-10-14T10:00:00Z"):
             "assets": [{"name": name, "state": "uploaded", "size": 1234, "digest": "sha256:" + "a" * 64,
                         "browser_download_url": f"{site.GITHUB}/releases/download/{tag}/{name}"}
                        for name in names]}
+
+
+SPLIT = "1.8.24"
+# Reviewed split release catalog (split plan §9.4, §10.5.4), checked in rather than derived.
+SPLIT_TARGETS = ("x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu")
+SPLIT_PREVIEW = {"airk-1.8.24.vsix", "airk-1.8.24.vsix-manifest.json",
+                 *(f"airk-1.8.24-{target}{suffix}" for target in SPLIT_TARGETS for suffix in (".zip", ".native-manifest.json"))}
+SPLIT_STABLE = SPLIT_PREVIEW | {
+    "airk-1.8.24-x86_64-pc-windows-msvc-installer.exe", "airk-1.8.24-aarch64-apple-darwin-installer.dmg",
+    "airk-1.8.24-x86_64-apple-darwin-installer.dmg", "airk-1.8.24-x86_64-unknown-linux-gnu-installer.tar.gz",
+    *(f"airk-1.8.24-{target}-installer.manifest.json" for target in SPLIT_TARGETS)}
+
+
+def split_release(*, preview=False, published="2026-11-12T10:00:00Z", names=None):
+    """A published split release and its own release.json bytes."""
+    tag = "v" + SPLIT
+    names = set(names if names is not None else (SPLIT_PREVIEW if preview else SPLIT_STABLE))
+    digests = {name: hashlib.sha256(name.encode()).hexdigest() for name in names}
+    record = json.dumps({"schema": "airk-github-release/1", "tag": tag, "package_version": SPLIT,
+                         "channel": "preview" if preview else "stable", "assets": digests}).encode()
+    digests["release.json"] = hashlib.sha256(record).hexdigest()
+    digests.update({name: "e" * 64 for name in ("release-notes.md", "SHA256SUMS")})
+    assets = [{"id": index + 1, "name": name, "state": "uploaded", "size": 1234, "digest": "sha256:" + value,
+               "browser_download_url": f"{site.GITHUB}/releases/download/{tag}/{name}"}
+              for index, (name, value) in enumerate(sorted(digests.items()))]
+    return {"tag_name": tag, "draft": False, "prerelease": preview, "published_at": published, "assets": assets}, record
+
+
+class SplitDownloadTests(unittest.TestCase):
+    def test_split_release_presents_service_installers_then_one_universal_extension(self):
+        item, record = split_release()
+        fetched = []
+        def fetch(release):
+            fetched.append(release["tag_name"])
+            return record
+        records = site.select_releases([item, release(preview=False, published="2026-10-01T10:00:00Z")], fetch)
+        self.assertEqual(fetched, ["v1.8.24"])
+        html = site.render_downloads(records)
+        self.assertLess(html.index("Step 1 · Install AIRK Service"), html.index("Step 2 · Install VS Code Extension"))
+        self.assertEqual(html.count(">Download installer "), 4)
+        for name in ("airk-1.8.24-x86_64-pc-windows-msvc-installer.exe", "airk-1.8.24-aarch64-apple-darwin-installer.dmg",
+                     "airk-1.8.24-x86_64-apple-darwin-installer.dmg", "airk-1.8.24-x86_64-unknown-linux-gnu-installer.tar.gz",
+                     "airk-1.8.24-x86_64-unknown-linux-gnu-installer.manifest.json", "airk-1.8.24-x86_64-pc-windows-msvc.zip",
+                     "airk-1.8.24.vsix", "airk-1.8.24.vsix-manifest.json"):
+            self.assertIn(f"{site.GITHUB}/releases/download/v1.8.24/{name}\"", html)
+        self.assertEqual(html.count(">Download VSIX "), 1)
+        self.assertNotIn("win32-x64.vsix", html)
+        self.assertNotIn("not verified", html)
+
+    def test_split_assets_without_their_verified_build_record_are_not_advertised(self):
+        item, _ = split_release()
+        html = site.render_downloads(site.select_releases([item]))
+        self.assertEqual(html.count('aria-disabled="true">Installer not verified'), 4)
+        self.assertIn('aria-disabled="true">Extension not verified', html)
+        self.assertNotIn("Download installer", html)
+        self.assertNotIn("/v1.8.24/airk-1.8.24", html)
+
+    def test_split_digest_or_record_disagreement_fails(self):
+        item, record = split_release()
+        changed = copy.deepcopy(item)
+        next(asset for asset in changed["assets"] if asset["name"].endswith("-installer.exe"))["digest"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(ValueError, "differ from the release build record"):
+            site.select_releases([changed], lambda release: record)
+        with self.assertRaisesRegex(ValueError, "release.json differs"):
+            site.select_releases([item], lambda release: record + b" ")
+        other = json.loads(record)
+        other["channel"] = "preview"
+        forged, forged_record = copy.deepcopy(item), json.dumps(other).encode()
+        next(asset for asset in forged["assets"] if asset["name"] == "release.json")["digest"] = \
+            "sha256:" + hashlib.sha256(forged_record).hexdigest()
+        with self.assertRaisesRegex(ValueError, "differ from the release build record"):
+            site.select_releases([forged], lambda release: forged_record)
+
+    def test_split_catalog_is_exact_per_channel(self):
+        preview, record = split_release(preview=True)
+        html = site.render_downloads(site.select_releases([preview], lambda release: record))
+        self.assertEqual(html.count('aria-disabled="true">Installer not published'), 4)
+        self.assertEqual(html.count(">Download VSIX "), 1)
+        for names, reason in ((SPLIT_STABLE - {"airk-1.8.24-x86_64-apple-darwin-installer.dmg"}, "incomplete"),
+                              (SPLIT_STABLE | {"airk-1.8.24-win32-x64.vsix"}, "unexpected"),
+                              (SPLIT_STABLE - {"airk-1.8.24.vsix"}, "incomplete")):
+            item, record = split_release(names=names)
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
+                site.select_releases([item], lambda release: record)
 
 
 class DownloadSiteTests(unittest.TestCase):

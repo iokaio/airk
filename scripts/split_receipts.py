@@ -457,20 +457,28 @@ def validate_vsix(document):
     return VSIX
 
 
+def release_assets(version, channel):
+    """The published asset names of one split release (release.json, notes and SHA256SUMS aside):
+    per target the pair zip and native manifest and, when required, the installer and its
+    manifest; one universal VSIX and its manifest."""
+    assets = {f"airk-{version}.vsix", f"airk-{version}.vsix-manifest.json"}
+    for target in TARGETS:
+        assets |= {f"airk-{version}-{target}.zip", f"airk-{version}-{target}.native-manifest.json"}
+        if standalone.required(version, channel):
+            assets |= {standalone.artifact(version, target), standalone.manifest(version, target)}
+    return assets
+
+
 def catalog_names(version, channel, commit, producer, release):
     """The complete producer, release-input and asset name sets for one release."""
     produced = f"{commit}-{producer['run_id']}-{producer['attempt']}"
     released = f"{commit}-{release['run_id']}"
     artifacts = {f"airk-native-{target}-{produced}" for target in TARGETS} | {f"airk-vsix-universal-{produced}"}
     inputs = {f"airk-vsix-universal-{released}"}
-    assets = {f"airk-{version}.vsix", f"airk-{version}.vsix-manifest.json"}
     for target in TARGETS:
         prefix = "airk" if platform_of(target)[0] == "linux" else "airk-signed"
         inputs |= {f"{prefix}-native-{target}-{released}", f"airk-source-{target}-{released}"}
-        assets |= {f"airk-{version}-{target}.zip", f"airk-{version}-{target}.native-manifest.json"}
-        if standalone.required(version, channel):
-            assets |= {standalone.artifact(version, target), standalone.manifest(version, target)}
-    return artifacts, inputs, assets
+    return artifacts, inputs, release_assets(version, channel)
 
 
 def _names(document, key, expected):

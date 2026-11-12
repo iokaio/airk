@@ -201,6 +201,72 @@ class HostedSigningContracts(unittest.TestCase):
                 signing.qualify_signed_runtime(Path("unused"), True, "aarch64-apple-darwin")
         execute.assert_not_called()
 
+    def split_probe_fixture(self, output, schema=3, version="1.8.24"):
+        runtime = output / "runtime"
+        names = ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl")
+        for name in names:
+            (runtime / name).parent.mkdir(parents=True, exist_ok=True)
+            (runtime / name).write_bytes(b"inert signed split image " + name.encode())
+        files = {name: hashlib.sha256((runtime / name).read_bytes()).hexdigest() for name in names}
+        builder = SimpleNamespace(single_image_version=Mock(return_value=True), source_identity=Mock(return_value="input seal"),
+                                  verify_model_smoke=Mock(return_value={"source": "embedded", "pipeline_digest": "a" * 64}))
+        package = SimpleNamespace(bounded_json=Mock(return_value={"schema": schema, "version": version}),
+                                  runtime_builder=Mock(return_value=builder), validate_runtime=Mock(return_value=(files, names)),
+                                  sha256=Mock(return_value="b" * 64), inventory=Mock(return_value=files))
+        spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda value: None))
+        return runtime, builder, package, spec
+
+    def test_split_signed_pair_probes_model_and_nested_airkctl_but_not_the_presplit_install_harness(self):
+        for reply in ("airkctl 1.8.24", "airkctl 1.8.23"):
+            with self.subTest(reply=reply), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                runtime, builder, package, spec = self.split_probe_fixture(output)
+                completed = subprocess.CompletedProcess([], 0, reply + "\n", "")
+                with patch.object(signing.importlib.util, "spec_from_file_location", return_value=spec), \
+                        patch.object(signing.importlib.util, "module_from_spec", return_value=package), \
+                        patch.object(signing.subprocess, "run", return_value=completed) as execute, patch("builtins.print"):
+                    if reply.endswith("1.8.24"):
+                        signing.qualify_signed_runtime(output, True, "aarch64-apple-darwin")
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "airkctl"):
+                            signing.qualify_signed_runtime(output, True, "aarch64-apple-darwin")
+                builder.verify_model_smoke.assert_called_once_with(runtime, "macos", "1.8.24")
+                self.assertEqual(execute.call_count, 1)
+                self.assertEqual(execute.call_args.args[0], [str(runtime / "AIRK.app/Contents/MacOS/airkctl"), "--version"])
+                self.assertFalse(set(signing.SECRET_NAMES) & execute.call_args.kwargs["env"].keys())
+                report = json.loads((output / "post-sign-validation.json").read_text())
+                self.assertNotIn("service_install", report)
+                if reply.endswith("1.8.24"):
+                    self.assertEqual(report["status"], "passed")
+                    self.assertEqual(report["stages"], ["signed_embedded_model_passed", "signed_airkctl_version_passed"])
+                else:
+                    self.assertEqual((report["status"], report["failure_stage"]), ("failed", "signed_airkctl_version"))
+
+    def test_split_version_requires_the_schema_3_pair_descriptor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, _, package, spec = self.split_probe_fixture(Path(temporary), schema=2)
+            with patch.object(signing.importlib.util, "spec_from_file_location", return_value=spec), \
+                    patch.object(signing.importlib.util, "module_from_spec", return_value=package), \
+                    patch.object(signing.subprocess, "run") as execute:
+                with self.assertRaisesRegex(ValueError, "schema"):
+                    signing.qualify_signed_runtime(Path(temporary), True, "aarch64-apple-darwin")
+            execute.assert_not_called()
+
+    def test_certificate_audit_covers_the_split_nested_airkctl(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            names = ["AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl"]
+            for name in names:
+                (output / "runtime" / name).parent.mkdir(parents=True, exist_ok=True)
+                (output / "runtime" / name).write_bytes(b"fictional signed bytes")
+            (output / "signing.json").write_text(json.dumps({"schema": "airk-service-pair-signing/1",
+                                                             "components": {name: {} for name in names}}), encoding="utf-8")
+            with patch.object(signing, "verify_signed_certificate") as verify, patch("builtins.print"):
+                audit = signing.verify_signed_output(output, True, PUBLIC_SHA1)
+            self.assertEqual(audit["signed_paths"], ["runtime/AIRK.app/Contents/MacOS/airk",
+                                                     "runtime/AIRK.app/Contents/MacOS/airkctl", "runtime/AIRK.app"])
+            self.assertEqual(verify.call_count, 3)
+
     def test_ref_event_and_host_guards_reject_untrusted_context(self):
         with tempfile.TemporaryDirectory() as temporary:
             environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",

@@ -248,14 +248,67 @@ def pair_vsix(directory, native_dir, files, native_receipt, executables):
     write_receipt(directory, receipt)
 
 
+# Reviewed split plan §9.5 program layout and I4 signing claims (checked-in; not derived from the packagers).
+SPLIT_LAYOUT_IMAGES = {"x86_64-pc-windows-msvc": {"airk.exe": "service/airk.exe", "airkctl.exe": "bin/airkctl.exe"},
+                       "x86_64-unknown-linux-gnu": {"airk": "service/airk", "airkctl": "bin/airkctl"}}
+SPLIT_EXECUTABLES = {"windows": {"airkctl": "bin/airkctl.exe", "airk": "service/airk.exe"},
+                     "linux": {"airk": "service/airk", "airkctl": "bin/airkctl"},
+                     "macos": {"airk": "AIRK.app/Contents/MacOS/airk", "airkctl": "AIRK.app/Contents/MacOS/airkctl"}}
+SPLIT_SIGNING_CLAIMS = {"windows": {"platform": "windows", "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+                                    "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"},
+                        "linux": {"platform": "linux", "signed": False, "integrity": "record-sha256"},
+                        "macos": {"platform": "macos", "team_id": "5PX7D99PXA"}}
+
+
+def split_installer_payload(files, target, version, artifact, admin=None, layout_change=None):
+    """Fictional split installer contents: payload/ (the §9.5 layout and its inventory) plus wrappers."""
+    os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
+    images = SPLIT_LAYOUT_IMAGES.get(target, {})
+    layout = {}
+    for name, data in files.items():
+        if name in ("airk-install.json", "airk-runtime.json", "airk-build.json"):
+            continue
+        layout[images.get(name, "notices/" + name if name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") else name)] = data
+    if os_name == "windows":
+        layout["notices/inno-setup/LICENSE.txt"] = b"Fictional compiler license"
+    sha = lambda data: release.hashlib.sha256(data).hexdigest()
+    inventory = {"schema": "airk-service-payload/1", "version": version, "channel": "stable", "target": target,
+                 "executables": SPLIT_EXECUTABLES[os_name],
+                 "files": {name: {"sha256": sha(data), "bytes": len(data)} for name, data in sorted(layout.items())},
+                 "admin_assets": admin or {"inventory_sha256": "3" * 64, "bundle_sha256": "4" * 64},
+                 "signing": SPLIT_SIGNING_CLAIMS[os_name]}
+    if layout_change:
+        layout.update(layout_change)
+    layout["payload-inventory.json"] = (json.dumps(inventory, indent=1) + "\n").encode()
+    payload = {"payload/" + name: data for name, data in layout.items()}
+    if os_name == "windows":
+        return payload
+    sums = "".join(f"{sha(payload[path])}  {path}\n" for path in sorted(payload)).encode()
+    payload["payload.sha256"] = sums
+    if os_name == "macos":
+        mac = release.module("test_split_installer_mac", "package-standalone-macos.py")
+        payload.update(mac.split_installer_files(version, target, sha(layout["payload-inventory.json"]), sha(sums),
+                                                 sha(layout["AIRK.app/Contents/MacOS/airk"]), len(layout)))
+    else:
+        linux = release.module("test_split_installer_linux", "package-standalone-linux.py")
+        values = {"VERSION": version, "ARCHIVE_NAME": artifact, "DIRECTORY_NAME": artifact.removesuffix(".tar.gz"),
+                  "PAYLOAD_FILE_COUNT": len(layout), "PAYLOAD_SUMS_SHA256": sha(sums),
+                  "INVENTORY_SHA256": sha(layout["payload-inventory.json"]), "AIRK_SHA256": sha(layout["service/airk"])}
+        payload.update({name: linux.render_template(name + ".in", values).encode() for name in ("install.sh", "README.txt")})
+    return payload
+
+
 class ServicePairReleaseContracts(unittest.TestCase):
-    def standalone_fixture(self, directory, target, version="1.8.14", make_pair=None):
+    def standalone_fixture(self, directory, target, version="1.8.14", make_pair=None, split_options=None):
         files, runtime, _ = (make_pair or pair_fixture)(directory / "native", target, target in release.SIGNED_TARGETS, version)
         output = directory / "installer"
         output.mkdir()
         artifact = release.standalone.artifact(version, target)
         payload = {"runtime/" + name: data for name, data in files.items()}
-        if "apple" in target:
+        split = release.receipts.split_version(version)
+        if split:
+            payload = split_installer_payload(files, target, version, artifact, **(split_options or {}))
+        elif "apple" in target:
             mac = release.module("test_installer_mac", "package-standalone-macos.py")
             payload.update(mac.installer_files(version, target, runtime["install_manifest_sha256"],
                                                runtime["payload"]["AIRK.app/Contents/MacOS/airk"]))
@@ -274,7 +327,7 @@ class ServicePairReleaseContracts(unittest.TestCase):
                 for name, encoded in payload.items():
                     info = tarfile.TarInfo(artifact.removesuffix(".tar.gz") + "/" + name)
                     info.size = len(encoded)
-                    info.mode = 0o755 if name in ("install.sh", "runtime/airk") else 0o644
+                    info.mode = 0o755 if name in ("install.sh", "runtime/airk", "payload/service/airk", "payload/bin/airkctl") else 0o644
                     archive.addfile(info, io.BytesIO(encoded))
         else:
             (output / artifact).write_bytes(b"Fictional OS installer; these tests assert no actual platform trust")
@@ -291,7 +344,7 @@ class ServicePairReleaseContracts(unittest.TestCase):
                 uninstaller={"identity": "c" * 40, "azure": release.signer.AZURE_SIGNING,
                     "unsigned_sha256": "1" * 64, "binary_sha256": "2" * 64, "verification": dict(verification)},
                 compiler={"version": "6.7.1.0", "sha256": "3" * 64},
-                installer_source_sha256=release.digest(release.ROOT / "installers/windows/airk.iss"))
+                installer_source_sha256=release.digest(release.ROOT / "installers/windows" / ("airk-service.iss" if split else "airk.iss")))
         elif "apple" in target:
             receipt.update(runtime_signing=runtime["signing"], runtime_signing_sha256="1" * 64,
                 signing={"platform": "Darwin", "identity": "c" * 40, "team_id": "5PX7D99PXA",
@@ -301,6 +354,9 @@ class ServicePairReleaseContracts(unittest.TestCase):
         else:
             receipt["signing"] = {"platform": "Linux", "trust": "unsigned"}
             receipt["native_archive_sha256"] = runtime["archive_sha256"]
+        if split:
+            receipt.update(payload_schema="airk-service-payload/1",
+                           payload_inventory_sha256=receipt["payload"]["payload/payload-inventory.json"])
         self.write_installer(output, receipt)
         return output, runtime, receipt
 
@@ -820,6 +876,44 @@ class SplitReleaseContracts(unittest.TestCase):
                     release.assemble(inputs, root / "out", COMMIT, SPLIT, "v" + SPLIT, "preview", "456", "1", producer,
                                      pinned=True, source_records=source_records)
                 self.assertFalse((root / "out").exists())
+
+    def test_split_installers_bind_the_service_layout_inventory_and_wrappers(self):
+        images = {"x86_64-pc-windows-msvc": "payload/service/airk.exe", "x86_64-unknown-linux-gnu": "payload/bin/airkctl",
+                  "aarch64-apple-darwin": "payload/AIRK.app/Contents/MacOS/airkctl",
+                  "x86_64-apple-darwin": "payload/AIRK.app/Contents/MacOS/airk"}
+        for target in SPLIT_TARGETS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                output, native, receipt = self.standalone_fixture(Path(temporary), target, SPLIT, split_fixture)
+                self.assertEqual(release.verify_installer(output, target, COMMIT, SPLIT, native)[0], receipt)
+                self.assertNotIn("runtime/airk-install.json", receipt["payload"])
+                mutations = [("image", "different native runtime"), ("schema", "pinned service payload inventory"),
+                             ("inventory", "pinned service payload inventory")]
+                mutations.append(("presplit_script", "provenance differs") if "windows" in target
+                                 else ("roster", "roster differs"))
+                for mutation, reason in mutations:
+                    wrong = copy.deepcopy(receipt)
+                    if mutation == "image":
+                        wrong["payload"][images[target]] = "0" * 64
+                    elif mutation == "schema":
+                        del wrong["payload_schema"]
+                    elif mutation == "inventory":
+                        wrong["payload_inventory_sha256"] = "0" * 64
+                    elif mutation == "presplit_script":
+                        wrong["installer_source_sha256"] = release.digest(release.ROOT / "installers/windows/airk.iss")
+                    else:
+                        wrong["payload"]["payload.sha256"] = "0" * 64
+                    self.write_installer(output, wrong)
+                    with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, reason):
+                        release.verify_installer(output, target, COMMIT, SPLIT, native)
+
+    def test_split_linux_inventory_must_describe_the_tested_pair(self):
+        target = "x86_64-unknown-linux-gnu"
+        for options, reason in (({"admin": {"inventory_sha256": "3" * 64, "bundle_sha256": "5" * 64}}, "inventory differs"),
+                                ({"layout_change": {"notices/NOTICE": b"changed after the inventory"}}, "different native runtime")):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as temporary:
+                output, native, _ = self.standalone_fixture(Path(temporary), target, SPLIT, split_fixture, options)
+                with self.assertRaisesRegex(ValueError, reason):
+                    release.verify_installer(output, target, COMMIT, SPLIT, native)
 
     def test_split_source_record_binds_the_tested_pair_alone(self):
         with tempfile.TemporaryDirectory() as temporary:

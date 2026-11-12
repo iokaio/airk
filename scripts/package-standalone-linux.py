@@ -145,7 +145,7 @@ def render_template(name, values):
     template = template_path(name, str(values.get("VERSION", ""))).read_text(encoding="utf-8")
     for key, value in values.items():
         template = template.replace("@" + key + "@", str(value))
-    if re.search(r"@[A-Z_]+@", template):
+    if re.search(r"@[A-Z0-9_]+@", template):
         raise ValueError("Unresolved Linux installer template value")
     return template
 
@@ -194,22 +194,39 @@ def write_installer(stage, archive, inventory, directory_name):
     verify_installer(archive, inventory, directory_name)
 
 
-def service_layout(runtime, files, layout):
-    """The section 9.5 program layout from a validated split runtime; returns layout path -> runtime name.
-    Pair metadata stays out of the program folder (as on Windows); any other file is refused."""
+# Runtime image name -> section 9.5 program path, per platform. macOS keeps the signed AIRK.app
+# as it is (both images in Contents/MacOS); see layout_names.
+LAYOUT_IMAGES = {"linux": {"airk": "service/airk", "airkctl": "bin/airkctl"},
+                 "windows": {"airk.exe": "service/airk.exe", "airkctl.exe": "bin/airkctl.exe"},
+                 "macos": {}}
+
+
+def layout_names(files, os_name="linux"):
+    """The section 9.5 program layout of a validated split runtime roster, without touching files:
+    layout path -> runtime name. Pair metadata stays out of the program folder; the root legal
+    files move under notices/; any other file is refused. One owner for the three packagers and
+    release assembly (github-release.py)."""
+    images = LAYOUT_IMAGES[os_name]
     mapping = {}
     for name in files:
         if name in PAIR_METADATA:
             continue
-        if name in SERVICE_IMAGES:
-            placed = SERVICE_IMAGES[name]
+        if name in images:
+            placed = images[name]
         elif name in LEGAL:
             placed = "notices/" + name
-        elif name.startswith("notices/"):
+        elif name.startswith("notices/") or (os_name == "macos" and name.startswith("AIRK.app/")):
             placed = name
         else:
             raise ValueError("Unexpected split runtime file outside the service layout: " + name)
         mapping[safe_name(placed)] = name
+    return mapping
+
+
+def service_layout(runtime, files, layout):
+    """The section 9.5 program layout from a validated split runtime; returns layout path -> runtime name.
+    Pair metadata stays out of the program folder (as on Windows); any other file is refused."""
+    mapping = layout_names(files)
     layout.mkdir(parents=True, exist_ok=False)
     for placed, name in sorted(mapping.items()):
         path = layout / placed

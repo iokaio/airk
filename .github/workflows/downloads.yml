@@ -10,6 +10,7 @@ on:
       - scripts/build-downloads.py
       # Shared release-catalog dependency read by build-downloads.py.
       - scripts/standalone-installer-contract.py
+      - scripts/split_receipts.py
       - scripts/tests/test_downloads_site.py
       - .github/workflows/downloads.yml
 permissions:
@@ -30,10 +31,9 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m unittest discover -s scripts/tests -p test_downloads_site.py -v
-      # TODO(split 10.5.2, §9.4): build-downloads.py / verify-published-release.py must present
-      # Install AIRK Service and Install VS Code Extension as two steps from the split catalog
-      # (one universal VSIX) and advertise only verified targets; add scripts/split_receipts.py
-      # to the paths above once build-downloads.py imports it.
+      # Split releases (§9.4): Install AIRK Service, then Install VS Code Extension (one universal
+      # VSIX); each asset is advertised only when its GitHub digest matches the release's own
+      # release.json, which build-downloads.py downloads and checks first.
       - name: Generate direct downloads from published AIRK releases
         env:
           GH_TOKEN: ${{ github.token }}

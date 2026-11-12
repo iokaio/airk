@@ -243,5 +243,103 @@ class WindowsInstallerContracts(unittest.TestCase):
         self.assertNotIn("artifacts/github-release/attestation", workflow)
 
 
+class SplitWindowsInstaller(unittest.TestCase):
+    """Split versions stage the §9.5 layout from the signed pair and compile airk-service.iss."""
+    # Reviewed, checked-in expectations (split plan §9.5; scripts/signing-identity.json).
+    LAYOUT = {"bin/airkctl.exe", "service/airk.exe", "notices/LICENSE", "notices/NOTICE",
+              "notices/THIRD_PARTY_NOTICES.md", "notices/inventory.json", "notices/dep-1.0/LICENSE",
+              "notices/inno-setup/LICENSE.txt", "payload-inventory.json"}
+    SIGNING = {"platform": "windows", "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+               "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"}
+    ADMIN = {"inventory_sha256": "3" * 64, "bundle_sha256": "4" * 64}
+
+    def fixture(self, root):
+        runtime = root / "runtime"
+        files = {"airk.exe": b"MZ fictional signed service", "airkctl.exe": b"MZ fictional signed CLI",
+                 "LICENSE": b"license", "NOTICE": b"notice", "THIRD_PARTY_NOTICES.md": b"third party",
+                 "notices/inventory.json": b"[]", "notices/dep-1.0/LICENSE": b"dependency license",
+                 "airk-install.json": b"{}", "airk-runtime.json": b"{}", "airk-build.json": b"{}"}
+        for name, data in files.items():
+            (runtime / name).parent.mkdir(parents=True, exist_ok=True)
+            (runtime / name).write_bytes(data)
+        iscc = root / "ISCC.exe"
+        iscc.write_bytes(b"MZ fictional compiler")
+        (root / "license.txt").write_text("Fictional compiler license")
+        payload = windows.package.inventory(runtime)
+        native = {"version": "1.8.24", "target": windows.TARGET, "commit": "a" * 40, "cargo_lock_sha256": "b" * 64,
+                  "runtime_install_sha256": payload["airk-install.json"], "runtime_source": "c" * 64,
+                  "payload": payload, "native_signing_sha256": "d" * 64, "admin_assets": dict(self.ADMIN)}
+        compiler = {"version": windows.INNO_VERSION, "sha256": windows.signer.digest(iscc)}
+        return runtime, native, iscc, compiler
+
+    prepared = WindowsInstallerContracts.prepared
+    built = WindowsInstallerContracts.built
+    signature = WindowsInstallerContracts.signature
+    context_patches = WindowsInstallerContracts.context_patches
+
+    def test_script_follows_the_version(self):
+        self.assertEqual(windows.script("1.8.23").name, "airk.iss")
+        self.assertEqual(windows.script("1.8.24").name, "airk-service.iss")
+
+    def test_prepare_stages_the_service_layout_and_its_inventory_from_the_signed_pair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output, runtime, native, _ = self.prepared(Path(temporary))
+            context = json.loads((output / "inputs.json").read_text())
+            layout = Path(context["layout"])
+            self.assertEqual(set(windows.package.inventory(layout)), self.LAYOUT)
+            self.assertEqual((layout / "service/airk.exe").read_bytes(), (runtime / "airk.exe").read_bytes())
+            self.assertEqual((layout / "bin/airkctl.exe").read_bytes(), (runtime / "airkctl.exe").read_bytes())
+            self.assertEqual((layout / "notices/inno-setup/LICENSE.txt").read_text(), "Fictional compiler license")
+            self.assertEqual(context["installer_source_sha256"],
+                             windows.signer.digest(windows.ROOT / "installers/windows/airk-service.iss"))
+            inventory = json.loads((layout / "payload-inventory.json").read_bytes())
+            self.assertEqual({key: value for key, value in inventory.items() if key != "files"},
+                             {"schema": "airk-service-payload/1", "version": "1.8.24", "channel": "stable",
+                              "target": "x86_64-pc-windows-msvc",
+                              "executables": {"airkctl": "bin/airkctl.exe", "airk": "service/airk.exe"},
+                              "admin_assets": self.ADMIN, "signing": self.SIGNING})
+            self.assertEqual(set(inventory["files"]), self.LAYOUT - {"payload-inventory.json"})
+            self.assertEqual(inventory["files"]["service/airk.exe"]["sha256"], native["payload"]["airk.exe"])
+            self.assertNotIn(b"\r\n", (layout / "payload-inventory.json").read_bytes())
+
+    def test_compiler_receives_the_layout_and_pinned_digests_of_the_service_script(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output, _, _, _ = self.prepared(Path(temporary))
+            context = json.loads((output / "inputs.json").read_text())
+            files = context["layout_files"]
+            completed = windows.subprocess.CompletedProcess([], 2, "", "")
+            with patch.object(windows.subprocess, "run", return_value=completed) as execute:
+                self.assertEqual(windows.compile_installer(context, output / "work", first=True), 2)
+            command = execute.call_args.args[0]
+            self.assertEqual(command[1:3], ["/Qp", "/NI"])
+            self.assertEqual(Path(command[-1]).name, "airk-service.iss")
+            self.assertEqual(set(command[3:-1]), {
+                "/DAirkVersion=1.8.24", f"/DAirkOutput={output / 'work/compiled'}",
+                "/DAirkArtifact=airk-1.8.24-x86_64-pc-windows-msvc-installer",
+                f"/DAirkUninstallers={output / 'work/uninstallers'}", f"/DAirkPayload={context['layout']}",
+                f"/DAirkInventorySHA={files['payload-inventory.json']}",
+                f"/DAirkBinarySHA={files['service/airk.exe']}", f"/DAirkCtlBinarySHA={files['bin/airkctl.exe']}"})
+
+    def test_record_publishes_the_payload_roster_and_refuses_a_changed_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output, runtime, native, compiler = self.built(Path(temporary))
+            context = json.loads((output / "inputs.json").read_text())
+            with (output / context["artifact"]).open("ab") as stream:
+                stream.write(b" fictional outer signature")
+            p1, p2 = self.context_patches(runtime, native, compiler)
+            with p1, p2, patch.object(windows, "verified_signature", side_effect=self.signature):
+                windows.record(output)
+            receipt = json.loads((output / "publish/installer.json").read_text())
+            self.assertEqual(set(receipt["payload"]), {"payload/" + name for name in self.LAYOUT})
+            self.assertEqual(receipt["payload_schema"], "airk-service-payload/1")
+            self.assertEqual(receipt["payload_inventory_sha256"],
+                             windows.signer.digest(Path(context["layout"]) / "payload-inventory.json"))
+            self.assertEqual(receipt["artifact"], "airk-1.8.24-x86_64-pc-windows-msvc-installer.exe")
+            (Path(context["layout"]) / "notices/NOTICE").write_bytes(b"changed")
+            p1, p2 = self.context_patches(runtime, native, compiler)
+            with p1, p2, self.assertRaisesRegex(ValueError, "layout changed"):
+                windows.load_context(output)
+
+
 if __name__ == "__main__":
     unittest.main()

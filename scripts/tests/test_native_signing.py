@@ -297,6 +297,96 @@ REVIEWED_AZURE_SIGNING = {
 }
 
 
+class SplitPairSigning(unittest.TestCase):
+    """Split versions (1.8.24+) sign the airk + airkctl pair; names are the reviewed §9.5 images."""
+    PAIRS = {"x86_64-pc-windows-msvc": ("airk.exe", "airkctl.exe"),
+             "aarch64-apple-darwin": ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl")}
+
+    def pair(self, root, target, version="1.8.24"):
+        source, output = root / "source", root / "signed"
+        runtime = output / "runtime"
+        source.mkdir(); runtime.mkdir(parents=True)
+        original = {"schema": 1, "version": version, "files": {"LICENSE": "a" * 64}}
+        signed = {"schema": 1, "version": version, "files": {"LICENSE": "a" * 64}}
+        components = {}
+        for name in self.PAIRS[target]:
+            for parent, body in [(source, b"original " + name.encode()), (runtime, b"signed " + name.encode())]:
+                (parent / name).parent.mkdir(parents=True, exist_ok=True)
+                (parent / name).write_bytes(body)
+            original["files"][name] = signing.digest(source / name)
+            signed["files"][name] = signing.digest(runtime / name)
+            components[name] = {"schema": "airk-native-signing/1", "target": target, "commit": "fixture",
+                                "cargo_lock_sha256": "b" * 64, "team_id": "5PX7D99PXA",
+                                "source_sha256": original["files"][name], "binary_sha256": signed["files"][name],
+                                "notarization": {"id": "one-app-job", "status": "Accepted", "stapled": True,
+                                                 "scope": "AIRK.app"}}
+        for parent, value in [(source, original), (runtime, signed)]:
+            (parent / "airk-install.json").write_text(json.dumps(value), encoding="utf-8")
+        receipt = {"schema": "airk-service-pair-signing/1", "target": target, "commit": "fixture",
+                   "cargo_lock_sha256": "b" * 64, "source_install_sha256": signing.digest(source / "airk-install.json"),
+                   "install_manifest_sha256": signing.digest(runtime / "airk-install.json"), "components": components}
+        (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+        return source, output, runtime, receipt
+
+    def test_split_signing_names_are_both_images(self):
+        builder = signing.pair_package().runtime_builder()
+        self.assertEqual(builder.signing_names("windows", "1.8.24"), ("airk.exe", "airkctl.exe"))
+        self.assertEqual(builder.signing_names("macos", "1.8.24"),
+                         ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl"))
+
+    def test_read_verified_pair_accepts_split_windows_and_macos_pairs_and_refuses_one_image(self):
+        for target in self.PAIRS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                source, output, runtime, receipt = self.pair(Path(temporary), target)
+                with patch.object(signing, "verify", return_value={}) as verify, \
+                        patch.object(signing, "verify_app_bundle") as bundle, \
+                        patch.object(signing, "run", return_value=""):
+                    result, _ = signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+                    self.assertEqual(result, runtime)
+                    self.assertEqual({call.args[0].relative_to(runtime).as_posix() for call in verify.call_args_list},
+                                     set(self.PAIRS[target]))
+                    self.assertEqual(bundle.call_count, 1 if "apple" in target else 0)
+                    del receipt["components"][self.PAIRS[target][1]]
+                    (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "component inventory"):
+                        signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+
+    def test_finish_pair_records_both_signed_digests_in_schema_3_pair_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = "x86_64-pc-windows-msvc"
+            source, output, runtime, receipt = self.pair(Path(temporary), target)
+            pair = {"schema": 3, "version": "1.8.24", "os": "windows", "arch": "x86_64",
+                    "airk_sha256": signing.digest(source / "airk.exe"),
+                    "airkctl_sha256": signing.digest(source / "airkctl.exe"),
+                    "i1_protocol": 1, "i2_contract": 1, "admin_inventory_sha256": "3" * 64}
+            # prepare_pair stages an exact copy; only the two images have been re-signed since.
+            (runtime / "airk-install.json").write_bytes((source / "airk-install.json").read_bytes())
+            for parent in (source, runtime):
+                (parent / "airk-runtime.json").write_text(json.dumps(pair), encoding="utf-8")
+                (parent / "airk-build.json").write_text(json.dumps({"schema": 2, "source": "c" * 64, "runtime": pair}),
+                                                        encoding="utf-8")
+            package = signing.pair_package()
+            files = package.inventory(source)
+            (output / "pair-signing.pending.json").write_text(json.dumps(
+                {"schema": 1, "source": str(source), "target": target,
+                 "source_install_sha256": files["airk-install.json"]}), encoding="utf-8")
+            (output / "signing.json").unlink()
+            components = {name: dict(value, notarization=None) for name, value in receipt["components"].items()}
+            with patch.object(signing, "pair_package", return_value=package), \
+                    patch.object(package, "validate_runtime", side_effect=lambda root, *_: (package.inventory(root), self.PAIRS[target])), \
+                    patch.object(signing, "verify", return_value={}), patch("builtins.print"):
+                signing.finish_pair(source, output, target, components, "fixture", "b" * 64)
+            recorded = json.loads((runtime / "airk-runtime.json").read_text(encoding="utf-8"))
+            self.assertEqual(recorded["airk_sha256"], signing.digest(runtime / "airk.exe"))
+            self.assertEqual(recorded["airkctl_sha256"], signing.digest(runtime / "airkctl.exe"))
+            self.assertNotIn("embed_sha256", recorded)
+            self.assertEqual(json.loads((runtime / "airk-build.json").read_text(encoding="utf-8"))["runtime"], recorded)
+            written = json.loads((output / "signing.json").read_text(encoding="utf-8"))
+            self.assertEqual(written["schema"], "airk-service-pair-signing/1")
+            self.assertEqual(set(written["components"]), {"airk.exe", "airkctl.exe"})
+            self.assertEqual(written["install_manifest_sha256"], signing.digest(runtime / "airk-install.json"))
+
+
 class SigningIdentityFile(unittest.TestCase):
     def test_hosted_policy_is_unchanged_in_value_and_order(self):
         self.assertEqual(signing.AZURE_SIGNING, REVIEWED_AZURE_SIGNING)

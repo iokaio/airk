@@ -204,6 +204,18 @@ class VersionContracts(unittest.TestCase):
                     version.verify_marketplace_publication(inventory, "0.1.0", "stable")
                 catalog.assert_not_called()
 
+    def test_github_plan_reads_a_published_split_release(self):
+        split = "1.8.24"
+        complete, _ = fixtures.split_release()
+        served = [dict(version=split, properties=[])]
+        self.assertEqual(version.plan(split, "stable", "github", served, [complete], [], publish=True)["next_version"], "1.8.25")
+        self.assertEqual(version.plan(split, "stable", "github", [], [complete], [], publish=True)["action"], "skip")
+        # A split release published with the pre-split per-platform VSIX catalog is not complete.
+        legacy, _ = fixtures.split_release(names=fixtures.SPLIT_STABLE - {"airk-1.8.24.vsix", "airk-1.8.24.vsix-manifest.json"}
+                                           | {"airk-1.8.24-win32-x64.vsix"})
+        with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
+            version.plan(split, "stable", "github", [], [legacy], [], publish=True)
+
     def test_split_versions_publish_and_read_back_one_universal_package(self):
         split = "1.8.24"
         served = [dict(version=split, properties=[])]  # Marketplace lists a universal package without a target.

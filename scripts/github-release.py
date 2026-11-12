@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import tarfile
 import tempfile
 import tomllib
 import zipfile
@@ -360,12 +361,23 @@ def verify_installer(directory, target, commit, version, runtime, *, published=F
         extension.package.safe_name(path)
         if not re.fullmatch(r"[0-9a-f]{64}", value):
             raise ValueError("Invalid standalone installer payload digest")
-    if {path.removeprefix("runtime/"): value for path, value in payload.items()
-            if path.startswith("runtime/")} != runtime["payload"]:
-        raise ValueError("Standalone installer contains a different native runtime")
-    wrappers = set(payload) - {"runtime/" + path for path in runtime["payload"]}
+    split = receipts.split_version(version)
+    if split:
+        service = split_service_payload(receipt, target, runtime, payload)
+        wrappers = set(payload) - set(service)
+    else:
+        if {path.removeprefix("runtime/"): value for path, value in payload.items()
+                if path.startswith("runtime/")} != runtime["payload"]:
+            raise ValueError("Standalone installer contains a different native runtime")
+        wrappers = set(payload) - {"runtime/" + path for path in runtime["payload"]}
+    if split and "windows" not in target:
+        # The pinned roster of every payload/ file; install.sh / Install AIRK.command check it first.
+        sums = "".join(f"{payload[path]}  {path}\n" for path in sorted(service)).encode()
+        if payload.get("payload.sha256") != hashlib.sha256(sums).hexdigest():
+            raise ValueError("Standalone installer payload roster differs from its payload")
     if "windows" in target:
-        if wrappers != {"notices/inno-setup/LICENSE.txt"}:
+        # Split: the Inno license sits inside the placed notices/ (split_service_payload).
+        if wrappers != (set() if split else {"notices/inno-setup/LICENSE.txt"}):
             raise ValueError("Unexpected Windows installer payload files")
         signing, uninstaller = receipt.get("signing"), receipt.get("uninstaller")
         if not isinstance(signing, dict) or not isinstance(uninstaller, dict):
@@ -382,14 +394,15 @@ def verify_installer(directory, target, commit, version, runtime, *, published=F
         if (signing.get("platform") != "Windows" or signing.get("binary_sha256") != digest(archive)
                 or not re.fullmatch(r"[0-9a-f]{64}", uninstaller.get("unsigned_sha256", ""))
                 or not re.fullmatch(r"[0-9a-f]{64}", uninstaller.get("binary_sha256", ""))
-                or receipt.get("installer_source_sha256") != digest(ROOT / "installers/windows/airk.iss")
+                or receipt.get("installer_source_sha256") != digest(windows_installer_source(version))
                 or not re.fullmatch(r"6\.7\.1(?:\.\d+)?", receipt.get("compiler", {}).get("version", ""))
                 or not re.fullmatch(r"[0-9a-f]{64}", receipt.get("compiler", {}).get("sha256", ""))):
             raise ValueError("Standalone Windows installer/uninstaller provenance differs")
     elif "apple" in target:
         signing = receipt.get("signing", {})
         notarization = signing.get("notarization", {})
-        if (wrappers != {"Install AIRK.command", "README.txt"}
+        mac_wrappers = {"Install AIRK.command", "README.txt", *(("payload.sha256",) if split else ())}
+        if (wrappers != mac_wrappers
                 or receipt.get("runtime_signing") != runtime.get("signing")
                 or not re.fullmatch(r"[0-9a-f]{64}", receipt.get("runtime_signing_sha256", ""))
                 or signing.get("platform") != "Darwin" or signing.get("trust") != "apple_developer_id"
@@ -401,8 +414,14 @@ def verify_installer(directory, target, commit, version, runtime, *, published=F
                 or notarization.get("stapled") is not True or notarization.get("scope") != name):
             raise ValueError("Standalone Mac signature, payload or notarization evidence differs")
         mac = module("standalone_macos_package", "package-standalone-macos.py")
-        for path, encoded in mac.installer_files(version, target, receipt["runtime_install_sha256"],
-                                                runtime["payload"]["AIRK.app/Contents/MacOS/airk"]).items():
+        if split:
+            bootstrap = mac.split_installer_files(version, target, receipt["payload_inventory_sha256"],
+                                                  payload["payload.sha256"],
+                                                  payload["payload/AIRK.app/Contents/MacOS/airk"], len(service))
+        else:
+            bootstrap = mac.installer_files(version, target, receipt["runtime_install_sha256"],
+                                            runtime["payload"]["AIRK.app/Contents/MacOS/airk"])
+        for path, encoded in bootstrap.items():
             if payload[path] != hashlib.sha256(encoded).hexdigest():
                 raise ValueError("Standalone Mac installer bootstrap differs from reviewed source")
     else:
@@ -410,19 +429,78 @@ def verify_installer(directory, target, commit, version, runtime, *, published=F
                 or receipt.get("signing") != {"platform": "Linux", "trust": "unsigned"}):
             raise ValueError("Standalone Linux installer must retain explicit unsigned provenance")
         linux = module("standalone_linux_package", "package-standalone-linux.py")
-        sums = "".join(f"{value}  runtime/{path}\n" for path, value in sorted(runtime["payload"].items()))
-        sums_sha256 = hashlib.sha256(sums.encode()).hexdigest()
-        values = {"VERSION": version, "ARCHIVE_NAME": name, "DIRECTORY_NAME": name.removesuffix(".tar.gz"),
-                  "PAYLOAD_FILE_COUNT": len(runtime["payload"]), "INSTALL_MANIFEST_SHA256": receipt["runtime_install_sha256"],
-                  "PAYLOAD_SUMS_SHA256": sums_sha256}
-        expected_wrappers = {"payload.sha256": sums.encode(), **{path: linux.render_template(path + ".in", values).encode()
-                            for path in ("install.sh", "README.txt")}}
+        values = {"VERSION": version, "ARCHIVE_NAME": name, "DIRECTORY_NAME": name.removesuffix(".tar.gz")}
+        if split:
+            values.update(PAYLOAD_FILE_COUNT=len(service), PAYLOAD_SUMS_SHA256=payload["payload.sha256"],
+                          INVENTORY_SHA256=receipt["payload_inventory_sha256"],
+                          AIRK_SHA256=payload["payload/service/airk"])
+            expected_wrappers = {}
+        else:
+            sums = "".join(f"{value}  runtime/{path}\n" for path, value in sorted(runtime["payload"].items()))
+            values.update(PAYLOAD_FILE_COUNT=len(runtime["payload"]),
+                          INSTALL_MANIFEST_SHA256=receipt["runtime_install_sha256"],
+                          PAYLOAD_SUMS_SHA256=hashlib.sha256(sums.encode()).hexdigest())
+            expected_wrappers = {"payload.sha256": sums.encode()}
+        expected_wrappers.update({path: linux.render_template(path + ".in", values).encode()
+                                  for path in ("install.sh", "README.txt")})
         if any(payload[path] != hashlib.sha256(encoded).hexdigest() for path, encoded in expected_wrappers.items()):
             raise ValueError("Standalone Linux installer bootstrap differs from reviewed source")
         if receipt.get("native_archive_sha256") != runtime["archive_sha256"]:
             raise ValueError("Standalone Linux native archive identity differs")
         linux.verify_installer(archive, payload, name.removesuffix(".tar.gz"))
+        if split:
+            verify_linux_inventory(archive, name.removesuffix(".tar.gz"), version, runtime, service, linux)
     return receipt, archive
+
+
+def windows_installer_source(version):
+    """The reviewed Inno script per version: the split AIRK Service installer or the pre-split one."""
+    return ROOT / "installers/windows" / ("airk-service.iss" if receipts.split_version(version) else "airk.iss")
+
+
+SERVICE_PAYLOAD = "airk-service-payload/1"
+
+
+def split_service_payload(receipt, target, runtime, payload):
+    """The installer's payload/ roster: the plan §9.5 layout of the tested (signed) pair, its
+    pinned `airk-service-payload/1` inventory and, on Windows, the Inno Setup license notice."""
+    linux = module("standalone_linux_layout", "package-standalone-linux.py")
+    os_name = receipts.platform_of(target)[0]
+    expected = {"payload/" + placed: runtime["payload"][name]
+                for placed, name in linux.layout_names(runtime["payload"], os_name).items()}
+    inventory = receipt.get("payload_inventory_sha256")
+    if (receipt.get("payload_schema") != SERVICE_PAYLOAD or not isinstance(inventory, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", inventory) or payload.get("payload/payload-inventory.json") != inventory):
+        raise ValueError("Split installer lacks its pinned service payload inventory")
+    service = {path: value for path, value in payload.items() if path.startswith("payload/")}
+    extra = {"payload/payload-inventory.json", *(("payload/notices/inno-setup/LICENSE.txt",) if os_name == "windows" else ())}
+    if not extra <= set(service) or {path: value for path, value in service.items() if path not in extra} != expected:
+        raise ValueError("Standalone installer contains a different native runtime")
+    return service
+
+
+def verify_linux_inventory(archive, directory_name, version, runtime, service, linux):
+    """The tar's payload-inventory.json describes exactly the placed files, images and admin shell."""
+    with tarfile.open(archive, "r|gz") as packaged:
+        for member in packaged:
+            if member.name == directory_name + "/payload/payload-inventory.json":
+                if not member.isfile() or member.size > 1 << 20:
+                    raise ValueError("Linux service payload inventory exceeds its bound")
+                inventory = json.loads(packaged.extractfile(member).read())
+                break
+        else:
+            raise ValueError("Linux installer lacks its service payload inventory")
+    files = inventory.get("files") if isinstance(inventory, dict) else None
+    expected = {path.removeprefix("payload/"): value for path, value in service.items()
+                if path != "payload/payload-inventory.json"}
+    if (not isinstance(files, dict) or set(files) != set(expected)
+            or any(not isinstance(row, dict) or set(row) != {"sha256", "bytes"} or row["sha256"] != expected[path]
+                   or type(row["bytes"]) is not int or row["bytes"] < 0 for path, row in files.items())
+            or {key: value for key, value in inventory.items() if key != "files"} != {
+                "schema": SERVICE_PAYLOAD, "version": version, "channel": "stable", "target": linux.TARGET,
+                "executables": linux.SERVICE_IMAGES, "admin_assets": runtime["admin_assets"],
+                "signing": linux.LINUX_SIGNING}):
+        raise ValueError("Linux service payload inventory differs from the tested pair")
 
 
 def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None, *, tree=None, pinned=False, source_records=False):

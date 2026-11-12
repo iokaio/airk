@@ -73,8 +73,6 @@ def installer_files(version, target, manifest_sha256, executable_sha256):
 
 
 SERVICE_IMAGES = {"airk": "AIRK.app/Contents/MacOS/airk", "airkctl": "AIRK.app/Contents/MacOS/airkctl"}
-PAIR_METADATA = frozenset({"airk-install.json", "airk-runtime.json", "airk-build.json"})
-LEGAL = frozenset({"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"})
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -100,17 +98,11 @@ def split_installer_files(version, target, inventory_sha256, roster_sha256, airk
 def service_layout(runtime, files, layout):
     """The section 9.5 macOS program layout from a validated (signed) split runtime: AIRK.app
     as signed, the root legal files and notices/ beside it; pair metadata stays out."""
+    mapping = module("standalone_macos_layout", "package-standalone-linux.py").layout_names(files, "macos")
     layout.mkdir(parents=True, exist_ok=False)
     placed = {}
-    for name, expected in sorted(files.items()):
-        if name in PAIR_METADATA:
-            continue
-        if name.startswith("AIRK.app/") or name.startswith("notices/"):
-            target = name
-        elif name in LEGAL:
-            target = "notices/" + name
-        else:
-            raise ValueError("Unexpected split runtime file outside the service layout: " + name)
+    for target, name in sorted(mapping.items()):
+        expected = files[name]
         source = runtime / name
         if source.is_symlink() or not source.resolve(strict=True).is_relative_to(runtime):
             raise ValueError("Linked or escaped standalone runtime input")

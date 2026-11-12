@@ -7,12 +7,18 @@ on:
       - .github/workflows/github-release.yml
       - scripts/github-release.py
       - scripts/ci-*-sign.py
+      - scripts/sign-native.py
       - scripts/package-standalone-*.py
       - scripts/standalone-installer-contract.py
       - installers/**
       - scripts/tests/test_standalone_*.py
       - scripts/tests/test_github_release.py
       - scripts/tests/test_ci_*_signing.py
+      - scripts/tests/test_native_signing.py
+      - scripts/tests/test_package_standalone_linux.py
+      # Published-release reader used by release-version.py plan --destination github.
+      - scripts/build-downloads.py
+      - scripts/tests/test_downloads_site.py
       # Release assembly owners shared with the split catalog: candidate selection, VSIX channel
       # promotion and verification, signed native repackaging and Marketplace version planning.
       - scripts/ci-candidates.py
@@ -246,10 +252,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'github-release.py' }} stage-signing --directory artifacts/tested-native --target ${{ matrix.target }}
-      # TODO(split 10.5.2, §9.4): the Windows (ci-windows-sign.py prepare/list/record) and
-      # macOS pair signing steps below must sign and verify both airk and airkctl (sign-native.py
-      # signing_names/read_verified_pair, airk-service-pair-signing/1); the Windows installer
-      # steps must package installers/windows/airk-service.iss (Phase 7) instead of airk.iss.
+      # Split versions (§9.4, §10.5.4): the Windows (ci-windows-sign.py prepare/list/record) and macOS
+      # pair signing steps below sign and verify both airk and airkctl
+      # (build-service-runtime.py signing_names; airk-service-pair-signing/1 with both components and
+      # schema-3 pair metadata); macOS signs the nested images, then seals and notarizes AIRK.app.
+      # package-standalone-windows.py stages the §9.5 layout and compiles airk-service.iss in the same
+      # prepare/build/record order; earlier versions keep airk.iss and their single/legacy payloads.
       - name: Stage Windows signing copy
         if: runner.os == 'Windows'
         run: python scripts/ci-windows-sign.py prepare --pair

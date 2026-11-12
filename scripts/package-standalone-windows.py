@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Package the signed native runtime as a per-user Inno Setup installer.
 
+Split versions (split_receipts.split_version) package the AIRK Service pair: the signed
+runtime is placed in the split plan section 9.5 layout (bin/airkctl.exe, service/airk.exe,
+notices/) with payload-inventory.json (`airk-service-payload/1`, setup_role CONTRACT.md),
+as build-local-service-installer.py stages it, and compiled with
+installers/windows/airk-service.iss. Earlier versions keep installers/windows/airk.iss.
+
 prepare emits an explicitly unsigned uninstaller for the existing Azure action;
 build embeds its verified signed bytes; record publishes metadata only after the
 outer EXE has also passed AIRK's existing Authenticode/publisher/EKU checks.
@@ -21,10 +27,31 @@ ROOT = Path(__file__).resolve().parent.parent
 TARGET = "x86_64-pc-windows-msvc"
 INNO_VERSION = "6.7.1"
 SCRIPT = ROOT / "installers/windows/airk.iss"
+SERVICE_SCRIPT = ROOT / "installers/windows/airk-service.iss"
+SERVICE_EXECUTABLES = {"airkctl": "bin/airkctl.exe", "airk": "service/airk.exe"}
+INNO_NOTICE = "notices/inno-setup/LICENSE.txt"
 spec = importlib.util.spec_from_file_location("standalone_windows_signer", ROOT / "scripts/sign-native.py")
 signer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signer)
 package = signer.pair_package()
+spec = importlib.util.spec_from_file_location("standalone_windows_layout", ROOT / "scripts/package-standalone-linux.py")
+layouts = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(layouts)
+
+
+def split(version):
+    return layouts.split_receipts().split_version(version)
+
+
+def script(version):
+    """The reviewed Inno script for this version (split AIRK Service or pre-split CLI installer)."""
+    return SERVICE_SCRIPT if split(version) else SCRIPT
+
+
+def windows_signing():
+    """The install record's signing claim (I4 `Signing::Windows`), from the checked-in identity."""
+    identity = signer.SIGNING_IDENTITY["windows"]
+    return {"platform": "windows", "publisher": identity["publisher"], "identity_eku": identity["identity_eku"]}
 
 
 def plain(path, maximum=4_294_967_296):
@@ -52,10 +79,32 @@ def native_inputs(runtime_dir, signed_dir):
     payload, _executables = package.validate_runtime(runtime, install["version"], TARGET, build["source"])
     if any(name.lower().endswith(".vsix") or "vscode" in name.lower() for name in payload):
         raise ValueError("Standalone installer must contain native CLI/MCP payload only")
-    return runtime, {"version": install["version"], "target": TARGET, "commit": commit,
-                     "cargo_lock_sha256": lock, "runtime_install_sha256": signer.digest(runtime / "airk-install.json"),
-                     "runtime_source": build["source"], "payload": payload,
-                     "native_signing_sha256": signer.digest(signed_dir / "signing.json")}
+    native = {"version": install["version"], "target": TARGET, "commit": commit,
+              "cargo_lock_sha256": lock, "runtime_install_sha256": signer.digest(runtime / "airk-install.json"),
+              "runtime_source": build["source"], "payload": payload,
+              "native_signing_sha256": signer.digest(signed_dir / "signing.json")}
+    if split(install["version"]):
+        native["admin_assets"] = {key: build["admin_assets"][key] for key in ("inventory_sha256", "bundle_sha256")}
+    return runtime, native
+
+
+def stage_service(runtime, native, license_file, layout):
+    """The section 9.5 layout from the verified signed pair, the Inno Setup license notice and
+    payload-inventory.json over every placed file; returns the layout inventory."""
+    layout.mkdir(parents=True, exist_ok=False)
+    for placed, name in sorted(layouts.layout_names(native["payload"], "windows").items()):
+        path = layout / placed
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(plain(runtime / name), path)
+        if signer.digest(path) != native["payload"][name]:
+            raise ValueError("Signed runtime changed while staging the service layout")
+    (layout / INNO_NOTICE).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(license_file, layout / INNO_NOTICE)
+    inventory = layouts.payload_inventory(layout, native["version"], native["admin_assets"], target=TARGET,
+                                          executables=SERVICE_EXECUTABLES, signing=windows_signing())
+    (layout / "payload-inventory.json").write_text(json.dumps(inventory, indent=1) + "\n", encoding="utf-8",
+                                                   newline="\n")
+    return package.inventory(layout)
 
 
 def compiler_identity(iscc):
@@ -71,15 +120,23 @@ def compiler_identity(iscc):
 
 
 def compile_installer(context, work, *, first):
-    definitions = {"AirkVersion": context["native"]["version"],
-                   "AirkRuntime": context["runtime"], "AirkOutput": str(work / "compiled"),
-                   "AirkArtifact": context["artifact"][:-4], "AirkUninstallers": str(work / "uninstallers"),
-                   "AirkInstallSHA": context["native"]["runtime_install_sha256"],
-                   "AirkBinarySHA": context["native"]["payload"]["airk.exe"],
-                   "AirkInnoLicense": context["inno_license"]}
+    version = context["native"]["version"]
+    common = {"AirkVersion": version, "AirkOutput": str(work / "compiled"),
+              "AirkArtifact": context["artifact"][:-4], "AirkUninstallers": str(work / "uninstallers")}
+    if split(version):
+        files = context["layout_files"]
+        definitions = {**common, "AirkPayload": context["layout"],
+                       "AirkInventorySHA": files["payload-inventory.json"],
+                       "AirkBinarySHA": files["service/airk.exe"], "AirkCtlBinarySHA": files["bin/airkctl.exe"]}
+    else:
+        definitions = {**common, "AirkRuntime": context["runtime"],
+                       "AirkInstallSHA": context["native"]["runtime_install_sha256"],
+                       "AirkBinarySHA": context["native"]["payload"]["airk.exe"],
+                       "AirkInnoLicense": context["inno_license"]}
     if any(any(char in str(value) for char in ('\r', '\n', '"')) for value in definitions.values()):
         raise ValueError("Unsafe Inno Setup definition")
-    command = [context["iscc"], "/Qp", "/NI", *[f"/D{name}={value}" for name, value in definitions.items()], str(SCRIPT)]
+    command = [context["iscc"], "/Qp", "/NI", *[f"/D{name}={value}" for name, value in definitions.items()],
+               str(script(version))]
     result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=600)
     (work / ("prepare.log" if first else "build.log")).write_text(result.stdout + result.stderr, encoding="utf-8")
@@ -100,7 +157,10 @@ def prepare(runtime_dir, signed_dir, output, iscc):
     context = {"schema": 1, "runtime": str(runtime.resolve()), "original": str(runtime_dir.resolve()),
                "signed": str(signed_dir.resolve()), "iscc": str(iscc.resolve()), "compiler": compiler,
                "inno_license": str(license_file.resolve()), "inno_license_sha256": signer.digest(license_file),
-               "installer_source_sha256": signer.digest(SCRIPT), "native": native, "artifact": artifact}
+               "installer_source_sha256": signer.digest(script(native["version"])), "native": native, "artifact": artifact}
+    if split(native["version"]):
+        layout = output / "layout"
+        context.update(layout=str(layout.resolve()), layout_files=stage_service(runtime, native, license_file, layout))
     save(output / "inputs.json", context)
     result = compile_installer(context, work, first=True)
     # ISCC's documented manual-signing first pass stops after writing the exact
@@ -128,13 +188,16 @@ def load_context(output):
             or Path(prepared.get("cache_name", "")).name != prepared.get("cache_name")
             or not prepared["cache_name"].endswith((".e32", ".e64"))):
         raise ValueError("Installer preparation ownership differs")
-    if context["installer_source_sha256"] != signer.digest(SCRIPT) or context["compiler"] != compiler_identity(Path(context["iscc"])):
+    if (context["installer_source_sha256"] != signer.digest(script(context["native"]["version"]))
+            or context["compiler"] != compiler_identity(Path(context["iscc"]))):
         raise ValueError("Installer source/compiler changed after preparation")
     if context["inno_license_sha256"] != signer.digest(plain(Path(context["inno_license"]), 65_536)):
         raise ValueError("Inno Setup license changed after preparation")
     runtime, native = native_inputs(Path(context["original"]), Path(context["signed"]))
     if native != context["native"] or str(runtime.resolve()) != context["runtime"]:
         raise ValueError("Signed runtime changed after installer preparation")
+    if "layout" in context and package.inventory(Path(context["layout"])) != context["layout_files"]:
+        raise ValueError("Staged service layout changed after installer preparation")
     return context, prepared
 
 
@@ -196,6 +259,10 @@ def record(output):
         "installer_source_sha256": context["installer_source_sha256"],
         "payload": {**{"runtime/" + name: value for name, value in native["payload"].items()},
                     "notices/inno-setup/LICENSE.txt": context["inno_license_sha256"]}}
+    if "layout" in context:
+        receipt.update(payload={"payload/" + name: value for name, value in context["layout_files"].items()},
+                       payload_schema=layouts.INVENTORY_SCHEMA,
+                       payload_inventory_sha256=context["layout_files"]["payload-inventory.json"])
     save(publish / "installer.json", receipt)
     (publish / "SHA256SUMS").write_text(
         f'{signer.digest(publish / artifact.name)}  {artifact.name}\n'

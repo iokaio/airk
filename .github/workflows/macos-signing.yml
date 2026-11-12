@@ -63,8 +63,9 @@ jobs:
         run: npm test --prefix packages/vscode
       - name: Use TCP for Apple ticket requests on Mac runners
         uses: ./.github/actions/macos-ticket-network
-      # TODO(split §9.4): the pair signing step below must sign airkctl as nested code before the
-      # AIRK.app bundle (sign-native.py signing_names); it signs airk only today.
+      # Split versions (§9.4): sign-native.py signs airk and airkctl as nested code with hardened
+      # runtime (signing_names), then seals and notarizes AIRK.app; the post-sign probe runs the
+      # signed model smoke and the nested airkctl --version.
       - name: Sign and notarize using an isolated temporary keychain
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}

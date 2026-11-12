@@ -257,6 +257,37 @@ def service_package(base, airk=FAKE_AIRK):
     return stage, values
 
 
+class ServiceLayoutNames(unittest.TestCase):
+    """layout_names is the one §9.5 mapping for the three packagers and release assembly."""
+    COMMON = {"LICENSE": "1" * 64, "NOTICE": "2" * 64, "THIRD_PARTY_NOTICES.md": "3" * 64,
+              "notices/inventory.json": "4" * 64, "airk-install.json": "5" * 64, "airk-runtime.json": "6" * 64,
+              "airk-build.json": "7" * 64}
+    NOTICES = {"notices/LICENSE": "LICENSE", "notices/NOTICE": "NOTICE",
+               "notices/THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md", "notices/inventory.json": "notices/inventory.json"}
+
+    def test_each_platform_places_both_images_and_notices_and_keeps_pair_metadata_out(self):
+        cases = {"linux": ({"airk": "8" * 64, "airkctl": "9" * 64}, {"service/airk": "airk", "bin/airkctl": "airkctl"}),
+                 "windows": ({"airk.exe": "8" * 64, "airkctl.exe": "9" * 64},
+                             {"service/airk.exe": "airk.exe", "bin/airkctl.exe": "airkctl.exe"}),
+                 "macos": ({"AIRK.app/Contents/MacOS/airk": "8" * 64, "AIRK.app/Contents/MacOS/airkctl": "9" * 64,
+                            "AIRK.app/Contents/Info.plist": "a" * 64},
+                           {"AIRK.app/Contents/MacOS/airk": "AIRK.app/Contents/MacOS/airk",
+                            "AIRK.app/Contents/MacOS/airkctl": "AIRK.app/Contents/MacOS/airkctl",
+                            "AIRK.app/Contents/Info.plist": "AIRK.app/Contents/Info.plist"})}
+        for os_name, (images, placed) in cases.items():
+            with self.subTest(os_name=os_name):
+                self.assertEqual(package.layout_names({**self.COMMON, **images}, os_name), {**self.NOTICES, **placed})
+        with self.assertRaisesRegex(ValueError, "outside the service layout"):
+            package.layout_names({"AIRK.app/Contents/MacOS/airk": "8" * 64}, "windows")
+
+    def test_templates_refuse_unresolved_values_including_digit_names(self):
+        values = {"VERSION": SPLIT_VERSION, "PAYLOAD_FILE_COUNT": 3, "PAYLOAD_SUMS_SHA256": "1" * 64,
+                  "AIRK_SHA256": "2" * 64}
+        with self.assertRaisesRegex(ValueError, "Unresolved"):
+            package.render_template("install.sh.in", values)
+        self.assertIn("'" + "3" * 64 + "'", package.render_template("install.sh.in", {**values, "INVENTORY_SHA256": "3" * 64}))
+
+
 class LinuxServiceInstaller(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(dir=package.ROOT / "artifacts", prefix="linux-service-installer-")
