@@ -3,24 +3,13 @@
 use super::*;
 use crate::http_endpoint::{
     self, TlsIdentity,
-    rotation::{self, Phase, Record},
+    rotation::{self, Phase, Record, now_ms, output, saved_endpoint},
 };
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::EndpointDescriptor,
 };
 
-fn now_ms() -> Result<u64> {
-    Ok(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
-}
-fn saved_endpoint(control: &Path) -> Result<Option<EndpointDescriptor>> {
-    let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
-    let binding = http_endpoint::installation_binding(control, registry.incarnation()?)?;
-    http_endpoint::load_descriptor(&control.join("http-1"), &binding)
-}
 async fn current_endpoint(install: &Path, control: &Path) -> Result<EndpointDescriptor> {
     let saved = snapshot::identity(install)?;
     let ControlResponse::Health { observation } =
@@ -53,27 +42,6 @@ async fn current_endpoint(install: &Path, control: &Path) -> Result<EndpointDesc
     );
     endpoint.validate()?;
     Ok(endpoint)
-}
-
-fn output(control: &Path, trust_result: Option<serde_json::Value>) -> Result<serde_json::Value> {
-    let record = rotation::read(control)?;
-    let endpoint = saved_endpoint(control)?;
-    let digest = record.as_ref().map(Record::digest).transpose()?;
-    let descriptor_digest = endpoint
-        .as_ref()
-        .map(EndpointDescriptor::digest)
-        .transpose()?;
-    let overdue = record.as_ref().is_some_and(|r| {
-        !matches!(r.phase, Phase::Finalized | Phase::Aborted)
-            && r.overlap_expires_unix_ms
-                .is_some_and(|expires| now_ms().is_ok_and(|now| now >= expires))
-    });
-    Ok(
-        serde_json::json!({"schema":1,"rotation":record,"receipt_sha256":digest,
-        "current_endpoint":endpoint,"current_descriptor_sha256":descriptor_digest,
-        "finalize_overdue":overdue,"trust_result":trust_result,
-        "guidance":"Issuer replacement requires explicit client trust enrollment and reconnect. The overlap deadline does not remove OS trust automatically. Finalize only removes exact owned trust; unknown outcomes require review."}),
-    )
 }
 
 pub(super) struct Input {

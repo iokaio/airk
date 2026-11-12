@@ -15,6 +15,14 @@ The same-user local transport between `airk` and its clients:
   wrote (Windows: owner and ACL; Unix: regular single-link file owned by the
   effective user without group or other bits; U84). Platform code lives in
   `endpoint/windows.rs` and `endpoint/unix.rs`, selected by `cfg`.
+- `private_record` (split U90): owner-private bounded record files under an
+  owner-only root, `read_private`/`write_private` (atomic replace or
+  no-clobber), `private_file`, the regular-unlinked-file check
+  `require_regular_unlinked`, and an exclusive owner-private lock file
+  (`lock`). Moved from `airk-cli` `http_endpoint` by
+  `scripts/dev/split_u90b_cert_trust.py` so `airkctl`'s offline trust
+  (U75) reads and writes the HTTPS records with the service's checks; the
+  error messages and on-disk bytes are unchanged.
 - `frame`: the 4-byte big-endian length-prefixed JSON codec shared by the
   control, query and session protocols.
 - `control`: one framed I1 control request per connection with bounded

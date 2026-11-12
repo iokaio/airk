@@ -6,3 +6,4 @@
 pub mod control;
 pub mod endpoint;
 pub mod frame;
+pub mod private_record;

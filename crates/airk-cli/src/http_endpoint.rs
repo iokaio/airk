@@ -4,7 +4,7 @@ use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::PREFERRED_HTTP_PORT,
 };
-use anyhow::{Result, ensure};
+use anyhow::Result;
 
 use std::{
     io,
@@ -16,11 +16,11 @@ mod metadata;
 mod store;
 mod tls;
 pub mod trust;
+pub(crate) use airk_core::service_http_credentials::same_authority;
 pub use metadata::{
     load_descriptor, publish_descriptor, read_registration_file, read_registrations_file,
     read_selection_file,
 };
-pub(crate) use store::same_authority;
 pub use store::{
     AttachmentRetirementProof, AuthenticatedCredential, ConnectionOwnership, CredentialStore,
     IssuedCredential, authority_digest, read_client_token,
@@ -71,93 +71,13 @@ impl BoundEndpoint {
     }
 }
 
+/// Moved to `airk-ipc` (U90) so `airkctl` keeps the same owner-private records.
+pub(crate) use airk_ipc::private_record::read_private;
+use airk_ipc::private_record::{private_file, write_private};
+
 fn digest(bytes: &[u8]) -> Sha256Digest {
     use sha2::{Digest, Sha256};
     Sha256Digest::from_bytes(Sha256::digest(bytes).into())
-}
-
-fn private_file(path: &Path) -> Result<()> {
-    crate::install_files::safe_file(path)?;
-    #[cfg(windows)]
-    crate::local_ipc::require_owner_private(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let metadata = std::fs::symlink_metadata(path)?;
-        ensure!(
-            metadata.uid().to_string() == crate::local_ipc::current_user()?
-                && metadata.permissions().mode() & 0o077 == 0,
-            "HTTP file is not owner-private"
-        );
-    }
-    Ok(())
-}
-
-pub(crate) fn read_private(root: &Path, name: &str, limit: usize) -> Result<Option<Vec<u8>>> {
-    use std::io::Read;
-    crate::local_ipc::require_existing_root(root)?;
-    let path = root.join(name);
-    match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        result => {
-            result?;
-        }
-    }
-    private_file(&path)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
-    }
-    let file = options.open(&path)?;
-    ensure!(
-        file.metadata()?.len() <= limit as u64,
-        "HTTP private record exceeds bound"
-    );
-    let mut bytes = Vec::new();
-    file.take((limit + 1) as u64).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= limit, "HTTP private record exceeds bound");
-    private_file(&path)?;
-    Ok(Some(bytes))
-}
-
-fn write_private(root: &Path, name: &str, bytes: &[u8], limit: usize, replace: bool) -> Result<()> {
-    use std::io::Write;
-    ensure!(bytes.len() <= limit, "HTTP private record exceeds bound");
-    crate::local_ipc::require_existing_root(root)?;
-    let path = root.join(name);
-    if std::fs::symlink_metadata(&path).is_ok() {
-        private_file(&path)?;
-    }
-    let mut temporary = tempfile::NamedTempFile::new_in(root)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        temporary
-            .as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    private_file(temporary.path())?;
-    temporary.write_all(bytes)?;
-    temporary.as_file().sync_all()?;
-    if replace {
-        temporary.persist(&path).map_err(|error| error.error)?;
-    } else {
-        temporary
-            .persist_noclobber(&path)
-            .map_err(|error| error.error)?;
-    }
-    private_file(&path)?;
-    #[cfg(unix)]
-    std::fs::File::open(root)?.sync_all()?;
-    Ok(())
 }
 
 #[cfg(test)]

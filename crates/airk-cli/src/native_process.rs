@@ -1,27 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native denial stays an error; background startup must never await an OS error dialog.
-use std::{
-    io,
-    process::{Child, Command},
-};
+use std::process::Command;
 
-/// Contain this exact newly spawned child before Init, or terminate and reap it.
-/// Production containment uses it only on Windows; tests use it everywhere.
-#[cfg(any(windows, test))]
-pub(crate) fn attach_owned(
-    child: &mut Child,
-    attach: impl FnOnce(&mut Child) -> anyhow::Result<crate::child_job::ChildJob>,
-) -> anyhow::Result<crate::child_job::ChildJob> {
-    use anyhow::Context;
-    match attach(child) {
-        Ok(containment) => Ok(containment),
-        Err(error) => {
-            let _ = child.kill();
-            child.wait().context("failed to reap uncontained child")?;
-            Err(error)
-        }
-    }
-}
+/// Moved to `airk-process` (`bounded_command`, U90); re-exported for callers
+/// (the Windows embedding pool without local inference, and tests).
+#[cfg(any(all(windows, not(feature = "local-inference")), test))]
+pub(crate) use airk_process::bounded_command::attach_owned;
+pub(crate) use airk_process::bounded_command::{ContainedChild, spawn};
 
 /// Replace this process with `command` (Unix) or run it with inherited stdio inside a
 /// kill-on-close job and exit with its code (Windows). Callers must not write to stdout first.
@@ -40,73 +25,12 @@ pub(crate) fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
     }
 }
 
-pub(crate) fn spawn(command: &mut Command) -> io::Result<Child> {
-    #[cfg(unix)]
-    airk_process::child_group::require_waitable_children()?;
-    without_error_dialogs(|| command.spawn())
-}
-
-/// A short-lived native command is never left running by a pipe, parse or wait
-/// failure. Descendants are drained before the enclosing owner releases.
-#[cfg(windows)]
-type ManagedChild = Child;
-#[cfg(unix)]
-type ManagedChild = airk_process::GroupChild;
-
-pub(crate) struct ContainedChild {
-    child: ManagedChild,
-    #[cfg(windows)]
-    containment: crate::child_job::ChildJob,
-}
-impl ContainedChild {
-    pub fn spawn(command: &mut Command) -> anyhow::Result<Self> {
-        #[cfg(windows)]
-        {
-            Self::attach(spawn(command)?, crate::child_job::ChildJob::attach)
-        }
-        #[cfg(unix)]
-        Ok(Self {
-            child: airk_process::GroupChild::spawn(command)?,
-        })
-    }
-
-    #[cfg(windows)]
-    fn attach(
-        mut child: Child,
-        attach: impl FnOnce(&mut Child) -> anyhow::Result<crate::child_job::ChildJob>,
-    ) -> anyhow::Result<Self> {
-        let containment = attach_owned(&mut child, attach)?;
-        Ok(Self { child, containment })
-    }
-}
-impl std::ops::Deref for ContainedChild {
-    type Target = ManagedChild;
-    fn deref(&self) -> &ManagedChild {
-        &self.child
-    }
-}
-impl std::ops::DerefMut for ContainedChild {
-    fn deref_mut(&mut self) -> &mut ManagedChild {
-        &mut self.child
-    }
-}
-impl Drop for ContainedChild {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            let _ = self.child.kill();
-            self.containment.drain();
-            let _ = self.child.wait();
-        }
-        #[cfg(unix)]
-        self.child.drain();
-    }
-}
-
 #[cfg(windows)]
 pub(crate) use airk_process::detached::spawn_detached;
 /// Moved to `airk-process` (U84); re-exported for existing callers.
-pub(crate) use airk_process::detached::{windows_argument, without_error_dialogs};
+pub(crate) use airk_process::detached::windows_argument;
+#[cfg(test)]
+pub(crate) use airk_process::detached::without_error_dialogs;
 
 #[cfg(all(test, windows))]
 mod tests {

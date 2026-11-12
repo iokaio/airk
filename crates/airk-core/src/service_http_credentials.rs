@@ -216,3 +216,52 @@ impl Ledger {
         })
     }
 }
+
+/// A saved minimum catalog clock may advance without changing the reviewed
+/// authority. Every other selection field, including each union member's
+/// original lineage, must remain equal.
+pub fn same_authority(previous: &HttpSelection, next: &HttpSelection) -> bool {
+    let mut normalized = previous.clone();
+    match (&mut normalized, next) {
+        (HttpSelection::Scoped { selection: old }, HttpSelection::Scoped { selection: new }) => {
+            if new.expected_catalog_revision < old.expected_catalog_revision {
+                return false;
+            }
+            old.expected_catalog_revision = new.expected_catalog_revision;
+        }
+        (
+            HttpSelection::Combined { selection: old },
+            HttpSelection::Combined { selection: new },
+        ) => {
+            if new.expected_catalog_revision < old.expected_catalog_revision {
+                return false;
+            }
+            old.expected_catalog_revision = new.expected_catalog_revision;
+        }
+        (
+            HttpSelection::ImportedLegacy { selection: old },
+            HttpSelection::ImportedLegacy { selection: new },
+        ) => {
+            if new.expected_catalog_revision < old.expected_catalog_revision {
+                return false;
+            }
+            old.expected_catalog_revision = new.expected_catalog_revision;
+        }
+        (
+            HttpSelection::ImportedLegacyUnion { selection: old },
+            HttpSelection::ImportedLegacyUnion { selection: new },
+        ) => {
+            if old.selections.len() != new.selections.len() {
+                return false;
+            }
+            for (old, new) in old.selections.iter_mut().zip(&new.selections) {
+                if new.expected_catalog_revision < old.expected_catalog_revision {
+                    return false;
+                }
+                old.expected_catalog_revision = new.expected_catalog_revision;
+            }
+        }
+        _ => return false,
+    }
+    normalized == *next
+}

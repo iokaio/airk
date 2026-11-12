@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native process lifetime primitives shared by supervision and extraction.
+pub mod bounded_command;
+pub mod cert_trust;
 pub mod child_job;
 pub mod client_owner;
 pub mod detached;

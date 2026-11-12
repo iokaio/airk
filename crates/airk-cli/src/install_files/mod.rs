@@ -12,41 +12,8 @@ use std::path::{Path, PathBuf};
 /// Refuse anything other than a regular, unlinked file with exactly one name:
 /// symlinks, reparse points (Windows) and hard-link aliases are rejected.
 pub(crate) fn safe_file(path: &Path) -> Result<()> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "runtime file is not a regular unlinked file"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ensure!(metadata.nlink() == 1, "aliased runtime file");
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        use std::os::windows::io::AsRawHandle;
-        ensure!(
-            metadata.file_attributes() & 0x400 == 0,
-            "redirected runtime file"
-        );
-        let file = File::open(path)?;
-        // SAFETY: initialized output storage and a live read-only file handle.
-        let mut information: windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION =
-            unsafe { std::mem::zeroed() };
-        // SAFETY: native API writes exactly the fixed output structure.
-        ensure!(
-            unsafe {
-                windows_sys::Win32::Storage::FileSystem::GetFileInformationByHandle(
-                    file.as_raw_handle(),
-                    &mut information,
-                )
-            } != 0,
-            "cannot inspect runtime file aliases"
-        );
-        ensure!(information.nNumberOfLinks == 1, "aliased runtime file");
-    }
-    Ok(())
+    // One implementation (U90): moved to `airk-ipc` for `airkctl`'s records.
+    airk_ipc::private_record::require_regular_unlinked(path)
 }
 
 /// Payload-relative name of the main executable on this platform.

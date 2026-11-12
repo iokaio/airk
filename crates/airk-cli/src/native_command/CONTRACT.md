@@ -89,3 +89,11 @@ identities, and several test modules re-run the fixture by its exact name,
 - Callers: `service_manager` (OS lifecycle), `http_endpoint::trust` (user
   trust store) and `runtime_install::macos_login` (signature and login job
   observation).
+
+## Moved (split U90)
+
+The items above now live in `airk_process::bounded_command` (with
+`native_process::ContainedChild`, `spawn` and `attach_owned`), moved by
+`scripts/dev/split_u90b_forwarders.py` so `airkctl` runs the same bounded
+commands. This module re-exports them with the visibility and cfg gates
+listed here; their behavior and bounds are unchanged.

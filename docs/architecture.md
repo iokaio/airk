@@ -18,7 +18,7 @@ Release state and qualification evidence are in the
 | Crate | Responsibility | AIRK dependencies |
 |---|---|---|
 | airk-core | Artifact, query, fact and citation contracts; transport-neutral service, catalog and read contracts; storage and embedding traits | None |
-| airk-process | Native owned-process containment and confirmed descendant cleanup; no indexing or service policy | None |
+| airk-process | Native owned-process containment and confirmed descendant cleanup, bounded native commands, per-user folders, detached spawn and the OS certificate-trust adapter with its ownership receipt (U84, U90), so `airkctl` and the service share one implementation; no indexing or service policy | None |
 | airk-ingest | Ignore-aware discovery, hashing, native grammars, document extraction and chunking | core, process |
 | airk-store | Content-addressed sources and extractions; authenticated SQLite catalogs, FTS5, postings and graph records; the service registry and index catalog; usage ledgers, durable intents, locks, quotas, relocation and current-object cleanup | core |
 | airk-retrieval | Local ONNX and word-vector inference, the embedded qualified model catalog, mutable DiskANN algorithms and retrieval primitives | core |
