@@ -634,6 +634,140 @@ pub enum ControlMethod {
     },
 }
 
+impl ControlMethod {
+    /// The metadata relay's exhaustive filter (`airk service console` and
+    /// `airkctl service rpc`): the refusal code for a method a metadata relay
+    /// must not carry, `None` when it may. A new method must be considered
+    /// here before a relay can expose it; no evidence credential is relayed.
+    pub fn metadata_relay_refusal(&self) -> Option<&'static str> {
+        let method = self;
+        // The console never receives an evidence bearer credential. Evidence
+        // brokerage remains on the dedicated scoped read transports.
+        match method {
+            Self::Connect { .. } | Self::ConnectScoped { .. } => {
+                return Some("console_brokerage_forbidden");
+            }
+            Self::PrepareUpgradeCheckpoint { .. }
+            | Self::ObserveUpgradeCheckpoint { .. }
+            | Self::UpgradeRecoveryProbe { .. }
+            | Self::ReleaseUpgradeAdmission { .. }
+            | Self::HttpEnroll { .. }
+            | Self::HttpRevoke { .. } => {
+                return Some("console_private_setup_forbidden");
+            }
+            // M2 is an `airkctl` read (split step 3a.1); the retiring console relay
+            // never carries its larger response frame.
+            Self::ToolsCatalog { .. }
+            | Self::ToolsCall { .. }
+            | Self::Lifecycle { .. }
+            | Self::LifecycleStatus
+            | Self::RecordClientError { .. }
+            | Self::ResolveProject { .. }
+            | Self::ClientRequestPrepare { .. }
+            | Self::ClientRequestList {}
+            | Self::ClientRequestSubmit { .. }
+            | Self::ClientRequestForget { .. }
+            | Self::PlanRegistration { .. }
+            | Self::PrepareStorage { .. }
+            | Self::PrepareConfiguration { .. }
+            | Self::UsageDocument { .. }
+            | Self::ModelCatalog {}
+            | Self::ExplorerOffline { .. }
+            | Self::WindowOpen { .. }
+            | Self::WindowRenew { .. }
+            | Self::WindowClose { .. }
+            | Self::WindowScopeGrant { .. }
+            | Self::WindowScopeRelease { .. }
+            | Self::AssistanceWindows {}
+            | Self::AssistanceSubmit { .. }
+            | Self::AssistanceDrain { .. }
+            | Self::HandoffPublish { .. }
+            | Self::ExplorerHandoff { .. }
+            | Self::AbandonLifecycle { .. }
+            | Self::AgentEndpoint {}
+            | Self::AgentConnectionInfo { .. }
+            | Self::AgentConnectionOwnership { .. }
+            | Self::AgentConnectionVerify { .. }
+            | Self::HttpIssuerRotation { .. } => {
+                return Some("console_method_not_reviewed");
+            }
+            // Exhaustive review: a new service method must be considered here before
+            // a trusted console can expose it. No default credential-bearing path.
+            Self::HttpEndpoint
+            | Self::ValidateCombinedDelivery { .. }
+            | Self::NativeRead { .. }
+            | Self::CatalogPage { .. }
+            | Self::CatalogDetail { .. }
+            | Self::CatalogContext { .. }
+            | Self::CatalogHostContext { .. }
+            | Self::CatalogLegacyBinding { .. }
+            | Self::CatalogGrantDraft { .. }
+            | Self::CatalogSourceMutationDraft { .. }
+            | Self::CatalogSourceChangeObservation { .. }
+            | Self::CatalogPendingSourceChange { .. }
+            | Self::CatalogPolicyStatus { .. }
+            | Self::CatalogPolicyResumeReceipt { .. }
+            | Self::CatalogPolicyResume { .. }
+            | Self::CatalogIndexRetirementEvidence { .. }
+            | Self::CatalogSourceChangeResolve { .. }
+            | Self::CatalogIndexSetupDraft { .. }
+            | Self::CatalogIndexSetupApply { .. }
+            | Self::CatalogIndexSetupReceipt { .. }
+            | Self::CatalogSplitSourceState { .. }
+            | Self::CatalogSplitDraft { .. }
+            | Self::CatalogSplitApply { .. }
+            | Self::CatalogSplitStatus { .. }
+            | Self::CatalogSplitReceipt { .. }
+            | Self::CatalogSplitRecover { .. }
+            | Self::CatalogSplitRecoveryReceipt { .. }
+            | Self::CatalogPreview { .. }
+            | Self::CatalogApply { .. }
+            | Self::CatalogReceipt { .. }
+            | Self::Logs { .. }
+            | Self::Health
+            | Self::Shutdown
+            | Self::Register { .. }
+            | Self::ReserveProject { .. }
+            | Self::Projects { .. }
+            | Self::RequestEpoch
+            | Self::RequestReceipt { .. }
+            | Self::PlanCreate { .. }
+            | Self::Plan { .. }
+            | Self::PlanItems { .. }
+            | Self::PlanExecute { .. }
+            | Self::PlanPause { .. }
+            | Self::PlanCancel { .. }
+            | Self::Events { .. }
+            | Self::Maintenance { .. }
+            | Self::Watch { .. }
+            | Self::Progress { .. }
+            | Self::Inspection { .. }
+            | Self::ConfigureWatch { .. }
+            | Self::ConfigureProject { .. }
+            | Self::ConfigurationResult { .. }
+            | Self::ReferenceRefreshReceipt { .. }
+            | Self::Enqueue { .. }
+            | Self::Job { .. }
+            | Self::Retry { .. }
+            | Self::Pause { .. }
+            | Self::Cancel { .. }
+            | Self::CancelPending { .. }
+            | Self::Console { .. }
+            | Self::InactiveConsole { .. }
+            | Self::Workers { .. }
+            | Self::Worker { .. }
+            | Self::RestartProject { .. }
+            | Self::EmbeddingStatus
+            | Self::StartEmbedding
+            | Self::StopEmbedding { .. }
+            | Self::SourceStatus
+            | Self::Resources
+            | Self::ConfigureResources { .. } => {}
+        }
+        None
+    }
+}
+
 /// A window lease (contracts §2.5): 256 random bits as 64 lowercase hex,
 /// held only in the owning session's memory and on its pipe frames. `Debug`
 /// never shows it.

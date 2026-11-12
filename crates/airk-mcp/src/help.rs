@@ -19,6 +19,14 @@ pub fn install_cli_help(factory: fn() -> CliCatalog) {
     let _ = CLI_FACTORY.set(factory);
 }
 
+/// `airkctl`'s command help (contracts C11a): generated from its parser by
+/// `AIRK_WRITE_CLI_HELP=1 cargo test -p airkctl --lib help_catalog` and
+/// embedded here, so a service without a parser answers `help command=…`.
+fn embedded_cli_help() -> CliCatalog {
+    serde_json::from_str(include_str!("help/cli_commands.json"))
+        .expect("embedded airkctl help catalog is valid JSON")
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HelpArgs {
@@ -88,7 +96,11 @@ fn answer_with_catalog(
         .iter()
         .find(|entry| entry.id == topic)
         .ok_or("unknown_help_topic")?;
-    let catalog = CLI_FACTORY.get().map(|factory| CLI.get_or_init(*factory));
+    let catalog = Some(CLI.get_or_init(|| {
+        CLI_FACTORY
+            .get()
+            .map_or_else(embedded_cli_help, |factory| factory())
+    }));
     let content = if let Some(command) = &args.command {
         if args.topic.is_some() && !matches!(topic.as_str(), "cli" | "commands") {
             return Err("conflicting_help_selectors");
@@ -101,7 +113,11 @@ fn answer_with_catalog(
         }) {
             return Err("invalid_cli_command_path");
         }
-        let name = words.strip_prefix(&["airk"]).unwrap_or(&words).join(" ");
+        let name = words
+            .strip_prefix(&["airkctl"])
+            .or_else(|| words.strip_prefix(&["airk"]))
+            .unwrap_or(&words)
+            .join(" ");
         catalog
             .ok_or("cli_help_not_supplied_by_native_host")?
             .get(&name)

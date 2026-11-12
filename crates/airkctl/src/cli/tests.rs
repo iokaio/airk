@@ -143,3 +143,30 @@ fn plain_drops_only_the_verbatim_drive_prefix() {
         PathBuf::from("/usr/local/bin/airkctl")
     );
 }
+
+/// C11a: the embedded `airk-mcp` help catalog is exactly this parser's help.
+#[test]
+fn help_catalog_matches_the_embedded_airk_mcp_catalog() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../airk-mcp/src/help/cli_commands.json");
+    // Clap renders the whole tree; give it a thread with room to do so.
+    let catalog = std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(help_catalog)
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(catalog.contains_key("agents connect"));
+    assert!(!catalog.keys().any(|key| key.starts_with("runtime")));
+    let text = serde_json::to_string_pretty(&catalog).unwrap() + "\n";
+    if std::env::var_os("AIRK_WRITE_CLI_HELP").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let saved = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    assert!(
+        saved == text,
+        "regenerate with AIRK_WRITE_CLI_HELP=1 cargo test -p airkctl --lib help_catalog"
+    );
+}

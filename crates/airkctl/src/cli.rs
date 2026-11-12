@@ -619,6 +619,20 @@ enum ServiceCommand {
         #[command(subcommand)]
         action: RequestsCommand,
     },
+    /// Send one raw management request (ControlMethod JSON) and print the service's answer.
+    ///
+    /// The metadata relay's filter applies: evidence credentials and private setup methods are
+    /// never relayed. Transport success and the service's own status are reported separately.
+    Rpc {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
+        request_file: Option<PathBuf>,
+        /// Read bounded management JSON from stdin instead of a request file.
+        #[arg(long)]
+        stdin: bool,
+    },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
         /// The service's control directory (default: --service-runtime-dir).
@@ -2266,6 +2280,80 @@ fn evidence(cx: &mut Context, mut selection: Selection, command: EvidenceCommand
 }
 
 /// The compact JSON line `airk service health|shutdown` printed.
+/// `service rpc` (P0 decision, U6): one raw `ControlMethod`, as `airk service
+/// rpc` relayed it: the metadata relay filter, then the service's `Health`
+/// and the request fenced to that instance; a `Connection` is never printed.
+fn rpc_service(
+    cx: &mut Context,
+    selection: Selection,
+    runtime_dir: Option<PathBuf>,
+    request_file: Option<PathBuf>,
+    stdin: bool,
+) -> u8 {
+    let limit = airk_core::service::MAX_FRAME_BYTES as u64;
+    let bytes = if stdin {
+        bounded(cx.io.stdin, limit)
+    } else {
+        match request_file.as_deref().map(std::fs::File::open) {
+            Some(Ok(mut file)) => bounded(&mut file, limit),
+            Some(Err(error)) => Err(crate::registration::failed(&error.to_string())),
+            None => Err(crate::registration::failed("request file required")),
+        }
+    };
+    let bytes = match bytes {
+        Ok(bytes) => bytes,
+        Err(line) => return fail(cx, &line),
+    };
+    let method: ControlMethod = match serde_json::from_slice(&bytes) {
+        Ok(method) => method,
+        Err(error) => return fail(cx, &crate::registration::failed(&error.to_string())),
+    };
+    if matches!(
+        method,
+        ControlMethod::Connect { .. } | ControlMethod::ConnectScoped { .. }
+    ) {
+        return fail(
+            cx,
+            &crate::registration::failed(
+                "metadata RPC cannot expose evidence credentials; use mcp or tools",
+            ),
+        );
+    }
+    let failure = |code: &str| ControlResponse::Failure { code: code.into() };
+    if let Some(code) = method.metadata_relay_refusal() {
+        return print_compact(cx, &failure(code));
+    }
+    let control = match runtime_dir.or(selection.control) {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    let health = match crate::service::request(&control, ControlMethod::Health, VERSION) {
+        Ok(ControlResponse::Health { observation }) => observation,
+        Ok(ControlResponse::Incompatible { .. }) => {
+            return print_compact(cx, &failure("service_protocol_incompatible"));
+        }
+        Ok(_) | Err(_) => return print_compact(cx, &failure("service_unavailable")),
+    };
+    if matches!(method, ControlMethod::Health) {
+        return print_compact(
+            cx,
+            &ControlResponse::Health {
+                observation: health,
+            },
+        );
+    }
+    let response = crate::service::request_fenced(&control, method, VERSION, Some(health.instance))
+        .unwrap_or_else(|_| failure("service_request_outcome_unknown"));
+    let response = match response {
+        ControlResponse::Connection { .. } => failure("console_brokerage_forbidden"),
+        response => response,
+    };
+    print_compact(cx, &response)
+}
+
 fn print_compact(cx: &mut Context, response: &ControlResponse) -> u8 {
     match serde_json::to_string(response) {
         Ok(text) => {
@@ -2671,6 +2759,13 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
         } => {
             return record_error_service(cx, selection, runtime_dir, operation);
         }
+        ServiceCommand::Rpc {
+            runtime_dir,
+            request_file,
+            stdin,
+        } => {
+            return rpc_service(cx, selection, runtime_dir, request_file, stdin);
+        }
         ServiceCommand::Trust {
             runtime_dir,
             action,
@@ -2931,6 +3026,43 @@ fn requested_output(arguments: &[OsString]) -> Output {
 
 /// Run one `airkctl` command line (the program name first) and return its
 /// I2 exit code.
+/// Every visible command's long help keyed by its path (`""` is the root):
+/// the catalog the service embeds for `airk_help command=…` (contracts C11a).
+pub fn help_catalog() -> std::collections::BTreeMap<String, String> {
+    use clap::CommandFactory;
+    fn visit(
+        mut command: clap::Command,
+        name: String,
+        catalog: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        command = command
+            .color(clap::ColorChoice::Never)
+            .term_width(100)
+            .bin_name(if name.is_empty() {
+                "airkctl".into()
+            } else {
+                format!("airkctl {name}")
+            });
+        catalog.insert(name.clone(), command.render_long_help().to_string());
+        for child in command
+            .get_subcommands()
+            .filter(|child| !child.is_hide_set())
+        {
+            let path = if name.is_empty() {
+                child.get_name().into()
+            } else {
+                format!("{name} {}", child.get_name())
+            };
+            visit(child.clone(), path, catalog);
+        }
+    }
+    let mut root = Cli::command();
+    root.build();
+    let mut catalog = std::collections::BTreeMap::new();
+    visit(root, String::new(), &mut catalog);
+    catalog
+}
+
 pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     let output = requested_output(arguments.get(1..).unwrap_or_default());
     let mut cx = Context { output, io };
