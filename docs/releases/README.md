@@ -4,6 +4,7 @@ The 1.8.23 manual installation reported an HTTP cleanup refusal. Its subsequent
 native fix is an untested source checkpoint; no replacement installer was built.
 Repair and qualification stopped at the user's direction on 10 November 2026.
 
+- [1.8.25 split candidate](release-1.8.25.md): 1.8.24 plus the pre-split retirement fix and the installer's report of anything setup leaves behind. Manifests synchronized at 1.8.25; installed and platform qualification pending.
 - [1.8.24 first split candidate](release-1.8.24.md): `airk` service only, `airkctl` client, UI-only universal VSIX, admin pages, locally signed Windows AIRK Service installer. Manifests synchronized at 1.8.24; installed and platform qualification pending.
 - [1.8.23 Windows debug manual-test candidate](release-1.8.23.md): full owned uninstall through 1.9.0 inclusive, including the same build; empty successor without automatic indexing; ordinary reopen reconnects; Reconnect uses existing reviewed single/combined scopes. Source manifests and lockfiles are synchronized at 1.8.23; the Windows debug native package and VSIX are built and package-verified. Installed-editor and platform qualification remain pending.
 - [1.8.22 local VSIX candidate](release-1.8.22.md) (failed manual-test artifact; corrected source prepared for 1.8.23): one resident `airk.exe` (the service), with workers inside it; one session per VS Code window; direct HTTPS agents and credential helper. Reconnect created an index before failing its scope check. Original artifact identity and evidence are retained.
