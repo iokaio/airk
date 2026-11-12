@@ -10,14 +10,18 @@ import tempfile
 
 # One row per native host. PRs gate the first three; main push builds macOS
 # Intel and promotes the PR's tested artifacts for the others when the merged
-# tree is identical. Every other main/manual build covers all four.
+# tree is identical. Every other main/manual build covers all four. Within the
+# runtime directory, `executable` is the airk service image and `airkctl` the
+# CLI image of the split pair (split_receipts.IMAGES).
 NATIVE_ROWS = (
-    dict(os="ubuntu-24.04", target="x86_64-unknown-linux-gnu", executable="airk", cargo_jobs=4, test_threads=4),
-    dict(os="windows-2025", target="x86_64-pc-windows-msvc", executable="airk.exe", cargo_jobs=4, test_threads=4),
+    dict(os="ubuntu-24.04", target="x86_64-unknown-linux-gnu", executable="airk", airkctl="airkctl",
+         cargo_jobs=4, test_threads=4),
+    dict(os="windows-2025", target="x86_64-pc-windows-msvc", executable="airk.exe", airkctl="airkctl.exe",
+         cargo_jobs=4, test_threads=4),
     dict(os="macos-15", target="aarch64-apple-darwin", executable="AIRK.app/Contents/MacOS/airk",
-         cargo_jobs=2, test_threads=2),
+         airkctl="AIRK.app/Contents/MacOS/airkctl", cargo_jobs=2, test_threads=2),
     dict(os="macos-15-intel", target="x86_64-apple-darwin", executable="AIRK.app/Contents/MacOS/airk",
-         cargo_jobs=4, test_threads=4, timeout_minutes=120),
+         airkctl="AIRK.app/Contents/MacOS/airkctl", cargo_jobs=4, test_threads=4, timeout_minutes=120),
 )
 PR_TARGETS = tuple(row["target"] for row in NATIVE_ROWS[:3])
 MAIN_TARGETS = tuple(row["target"] for row in NATIVE_ROWS[3:])

@@ -120,7 +120,10 @@ class ServiceClientTests(unittest.TestCase):
                 fixture.install=owner/"install";fixture.control=owner/("state/control" if authority=="catalog" else "control")
                 fixture.environment={};fixture.log=io.BytesIO();fixture.managed_started=False;fixture.child=None
                 health={"instance":"native-instance","runtime_sha256":identity,"executable_sha256":CLIENTS.hashlib.sha256(binary.read_bytes()).hexdigest()}
-                commands=[]
+                commands=[];user_commands=[]
+                def user(*args,**kwargs):
+                    user_commands.append(args)
+                    return subprocess.CompletedProcess([],0,"{}","")
                 def run(*args,**kwargs):
                     commands.append(args)
                     if args[:2]==("runtime","stage"):
@@ -132,20 +135,152 @@ class ServiceClientTests(unittest.TestCase):
                         value={"control_dir":str(fixture.control),"executable":str(fixture.install/"runtimes"/identity/binary.name)}
                     else:value={}
                     return subprocess.CompletedProcess([],0,json.dumps(value),"")
-                fixture.run=run;fixture.rpc=Mock(return_value={"observation":health})
+                # Pre-split operations go through service_run; user commands through run.
+                fixture.service_run=run;fixture.run=user;fixture.rpc=Mock(return_value={"observation":health})
                 child=Mock()
                 with patch.object(CLIENTS.subprocess,"Popen",return_value=child) as process:
                     fixture.start()
                 if authority=="catalog":
                     process.assert_not_called()
                     self.assertEqual([command[:2] for command in commands],[("runtime","stage"),("runtime","activate"),*(([("runtime","ensure")]) if not single_image else []),("runtime","inspect")])
+                    self.assertEqual(user_commands,[])
                     self.assertTrue(fixture.managed_started)
                     fixture.assert_alive()
                 else:
                     process.assert_called_once()
                     self.assertEqual(process.call_args.args[0],[str(binary),"serve","--runtime-dir",str(fixture.control)])
-                    self.assertEqual(commands,[("service","health","--runtime-dir",fixture.control)])
+                    self.assertEqual(user_commands,[("service","health","--runtime-dir",fixture.control)])
+                    self.assertEqual(commands,[])
                     self.assertFalse(fixture.managed_started)
+
+    def split_pair(self, root, version="1.8.24"):
+        """A fictional schema-3 Windows-layout pair; its images are never executed."""
+        runtime = root / "runtime"
+        (runtime / "notices").mkdir(parents=True)
+        files = {"airk.exe": b"fictional airk service image", "airkctl.exe": b"fictional airkctl image",
+                 "LICENSE": b"Original fixture license", "notices/fixture.txt": b"Original fixture notice"}
+        for name, value in files.items():
+            (runtime / name).write_bytes(value)
+        digest = lambda path: CLIENTS.hashlib.sha256(path.read_bytes()).hexdigest()
+        metadata = {"schema": 3, "version": version, "os": "windows", "arch": "x86_64",
+                    "airk_sha256": digest(runtime / "airk.exe"), "airkctl_sha256": digest(runtime / "airkctl.exe"),
+                    "i1_protocol": 1, "i2_contract": 1, "admin_inventory_sha256": "e" * 64}
+        (runtime / "airk-runtime.json").write_text(json.dumps(metadata), encoding="utf-8")
+        (runtime / "airk-build.json").write_text(json.dumps({"runtime": metadata}), encoding="utf-8")
+        inventory = {name: digest(runtime / name) for name in [*files, "airk-runtime.json", "airk-build.json"]}
+        (runtime / "airk-install.json").write_text(json.dumps({"schema": 1, "version": version, "os": "windows",
+                                                               "arch": "x86_64", "files": inventory}), encoding="utf-8")
+        return runtime, metadata
+
+    def test_split_pair_classification_and_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime, metadata = self.split_pair(Path(temporary))
+            compatibility = CLIENTS.classify_runtime(runtime)
+            self.assertEqual(compatibility["topology"], "split_pair")
+            self.assertEqual((compatibility["transport"], compatibility["authority"], compatibility["startup"]),
+                             ("https", "catalog", "managed_install"))
+            self.assertEqual(compatibility["evidence"], {"kind": "current_schema_3_pair_contract"})
+            self.assertEqual(CLIENTS.paired_images(runtime), (runtime / "airk.exe", runtime / "airkctl.exe"))
+            self.assertEqual(CLIENTS.split_cli(runtime / "airk.exe"), runtime / "airkctl.exe")
+            self.assertEqual(CLIENTS.split_cli(runtime / "airk.exe", runtime / "airkctl.exe"), runtime / "airkctl.exe")
+            with self.assertRaisesRegex(ValueError, "--binary"):
+                CLIENTS.split_cli(runtime / "airkctl.exe")
+            with self.assertRaisesRegex(ValueError, "--airkctl"):
+                CLIENTS.split_cli(runtime / "airk.exe", runtime / "LICENSE")
+            # A pre-split payload has no separate CLI and accepts none.
+            single = Path(temporary) / "single"
+            single.mkdir()
+            (single / "airk").write_bytes(b"fictional single image")
+            self.assertIsNone(CLIENTS.split_cli(single / "airk"))
+            with self.assertRaisesRegex(ValueError, "pre-split"):
+                CLIENTS.split_cli(single / "airk", single / "airk")
+            for changed in ({**metadata, "airkctl_sha256": metadata["airk_sha256"]}, {**metadata, "version": "1.8.23"},
+                            {key: value for key, value in metadata.items() if key != "airkctl_sha256"},
+                            {**metadata, "extra": True}):
+                with self.subTest(changed=changed):
+                    (runtime / "airk-runtime.json").write_text(json.dumps(changed), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "split pair"):
+                        CLIENTS.classify_runtime(runtime)
+
+    def test_split_fixture_payload_restages_the_verified_pair_under_a_schema_two_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime, metadata = self.split_pair(root)
+            before = {path.relative_to(runtime).as_posix(): path.read_bytes() for path in runtime.rglob("*") if path.is_file()}
+            payload = CLIENTS.split_fixture_payload(runtime, root / "payload")
+            self.assertEqual({path.relative_to(runtime).as_posix(): path.read_bytes() for path in runtime.rglob("*") if path.is_file()}, before)
+            receipt = json.loads((payload / "airk-runtime.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt, {"schema": 2, "version": "1.8.24", "os": "windows", "arch": "x86_64",
+                                       "airk_sha256": metadata["airk_sha256"]})
+            manifest = json.loads((payload / "airk-install.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(manifest), {"schema", "version", "os", "arch", "files"})
+            self.assertEqual(sorted(manifest["files"]), ["LICENSE", "airk-runtime.json", "airk.exe", "airkctl.exe",
+                                                         "notices/fixture-provenance.json", "notices/fixture.txt"])
+            self.assertFalse((payload / "airk-build.json").exists())
+            for name, expected in manifest["files"].items():
+                self.assertEqual(CLIENTS.file_sha256(payload / name), expected, name)
+            self.assertEqual((payload / "airk.exe").read_bytes(), (runtime / "airk.exe").read_bytes())
+            # A changed pair file is refused before anything is staged.
+            (runtime / "LICENSE").write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "sealed inventory"):
+                CLIENTS.split_fixture_payload(runtime, root / "changed")
+
+    def test_split_pair_routes_user_commands_to_airkctl_and_service_operations_to_airk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            runtime, _ = self.split_pair(root)
+            owner = root / "owner"
+            owner.mkdir()
+            with self.assertRaisesRegex(ValueError, "--airkctl"):
+                CLIENTS.Fixture(runtime, owner, cli=runtime / "airk.exe")
+            self.assertFalse((owner / "service.stderr").exists())
+            fixture = CLIENTS.Fixture(runtime, owner, cli=runtime / "airkctl.exe")
+            try:
+                self.assertEqual((fixture.binary, fixture.cli), (runtime / "airk.exe", runtime / "airkctl.exe"))
+                self.assertTrue(fixture.single_image and fixture.managed_installation)
+                service, cli = str(runtime / "airk.exe"), str(runtime / "airkctl.exe")
+                self.assertEqual(fixture.user_command("search", "x"), [cli, "search", "x"])
+                self.assertEqual(fixture.service_command("runtime", "inspect"),
+                                 [service, "__airk_role", "setup-interim", "runtime", "inspect"])
+                self.assertEqual(fixture.service_command("--verify-model-smoke", selector=False), [service, "--verify-model-smoke"])
+                calls, state = [], {}
+                def native(command, **kwargs):
+                    calls.append(command)
+                    arguments = command[1:]
+                    if command[0] == service:
+                        self.assertEqual(arguments[:2], ["__airk_role", "setup-interim"])
+                        operation = arguments[2:4]
+                        if operation == ["runtime", "stage"]:
+                            source = Path(arguments[arguments.index("--source") + 1])
+                            self.assertEqual(source, owner / "pair-fixture-payload")
+                            state["identity"] = CLIENTS.file_sha256(source / "airk-install.json")
+                            installed = fixture.install / "runtimes" / state["identity"]
+                            CLIENTS.shutil.copytree(source, installed)
+                            fixture.control.mkdir(parents=True)
+                            value = {}
+                        elif operation == ["runtime", "inspect"]:
+                            value = {"control_dir": str(fixture.control),
+                                     "executable": str(fixture.install / "runtimes" / state["identity"] / "airk.exe")}
+                        else:
+                            self.assertEqual(operation, ["runtime", "activate"])
+                            value = {}
+                    else:
+                        self.assertEqual(command[0], cli)
+                        self.assertEqual(arguments[:4], ["service", "rpc", "--runtime-dir", str(fixture.control)])
+                        self.assertEqual(json.loads(kwargs["input"]), "health")
+                        value = {"status": "health", "observation": {
+                            "instance": "a" * 32, "runtime_sha256": state["identity"],
+                            "executable_sha256": CLIENTS.file_sha256(runtime / "airk.exe")}}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+                with patch.object(CLIENTS.subprocess, "run", side_effect=native), \
+                     patch.object(CLIENTS.subprocess, "Popen") as process:
+                    fixture.start()
+                process.assert_not_called()
+                self.assertEqual([call[0] for call in calls], [service, service, service, cli])
+                self.assertEqual(fixture.binary, fixture.install / "runtimes" / state["identity"] / "airk.exe")
+                self.assertEqual(fixture.cli, runtime / "airkctl.exe")
+            finally:
+                fixture.log.close()
 
     def test_compatibility_matrix_executes_real_setup_and_scope_building(self):
         for schema, authority in ((1,"legacy"),(1,"catalog"),(2,"catalog")):
@@ -261,7 +396,8 @@ class ServiceClientTests(unittest.TestCase):
                 spec.loader.exec_module(module)
                 binary = Path(temporary) / "airk"
                 binary.write_bytes(b"fixture only")
-                def at_boundary(runtime, owner):
+                def at_boundary(runtime, owner, cli=None):
+                    self.assertIsNone(cli, "No --airkctl was given")
                     self.assertFalse((owner / "state").exists(), "Native state must be created privately by the installer")
                     self.assertTrue((owner / "index-data").is_dir())
                     raise RuntimeError("verified roots before native stage")
@@ -327,12 +463,15 @@ class ServiceClientTests(unittest.TestCase):
         fixture.binary, fixture.control = Path("installed/airk"), Path("private/control")
         fixture.projects = {"usage-benchmark": {"binding": "owned", "root": "source", "data_root": "index-data/usage", "collection": "usage"}}
         fixture.arguments = Mock(side_effect=AssertionError("Owner accounting must not use evidence grant"))
-        for args in (["usage", "report"], ["usage", "clear"], ["usage", "configure", "--mode", "disabled"]):
-            command = usage.usage_command(fixture, args)
-            self.assertEqual(command[0], str(fixture.binary))
-            self.assertEqual(command[1:11], ["--service-runtime-dir", str(fixture.control), "--service-project", "owned",
-                                           "--root", "source", "--data-dir", "index-data/usage", "--collection", "usage"])
-            self.assertEqual(command[11:], args)
+        for cli in (None, Path("pair/airkctl")):
+            # A split pair's usage management is an airkctl user command, never the airk service.
+            fixture.cli = cli
+            for args in (["usage", "report"], ["usage", "clear"], ["usage", "configure", "--mode", "disabled"]):
+                command = usage.usage_command(fixture, args)
+                self.assertEqual(command[0], str(cli or fixture.binary))
+                self.assertEqual(command[1:11], ["--service-runtime-dir", str(fixture.control), "--service-project", "owned",
+                                               "--root", "source", "--data-dir", "index-data/usage", "--collection", "usage"])
+                self.assertEqual(command[11:], args)
         with self.assertRaises(AssertionError):
             usage.usage_command(fixture, ["search", "fictional"])
         fixture.arguments.assert_not_called()

@@ -54,7 +54,8 @@ class RetrievalQualityTests(unittest.TestCase):
             with self.subTest(representative=representative), tempfile.TemporaryDirectory() as temporary:
                 base = Path(temporary) / "fixture"
                 binary = Path(temporary) / "airk"
-                def before_native_start(runtime, owner):
+                def before_native_start(runtime, owner, cli=None):
+                    self.assertIsNone(cli, "No --airkctl was given")
                     self.assertEqual(owner, base)
                     self.assertFalse((owner / "state").exists(), "Native state must not inherit an ordinary fixture-directory ACL")
                     self.assertTrue((owner / "index-data").is_dir())

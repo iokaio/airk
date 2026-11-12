@@ -203,6 +203,26 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             plan.native_matrix(("unknown-target",))
 
+    def test_native_rows_name_the_service_and_cli_images_of_each_split_pair(self):
+        # Reviewed literals: harness steps pass `executable` (airk, the service) and
+        # `airkctl` (the CLI) from the restored runtime directory.
+        expected = {
+            "x86_64-unknown-linux-gnu": ("airk", "airkctl"),
+            "x86_64-pc-windows-msvc": ("airk.exe", "airkctl.exe"),
+            "aarch64-apple-darwin": ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl"),
+            "x86_64-apple-darwin": ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl"),
+        }
+        self.assertEqual({row["target"]: (row["executable"], row["airkctl"]) for row in plan.NATIVE_ROWS}, expected)
+        for row in plan.native_matrix(plan.native_targets("pull_request", False))["include"]:
+            self.assertEqual((row["executable"], row["airkctl"]), expected[row["target"]])
+        # The packaging owner agrees with the reviewed table (no derived expectation).
+        specification = importlib.util.spec_from_file_location("ci_plan_split_receipts", Path(__file__).parents[1] / "split_receipts.py")
+        receipts = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(receipts)
+        for target, images in expected.items():
+            named = receipts.IMAGES[receipts.platform_of(target)[0]]
+            self.assertEqual((named["airk"], named["airkctl"]), images)
+
     def test_dependency_toolchain_and_ci_changes_rebuild_every_target_on_main(self):
         for paths in ([], ["Cargo.lock"], ["crates/airk-core/Cargo.toml"], ["rust-toolchain.toml"], [".cargo/config.toml"],
                       ["Dockerfile"], ["scripts/ci-prune-target.py"], [".github/workflows/ci.yml"], [".config/nextest.toml"],

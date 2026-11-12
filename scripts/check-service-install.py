@@ -20,11 +20,20 @@ import uuid
 # allowance also covers the ordinary lock/setup/exit budget, candidate health
 # (60 seconds), and error reporting. This does not change native deadlines.
 LIFECYCLE_TIMEOUT = 180 + 180 + 60 + 60
+# U93 (split plan section 5.1): a split airk serves the pre-split runtime operations
+# only behind this private-role selector; user commands belong to airkctl.
+INTERIM_SELECTOR = ("__airk_role", "setup-interim")
+
+
+def operation(arguments):
+    """The pre-split operation named after an optional U93 selector."""
+    return tuple(arguments[2:]) if tuple(arguments[:2]) == INTERIM_SELECTOR else tuple(arguments)
 
 
 def invoke_native(executable, *arguments, environment, rejected=False, raw=False, input=None, timeout=None):
+    lifecycle = operation(arguments)[:2] in (("runtime", "activate"), ("runtime", "rollback"))
     if timeout is None:
-        timeout = LIFECYCLE_TIMEOUT if arguments[:2] in (("runtime", "activate"), ("runtime", "rollback")) else 180
+        timeout = LIFECYCLE_TIMEOUT if lifecycle else 180
     try:
         result = subprocess.run([str(executable), *map(str, arguments)], capture_output=True,
                                 encoding="utf-8", env=environment, timeout=timeout,
@@ -33,7 +42,7 @@ def invoke_native(executable, *arguments, environment, rejected=False, raw=False
         # subprocess retains captured streams on the original exception. Expose
         # bounded diagnostic tails only for lifecycle commands, whose output is
         # an activation receipt/error rather than an enrollment credential.
-        if arguments[:2] in (("runtime", "activate"), ("runtime", "rollback")):
+        if lifecycle:
             def tail(value):
                 return (value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or "")[-4096:]
             error.add_note(f"Native lifecycle timed out without retry. Last stdout: {tail(error.stdout)}; last stderr: {tail(error.stderr)}")
@@ -91,10 +100,13 @@ def check_login_plan(plan, install, platform=sys.platform, *, version="1.8.13"):
                  and arguments == ["runtime", "login-serve" if runtime_builder().single_image_version(version) else "login-foreground", "--channel", "stable"])
     else:
         entry = "managed-serve" if runtime_builder().single_image_version(version) else "foreground"
-        valid = len(arguments) == 4 and arguments[:3] == ["runtime", entry, "--install-dir"]
+        # A split airk's login entry is the U93 interim role (service_manager.rs runtime_arguments).
+        prefix = list(INTERIM_SELECTOR) if runtime_builder().split_pair_version(version) else []
+        expected = [*prefix, "runtime", entry, "--install-dir"]
+        valid = len(arguments) == len(expected) + 1 and arguments[:-1] == expected
         if valid:
             try:
-                valid = Path(arguments[3]).samefile(install)
+                valid = Path(arguments[-1]).samefile(install)
             except OSError:
                 valid = False
     if not valid:
@@ -125,16 +137,26 @@ def check_installed_images(payload, installed, inventory, invoke):
     operating_system, version = inventory["os"], inventory["version"]
     main, helper = builder.runtime_names(operating_system)
     if builder.single_image_version(version):
+        split = builder.split_pair_version(version)
         if main not in inventory["files"]:
             raise RuntimeError("Approved executable inventory is incomplete")
         check_image(installed / main, inventory["files"][main])
+        if split:
+            # The split pair's CLI image travels with the service image (split_receipts.IMAGES).
+            cli = builder.split_images(operating_system)[1]
+            if cli not in inventory["files"]:
+                raise RuntimeError("Split payload inventory lacks its airkctl image")
+            check_image(installed / cli, inventory["files"][cli])
+            if invoke(installed / cli, "--version", raw=True) != f"airkctl {version}":
+                raise RuntimeError("Installed airkctl lost its executable identity")
         suffix = ".exe" if operating_system == "windows" else ""
         forbidden = [helper, "airk-launcher" + suffix, "airk-service" + suffix,
                      "airk-index" + suffix, "airk-source" + suffix]
         for name in forbidden:
             if name in inventory["files"] or os.path.lexists(installed / name) or os.path.lexists(payload / name):
                 raise RuntimeError("Single-executable payload contains a retired helper, launcher or role alias")
-        if invoke(installed / main, "runtime", "self-test").get("self_test") != "passed":
+        selector = INTERIM_SELECTOR if split else ()
+        if invoke(installed / main, *selector, "runtime", "self-test").get("self_test") != "passed":
             raise RuntimeError("Single-executable main failed native self-test")
         return False, inventory["files"][main]
     launcher = builder.launcher_name(operating_system, version)
@@ -226,19 +248,28 @@ def parity_envelope(envelope, transport):
 
 
 def modern_client_lifecycle(invoke, binary, installed_main, install, control, source, data, health, evidence_file,
-                            *, stopped_probe=None):
-    """Actual native grant/enrollment and two independent service-owned TLS sessions."""
+                            *, stopped_probe=None, cli=None):
+    """Actual native grant/enrollment and two independent service-owned TLS sessions.
+
+    With a split pair's `cli` (airkctl), user commands run there and the
+    pre-split runtime operations run on `binary` (airk) behind the U93 selector.
+    """
     reviewed = load_fixture("installation_reviewed_fixture", "check-runtime-upgrade.py")
     transport = load_fixture("installation_http_fixture", "http_fixture.py")
     reads = load_fixture("installation_read_contract", "check-service-clients.py")
+    selector = INTERIM_SELECTOR if cli is not None else ()
+    def user(*arguments, **kwargs):
+        return invoke(cli or binary, *arguments, **kwargs)
+    def service(*arguments, **kwargs):
+        return invoke(binary, *selector, *arguments, **kwargs)
     def rpc(method):
-        response = reads.metadata_rpc(lambda exact, _deadline: invoke(binary, "service", "rpc", "--runtime-dir", control,
-                                                                      "--stdin", input=exact), method)
+        response = reads.metadata_rpc(lambda exact, _deadline: user("service", "rpc", "--runtime-dir", control,
+                                                                    "--stdin", input=exact), method)
         if response.get("status") in ("failure", "incompatible"):
             raise RuntimeError("Owned installation metadata request refused: " + json.dumps(response))
         return response
     project, selected = reviewed.reviewed_fixture(rpc, source, data, collection="install-lifetime")
-    job = invoke(binary, "--service-runtime-dir", control, "--service-project", project["binding"],
+    job = user("--service-runtime-dir", control, "--service-project", project["binding"],
                  "--root", project["root"], "--data-dir", project["data_root"], "--collection", project["collection"], "index")["job"]
     deadline = time.monotonic() + 180
     while True:
@@ -261,7 +292,7 @@ def modern_client_lifecycle(invoke, binary, installed_main, install, control, so
             "selection":{"kind":"scoped","selection":selected}, "client":"unknown"})
         retain()
         connection = transport.enroll_native(
-            lambda *arguments, timeout=None: invoke(binary, *arguments, timeout=timeout),
+            lambda *arguments, timeout=None: service(*arguments, timeout=timeout),
             install, control, {"kind": "scoped", "selection": selected}, identifier)
         expected, actual = dict(selected), dict(connection["selection"]["selection"])
         expected.pop("expected_catalog_revision"); actual.pop("expected_catalog_revision")
@@ -327,27 +358,27 @@ def modern_client_lifecycle(invoke, binary, installed_main, install, control, so
         if second is not None: second.close()
     if rpc("health")["observation"]["instance"] != health["instance"]:
         raise RuntimeError("HTTP session shutdown disturbed the shared service")
-    prepared = invoke(binary,"runtime","prepare-client","--install-dir",install)
+    prepared = service("runtime","prepare-client","--install-dir",install)
     if (prepared.get("launcher") is not None or prepared.get("service_lifecycle_changed") is not False
             or not Path(prepared["executable"]).samefile(installed_main)):
         raise RuntimeError("Modern client preparation created a launcher or changed lifecycle")
     epoch = rpc("request_epoch")
     request = {"caller":uuid.uuid4().hex,"key":{"namespace":epoch["namespace"],"epoch":epoch["epoch"],"nonce":uuid.uuid4().hex},
                "action":"stop","expected_instance":health["instance"],"runtime":health["runtime_sha256"],"force":False}
-    stopped = invoke(binary,"runtime","lifecycle","--install-dir",install,input=json.dumps(request))
+    stopped = service("runtime","lifecycle","--install-dir",install,input=json.dumps(request))
     proof["managed_stop"] = stopped; retain()
     record = stopped.get("record",{})
     if (record.get("phase") != "complete" or
             any(record.get("request",{}).get(field) != request[field] for field in
                 ("caller", "key", "action", "expected_instance", "runtime"))):
         raise RuntimeError("Managed Stop did not qualify its exact observed instance")
-    inspect = invoke(binary,"runtime","inspect","--install-dir",install)
+    inspect = service("runtime","inspect","--install-dir",install)
     if inspect["lifecycle"].get("explicitly_stopped") is not True or inspect["lifecycle"].get("pending") is not None:
         raise RuntimeError("Managed Stop did not preserve its settled durable fence")
-    invoke(binary,"runtime","ensure","--install-dir",install,rejected=True)
+    service("runtime","ensure","--install-dir",install,rejected=True)
     if stopped_probe is not None:
         stopped_probe()
-    restarted = invoke(binary,"runtime","start","--install-dir",install)
+    restarted = service("runtime","start","--install-dir",install)
     if restarted["instance"] == health["instance"] or restarted["runtime_sha256"] != health["runtime_sha256"]:
         raise RuntimeError("Explicit Start did not elect the same approved runtime as a fresh instance")
     proof["explicit_start"] = restarted; retain()
@@ -356,22 +387,31 @@ def modern_client_lifecycle(invoke, binary, installed_main, install, control, so
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runtime", type=Path, required=True)
+    parser.add_argument("--runtime", type=Path, required=True,
+                        help="Runtime directory: a pre-split payload or a split pair (schema 3) with airk and airkctl")
     args = parser.parse_args()
     payload = args.runtime.resolve(strict=True)
     binary = payload / ("airk.exe" if os.name == "nt" else "airk")
     if not binary.is_file():
         binary = payload / "AIRK.app/Contents/MacOS/airk"
-    identity = sha256(payload / "airk-install.json")
-    inventory = json.loads((payload / "airk-install.json").read_text(encoding="utf-8"))
-    version = inventory["version"]
-    modern = runtime_builder().single_image_version(version)
+    clients = load_fixture("installed_split_pair", "check-service-clients.py")
+    # A split pair: user commands run on its airkctl; the runtime lifecycle below
+    # is the U93 interim operation set of its airk. None for a pre-split payload.
+    cli = clients.split_cli(binary)
+    source_pair = payload if cli is not None else None
+    selector = INTERIM_SELECTOR if cli is not None else ()
     environment = dict(os.environ, HTTP_PROXY="http://127.0.0.1:1",
                        HTTPS_PROXY="http://127.0.0.1:1", ALL_PROXY="http://127.0.0.1:1")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     def invoke(executable, *arguments, **kwargs):
         return invoke_native(executable, *arguments, environment=environment, **kwargs)
+
+    def user(*arguments, **kwargs):
+        return invoke(cli or binary, *arguments, **kwargs)
+
+    def shutdown_command(control):
+        return [str(cli or binary), "service", "shutdown", "--runtime-dir", str(control)]
 
     def client_lifetime(launcher, source, control):
         result = subprocess.run([sys.executable, str(Path(__file__).with_name("check-client-lifetime.py")),
@@ -392,9 +432,19 @@ def main():
         user_data.mkdir()
         original = b"Original project data must survive runtime uninstall.\n"
         (user_data / "sentinel").write_bytes(original)
+        if source_pair is not None:
+            # U93: the interim stage reads schema-2 receipts. Stage the pair's
+            # verified files under one (check-service-clients split_fixture_payload).
+            source_inventory = json.loads((source_pair / "airk-install.json").read_text(encoding="utf-8"))
+            source_identity = sha256(source_pair / "airk-install.json")
+            payload = clients.split_fixture_payload(source_pair, fixture / "pair-fixture-payload")
+        identity = sha256(payload / "airk-install.json")
+        inventory = json.loads((payload / "airk-install.json").read_text(encoding="utf-8"))
+        version = inventory["version"]
+        modern = runtime_builder().single_image_version(version)
 
         def run(*arguments, **kwargs):
-            return invoke(binary, "runtime", *arguments, **kwargs)
+            return invoke(binary, *selector, "runtime", *arguments, **kwargs)
 
         def stage(source, approved):
             return run("stage", "--source", source, "--install-dir", install,
@@ -443,7 +493,8 @@ def main():
                 http_source.mkdir()
                 (http_source / "sentinel.txt").write_bytes(original)
                 health = modern_client_lifecycle(invoke, binary, installed_main, install, control, http_source,
-                                                 fixture / "index-state", health, fixture / "https-lifecycle-evidence.json")
+                                                 fixture / "index-state", health, fixture / "https-lifecycle-evidence.json",
+                                                 cli=cli)
             else:
                 launcher = Path(inspection["launcher"])
                 if current_mac:
@@ -471,7 +522,7 @@ def main():
                 run("repair-launcher", "--install-dir", install, rejected=True)
                 if sha256(launcher) != before_launcher or (install / "launcher-repair.json").exists():
                     raise RuntimeError("Live-owner repair changed launcher state")
-                invoke(binary, "service", "shutdown", "--runtime-dir", control)
+                user("service", "shutdown", "--runtime-dir", control)
                 until = time.monotonic() + 30
                 while True:
                     try:
@@ -507,7 +558,7 @@ def main():
                         if foreground.poll() is not None:
                             raise RuntimeError("Foreground launcher exited before native health")
                         try:
-                            observed = invoke(binary, "service", "health", "--runtime-dir", control)
+                            observed = user("service", "health", "--runtime-dir", control)
                             if observed.get("observation", {}).get("runtime_sha256") == identity:
                                 break
                         except RuntimeError:
@@ -517,12 +568,12 @@ def main():
                         time.sleep(0.1)
                     if (install / "control").exists():
                         raise RuntimeError("Foreground dispatch recreated legacy install-root state")
-                    invoke(binary, "service", "shutdown", "--runtime-dir", control)
+                    user("service", "shutdown", "--runtime-dir", control)
                     if foreground.wait(timeout=30):
                         raise RuntimeError("Foreground launcher did not preserve clean service exit")
                 finally:
                     if foreground.poll() is None:
-                        subprocess.run([str(binary), "service", "shutdown", "--runtime-dir", str(control)],
+                        subprocess.run(shutdown_command(control),
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        timeout=30, env=environment, creationflags=flags)
                         try:
@@ -615,12 +666,14 @@ def main():
             if modern and (http_source / "sentinel.txt").read_bytes() != original:
                 raise RuntimeError("Native lifecycle changed the owned HTTPS source")
             check_payload_unchanged(payload, inventory, identity)
+            if source_pair is not None:
+                check_payload_unchanged(source_pair, source_inventory, source_identity)
             print("Offline runtime staging, election, exact payload health, versioned client lifecycle, upgrade, rollback, and resumable uninstall passed.")
         finally:
             # Never operate on an installed user service: this exact private control
             # namespace belongs to the temporary fixture above.
             if control.exists():
-                subprocess.run([str(binary), "service", "shutdown", "--runtime-dir", str(control)],
+                subprocess.run(shutdown_command(control),
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                timeout=30, env=environment, creationflags=flags)
 

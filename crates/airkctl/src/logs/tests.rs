@@ -36,3 +36,34 @@ fn locate_normalizes_the_record_and_the_control_root_alike() {
     assert_eq!(locate(&explicit, Some(&locations)).unwrap(), explicit);
     assert_eq!(locate(state, None).unwrap(), state);
 }
+
+#[test]
+fn a_managed_layout_logs_folder_is_read_only_when_its_receipt_names_the_control_root() {
+    let owner = tempfile::tempdir().unwrap();
+    let root = owner.path().canonicalize().unwrap();
+    let (control, logs) = (
+        root.join("state").join("control"),
+        root.join("state").join("logs"),
+    );
+    // Owner-only folders, as the service creates them; a ring location must be.
+    for folder in [root.join("state"), control.clone(), logs.clone()] {
+        airk_ipc::endpoint::prepare_root(&folder).unwrap();
+    }
+    // No receipt anywhere: the rings stay beside the control root.
+    assert_eq!(locate(&control, None).unwrap(), control);
+    let receipt = |root: &Path| {
+        serde_json::to_vec(&serde_json::json!({"schema": 1, "root": owner_digest(root)})).unwrap()
+    };
+    let canonical =
+        airk_process::user_folders::canonical_location(&std::path::absolute(&control).unwrap())
+            .unwrap();
+    // A receipt for another control root is never followed.
+    std::fs::write(logs.join(RAW_LOG_OWNER), receipt(&root.join("elsewhere"))).unwrap();
+    assert_eq!(locate(&control, None).unwrap(), control);
+    // The receipt naming this control root proves the sibling folder.
+    std::fs::write(logs.join(RAW_LOG_OWNER), receipt(&canonical)).unwrap();
+    assert_eq!(locate(&control, None).unwrap(), logs);
+    // Rings beside the control root still win.
+    std::fs::write(control.join(LOG_OWNER), b"{}").unwrap();
+    assert_eq!(locate(&control, None).unwrap(), control);
+}

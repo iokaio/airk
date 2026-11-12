@@ -339,64 +339,44 @@ jobs:
         run: python scripts/ci-runtime.py restore --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --transfer artifacts/runtime-transfer/${{ matrix.target }}
       - name: Record runner capacity before native validation
         run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-before.json
-      # TODO(split 10.5.2, harness row): `airk` is service-only. Inventory each consumer below
-      # as service, CLI or matched pair: check-service-clients.py, check-service-install.py and
-      # the --binary harnesses (check-transformer-model, benchmark-code, check-retrieval-quality,
-      # check-document-tables, check-storage-lifecycle, check-usage-inputs,
-      # check-publication-faults) still drive user commands through matrix.executable (airk);
-      # they need the airkctl path (or --runtime-dir) per scripts/ci-plan.py NATIVE_ROWS, which
-      # has no airkctl column yet. AIRK_TEST_BINARY below also points at airk, and
-      # packages/vscode/src/test/nativeSmoke.test.ts was removed in Phase 6, so the MCP smoke
-      # step has no test file until an airkctl session smoke replaces it.
+      # Split harness row (split plan 10.5.2): `airk` is service-only. Every harness below runs user
+      # commands on the pair's airkctl (matrix.airkctl) and keeps service start, process-exit
+      # and U93 interim runtime operations on airk (matrix.executable). check-service-clients.py
+      # and check-service-install.py take the runtime directory and resolve both images from its
+      # pair metadata; the --binary harnesses also receive --airkctl, verified against the pair.
       - name: Native direct clients, retained reads and shared offline inference
         run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
       - name: Installed process roles and client lifetime
         run: python scripts/check-service-install.py --runtime artifacts/runtime/${{ matrix.target }}
       - name: Real embedded model indexing and vector retrieval
         if: ${{ inputs.qualification }}
-        run: python scripts/check-transformer-model.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+        run: python scripts/check-transformer-model.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }}
       - name: Bounded code indexing correctness and measurement smoke
         if: ${{ inputs.qualification }}
-        run: python scripts/benchmark-code.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
+        run: python scripts/benchmark-code.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
       - name: Persistent retrieval ranking and scoped recall receipts
         if: ${{ inputs.qualification }}
-        run: python scripts/check-retrieval-quality.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --output artifacts/benchmarks/${{ matrix.target }}-retrieval.json
+        run: python scripts/check-retrieval-quality.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }} --output artifacts/benchmarks/${{ matrix.target }}-retrieval.json
       - name: DOCX and XLSX table indexing through the public CLI
-        run: python scripts/check-document-tables.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+        run: python scripts/check-document-tables.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }}
       - name: Source aliases and storage quota lifecycle through the public CLI
         if: ${{ inputs.qualification }}
-        run: python scripts/check-storage-lifecycle.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+        run: python scripts/check-storage-lifecycle.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }}
       - name: Validate usage imports and calibration
         if: ${{ inputs.qualification }}
-        run: python scripts/check-usage-inputs.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+        run: python scripts/check-usage-inputs.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }}
       - name: Abrupt process termination preserves a coherent published revision
         if: ${{ inputs.qualification }}
-        run: python scripts/check-publication-faults.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
-      - name: Full extension and native lifecycle qualification
+        run: python scripts/check-publication-faults.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
+      # The UI-only extension (U29) starts no native image; no extension test reads a native binary.
+      - name: Full extension contract suite
         if: ${{ inputs.qualification }}
-        env:
-          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
         run: npm test --prefix packages/vscode
-      - name: Managed MCP smoke and cold-client regression repetitions
-        shell: bash
-        env:
-          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
-        # One full routine pass. Preserve three cold-client observations until
-        # the corrected cold setup path is qualified; qualification repeats all.
-        # Each failed command stops the step; no failed pass is retried.
-        run: |
-          # Qualification's full suite above already supplies its first pass.
-          if [ "$AIRK_QUALIFICATION" != "true" ]; then
-            npm run compile --prefix packages/vscode
-            python scripts/ci-metrics.py run --name mcp-smoke-1 -- node --test packages/vscode/out/test/nativeSmoke.test.js
-          fi
-          for pass in 2 3; do
-            if [ "$AIRK_QUALIFICATION" = "true" ]; then
-              python scripts/ci-metrics.py run --name "mcp-smoke-$pass" -- node --test packages/vscode/out/test/nativeSmoke.test.js
-            else
-              python scripts/ci-metrics.py run --name "cold-clients-$pass" -- node --test --test-name-pattern '^four cold HTTPS (sequential|concurrent) clients observe first status without diagnostic warmup$' packages/vscode/out/test/nativeSmoke.test.js
-            fi
-          done
+      # packages/vscode/src/test/nativeSmoke.test.ts was removed in split Phase 6. Its native
+      # coverage now runs in "Native direct clients" above: the airkctl session/2 smoke (hello,
+      # control health relay, clean exit), three concurrent HTTPS MCP clients reconnected twice,
+      # and full MCP/JSON API catalog parity. The four-cold-HTTPS-client first-status
+      # repetitions have no split owner yet (recorded follow-up, split plan 10.5.2 harness row).
       - name: Package and verify allowlisted native payload
         run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }}
       # The VSIX is universal and UI-only (U29); the extension job packages it once without

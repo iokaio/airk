@@ -22,7 +22,8 @@ def write_package(path, parts):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--binary", type=Path, required=True, help="The runtime's airk service image")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     with clients.owned_client_fixture() as temporary, contextlib.ExitStack() as resources:
@@ -42,7 +43,7 @@ def main():
         originals = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in [xlsx, docx]}
         state = base / "index-data"
         state.mkdir()
-        fixture = clients.Fixture(binary.parent, base)
+        fixture = clients.Fixture(binary.parent, base, cli=args.airkctl)
         assert fixture.binary == binary
         resources.callback(fixture.close)
         fixture.start()

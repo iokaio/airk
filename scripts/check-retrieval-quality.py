@@ -415,7 +415,7 @@ def add_fixture_root(service, name, alias, root):
     return service.configure(name, change)
 
 
-def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
+def fixture(binary, base, count, trials, metrics_module, detail="balanced", cli=None):
     # owner/state is reserved for native-created, owner-private service state.
     root, state, alias = (base / name for name in ("root", "index-data", "alias"))
     root.mkdir(parents=True)
@@ -447,7 +447,7 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
     (model / "vocabulary.json").write_text(json.dumps(vocabulary), encoding="utf-8")
     (model / "model.json").write_text(json.dumps({"schema": 1, "name": "original-qualification-fixture",
         "license": "Apache-2.0", "dimensions": 2, "sha256": digest(model / "vocabulary.json")}), encoding="utf-8")
-    service = clients.Fixture(binary.parent, base)
+    service = clients.Fixture(binary.parent, base, cli=cli)
     try:
         require_source_change_contract(service)
     except BaseException:
@@ -540,7 +540,7 @@ def index_controls(service, root, source_hashes, publication, control):
             "basis": "Explicit source-job elapsed time and exact-job native progress, after query samples. Semantic drain time is separate; no inference or physical-I/O claim."}
 
 
-def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, model, measurement=None):
+def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, model, measurement=None, cli=None):
     """Measure actual pinned-model results; misses remain measurements, not test failures."""
     root, state = base / "root", base / "index-data"
     root.mkdir(parents=True)
@@ -550,7 +550,7 @@ def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, mo
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
     source_hashes = {name: digest(root / name) for name in corpus["sources"]}
-    service = clients.Fixture(binary.parent, base)
+    service = clients.Fixture(binary.parent, base, cli=cli)
     records = []
     measurement = measurement if measurement is not None else {}
     measurement.update(schema="airk.relevance-measurement/1", corpus_sha256=corpus_hash,
@@ -613,7 +613,8 @@ def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, mo
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--binary", type=Path, required=True, help="The runtime's airk service image")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--detail", choices=("balanced", "agent_lean", "essential", "detailed"),
@@ -638,16 +639,29 @@ def main():
             parser.error("--model-dir must contain one catalog-pinned MiniLM profile")
         provisioner.provision(model, profile=profile)
     binary = args.binary.resolve(strict=True)
+    # A split pair: model-catalog is an airkctl user command; airk answers
+    # --version only behind the U93 interim selector.
+    cli = clients.split_cli(binary, args.airkctl)
     if corpus:
-        runtime_catalog = json.loads(subprocess.check_output(
-            [str(binary), "model-catalog"], text=True, encoding="utf-8", timeout=15))
-        if runtime_catalog["bundled_model"]["manifest"] != manifest:
+        if cli:
+            # Split airkctl answers model-catalog only from a running service; the offline
+            # service-image smoke names the selected profile, as package-native.py reads it.
+            smoke = json.loads(subprocess.check_output(
+                [str(binary), "--verify-model-smoke"], text=True, encoding="utf-8", timeout=120))
+            selected = [p for p in provisioner.CATALOG["profiles"] if p["id"] == smoke.get("profile")]
+            runtime_manifest = selected[0]["manifest"] if len(selected) == 1 else None
+        else:
+            runtime_manifest = json.loads(subprocess.check_output(
+                [str(binary), "model-catalog"], text=True, encoding="utf-8", timeout=15))["bundled_model"]["manifest"]
+        if runtime_manifest != manifest:
             parser.error("--model-dir must match this runtime's selected bundled profile")
     spec = importlib.util.spec_from_file_location("scale_metrics", Path(__file__).with_name("benchmark-scale.py"))
     metrics = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(metrics)
     report = {"schema": "airk-retrieval-qualification/1", "source": source_identity(), "index_detail": args.detail,
-        "binary_sha256": digest(binary), "binary_version": subprocess.check_output([str(binary), "--version"], text=True, timeout=15).strip(),
+        "binary_sha256": digest(binary), "binary_version": subprocess.check_output(
+            [str(binary), *(clients.INTERIM_SELECTOR if cli else ()), "--version"], text=True, timeout=15).strip(),
+        "airkctl_sha256": digest(cli) if cli else None,
         "platform": platform.platform(), "architecture": platform.machine(),
         "judgments_sha256": hashlib.sha256(json.dumps(CASES, sort_keys=True).encode()).hexdigest(),
         "cache_conditions": "cold means first query in a newly initialized MCP session; modern HTTPS shares the native service, historical stdio starts a frontend process; OS caches uncontrolled",
@@ -667,10 +681,10 @@ def main():
             if corpus:
                 report["scope"] = "Small original file-judged corpus using the pinned offline model; lexical/vector/hybrid measured separately. No installed-editor or general relevance claim."
                 report["representative"] = {}
-                representative_fixture(binary, base, corpus, corpus_hash, args.trials, args.detail, model, report["representative"])
+                representative_fixture(binary, base, corpus, corpus_hash, args.trials, args.detail, model, report["representative"], cli)
             else:
                 for count in (32, 256):
-                    report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail))
+                    report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail, cli))
     except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
         report["failure_class"] = type(error).__name__
         if retained_fixture is not None:
@@ -681,7 +695,7 @@ def main():
         while frame is not None:
             frames.append({"file": Path(frame.tb_frame.f_code.co_filename).name, "line": frame.tb_lineno})
             frames = frames[-12:]
-            if Path(frame.tb_frame.f_code.co_filename).name == "check-service-clients.py" and frame.tb_frame.f_code.co_name == "run":
+            if Path(frame.tb_frame.f_code.co_filename).name == "check-service-clients.py" and frame.tb_frame.f_code.co_name in ("run", "service_run"):
                 stage_failure = tuple(frame.tb_frame.f_locals.get("args", ())[:2]) == ("runtime", "stage")
             frame = frame.tb_next
         report["failure_frames"] = frames

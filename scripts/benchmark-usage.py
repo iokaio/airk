@@ -25,7 +25,8 @@ def usage_command(fixture, arguments):
     assert arguments[:2] in (["usage", "report"], ["usage", "configure"], ["usage", "clear"]), \
         "Unexpected usage management command"
     # Reports inspect complete owned accounting, not a selected evidence grant.
-    return [str(fixture.binary), *fixture.management_arguments("usage-benchmark"), *arguments]
+    # A user command: the split pair's airkctl (fixture.user_command), never the airk service.
+    return fixture.user_command(*fixture.management_arguments("usage-benchmark"), *arguments)
 
 
 def main():
@@ -100,7 +101,7 @@ def main():
         recorded_after = after["report"]["operations"].get("search", {}).get("calls", 0)
         result = {"schema": "airk-usage-overhead/1", "platform": platform.system(), "architecture": platform.machine(),
                   "runtime_manifest_sha256": hashlib.sha256((fixture.runtime / "airk-install.json").read_bytes()).hexdigest(),
-                  "binary_version": subprocess.check_output([str(fixture.binary), "--version"], text=True, timeout=30).strip(),
+                  "binary_version": subprocess.check_output(fixture.service_command("--version"), text=True, timeout=30).strip(),
                   "trials_per_mode": args.trials, "workers": args.workers,
                   "enabled": stats(durations["enabled"]), "disabled": stats(durations["disabled"]),
                   "median_difference_ms": statistics.median(durations["enabled"]) - statistics.median(durations["disabled"]),

@@ -23,7 +23,12 @@ class ServiceInstallCheckTests(unittest.TestCase):
                 (("runtime", "activate", "--install-dir", "owned"), None, 480),
                 (("runtime", "rollback", "--install-dir", "owned"), None, 480),
                 (("runtime", "activate", "--install-dir", "owned"), 7, 7),
-                (("runtime", "ensure", "--install-dir", "owned"), 240, 240)):
+                (("runtime", "ensure", "--install-dir", "owned"), 240, 240),
+                # A split airk serves the same operations behind the U93 selector.
+                (("__airk_role", "setup-interim", "runtime", "activate", "--install-dir", "owned"), None, 480),
+                (("__airk_role", "setup-interim", "runtime", "rollback", "--install-dir", "owned"), None, 480),
+                (("__airk_role", "setup-interim", "runtime", "ensure", "--install-dir", "owned"), None, 180),
+                (("service", "rpc", "--runtime-dir", "owned"), None, 180)):
             with self.subTest(arguments=arguments, override=override), mock.patch.object(
                     smoke.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")) as run:
                 self.assertEqual(smoke.invoke_native("owned-airk", *arguments, environment={}, timeout=override), {"ok":True})
@@ -96,6 +101,48 @@ class ServiceInstallCheckTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "retired"):
                     smoke.check_installed_images(payload, installed, inventory, invoke)
 
+    def test_split_login_plans_use_the_interim_role_and_keep_the_mac_entry(self):
+        install = Path(__file__).parent.resolve()
+        for platform, arguments in (("darwin", ["runtime", "login-serve", "--channel", "stable"]),
+                                    ("linux", ["__airk_role", "setup-interim", "runtime", "managed-serve", "--install-dir", str(install)]),
+                                    ("win32", ["__airk_role", "setup-interim", "runtime", "managed-serve", "--install-dir", str(install)])):
+            plan = {"id":"airksvc-fixture", "platform":"smappservice_user", "arguments":arguments}
+            smoke.check_login_plan(plan, install, platform, version="1.8.24")
+            if platform != "darwin":
+                for changed in (arguments[2:], ["__airk_role", "setup-interim", "runtime", "foreground", "--install-dir", str(install)],
+                                [*arguments[:-1], str(install.parent)]):
+                    with self.subTest(platform=platform, changed=changed), self.assertRaises(RuntimeError):
+                        smoke.check_login_plan({**plan, "arguments":changed}, install, platform, version="1.8.24")
+
+    def test_split_images_verify_both_pair_images_and_self_test_behind_the_interim_role(self):
+        for operating_system in ("windows", "linux", "macos"):
+            with self.subTest(os=operating_system), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload, installed = root / "source", root / "installed"
+                main, cli = smoke.runtime_builder().split_images(operating_system)
+                for name in (main, cli):
+                    image = payload / name
+                    image.parent.mkdir(parents=True, exist_ok=True)
+                    image.write_bytes(("Original approved fixture: " + name).encode())
+                    image.chmod(0o700)
+                inventory = {"os": operating_system, "version": "1.8.24",
+                             "files": {name: smoke.sha256(payload / name) for name in (main, cli)}}
+                shutil.copytree(payload, installed)
+                calls = []
+                def invoke(image, *arguments, raw=False):
+                    calls.append((image.relative_to(installed).as_posix(), arguments, raw))
+                    return "airkctl 1.8.24" if raw else {"self_test": "passed"}
+                self.assertEqual(smoke.check_installed_images(payload, installed, inventory, invoke),
+                                 (False, inventory["files"][main]))
+                self.assertEqual(calls, [(cli, ("--version",), True),
+                                         (main, ("__airk_role", "setup-interim", "runtime", "self-test"), False)])
+                (installed / cli).write_bytes(b"changed")
+                with self.assertRaisesRegex(RuntimeError, "modified"):
+                    smoke.check_installed_images(payload, installed, inventory, invoke)
+                del inventory["files"][cli]
+                with self.assertRaisesRegex(RuntimeError, "airkctl"):
+                    smoke.check_installed_images(payload, installed, inventory, invoke)
+
     def test_modern_login_plans_use_direct_manager_entry_and_keep_mac_main_sealed(self):
         install = Path(__file__).parent.resolve()
         for platform, arguments in (("darwin", ["runtime", "login-serve", "--channel", "stable"]),
@@ -108,8 +155,10 @@ class ServiceInstallCheckTests(unittest.TestCase):
                                        install, platform, version="1.8.14")
 
     def test_modern_lifecycle_contract_retains_scope_disconnect_and_exact_stop_fences(self):
-        for fault in (None, "authority", "instance", "stop_pending", "envelope"):
-            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+        cases = [(fault, False) for fault in (None, "authority", "instance", "stop_pending", "envelope")]
+        cases += [(None, True), ("instance", True)]  # Split pair: airkctl user commands, airk U93 operations.
+        for fault, split in cases:
+            with self.subTest(fault=fault, split=split), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 source, control, install = root / "source", root / "control", root / "install"
                 source.mkdir(); control.mkdir(); install.mkdir()
@@ -117,6 +166,8 @@ class ServiceInstallCheckTests(unittest.TestCase):
                 native_transport = smoke.load_fixture("test_install_native_setup", "http_fixture.py")
                 (source / "sentinel.txt").write_bytes(b"Original source proof\n")
                 main = install / "airk"; main.write_bytes(b"fictional image")
+                cli = install / "airkctl" if split else None
+                images = []
                 selected = {"namespace":"a" * 32, "expected_catalog_revision":4, "index_id":"idx_original"}
                 project = {"binding":"b" * 64,"root":str(source),"data_root":str(root / "data"),"collection":"fixture"}
                 health = {"instance":"c" * 32,"runtime_sha256":"d" * 64}
@@ -141,7 +192,19 @@ class ServiceInstallCheckTests(unittest.TestCase):
                         return {**envelope,"future_provenance":{"unselected":True}} if fault == "envelope" else envelope
                     def close(self): self.closed = True
                 self_outer = self
-                def invoke(_image, *arguments, input=None, rejected=False, timeout=None):
+                def invoke(image, *arguments, input=None, rejected=False, timeout=None):
+                    images.append((image, arguments[:2]))
+                    if split and image == main:
+                        self.assertEqual(arguments[:2], smoke.INTERIM_SELECTOR, "airk receives only U93 operations")
+                        arguments = arguments[2:]
+                        self.assertEqual(arguments[0], "runtime")
+                    elif split:
+                        self.assertEqual(image, cli)
+                        self.assertNotEqual(arguments[:2], smoke.INTERIM_SELECTOR)
+                        self.assertTrue(arguments[:2] == ("service", "rpc") or arguments[-1] == "index", arguments)
+                    else:
+                        self.assertEqual(image, main)
+                        self.assertNotEqual(arguments[:2], smoke.INTERIM_SELECTOR)
                     calls.append((arguments, rejected))
                     if arguments[:2] == ("service","rpc"):
                         method = json.loads(input)
@@ -188,7 +251,7 @@ class ServiceInstallCheckTests(unittest.TestCase):
                             self.assertEqual(calls[-1][0][:2], ("runtime", "ensure"))
                             self.assertFalse(any(arguments[:2] == ("runtime", "start") for arguments, _ in calls))
                             stopped_checks.append(True)
-                        result = smoke.modern_client_lifecycle(*args, stopped_probe=stopped_probe)
+                        result = smoke.modern_client_lifecycle(*args, stopped_probe=stopped_probe, cli=cli)
                         self.assertEqual(stopped_checks, [True])
                         self.assertNotEqual(result["instance"],health["instance"])
                         self.assertEqual(len(enrollments),2)
@@ -200,8 +263,11 @@ class ServiceInstallCheckTests(unittest.TestCase):
                             smoke.modern_client_lifecycle(*args)
                     else:
                         with self.assertRaisesRegex(RuntimeError, "authority|replaced|Stop|parity"):
-                            smoke.modern_client_lifecycle(*args)
+                            smoke.modern_client_lifecycle(*args, cli=cli)
                 self.assertTrue(all(client.closed for client in clients))
+                if split:
+                    self.assertIn((cli, ("service", "rpc")), images)
+                    self.assertIn((main, smoke.INTERIM_SELECTOR), images)
                 self.assertEqual((source / "sentinel.txt").read_bytes(),b"Original source proof\n")
 
     def test_complete_envelope_parity_normalizes_only_documented_timing(self):

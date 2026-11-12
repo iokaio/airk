@@ -60,16 +60,18 @@ class HostedSigningContracts(unittest.TestCase):
                 self.assertNotIn("||", step)
         self.assertCountEqual(callers, ["github-release.yml", "macos-signing.yml"])
 
-    def test_standalone_signing_smoke_uses_the_built_mac_bundle_executable(self):
+    def test_extension_contracts_run_after_the_build_without_a_native_test_binary(self):
+        # Split (U29): the UI-only extension starts no native image, so no step hands
+        # it AIRK_TEST_BINARY; the signed pair is probed by ci-macos-sign.py --pair.
         workflow = (signing.ROOT / ".github/workflows/macos-signing.yml").read_text(encoding="utf-8")
-        executable = builder.runtime_names("macos")[0]
-        paths = [line.strip() for line in workflow.splitlines() if "AIRK_TEST_BINARY:" in line]
-        self.assertEqual(paths, ["AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/" + executable])
+        self.assertNotIn("AIRK_TEST_BINARY:", workflow)
         build = workflow.index("python scripts/build-service-runtime.py --profile release")
-        smoke = workflow.index(paths[0])
+        suite = workflow.index("run: npm test --prefix packages/vscode")
         transport = workflow.index("uses: ./.github/actions/macos-ticket-network")
-        self.assertLess(build, smoke)
-        self.assertLess(smoke, transport)
+        sign = workflow.index("run: python scripts/ci-macos-sign.py --target ${{ matrix.target }} --pair")
+        self.assertLess(build, suite)
+        self.assertLess(suite, transport)
+        self.assertLess(transport, sign)
 
     def test_signer_can_resolve_chain_and_restores_search_list_on_success_or_failure(self):
         values = {"MACOS_CERTIFICATE_P12": base64.b64encode(b"fictional p12").decode(),

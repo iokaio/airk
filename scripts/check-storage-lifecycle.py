@@ -113,8 +113,10 @@ def assert_removed_selection(result, selected, retirement=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
-    binary = parser.parse_args().binary.resolve(strict=True)
+    parser.add_argument("--binary", type=Path, required=True, help="The runtime's airk service image")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
+    args = parser.parse_args()
+    binary = args.binary.resolve(strict=True)
     with clients.owned_client_fixture() as temporary, ExitStack() as stack:
         base = Path(temporary).resolve(strict=True)
         root, specs, replacement, data = [base / name for name in ("workspace", "specs", "replacement", "index-data")]
@@ -126,7 +128,7 @@ def main():
         (root / "main.md").write_bytes(primary_text.encode("utf-8"))
         (specs / "requirements.md").write_bytes(original_text.encode("utf-8"))
         (replacement / "requirements.md").write_bytes(replacement_text.encode("utf-8"))
-        fixture = clients.Fixture(binary.parent, base)
+        fixture = clients.Fixture(binary.parent, base, cli=args.airkctl)
         # Reviewed source mutation/retirement below uses the modern native
         # administrative owner. Historical catalog setup alone proves neither.
         if fixture.catalog_authority and not fixture.single_image:

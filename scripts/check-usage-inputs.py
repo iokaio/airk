@@ -110,7 +110,7 @@ class UsageFixture(clients.Fixture):
                             "total_bytes": len(raw), "truncated": len(raw) > 65536}
                 path = self.owner / f"failed-read-{sequence:02d}.json"
                 with path.open("x", encoding="utf-8") as output:
-                    json.dump({"command": [str(self.binary), *map(str, command)],
+                    json.dump({"command": self.user_command(*command),
                                "query": [str(value) for value in args], "options": kwargs,
                                "returncode": result.returncode if result is not None else None,
                                "stdout": bounded(result.stdout if result is not None else getattr(error, "stdout", None)),
@@ -325,8 +325,10 @@ def usage_arguments(fixture, project, command):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
-    binary = parser.parse_args().binary.resolve(strict=True)
+    parser.add_argument("--binary", type=Path, required=True, help="The runtime's airk service image")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
+    args = parser.parse_args()
+    binary = args.binary.resolve(strict=True)
     with retained_usage_fixture() as temporary, ExitStack() as stack:
         base = Path(temporary).resolve(strict=True)
         root = base / "sources"
@@ -334,7 +336,7 @@ def main():
         (root / "fixture.txt").write_text("Original bounded usage fixture.\n", encoding="utf-8")
         state = base / "index-data"
         state.mkdir()
-        fixture = UsageFixture(binary.parent, base)
+        fixture = UsageFixture(binary.parent, base, cli=args.airkctl)
         assert fixture.binary == binary
         fixture.environment.pop("AIRK_USAGE_MODE", None)
         stack.enter_context(fixture)

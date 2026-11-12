@@ -55,11 +55,10 @@ jobs:
         run: ./scripts/check-repo.ps1
       - run: git diff --check
       - run: python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
-      # TODO(split 10.5.2, harness row): the extension no longer starts or embeds airk; this
-      # AIRK_TEST_BINARY consumer needs an airkctl/service split before it observes anything.
-      - name: Extension contracts and real native MCP adapter
-        env:
-          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/AIRK.app/Contents/MacOS/airk
+      # The UI-only extension (U29) starts no native image and no extension test reads a native
+      # test binary; the signed pair is probed after signing below (model smoke, nested
+      # airkctl --version).
+      - name: Extension contracts (UI-only)
         run: npm test --prefix packages/vscode
       - name: Use TCP for Apple ticket requests on Mac runners
         uses: ./.github/actions/macos-ticket-network

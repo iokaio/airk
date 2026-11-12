@@ -50,11 +50,17 @@ class TransformerQualificationTests(unittest.TestCase):
                 CHECK.assert_embedded_default_not_extracted(control)
 
     def test_unknown_embedded_manifest_never_selects_an_arbitrary_model(self):
-        fixture = Mock()
-        fixture.run.return_value.stdout = json.dumps({"bundled_model": {"manifest": {"name": "unapproved"}}})
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            with self.assertRaisesRegex(AssertionError, "pinned input catalog"):
-                CHECK.embedded_custom_input(fixture, base)
-            self.assertEqual(list(base.iterdir()), [])
-        fixture.run.assert_called_once_with("model-catalog")
+        for cli in (None, Path("pair/airkctl")):
+            with self.subTest(cli=cli):
+                fixture = Mock(cli=cli, control=Path("owned/control"))
+                fixture.run.return_value.stdout = json.dumps({"bundled_model": {"manifest": {"name": "unapproved"}}})
+                with tempfile.TemporaryDirectory() as temporary:
+                    base = Path(temporary)
+                    with self.assertRaisesRegex(AssertionError, "pinned input catalog"):
+                        CHECK.embedded_custom_input(fixture, base)
+                    self.assertEqual(list(base.iterdir()), [])
+                # A split pair's airkctl asks the owned service; a pre-split image answers itself.
+                if cli is None:
+                    fixture.run.assert_called_once_with("model-catalog")
+                else:
+                    fixture.run.assert_called_once_with("--service-runtime-dir", Path("owned/control"), "model-catalog")

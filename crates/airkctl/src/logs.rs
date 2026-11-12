@@ -58,13 +58,35 @@ pub fn locate(control: &Path, installation: Option<&Locations>) -> Result<PathBu
     let normal = |path: &Path| -> Result<PathBuf> {
         airk_process::user_folders::canonical_location(&std::path::absolute(path)?)
     };
-    let Some(locations) = installation else {
+    if let Some(locations) = installation {
+        let state = normal(Path::new(&locations.state))?;
+        let logs = normal(Path::new(&locations.logs))?;
+        if let Some(parent) = ring_parent(&normal(control)?, Some((&state, &logs))) {
+            return Ok(parent);
+        }
+    }
+    managed_sibling(control)
+}
+
+/// A control root without an install record: its rings beside it, or (a
+/// pre-split managed layout, as the interim selector stages for fixtures)
+/// in the layout's `logs` folder beside the control folder — accepted only
+/// when that folder's ring owner receipt names exactly this control root,
+/// the same proof (`prove_owner`) every read applies.
+fn managed_sibling(control: &Path) -> Result<PathBuf> {
+    let beside = |owner: &str| exists(&control.join(owner));
+    if beside(LOG_OWNER)? || beside(RAW_LOG_OWNER)? {
+        return Ok(control.to_path_buf());
+    }
+    let Some(sibling) = control.parent().map(|state| state.join("logs")) else {
         return Ok(control.to_path_buf());
     };
-    let state = normal(Path::new(&locations.state))?;
-    let logs = normal(Path::new(&locations.logs))?;
-    Ok(ring_parent(&normal(control)?, Some((&state, &logs)))
-        .unwrap_or_else(|| control.to_path_buf()))
+    for owner in [LOG_OWNER, RAW_LOG_OWNER] {
+        if exists(&sibling.join(owner))? && prove_owner(control, &sibling, owner).is_ok() {
+            return Ok(sibling);
+        }
+    }
+    Ok(control.to_path_buf())
 }
 
 /// The ring folder after its ownership proof, or `None` when the ring and its
@@ -80,6 +102,15 @@ fn owned_folder(
     if absent_is_empty && !exists(&parent.join(owner))? && !exists(&parent.join(directory))? {
         return Ok(None);
     }
+    prove_owner(control, parent, owner)?;
+    let folder = parent.join(directory);
+    ensure!(exists(&folder)?, "diagnostic log directory missing");
+    airk_ipc::endpoint::require_existing_root(&folder)?;
+    Ok(Some(folder))
+}
+
+/// `parent` holds `owner`, a ring ownership receipt naming exactly `control`.
+fn prove_owner(control: &Path, parent: &Path, owner: &str) -> Result<()> {
     ensure!(exists(parent)?, "diagnostic log location missing");
     airk_ipc::endpoint::require_existing_root(parent)?;
     let receipt = parent.join(owner);
@@ -101,10 +132,7 @@ fn owned_folder(
             && serde_json::from_slice::<serde_json::Value>(&bytes).ok() == Some(expected),
         "foreign diagnostic log ownership"
     );
-    let folder = parent.join(directory);
-    ensure!(exists(&folder)?, "diagnostic log directory missing");
-    airk_ipc::endpoint::require_existing_root(&folder)?;
-    Ok(Some(folder))
+    Ok(())
 }
 
 /// The ring's stored bytes, refusing unknown, unsafe or oversized entries.

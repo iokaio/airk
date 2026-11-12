@@ -15,6 +15,7 @@ spec.loader.exec_module(clients)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True, help="Main executable in the verified runtime pair")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
     parser.add_argument("--files", type=int, default=64)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -31,7 +32,7 @@ def main():
             (root / f"module_{number:04}.ts").write_text(
                 f"export class Service{number} {{\n  perform{number}(input: string): string {{\n"
                 "    db.query(input);\n    return input;\n  }\n}\n", encoding="utf-8")
-        fixture = clients.Fixture(binary.parent, base)
+        fixture = clients.Fixture(binary.parent, base, cli=args.airkctl)
         assert fixture.binary == binary
         def measured(label, operation):
             started = time.perf_counter_ns()

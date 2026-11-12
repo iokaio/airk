@@ -16,7 +16,9 @@ spec.loader.exec_module(clients)
 
 def embedded_custom_input(fixture, base):
     """Copy verified build inputs for explicit custom-input rejection tests only."""
-    catalog = json.loads(fixture.run("model-catalog").stdout)
+    # A split pair's airkctl reads the catalog from the owned service's control endpoint.
+    scope = ("--service-runtime-dir", fixture.control) if fixture.cli is not None else ()
+    catalog = json.loads(fixture.run(*scope, "model-catalog").stdout)
     manifest = catalog["bundled_model"]["manifest"]
     spec = importlib.util.spec_from_file_location("transformer_model_inputs", Path(__file__).with_name("provision-local-model.py"))
     provision = importlib.util.module_from_spec(spec)
@@ -56,6 +58,7 @@ def assert_healthy_embedded_provider(observation):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True, help="Main executable in the verified runtime pair")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
     parser.add_argument("--model-dir", type=Path, help="Explicit custom offline assets; omitted selects the bundled model")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
@@ -69,7 +72,7 @@ def main():
         (root / "auth.txt").write_text("Reset a forgotten password using a time-limited recovery link sent to the verified email address.\n", encoding="utf-8")
         (root / "bread.txt").write_text("Bread dough combines flour and yeast before baking in a hot oven.\n", encoding="utf-8")
         originals = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in root.iterdir()}
-        fixture = clients.Fixture(binary.parent, base)
+        fixture = clients.Fixture(binary.parent, base, cli=args.airkctl)
         assert fixture.binary == binary
         def tool(name, arguments=None, deadline=None):
             if name == "airk_status":

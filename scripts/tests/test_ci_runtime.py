@@ -299,9 +299,18 @@ class WorkflowSplitTests(unittest.TestCase):
         for command in ("cargo build", "cargo test", "cargo nextest", "build-service-runtime.py"):
             self.assertNotIn(command, validation)
         self.assertLess(validation.index("ci-runtime.py restore"), validation.index("check-service-clients.py"))
-        self.assertLess(validation.index("mcp-smoke-1"), validation.index("package-native.py"))
-        self.assertIn("--test-name-pattern '^four cold HTTPS (sequential|concurrent) clients observe first status without diagnostic warmup$'", validation)
-        self.assertIn('if [ "$AIRK_QUALIFICATION" = "true" ]', validation)
+        # Split: the removed nativeSmoke.test.ts MCP smoke is replaced by the airkctl
+        # session smoke and HTTPS MCP clients inside check-service-clients.py, which
+        # still runs on every PR before packaging. The cold-client repetitions are a
+        # recorded follow-up, never a step that runs a deleted test file.
+        self.assertLess(validation.index("check-service-clients.py"), validation.index("package-native.py"))
+        self.assertLess(validation.index("check-service-install.py"), validation.index("package-native.py"))
+        self.assertNotIn("nativeSmoke.test.js", validation)
+        self.assertNotIn("AIRK_TEST_BINARY", validation)
+        for step in validation.split("      - ")[1:]:
+            if "--binary artifacts/runtime/" in step:
+                self.assertIn("--binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} "
+                              "--airkctl artifacts/runtime/${{ matrix.target }}/${{ matrix.airkctl }}", step)
         self.assertIn("CARGO_PROFILE_DEV_DEBUG: '0'", build)
         self.assertIn("CARGO_PROFILE_TEST_DEBUG: '0'", build)
         self.assertNotIn("CARGO_PROFILE_RELEASE", workflow)

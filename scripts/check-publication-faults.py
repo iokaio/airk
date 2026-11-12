@@ -103,7 +103,8 @@ class FaultFixture(clients.Fixture):
             (self.owner / "initial-owner-drain.json").write_text(json.dumps(drained, indent=2) + "\n")
         previous = self.managed_health
         assert self.child is None or self.child.poll() is not None, "Previous foreground child is still alive"
-        self.child = subprocess.Popen([str(self.binary), "runtime", "foreground", "--install-dir", str(self.install)],
+        # The service observation stays on airk (U93 interim role on a split pair).
+        self.child = subprocess.Popen(self.service_command("runtime", "foreground", "--install-dir", self.install),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log, cwd=self.runtime, env=self.environment,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         deadline = time.monotonic() + 90
@@ -146,13 +147,13 @@ class FaultFixture(clients.Fixture):
         return proof
 
 
-def run_campaign(binary, base, attempts, full_disk):
+def run_campaign(binary, base, attempts, full_disk, cli=None):
     source, data = base / "source", base / "index-data"
     source.mkdir()
     data.mkdir()
     source_file = source / "requirement.md"
     source_file.write_text("REQOLDMARKER: Original requirement shall remain readable.\n", encoding="utf-8")
-    with FaultFixture(binary.parent, base) as fixture:
+    with FaultFixture(binary.parent, base, cli=cli) as fixture:
         assert digest(fixture.binary) == digest(binary)
         fixture.assert_alive()
         fixture.register("faults", source, data)
@@ -266,7 +267,8 @@ def run_campaign(binary, base, attempts, full_disk):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--binary", type=Path, required=True, help="The runtime's airk service image")
+    parser.add_argument("--airkctl", type=Path, help="A split pair's own airkctl (verified; derived from the pair when omitted)")
     parser.add_argument("--attempts", type=int, default=6)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--isolated-tmpfs", type=Path)
@@ -279,7 +281,7 @@ def main():
     if parent and (parent == Path("/dev/shm") or parent == Path("/tmp") or any(parent.iterdir())):
         parser.error("isolated tmpfs must be a dedicated, initially empty mount")
     with owned_fault_fixture(parent) as temporary:
-        report = run_campaign(binary, Path(temporary), args.attempts, parent)
+        report = run_campaign(binary, Path(temporary), args.attempts, parent, args.airkctl)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Publication fault campaign passed; report: {args.output}")

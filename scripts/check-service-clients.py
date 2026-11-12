@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -19,6 +20,11 @@ import threading
 import time
 import uuid
 import sys
+
+# U93 (split plan §5.1): a split `airk` is service-only. The pre-split operations it
+# still serves (runtime …, the private workers) sit behind this private-role selector;
+# every user command belongs to `airkctl`.
+INTERIM_SELECTOR = ("__airk_role", "setup-interim")
 
 TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
@@ -300,7 +306,8 @@ def inference_worker_clean_exit(fixture):
     if fixture.single_image:
         # This probe owns an isolated ServiceLease and loads embedded assets in
         # its main image. There is no embedding/helper executable.
-        result = fixture.run("--verify-model-smoke", check=False, timeout=120)
+        # airk admits this exact argument before any role selector.
+        result = fixture.service_run("--verify-model-smoke", check=False, timeout=120, selector=False)
         assert result.returncode == 0, "Embedded inference probe failed or aborted during exit"
         report = json.loads(result.stdout)
         assert report["schema"] == 1 and report["source"] == "embedded"
@@ -366,15 +373,135 @@ def reviewed_runtime_contract(manifest_sha256, source_sha256, version):
     return contract
 
 
+def runtime_builder():
+    specification = importlib.util.spec_from_file_location("client_fixture_runtime_builder", Path(__file__).with_name("build-service-runtime.py"))
+    builder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder)
+    return builder
+
+
+def file_sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def paired_images(runtime):
+    """(airk, airkctl) of a classified split pair, named by split_receipts.IMAGES for its own OS."""
+    metadata = json.loads((runtime / "airk-runtime.json").read_bytes())
+    images = runtime_builder().split_receipts().IMAGES[metadata["os"]]
+    service, cli = runtime / images["airk"], runtime / images["airkctl"]
+    for image in (service, cli):
+        if image.is_symlink() or not image.is_file():
+            raise ValueError("Split pair image is missing or linked: " + image.name)
+    return service, cli
+
+
+def split_cli(binary, cli=None):
+    """The split pair's airkctl beside `binary` (its airk service image), else None.
+
+    A pre-split runtime has one image for user commands and the service. An
+    explicit `cli` must be exactly the pair's own airkctl; it never selects another.
+    """
+    root = runtime_root(binary.parent)
+    metadata = root / "airk-runtime.json"
+    value = json.loads(metadata.read_bytes()) if metadata.is_file() else None
+    if not (isinstance(value, dict) and value.get("schema") == 3):
+        if cli is not None:
+            raise ValueError("A pre-split runtime has no separate airkctl image")
+        return None
+    if classify_runtime(root)["topology"] != "split_pair":
+        raise ValueError("Unsupported split pair runtime")
+    service, paired = paired_images(root)
+    if not service.samefile(binary):
+        raise ValueError("--binary must name the split pair's airk service image")
+    if cli is not None and not Path(cli).resolve(strict=True).samefile(paired):
+        raise ValueError("--airkctl must name the split pair's own airkctl image")
+    return paired
+
+
+def split_fixture_payload(pair, destination):
+    """U93 interim fixture payload for a split pair (schema 3); the source pair is never changed.
+
+    The interim `runtime stage` decodes only the schema-1/2 executable receipts.
+    Exactly as the Rust reviewed fixture does (crates/airk-cli/tests/common/
+    reviewed.rs `payload`), the pair's files are copied under a schema-2
+    single-image receipt that names the same `airk` digest, with a fixture
+    provenance notice. Every copied file is verified against the pair's sealed
+    inventory. Installing the real pair belongs to the setup role and the split
+    installers (§9.5), not to this fixture.
+    """
+    pair = runtime_root(pair)
+    if classify_runtime(pair)["topology"] != "split_pair":
+        raise ValueError("Expected a split pair runtime")
+    metadata = json.loads((pair / "airk-runtime.json").read_bytes())
+    manifest = json.loads((pair / "airk-install.json").read_bytes())
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    identity = {key: metadata[key] for key in ("version", "os", "arch")}
+    if (set(manifest) != {"schema", "version", "os", "arch", "files"} or manifest["schema"] != 1
+            or {key: manifest[key] for key in identity} != identity
+            or not isinstance(files, dict) or not 4 <= len(files) <= 2048):
+        raise ValueError("Split pair inventory does not match its pair metadata")
+    images = runtime_builder().split_receipts().IMAGES[metadata["os"]]
+    if any(files.get(images[role]) != metadata[role + "_sha256"] for role in ("airk", "airkctl")):
+        raise ValueError("Split pair inventory does not seal its two images")
+    destination.mkdir()
+    copied = {}
+    for name, expected in sorted(files.items()):
+        parts = name.split("/")
+        if "\\" in name or any(part in ("", ".", "..") for part in parts) or Path(name).is_absolute():
+            raise ValueError("Unsafe split pair inventory path")
+        if name in ("airk-runtime.json", "airk-build.json"):
+            continue  # Replaced by the schema-2 fixture receipt; reviewed.rs writes no build receipt.
+        source = pair.joinpath(*parts)
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("Split pair inventory file is missing or linked: " + name)
+        target = destination.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        if file_sha256(target) != expected:
+            raise ValueError("Split pair file differs from its sealed inventory: " + name)
+        copied[name] = expected
+    def write(name, value):
+        path = destination.joinpath(*name.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as stream:
+            stream.write(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+        copied[name] = file_sha256(path)
+    write("airk-runtime.json", {"schema": 2, **identity, "airk_sha256": metadata["airk_sha256"]})
+    write("notices/fixture-provenance.json", {
+        "schema": 1, "purpose": "private split-pair harness fixture (U93 interim staging)",
+        "approval": "explicit local organization digest", "source_pair_airkctl_sha256": metadata["airkctl_sha256"],
+        "release_qualified": False, "signature_qualified": False, "linked_dependency_notice_qualified": False})
+    with (destination / "airk-install.json").open("x", encoding="utf-8") as stream:
+        json.dump({"schema": 1, **identity, "files": dict(sorted(copied.items()))}, stream, indent=2)
+        stream.write("\n")
+    return destination
+
+
 def classify_runtime(runtime):
     metadata_bytes = (runtime / "airk-runtime.json").read_bytes()
     metadata = json.loads(metadata_bytes)
     if not isinstance(metadata, dict):
         raise ValueError("Fixture runtime metadata must be an object")
     schema = metadata.get("schema")
-    if type(schema) is not int or schema not in (1, 2):
+    if type(schema) is not int or schema not in (1, 2, 3):
         raise ValueError("Unsupported fixture executable topology")
-    if schema == 2:
+    if schema == 3:
+        # split_receipts owns the exact pair metadata contract; the pair gate
+        # owns which versions are split products. Neither approves state.
+        builder = runtime_builder()
+        try:
+            builder.split_receipts().validate_pair_metadata(metadata)
+            split = builder.split_pair_version(metadata["version"])
+        except (ValueError, TypeError, KeyError) as error:
+            raise ValueError("Unsupported split pair runtime metadata") from error
+        if not split:
+            raise ValueError("Unsupported split pair runtime version")
+        authority = "catalog"
+        input_owner = "native_administrative"
+        migration_path = "reviewed_catalog"
+        evidence = {"kind": "current_schema_3_pair_contract"}
+    elif schema == 2:
         version = metadata.get("version")
         if (not isinstance(version, str)
                 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version)):
@@ -382,9 +509,7 @@ def classify_runtime(runtime):
         # The builder owns executable topology. This classification does not
         # approve persisted state, an upgrade or the payload's authenticity;
         # native stage/activation still validates those independent contracts.
-        specification = importlib.util.spec_from_file_location("client_fixture_runtime_builder", Path(__file__).with_name("build-service-runtime.py"))
-        builder = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(builder)
+        builder = runtime_builder()
         main_digest = metadata.get("airk_sha256")
         if (set(metadata) != {"schema", "version", "os", "arch", "airk_sha256"}
                 or not builder.single_image_version(version)
@@ -416,11 +541,11 @@ def classify_runtime(runtime):
                     "source_sha256": key[1], "historical_contract_review_revision": contract["historical_contract_review_revision"]}
         if "compiled_source_revision" in contract:
             evidence["compiled_source_revision"] = contract["compiled_source_revision"]
-    if authority not in ("legacy", "catalog") or schema == 2 and authority != "catalog":
+    if authority not in ("legacy", "catalog") or schema >= 2 and authority != "catalog":
         raise ValueError("Unsupported fixture authority/topology combination")
     catalog = authority == "catalog"
-    return {"topology": "single_image" if schema == 2 else "paired",
-            "transport": "https" if schema == 2 else "stdio", "authority": authority,
+    return {"topology": {1: "paired", 2: "single_image", 3: "split_pair"}[schema],
+            "transport": "https" if schema >= 2 else "stdio", "authority": authority,
             "setup_owner": "reviewed_catalog_setup" if catalog else "raw_registration",
             "input_owner": input_owner, "original_scope": "catalog_session" if catalog else "service_project",
             "migration_provenance": "user_reviewed_project_grant" if catalog else "imported_legacy_snapshot",
@@ -433,7 +558,10 @@ runtime_compatibility = classify_runtime
 
 
 class Fixture:
-    def __init__(self, runtime, owner, command_timeout=120, job_timeout=180):
+    # A pre-split runtime has one image for user commands and the service.
+    cli = None
+
+    def __init__(self, runtime, owner, command_timeout=120, job_timeout=180, cli=None):
         self.runtime = runtime_root(runtime)
         self.owner = owner.resolve(strict=True)
         self.binary = self.runtime / ("airk.exe" if os.name == "nt" else "airk")
@@ -443,7 +571,14 @@ class Fixture:
         self.projects = {}
         self.scopes = {}
         self.compatibility = classify_runtime(self.runtime)
-        self.single_image = self.compatibility["topology"] == "single_image"
+        # A split pair's airk is the same single service image; HTTPS only.
+        self.single_image = self.compatibility["topology"] in ("single_image", "split_pair")
+        if self.compatibility["topology"] == "split_pair":
+            # User commands run on the pair's airkctl; service start/exit
+            # observations, private roles and U93 operations stay on airk.
+            self.binary, self.cli = paired_images(self.runtime)
+        if cli is not None and (self.cli is None or not Path(cli).resolve(strict=True).samefile(self.cli)):
+            raise ValueError("--airkctl must name this split pair's own airkctl image")
         self.install = owner / "install"
         if self.managed_installation:
             self.control = owner / "state" / "control"
@@ -498,25 +633,46 @@ class Fixture:
             # Returning false preserves the original exception and traceback.
         return False
 
-    def run(self, *args, input=None, check=True, timeout=None):
-        result = subprocess.run([str(self.binary), *map(str, args)], input=input, capture_output=True,
+    def user_command(self, *args):
+        """A user command: the split pair's airkctl, else the pre-split image's own CLI."""
+        return [str(self.cli or self.binary), *map(str, args)]
+
+    def service_command(self, *args, selector=True):
+        """The airk service image. On a split pair, U93 pre-split operations go behind
+        the interim selector; selector=False passes exact arguments (private roles,
+        --verify-model-smoke, which airk admits before any selector)."""
+        prefix = INTERIM_SELECTOR if selector and self.cli is not None else ()
+        return [str(self.binary), *prefix, *map(str, args)]
+
+    def execute(self, command, *, input=None, check=True, timeout=None):
+        result = subprocess.run(command, input=input, capture_output=True,
                                 text=True, encoding="utf-8", timeout=min(self.command_timeout, timeout) if timeout is not None else self.command_timeout, cwd=self.runtime, env=self.environment,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if check and result.returncode:
             raise AssertionError(f"Native client failed ({result.returncode}): {result.stderr[-4096:]} {result.stdout[-4096:]}")
         return result
 
+    def run(self, *args, input=None, check=True, timeout=None):
+        return self.execute(self.user_command(*args), input=input, check=check, timeout=timeout)
+
+    def service_run(self, *args, input=None, check=True, timeout=None, selector=True):
+        return self.execute(self.service_command(*args, selector=selector), input=input, check=check, timeout=timeout)
+
     def start(self):
         if self.managed_installation:
-            identity = hashlib.sha256((self.runtime / "airk-install.json").read_bytes()).hexdigest()
-            staged = json.loads(self.run("runtime", "stage", "--source", self.runtime, "--install-dir", self.install,
+            source = self.runtime
+            if self.cli is not None:
+                # U93: the interim stage reads a schema-2 receipt; see split_fixture_payload.
+                source = split_fixture_payload(self.runtime, self.owner / "pair-fixture-payload")
+            identity = hashlib.sha256((source / "airk-install.json").read_bytes()).hexdigest()
+            staged = json.loads(self.service_run("runtime", "stage", "--source", source, "--install-dir", self.install,
                 "--state-dir", self.owner / "state", "--approved-sha256", identity,
                 "--verification-basis", "organization-digest").stdout)
             self.managed_started = True  # Activation may start before an uncertain response.
-            activated = json.loads(self.run("runtime", "activate", "--install-dir", self.install, "--runtime-sha256", identity).stdout)
+            activated = json.loads(self.service_run("runtime", "activate", "--install-dir", self.install, "--runtime-sha256", identity).stdout)
             if not self.single_image:
-                self.run("runtime", "ensure", "--install-dir", self.install)
-            inspection = json.loads(self.run("runtime", "inspect", "--install-dir", self.install).stdout)
+                self.service_run("runtime", "ensure", "--install-dir", self.install)
+            inspection = json.loads(self.service_run("runtime", "inspect", "--install-dir", self.install).stdout)
             expected_main = self.install / "runtimes" / identity / self.binary.relative_to(self.runtime)
             assert Path(inspection["control_dir"]).samefile(self.control)
             assert Path(inspection["executable"]).samefile(expected_main)
@@ -555,14 +711,14 @@ class Fixture:
                 actual = self.rpc("health")["observation"]
                 if self.managed_health is not None:
                     self.assert_alive()
-                inspection = json.loads(self.run("runtime","inspect","--install-dir",self.install).stdout)
+                inspection = json.loads(self.service_run("runtime","inspect","--install-dir",self.install).stdout)
                 assert inspection["selection"]["active"] == actual["runtime_sha256"]
                 assert actual["executable_sha256"] == hashlib.sha256(self.binary.read_bytes()).hexdigest()
                 epoch = self.rpc("request_epoch")
                 request = {"caller":uuid.uuid4().hex,"key":{"namespace":epoch["namespace"],"epoch":epoch["epoch"],"nonce":uuid.uuid4().hex},
                            "action":"stop","expected_instance":actual["instance"],"runtime":actual["runtime_sha256"],"force":False}
                 (self.owner / "managed-stop-request.json").write_text(json.dumps(request,indent=2)+"\n")
-                response = json.loads(self.run("runtime","lifecycle","--install-dir",self.install,input=json.dumps(request)).stdout)
+                response = json.loads(self.service_run("runtime","lifecycle","--install-dir",self.install,input=json.dumps(request)).stdout)
                 (self.owner / "managed-stop-result.json").write_text(json.dumps(response,indent=2)+"\n")
                 expected = {key:value for key,value in request.items() if key != "force"}
                 expected["manager"] = False
@@ -820,7 +976,8 @@ class Fixture:
         spec = importlib.util.spec_from_file_location("native_https_enrollment", Path(__file__).with_name("http_fixture.py"))
         transport = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(transport)
-        return transport.enroll_native(self.run, self.install, self.control, selection, connection_id,
+        # `runtime http-connection` is a U93 pre-split operation of the service image.
+        return transport.enroll_native(self.service_run, self.install, self.control, selection, connection_id,
                                       client, deadline=deadline)
 
     def http_mcp(self, name, lifecycle, client, *, workbench=False):
@@ -958,6 +1115,75 @@ def mixed_mcp_clients(fixture, project):
             assert all(check.result() == len(MCP_TOOLS) for check in checks)
     return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": len(MCP_TOOLS),
             "lifecycles": [mode for mode, _ in modes], "reconnect": True, "same_project_reads": True}
+
+
+def airkctl_session_smoke(fixture):
+    """One real `airkctl session` (session/2, contracts §3.7) against the owned service.
+
+    hello and a control health relay, then end of input. airkctl is the client
+    under test; the service identity it relays must be the observed airk instance.
+    Frames are a 4-byte big-endian length then JSON; events are recorded, not replied to.
+    """
+    assert fixture.cli is not None, "The session smoke needs the split pair's airkctl"
+    child = subprocess.Popen(fixture.user_command("--service-runtime-dir", fixture.control, "session"),
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             cwd=fixture.runtime, env=fixture.environment,
+                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    frames = queue.Queue()
+    def reader():
+        try:
+            while True:
+                header = child.stdout.read(4)
+                if len(header) < 4:
+                    break
+                size = int.from_bytes(header, "big")
+                body = child.stdout.read(size) if 0 < size <= 16 << 20 else b""
+                frames.put(json.loads(body) if len(body) == size and size else {"invalid_frame": size})
+        finally:
+            frames.put(None)
+    threading.Thread(target=reader, daemon=True).start()
+    def send(identifier, request):
+        encoded = json.dumps({"id": identifier, "request": request}, separators=(",", ":")).encode("utf-8")
+        child.stdin.write(len(encoded).to_bytes(4, "big") + encoded)
+        child.stdin.flush()
+    events = []
+    def reply(identifier):
+        deadline = time.monotonic() + 60
+        while True:
+            frame = frames.get(timeout=remaining(deadline, 60))
+            assert frame is not None and "invalid_frame" not in frame, f"airkctl session closed or framed invalidly: {frame}"
+            if "event" in frame:
+                events.append(frame["event"].get("kind"))
+                continue
+            assert frame.get("id") == identifier, frame
+            return frame["outcome"]
+    try:
+        hello_id, health_id = uuid.uuid4().hex, uuid.uuid4().hex
+        send(hello_id, {"hello": {"protocol": 2, "client": {"name": "airk-native-check", "version": "fixture"},
+                                  "i2_contracts": [1]}})
+        hello = reply(hello_id)
+        assert hello["status"] == "hello" and hello["protocol"] == 2, hello
+        assert hello["executable_sha256"] == file_sha256(fixture.cli), "Session hello names another airkctl image"
+        send(health_id, {"control": {"method": "health"}})
+        relayed = reply(health_id)
+        assert relayed["status"] == "control", relayed
+        observation = relayed["response"]["observation"]
+        expected = fixture.rpc("health")["observation"]
+        assert observation["instance"] == expected["instance"], "Session relayed another service instance"
+        assert observation["executable_sha256"] == file_sha256(fixture.binary), "Session relayed another service image"
+        if "service_instance" in hello:
+            assert hello["service_instance"] == expected["instance"], hello
+        child.stdin.close()
+        child.wait(timeout=30)
+        errors = child.stderr.read()
+        assert child.returncode == 0, f"airkctl session did not exit cleanly ({child.returncode}): {errors[-4096:]!r}"
+    finally:
+        if child.poll() is None:
+            child.kill()  # Only this owned airkctl child; the service is never signaled.
+            child.wait(timeout=15)
+    fixture.assert_alive()
+    return {"protocol": hello["protocol"], "capabilities": hello["capabilities"], "control_relay": "health",
+            "service_instance_matched": True, "events": events, "clean_exit": True}
 
 
 def retained_job_failure(fixture, project):
@@ -1115,6 +1341,7 @@ def qualify(runtime, files, model):
             assert terse["items"][0]["name"] == full["items"][0]["name"] == "polar_fixture_0"
             mcp_tools = fixture.stdio("project-a", workbench=True)
             mcp_lifecycles = mixed_mcp_clients(fixture, "project-a")
+            session = airkctl_session_smoke(fixture) if fixture.cli is not None else None
             offline = owner / "temporarily-offline"
             roots[0].rename(offline)
             try:
@@ -1166,6 +1393,10 @@ def qualify(runtime, files, model):
                       "inference_worker_clean_exit": worker_clean_exit if not fixture.single_image else None,
                       "in_process_model_smoke": worker_clean_exit if fixture.single_image else None,
                       "mcp_lifecycles": mcp_lifecycles,
+                      "airkctl_session": session,
+                      # start() proved the installed service bytes equal the runtime's image.
+                      "images": {"service_sha256": file_sha256(fixture.binary),
+                                 "cli_sha256": file_sha256(fixture.cli) if fixture.cli is not None else None},
                       "failure_diagnostics": failure_diagnostics,
                       "terse_bytes": len(json.dumps(terse).encode()), "full_bytes": len(json.dumps(full).encode()),
                       "elapsed_seconds": round(time.monotonic() - started, 3), "source_bytes_preserved": True}
