@@ -79,7 +79,9 @@ async fn handle(
         | ControlMethod::ExplorerHandoff { .. }
         | ControlMethod::AbandonLifecycle { .. }
         | ControlMethod::AgentEndpoint {}
-        | ControlMethod::AgentConnectionInfo { .. } => {
+        | ControlMethod::AgentConnectionInfo { .. }
+        | ControlMethod::AgentConnectionOwnership { .. }
+        | ControlMethod::AgentConnectionVerify { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

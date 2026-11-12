@@ -783,6 +783,58 @@
           "bytes": "{\"status\":\"agent_refused\"}"
         }
       ]
+    },
+    {
+      "variant": "agent_reads",
+      "method": "M16, V1",
+      "methods": [
+        {
+          "name": "ownership",
+          "bytes": "{\"agent_connection_ownership\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "verify",
+          "bytes": "{\"agent_connection_verify\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "ownership_without_id",
+          "bytes": "{\"agent_connection_ownership\":{}}"
+        },
+        {
+          "name": "ownership_with_purpose",
+          "bytes": "{\"agent_connection_ownership\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"purpose\":\"predecessor-cleanup\"}}"
+        },
+        {
+          "name": "verify_with_token",
+          "bytes": "{\"agent_connection_verify\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"token\":\"x\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "ownership",
+          "bytes": "{\"status\":\"agent_connection_ownership\",\"result\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"schema\":1,\"status\":\"not_owned\"}}"
+        },
+        {
+          "name": "verified",
+          "bytes": "{\"status\":\"agent_connection_verified\",\"result\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"http_status\":200,\"schema\":1,\"url\":\"https://127.0.0.1:57421/mcp\",\"verified\":true}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "ownership_without_result",
+          "bytes": "{\"status\":\"agent_connection_ownership\"}"
+        },
+        {
+          "name": "verified_without_result",
+          "bytes": "{\"status\":\"agent_connection_verified\"}"
+        }
+      ]
     }
   ]
 }

@@ -474,6 +474,17 @@ pub enum ControlMethod {
     AgentConnectionInfo {
         connection_id: Incarnation,
     },
+    /// M16 (split step 3e.4, `agents list`): whether this installation owns a
+    /// connection id, as `airk runtime lookup-http-connection` answered it,
+    /// without its selected-runtime and staged-selection checks.
+    AgentConnectionOwnership {
+        connection_id: Incarnation,
+    },
+    /// V1 (`agents verify`): probe this service's own `/mcp` over HTTPS with
+    /// the connection's stored credential; the token never leaves the service.
+    AgentConnectionVerify {
+        connection_id: Incarnation,
+    },
     /// M20 (U80): mark a stuck lifecycle record abandoned in the ledger; a
     /// terminal record answers unchanged. A record this instance is draining
     /// is refused (`lifecycle_request_in_progress`).
@@ -1302,6 +1313,14 @@ pub enum ControlResponse {
     /// M15: the connection's references (no token).
     AgentConnectionInfo {
         connection: Box<crate::service_http::HttpConnectionInfo>,
+    },
+    /// M16: `{schema, connection_id, status: owned|not_owned|unavailable, …}`.
+    AgentConnectionOwnership {
+        result: serde_json::Value,
+    },
+    /// V1: `{schema, connection_id, url, verified, …}`.
+    AgentConnectionVerified {
+        result: serde_json::Value,
     },
     /// M15a/M15 refused. `message` is the full error chain bounded to 4,096
     /// characters, as the pre-split CLI's `operation_failed` line carried it.
