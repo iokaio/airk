@@ -127,7 +127,7 @@ enum Command {
         #[arg(long)]
         owner_watch: bool,
     },
-    /// Local HTTPS connections for agents: endpoint, info, list, verify, credential and revoke.
+    /// Local HTTPS connections for agents: endpoint, info, list, verify, credential, launch and revoke.
     Agents {
         #[command(subcommand)]
         action: AgentsCommand,
@@ -235,6 +235,25 @@ enum AgentsCommand {
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
+    },
+    /// Start Claude Code, Codex or VS Code on this connection in the foreground (U91).
+    ///
+    /// The credential goes only into the client's environment and the AIRK issuer is
+    /// added to its trust; existing CA bundles stay enabled. Exits with the client's status.
+    Launch {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        client: crate::launch::Client,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        /// The client's working folder (default: the current directory).
+        #[arg(long)]
+        directory: Option<PathBuf>,
+        /// Arguments for the client, after `--`.
+        #[arg(last = true)]
+        args: Vec<std::ffi::OsString>,
     },
     /// Revoke one local HTTPS connection while preserving its original receipt.
     Revoke {
@@ -2466,6 +2485,11 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                 | AgentsCommand::Verify {
                     runtime_dir,
                     connection_id,
+                }
+                | AgentsCommand::Launch {
+                    runtime_dir,
+                    connection_id,
+                    ..
                 } => (runtime_dir.clone(), Some(*connection_id)),
             };
             let control = match runtime_dir.or(selection.control.clone()) {
@@ -2475,6 +2499,27 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                     Err(code) => return code,
                 },
             };
+            if let AgentsCommand::Launch {
+                client,
+                connection_id,
+                directory,
+                args,
+                ..
+            } = &action
+            {
+                let directory = directory.clone().unwrap_or_else(|| PathBuf::from("."));
+                return match crate::launch::launch(
+                    &control,
+                    VERSION,
+                    *client,
+                    *connection_id,
+                    &directory,
+                    args,
+                ) {
+                    Ok(code) => u8::try_from(code).unwrap_or(1),
+                    Err(line) => fail(cx, &line),
+                };
+            }
             let result = match (&action, connection) {
                 (AgentsCommand::Endpoint { .. }, _) => crate::agents::endpoint(&control, VERSION),
                 (AgentsCommand::Info { .. }, Some(id)) => {

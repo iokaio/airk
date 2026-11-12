@@ -167,7 +167,7 @@ pub fn credential(control: &Path, connection_id: Incarnation) -> Result<Value, E
 
 /// An owner-private file within `limit` bytes, `None` when absent, with the
 /// messages `airk`'s HTTPS private-record reader gives.
-fn private_file(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
+pub(crate) fn private_file(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
