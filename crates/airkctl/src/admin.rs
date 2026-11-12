@@ -20,6 +20,57 @@ pub fn launch_url(port: u16, code: &str) -> String {
     format!("https://127.0.0.1:{port}/admin/launch#c={code}")
 }
 
+/// The admin pages a route may open (contracts §4.5, U97).
+pub const PAGES: [&str; 11] = [
+    "overview",
+    "index-library",
+    "activity",
+    "agents",
+    "storage",
+    "recovery",
+    "service",
+    "logs",
+    "usage",
+    "search",
+    "help",
+];
+
+/// Percent-encoding of everything but the RFC 3986 unreserved characters.
+fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// A page route, `<page>[?<name>=<value>…]`, with each value encoded. A
+/// route only selects a page and prefills fields; it never starts an action.
+pub fn route(page: &str, prefill: &[(&str, &str)]) -> String {
+    let query: Vec<String> = prefill
+        .iter()
+        .map(|(name, value)| format!("{name}={}", encode(value)))
+        .collect();
+    if query.is_empty() {
+        page.to_owned()
+    } else {
+        format!("{page}?{}", query.join("&"))
+    }
+}
+
+/// The launch URL that opens `route` once signed in: `#c=<code>&route=<encoded>`.
+/// The page drops the code from history and keeps only the route.
+pub fn with_route(url: String, route: Option<&str>) -> String {
+    match route {
+        Some(route) => format!("{url}&route={}", encode(route)),
+        None => url,
+    }
+}
+
 /// The stderr warning `admin url` writes (M5).
 pub const URL_WARNING: &str = "warning: this URL is a single-use AIRK Admin sign-in secret, valid for 60 seconds. Open it only in your own browser on this computer; never paste it into a page or share it.";
 
@@ -146,12 +197,12 @@ fn browse(path: &Path) -> Result<(), ErrorLine> {
 
 /// `admin open`: refuse without a local desktop, then A1, the redirect
 /// file and the default browser. Returns the redirect file's path.
-pub fn open(control: &Path, version: &str) -> Result<PathBuf, ErrorLine> {
+pub fn open(control: &Path, version: &str, route: Option<&str>) -> Result<PathBuf, ErrorLine> {
     local_desktop(
         |name| std::env::var_os(name),
         cfg!(all(unix, not(target_os = "macos"))),
     )?;
-    let url = url(control, version)?;
+    let url = with_route(url(control, version)?, route);
     let path = write_redirect(control, &url)?;
     browse(&path)?;
     Ok(path)
@@ -160,6 +211,20 @@ pub fn open(control: &Path, version: &str) -> Result<PathBuf, ErrorLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routes_encode_their_prefill_and_ride_after_the_code() {
+        let route = route("index-library", &[("root", "C:\\Users\\me\\My Docs")]);
+        assert_eq!(route, "index-library?root=C%3A%5CUsers%5Cme%5CMy%20Docs");
+        assert_eq!(
+            with_route(
+                "https://127.0.0.1:1/admin/launch#c=abc".into(),
+                Some(&route)
+            ),
+            "https://127.0.0.1:1/admin/launch#c=abc&route=index-library%3Froot%3DC%253A%255CUsers%255Cme%255CMy%2520Docs"
+        );
+        assert_eq!(with_route("u".into(), None), "u");
+    }
 
     /// `fixtures/split/i1/admin_launch_code.json`, case `one_shot_url`.
     #[test]

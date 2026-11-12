@@ -42,6 +42,11 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl info`](#airkctl-info)
 - [`airkctl init`](#airkctl-init)
 - [`airkctl inspect`](#airkctl-inspect)
+- [`airkctl library`](#airkctl-library)
+- [`airkctl library list`](#airkctl-library-list)
+- [`airkctl library setup`](#airkctl-library-setup)
+- [`airkctl library setup-apply`](#airkctl-library-setup-apply)
+- [`airkctl library show`](#airkctl-library-show)
 - [`airkctl model-catalog`](#airkctl-model-catalog)
 - [`airkctl outline`](#airkctl-outline)
 - [`airkctl parse`](#airkctl-parse)
@@ -122,6 +127,7 @@ Commands:
   pause          Pause work for the project
   resume         Resume work paused with `pause`
   watch          Turn native source watching on or off for the project (on keeps the index current after edits)
+  library        The index library: list, show and set up indexes (the admin pages' Index library)
   projects       List the projects registered with the service (same fields as the MCP `projects` tool)
   service        The AIRK service: start, stop, status, logs, requests, trust and management
   parse          Plan, and with --execute run, a multi-step read-only evidence request
@@ -263,8 +269,16 @@ Options:
       --runtime-dir <RUNTIME_DIR>
           The service's control directory (default: --service-runtime-dir, else the installation's)
 
+      --page <PAGE>
+          The page to open
+
+          [possible values: overview, index-library, activity, agents, storage, recovery, service, logs, usage, search, help]
+
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
+
+      --for-folder <FOR_FOLDER>
+          Index library: prefill a new index for this folder
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -272,8 +286,14 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --show-index <SHOW_INDEX>
+          Index library: show this index (`idx_…`)
+
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --show-set <SHOW_SET>
+          Index library: show this index set (`prj_…`)
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
@@ -320,8 +340,16 @@ Options:
       --runtime-dir <RUNTIME_DIR>
           The service's control directory (default: --service-runtime-dir, else the installation's)
 
+      --page <PAGE>
+          The page to open
+
+          [possible values: overview, index-library, activity, agents, storage, recovery, service, logs, usage, search, help]
+
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
+
+      --for-folder <FOR_FOLDER>
+          Index library: prefill a new index for this folder
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -329,8 +357,14 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --show-index <SHOW_INDEX>
+          Index library: show this index (`idx_…`)
+
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --show-set <SHOW_SET>
+          Index library: show this index set (`prj_…`)
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
@@ -2443,7 +2477,7 @@ Options:
 ```text
 Acknowledge an existing reviewed index mapping and prepare its reserved storage.
 
-In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant. Authority-zero services retain their legacy registration behavior. For a service on an explicit control directory (the `service-foreground` role), use `airkctl service register --runtime-dir <control>` instead.
+In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes use the reviewed index setup: `airkctl library setup` (or the admin pages' Index library); init creates no index or grant. Authority-zero services retain their legacy registration behavior. For a service on an explicit control directory (the `service-foreground` role), use `airkctl service register --runtime-dir <control>` instead.
 
 Usage: airkctl init [OPTIONS]
 
@@ -2517,6 +2551,336 @@ Options:
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library
+
+```text
+The index library: list, show and set up indexes (the admin pages' Index library)
+
+Usage: airkctl library [OPTIONS] <COMMAND>
+
+Commands:
+  list         One catalog page (or every page with --all): indexes, index sets (projects), memberships, sources, grants or contexts
+  show         One catalog entity: an index, an index set or a grant
+  setup        Draft a new index for --root (and --data-dir) and print the service's review; --apply also creates it
+  setup-apply  Apply a draft `setup` printed (the whole `catalog_index_setup_draft` line or its `draft`)
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library list
+
+```text
+One catalog page (or every page with --all): indexes, index sets (projects), memberships, sources, grants or contexts
+
+Usage: airkctl library list [OPTIONS]
+
+Options:
+      --kind <KIND>
+          [default: indexes]
+          [possible values: indexes, projects, memberships, sources, grants, contexts]
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --index <INDEX>
+          Limit memberships or sources to one index (`idx_…`)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --set <SET>
+          Limit memberships to one index set (`prj_…`)
+
+      --after <AFTER>
+          A continuation cursor a previous page printed (JSON)
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --all
+          Follow every continuation at the first page's revision
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library setup
+
+```text
+Draft a new index for --root (and --data-dir) and print the service's review; --apply also creates it
+
+Usage: airkctl library setup [OPTIONS] --name <NAME>
+
+Options:
+      --name <NAME>
+          The index's display name
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --index-collection <INDEX_COLLECTION>
+          The index's collection (default: from the name, lowercase letters, digits and dashes)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --additional <ADDITIONAL>
+          An additional source root as ALIAS=PATH (repeatable)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --watch <WATCH>
+          Keep the index current after edits (native source watching)
+
+          [default: on]
+          [possible values: on, off]
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --revision <REVISION>
+          Draft against this catalog revision (default: the current one)
+
+      --apply
+          Apply the draft right after printing it
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library setup-apply
+
+```text
+Apply a draft `setup` printed (the whole `catalog_index_setup_draft` line or its `draft`)
+
+Usage: airkctl library setup-apply [OPTIONS] --draft-file <DRAFT_FILE>
+
+Options:
+      --draft-file <DRAFT_FILE>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library show
+
+```text
+One catalog entity: an index, an index set or a grant
+
+Usage: airkctl library show [OPTIONS]
+
+Options:
+      --index <INDEX>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --set <SET>
+
+
+      --grant <GRANT>
+
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --revision <REVISION>
+          Refuse unless the catalog is at this revision
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session

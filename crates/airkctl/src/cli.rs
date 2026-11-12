@@ -127,7 +127,7 @@ enum Command {
     },
     /// Acknowledge an existing reviewed index mapping and prepare its reserved storage.
     ///
-    /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airkctl service rpc`; init creates no index or grant.
+    /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes use the reviewed index setup: `airkctl library setup` (or the admin pages' Index library); init creates no index or grant.
     /// Authority-zero services retain their legacy registration behavior. For a service on an explicit control directory (the `service-foreground` role), use `airkctl service register --runtime-dir <control>` instead.
     Init,
     /// Print the offline model catalog and the CPU choice for this host.
@@ -193,6 +193,11 @@ enum Command {
         #[arg(value_parser = ["on", "off"])]
         mode: String,
     },
+    /// The index library: list, show and set up indexes (the admin pages' Index library).
+    Library {
+        #[command(subcommand)]
+        action: library::LibraryCommand,
+    },
     /// List the projects registered with the service (same fields as the MCP `projects` tool).
     Projects {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
@@ -219,6 +224,8 @@ enum AdminCommand {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
+        #[command(flatten)]
+        page: AdminPage,
     },
     /// Print a single-use AIRK Admin sign-in URL (valid 60 seconds) for manual use.
     ///
@@ -227,7 +234,48 @@ enum AdminCommand {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
+        #[command(flatten)]
+        page: AdminPage,
     },
+}
+
+/// The page AIRK Admin opens on, with fields to prefill (U97). A route
+/// never starts an action.
+#[derive(clap::Args)]
+struct AdminPage {
+    /// The page to open.
+    #[arg(long, value_parser = crate::admin::PAGES)]
+    page: Option<String>,
+    /// Index library: prefill a new index for this folder.
+    #[arg(long = "for-folder", requires = "page")]
+    for_folder: Option<PathBuf>,
+    /// Index library: show this index (`idx_…`).
+    #[arg(long = "show-index", requires = "page")]
+    show_index: Option<String>,
+    /// Index library: show this index set (`prj_…`).
+    #[arg(long = "show-set", requires = "page")]
+    show_set: Option<String>,
+}
+
+impl AdminPage {
+    fn route(&self) -> Option<String> {
+        let page = self.page.as_deref()?;
+        let folder = self
+            .for_folder
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned());
+        let mut prefill = Vec::new();
+        if let Some(folder) = folder.as_deref() {
+            prefill.push(("root", folder));
+        }
+        if let Some(index) = self.show_index.as_deref() {
+            prefill.push(("index", index));
+        }
+        if let Some(set) = self.show_set.as_deref() {
+            prefill.push(("set", set));
+        }
+        Some(crate::admin::route(page, &prefill))
+    }
 }
 
 #[derive(Subcommand)]
@@ -1815,7 +1863,9 @@ fn this_airkctl() -> Result<PathBuf, ErrorLine> {
 
 /// `admin open|url` (split Phase 5): A1 over the owner pipe.
 fn admin_command(cx: &mut Context, selection: Selection, action: AdminCommand) -> u8 {
-    let (AdminCommand::Open { runtime_dir } | AdminCommand::Url { runtime_dir }) = &action;
+    let (AdminCommand::Open { runtime_dir, page } | AdminCommand::Url { runtime_dir, page }) =
+        &action;
+    let route = page.route();
     let control = match runtime_dir.clone().or(selection.control) {
         Some(control) => control,
         None => match installed(cx) {
@@ -1826,6 +1876,7 @@ fn admin_command(cx: &mut Context, selection: Selection, action: AdminCommand) -
     match action {
         AdminCommand::Url { .. } => match crate::admin::url(&control, VERSION) {
             Ok(url) => {
+                let url = crate::admin::with_route(url, route.as_deref());
                 let _ = writeln!(cx.io.stderr, "airkctl: {}", crate::admin::URL_WARNING);
                 match cx.output {
                     Output::Json => json_line(cx, &serde_json::json!({ "url": url })),
@@ -1837,10 +1888,12 @@ fn admin_command(cx: &mut Context, selection: Selection, action: AdminCommand) -
             }
             Err(line) => fail(cx, &line),
         },
-        AdminCommand::Open { .. } => match crate::admin::open(&control, VERSION) {
-            Ok(_) => 0,
-            Err(line) => fail(cx, &line),
-        },
+        AdminCommand::Open { .. } => {
+            match crate::admin::open(&control, VERSION, route.as_deref()) {
+                Ok(_) => 0,
+                Err(line) => fail(cx, &line),
+            }
+        }
     }
 }
 
@@ -3110,6 +3163,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             }
         }),
         Command::Projects { runtime_dir } => projects(cx, selection, runtime_dir),
+        Command::Library { action } => library::run(cx, selection, action),
         Command::Tools {
             action:
                 ToolsCommand::Call {
@@ -3239,6 +3293,7 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     dispatch(&mut cx, cli.command, selection)
 }
 
+mod library;
 pub mod session;
 mod shell;
 #[cfg(test)]
