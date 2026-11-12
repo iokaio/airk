@@ -355,7 +355,9 @@ class LinuxServiceInstaller(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def run_installer(self, stage, *arguments, **environment):
-        log = self.base / "airk.log"
+        # One log per package: a stale log from an earlier run must never be read as this run's calls.
+        log = stage.parent / "airk.log"
+        log.unlink(missing_ok=True)
         home = self.base / "home"
         (home / ".local/bin").mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "PATH": str(Path(SH).parent) + os.pathsep + os.environ.get("PATH", ""),
@@ -370,6 +372,9 @@ class LinuxServiceInstaller(unittest.TestCase):
     def test_install_script_refuses_changed_linked_and_extra_payload_before_native_execution(self):
         cases = ("unchanged", "bytes", "inventory", "extra", "hard_link", "roster")
         for case in cases:
+            # On Linux the unchanged package installs (the happy-path test covers it); elsewhere it is refused.
+            if case == "unchanged" and sys.platform.startswith("linux"):
+                continue
             with self.subTest(case=case):
                 base = self.base / case
                 base.mkdir()
@@ -390,8 +395,6 @@ class LinuxServiceInstaller(unittest.TestCase):
                 self.assertEqual(calls, [], "no native program runs before the package verifies")
                 self.assertFalse((base / "program").exists())
                 if case == "unchanged":
-                    if sys.platform.startswith("linux"):
-                        continue
                     self.assertIn("this package is for Linux x86-64", result.stderr)
                 else:
                     self.assertNotIn("this package is for Linux", result.stderr)
