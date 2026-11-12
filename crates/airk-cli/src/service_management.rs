@@ -1131,7 +1131,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::ClientRequestSubmit { .. }
         | ControlMethod::ClientRequestForget { .. }
         | ControlMethod::PlanRegistration { .. }
-        | ControlMethod::PrepareStorage { .. } => {
+        | ControlMethod::PrepareStorage { .. }
+        | ControlMethod::PrepareConfiguration { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

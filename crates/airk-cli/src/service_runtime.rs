@@ -492,6 +492,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 collection,
                 storage,
             } => registration::plan(&root, &data_root, &collection, storage),
+            // M9 lands its handler in step 3c.5b; until then the typed refusal.
+            ControlMethod::PrepareConfiguration { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::PrepareStorage { project } => {
                 registration::prepare_storage(&state.control_root, project)
             }

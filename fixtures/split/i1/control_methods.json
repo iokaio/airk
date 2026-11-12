@@ -467,6 +467,64 @@
           "bytes": "{\"status\":\"registration_refused\"}"
         }
       ]
+    },
+    {
+      "variant": "prepare_configuration",
+      "method": "M9",
+      "methods": [
+        {
+          "name": "vectors",
+          "bytes": "{\"prepare_configuration\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"draft\":{\"operation\":\"vectors\",\"enabled\":false}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "import_usage_absolute_path",
+          "bytes": "{\"prepare_configuration\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"draft\":{\"operation\":\"import_usage\",\"path\":\"/home/fixture/usage.json\",\"expected_sha256\":null}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "clear_usage",
+          "bytes": "{\"prepare_configuration\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"draft\":{\"operation\":\"clear_usage\"}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_operation",
+          "bytes": "{\"prepare_configuration\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"draft\":{\"operation\":\"format_disk\"}}}"
+        },
+        {
+          "name": "draft_extra_field",
+          "bytes": "{\"prepare_configuration\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"draft\":{\"operation\":\"vectors\",\"enabled\":false,\"force\":true}}}"
+        },
+        {
+          "name": "without_draft",
+          "bytes": "{\"prepare_configuration\":{\"project\":\"abababababababababababababababababababababababababababababababab\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "prepared",
+          "bytes": "{\"status\":\"configuration_prepared\",\"request\":{\"incarnation\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"settings\":\"abababababababababababababababababababababababababababababababab\",\"configuration\":{\"operation\":\"vectors\",\"enabled\":false}}}"
+        },
+        {
+          "name": "refused",
+          "bytes": "{\"status\":\"configuration_refused\",\"message\":\"inspect the selected project before configuring it\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "prepared_without_request",
+          "bytes": "{\"status\":\"configuration_prepared\"}"
+        },
+        {
+          "name": "request_extra_field",
+          "bytes": "{\"status\":\"configuration_prepared\",\"request\":{\"incarnation\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"settings\":\"abababababababababababababababababababababababababababababababab\",\"configuration\":{\"operation\":\"vectors\",\"enabled\":false},\"submitted\":true}}"
+        }
+      ]
     }
   ]
 }

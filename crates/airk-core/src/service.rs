@@ -510,6 +510,13 @@ pub enum ControlMethod {
     PrepareStorage {
         project: ProjectBinding,
     },
+    /// M9 (split step 3c.5): prepare a configuration draft into the guarded
+    /// request the CLI journaled (its inspection, pinned inputs and checks);
+    /// no effect until the request is journaled and submitted (M5, M7).
+    PrepareConfiguration {
+        project: ProjectBinding,
+        draft: crate::service_configuration::ConfigurationDraft,
+    },
 }
 
 /// Which registration rule M4a applies, as the pre-split CLI chose it.
@@ -1084,6 +1091,15 @@ pub enum ControlResponse {
     /// M4b: the reserved storage exists; the registry's registration.
     StoragePrepared {
         registration: ProjectRegistration,
+    },
+    /// M9: the guarded configuration request.
+    ConfigurationPrepared {
+        request: Box<crate::service_configuration::ConfigurationRequest>,
+    },
+    /// M9 refused. `message` is the full error chain bounded to 4,096
+    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    ConfigurationRefused {
+        message: String,
     },
     /// M4a/M4b, or M1's catalog target, refused. `message` is the full error
     /// chain bounded to 4,096 characters, as the pre-split CLI's
