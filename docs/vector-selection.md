@@ -35,17 +35,17 @@ Each rule must have a unique `id` and at least one selector. Available selectors
 When several rules match, the lexicographically smallest rule ID is the reported reason. Canonical policy ordering makes the digest independent of rule order.
 
 ```console
-airk collections vectors selection show
-airk collections vectors selection validate --file /path/to/vector-selection.json
-airk collections vectors selection set --file /path/to/vector-selection.json
+airkctl settings vector_selection
+airkctl settings vector_selection --validate-file /path/to/vector-selection.json
+airkctl configure --file /path/to/set-vector-selection.json
 airkctl index
-airk collections vectors show
+airkctl settings vector_status
 airkctl info generated/example.js
 ```
 
-`validate` checks a proposed policy without saving it. `set` saves it for the next successful index; it does not start indexing. Both accept exactly one `--file` or `--json` input, limited to 128 KiB. Invalid input leaves the saved policy unchanged. The usual `--root`, `--data-dir` and `--collection` options select the collection.
+`--validate-file` checks a proposed policy without saving it. `configure` with a draft `{"operation":"vector_selection","policy":<policy>}` saves it for the next successful index; it does not start indexing. A configuration draft is limited to 16 KiB. Invalid input leaves the saved policy unchanged. The usual `--root`, `--data-dir` and `--collection` options select the collection.
 
-To remove all exclusions, save `{"version":1,"exclusions":[]}`. The existing `airk collections vectors set --enabled false` command disables vectors for the whole collection; `--enabled true` re-enables them with the saved exclusions.
+To remove all exclusions, save `{"version":1,"exclusions":[]}`. The `vectors` configuration operation (`{"operation":"vectors","enabled":false}` through `airkctl configure`) disables vectors for the whole collection; `"enabled":true` re-enables them with the saved exclusions.
 
 ## Agent Lean defaults and overrides
 

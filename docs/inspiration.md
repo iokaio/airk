@@ -11,7 +11,7 @@ AIRK does not depend on, vendor, copy or link either project's implementation. T
 
 The local `temp/` example was also reviewed as inspiration. Its useful workflow is workspace discovery, incremental updates, a status tool and MCP retrieval returning cited passages for a coding agent to reason over. AIRK implements that workflow independently, with broader text-file eligibility and an integrated binary rather than copying its scripts or configuration. `temp/` is private reference material: excluded from Git, Docker and public examples.
 
-The ease-of-use direction is one native executable across Windows/macOS/Linux or one container host per user/machine, `airk setup` for client-specific configuration, `airk index` for updates and collection-scoped read-only MCP tools. A native VS Code extension is explored separately. Published binaries/image tags will be documented only once releases actually exist.
+The ease-of-use direction is one native executable across Windows/macOS/Linux or one container host per user/machine, `airkctl agents connect` for client-specific configuration, `airkctl index` for updates and collection-scoped read-only MCP tools. A native VS Code extension is explored separately. Published binaries/image tags will be documented only once releases actually exist.
 
 DiskANN with actual disk-backed graph/vector access is the selected final vector tier. The inspected Munarium DiskANN provider operates in memory and reconstructs from persisted artifacts. Borrow its separation, provenance and verification ideas; do not mistake persistence alone for large-than-memory search. See [the collection/index design](collections.md).
 

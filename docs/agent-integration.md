@@ -301,7 +301,7 @@ reviewed source selections and supported preferences, then reconnect clients
 with fresh authority. Supported 1.8.16+ upgrades require the persisted state
 contract as well as the approved version. See the
 [current reset contract](upgrade-rebuild-fallback.md); its historical optional
-rebuild section is no longer current setup guidance. `airk uninstall [--yes]` uses the native owner to stop/remove owned
+rebuild section is no longer current setup guidance. `airkctl service uninstall [--yes]` uses the native owner to stop/remove owned
 runtime files while preserving source files and index data; removing a downloaded
 installer or ejecting its image is not uninstalling the service.
 

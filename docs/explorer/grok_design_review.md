@@ -2,6 +2,8 @@ The design record for the AIRK Explorer prototype. You can also download it belo
 
 # AIRK Explorer — prototype design record
 
+> Note (12 Nov 2026, split): the `airk …` commands named below predate the AIRK split; user commands are now `airkctl …` (docs/cli-reference.md). `airk explorer-assistance` no longer exists; offline Explorer drafts, validation and templates are `airkctl explorer …`.
+
 This document records the decisions behind the interactive AIRK Explorer prototype, and the recommendations those decisions follow. It describes the prototype as it behaves. It is not a commitment that AIRK ships these screens, and it does not describe a live connection to a repository or a model.
 
 Two earlier artifacts set the recommendations. The running prototype is the result of following the later one and keeping the safety rules from the earlier one.

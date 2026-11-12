@@ -1,5 +1,7 @@
 # AIRK Workbench implementation plan
 
+> Note (12 Nov 2026, split): this dated plan predates the AIRK split. `airk parse` is now `airkctl parse` (docs/cli-reference.md). `dump-vocab` is not a user command: it is a developer-only operation in `parser-training` builds, reachable only through the private interim role selector.
+
 **Design baseline:** written 2026-10-29 against the 1.6.4 tree. This is the target design, with its original implementation and qualification gates. It does not describe the published 1.6.4 release.
 
 **Implementation:** the unreleased `feat/workbench` branch implements the sidebar and shared native `parse` prepare/execute path. See the [implementation record](implementation.md) for current commands, contracts, validation and differences from this target. In particular, the candidate classifier is suggestion-only pending independent qualification; do not infer trained-model acceptance or platform qualification from this plan.

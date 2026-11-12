@@ -28,7 +28,7 @@ Use the same source root, data directory and collection for all agents. Writers 
 
 ## Retention and removal
 
-Only current evidence and durable pending work own retained objects. Publication attempts bounded cleanup; `airk collections maintain` repeats it and reports removed files/bytes and pending work. Historical retention, generation pruning, checkpoints and rollback are unsupported. Removal acquires writer, lifecycle, usage and current-request exclusion and deletes only the selected managed collection. Sources remain untouched.
+Only current evidence and durable pending work own retained objects. Publication attempts bounded cleanup; a `maintain` job (`airkctl service requests prepare --project <binding> --kind maintain`, then `airkctl service requests retry <nonce>`) repeats it and reports removed files/bytes and pending work. Historical retention, generation pruning, checkpoints and rollback are unsupported. Removal acquires writer, lifecycle, usage and current-request exclusion and deletes only the selected managed collection. Sources remain untouched.
 
 ## Relocating a data root
 

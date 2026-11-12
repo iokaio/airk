@@ -34,6 +34,8 @@ The adapter accepts supplied TypeScript/TSX/JavaScript, Rust and C# SCIP documen
 
 Capture a manifest **before** producing the index. Declare build files, lockfiles, generated inputs and a file containing effective compiler flags/target/environment fingerprints. A Git commit alone does not bind dirty files. Preparation requires indexed inventory to match current sources. Keep output outside indexed sources or inside the excluded AIRK data directory.
 
+The `airk analysis` commands shown below no longer exist, and `airkctl` has no SCIP preparation or import command; the block records the former procedure.
+
 ~~~console
 airkctl index
 airk analysis prepare --producer scip-typescript --producer-version <actual-version> --build-input tsconfig.json --build-input package-lock.json
@@ -52,7 +54,7 @@ Import transactionally updates the current head with captured native/imported fa
 
 ## Explicit live LSP and Universal Ctags
 
-`airk analysis lsp --request /indexes/lsp.json` runs an explicitly selected local language server. `airk analysis ctags --request /indexes/ctags.json` runs Universal Ctags with JSON support. Both publish one replacement imported provider domain alongside unchanged native facts. They require a current index and a single owner root; aliased multi-root collections are rejected. Nothing downloads or installs a provider automatically.
+The former `analysis lsp --request /indexes/lsp.json` command ran an explicitly selected local language server, and `analysis ctags --request /indexes/ctags.json` ran Universal Ctags with JSON support; neither command exists any longer and `airkctl` has no equivalent. Both publish one replacement imported provider domain alongside unchanged native facts. They require a current index and a single owner root; aliased multi-root collections are rejected. Nothing downloads or installs a provider automatically.
 
 The request uses the same shape for either adapter. Keep it outside indexed sources:
 

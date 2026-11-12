@@ -11,23 +11,23 @@ Extraction policy selects an existing native adapter for each eligible source fi
 ## Inspect, validate and save
 
 ```powershell
-airk collections extraction show
-airk collections extraction validate --file extraction-policy.json
-airk collections extraction set --file extraction-policy.json
+airkctl settings extraction_policy
+airkctl settings extraction_policy --validate-file extraction-policy.json
+airkctl configure --file set-extraction-policy.json
 airkctl index
 ```
 
-Global `--root`, `--data-dir` and `--collection` select the collection as on other commands. `show` observes current policy; `validate` checks a proposed policy without saving or indexing. `set` saves the policy under the collection writer lock. Its effect becomes visible only in the next successful index publication. Existing reads continue using their published profiles if indexing has not run or fails.
+Global `--root`, `--data-dir` and `--collection` select the collection as on other commands. `settings extraction_policy` observes current policy; `--validate-file` checks a proposed policy without saving or indexing. `configure` with a draft such as `{"operation":"extraction_policy","path":"/absolute/path/extraction-policy.json"}` saves the policy under the collection writer lock. Its effect becomes visible only in the next successful index publication. Existing reads continue using their published profiles if indexing has not run or fails.
 
-Both `validate` and `set` require exactly one of `--file PATH` or `--json JSON`. Input is limited to 128 KiB and 256 rules. Versions 1 through 3 reject unknown fields and adapter IDs. Versions 2 and 3 accept captured header-context rules. Version 3 additionally accepts `detail`: `agent_lean`, `essential`, `balanced` or `detailed`. For larger policies, use `--file` to avoid operating-system command-line limits. An explicit reset to Balanced with no adapter overrides uses an empty rule list:
+Both read the policy from a file. Input is limited to 128 KiB and 256 rules. Versions 1 through 3 reject unknown fields and adapter IDs. Versions 2 and 3 accept captured header-context rules. Version 3 additionally accepts `detail`: `agent_lean`, `essential`, `balanced` or `detailed`. An explicit reset to Balanced with no adapter overrides saves a policy file with an empty rule list:
 
-```powershell
-airk collections extraction set --json '{"version":3,"detail":"balanced","rules":[]}'
+```json
+{"version":3,"detail":"balanced","rules":[]}
 ```
 
 From 1.2.3, new collections default to version 3, Agent Lean detail and no overrides. Existing indexed collections without a saved policy keep their published detail; legacy indexes and version 1/2 policies use Detailed. A version 3 policy without `detail` also retains the legacy Detailed interpretation. No policy file is automatically read from the source workspace.
 
-Use `airk collections extraction detail balanced` (or `agent_lean` / `essential` / `detailed`) to change only detail while preserving adapter rules. The sidebar offers the same selection with a review of rebuild costs. Status includes `configured_detail`, `published_detail` and `pending_reindex`; [index detail](ingestion-limits.md#index-detail) explains the evidence retained at each level.
+Use `airkctl configure --stdin` with `{"operation":"detail","level":"balanced"}` (or `agent_lean` / `essential` / `detailed`) to change only detail while preserving adapter rules. The sidebar offers the same selection with a review of rebuild costs. Status includes `configured_detail`, `published_detail` and `pending_reindex`; [index detail](ingestion-limits.md#index-detail) explains the evidence retained at each level.
 
 Agent Lean is the new-collection default from 1.2.3; it was opt-in in 1.2.0–1.2.2. The display labels are **Agent Lean**, **Rich Structure** (`balanced`) and **Search Only** (`essential`); Detailed remains an advanced option. Agent Lean retains selected declarations/signatures/imports, local structure and useful document facts, while omitting continuity fingerprints and broad document inventories. It retains supported call occurrences as unresolved syntax candidates. Its default vector policy skips reviewed lockfile basenames and minified JS/CSS; saved explicit vector policies keep their semantics. See [1.2.3 defaults](releases/release-1.2.3.md) and [1.2.0 operation and limits](releases/release-1.2.0.md).
 

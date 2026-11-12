@@ -30,11 +30,11 @@ Start lean and fast. Move to Rich Structure when broader structural facts or dec
 In the sidebar, choose **Index detail → Evidence to retain** on the collection card. Review the explanation and choose **Save and index** or **Save for next index**. The card distinguishes the configured level from the published level while a change is pending. Changing detail preserves adapter-selection overrides and affects only that collection. The CLI equivalent is:
 
 ```console
-airk collections extraction show
-airk collections extraction detail agent_lean
-airk collections extraction detail essential
-airk collections extraction detail balanced
-airk collections extraction detail detailed
+airkctl settings extraction_policy
+echo '{"operation":"detail","level":"agent_lean"}' | airkctl configure --stdin
+echo '{"operation":"detail","level":"essential"}' | airkctl configure --stdin
+echo '{"operation":"detail","level":"balanced"}' | airkctl configure --stdin
+echo '{"operation":"detail","level":"detailed"}' | airkctl configure --stdin
 ```
 
 Detail is included in extraction identity. An ordinary index pass re-extracts files whose level changed and publishes current evidence through the recovery journal. Progressive scheduled batches can become readable before the complete scan finishes; the panel reports the configured and applied levels separately. A failure retains previously committed evidence and reports the incomplete work. Increasing detail requires re-extraction; historical generations and history-retention settings are unavailable in 1.2. Explicit provider imports remain separately bound evidence. If retained OCR output prevents applying a changed level, run a full reindex to apply native extraction, then explicitly rerun OCR for those files. The full reindex may omit images with no native text; the original sources remain untouched. No OCR subprocess is launched implicitly.
@@ -45,9 +45,9 @@ Written definition and heading spans are captured independently of optional fact
 
 ### Execution and compression
 
-`airk execution` reports CPU/memory admission and the storage-root slot policy. `AIRK_EXECUTION_MODE` selects `automatic`, `interactive` or `throughput`; existing worker settings remain bounded ceilings. These estimates do not enforce an RSS limit. `airk index --scheduled --progress` emits committed progress as JSON on stderr, preserving final stdout JSON. Discovery totals remain unknown until a complete inventory.
+The former `execution` command (no longer available; `airkctl` has no equivalent) reported CPU/memory admission and the storage-root slot policy. `AIRK_EXECUTION_MODE` selects `automatic`, `interactive` or `throughput`; existing worker settings remain bounded ceilings. These estimates do not enforce an RSS limit. The former `index --scheduled --progress` emitted committed progress as JSON on stderr, preserving final stdout JSON; `airkctl index` has neither option. Discovery totals remain unknown until a complete inventory.
 
-Optional retained-object compression is off by default. `airk compression set automatic` affects future immutable writes; `airk compression repack --max-files 32` rewrites a bounded batch through the recovery journal. Continue with the returned `next_after` using `--after`. See [the release notes](releases/release-1.2.0.md#optional-lossless-retained-object-compression) for byte limits, exact evidence guarantees and accounting scope.
+Optional retained-object compression is off by default. The former `compression set automatic` command affected future immutable writes, and `compression repack --max-files 32` rewrote a bounded batch through the recovery journal, continued with the returned `next_after` using `--after`. Neither command exists any longer and `airkctl` has no equivalent. See [the release notes](releases/release-1.2.0.md#optional-lossless-retained-object-compression) for byte limits, exact evidence guarantees and accounting scope.
 
 ## Inspect and configure
 
@@ -56,18 +56,17 @@ In the extension, use **AIRK: Show Ingestion Limits** to see automatic versus co
 Use **AIRK: Configure Ingestion Limits…** to restore automatic sizing or validate, review and import a JSON policy. The CLI equivalents are:
 
 ```console
-airk collections limits describe
-airk collections limits show
-airk collections limits validate limits.json
-airk collections limits set limits.json
-airk collections limits reset
+airkctl settings scan_limits
+airkctl settings scan_limits --validate-file limits.json
+airkctl configure --file set-limits.json
+echo '{"operation":"reset_scan_limits"}' | airkctl configure --stdin
 ```
 
 When indexing reaches a collection source, extracted-text, file-count, discovery or read budget, the extension offers **Review larger limit**. Enter a larger allowance within the displayed hard ceiling, then choose **Save limit and retry**. The confirmation explains: "Larger limits can increase indexing time, memory use and disk usage. Disk quotas and per-file extraction limits still apply; the previous index is retained if indexing fails." Values above normal machine sizing are labeled explicitly.
 
 Approval saves only the selected budget for that collection and retries once. Dismissal leaves the policy unchanged; a second failure stops without another automatic prompt/retry loop. If another client changes the limits while approval is pending, saving fails and requires a fresh review. No override is offered for per-file extraction ceilings, disk quota failures or unrelated errors. CLI and unattended workers continue to enforce configured limits and never grant themselves an increase.
 
-`show` returns only the effective policy; `describe` also returns the detected memory, automatic recommendation and whether a saved policy is active. `reset` removes the current collection's explicit override. Existing saved limits are never silently increased or replaced; an old 64 MiB policy stays in force until explicitly changed or reset. All changes apply on the next index; they do not publish or discard evidence.
+`settings scan_limits` returns the effective policy with the detected memory, automatic recommendation and whether a saved policy is active (the former `describe` view). `set-limits.json` is a draft such as `{"operation":"scan_limits","path":"/absolute/path/limits.json"}`. `reset_scan_limits` removes the current collection's explicit override. Existing saved limits are never silently increased or replaced; an old 64 MiB policy stays in force until explicitly changed or reset. All changes apply on the next index; they do not publish or discard evidence.
 
 An explicit policy equivalent to the largest automatic defaults is:
 

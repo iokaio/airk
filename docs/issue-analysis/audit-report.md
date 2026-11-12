@@ -1,5 +1,7 @@
 # AIRK 1.8.7 (VS Code extension): short audit
 
+> Note (12 Nov 2026, split): the `airk …` commands named below predate the AIRK split; user commands are now `airkctl …` (docs/cli-reference.md), and `airk mcp` and `airk runtime …` no longer exist.
+
 Date: 2026-11-03. Tested: v1.8.7, darwin-arm64, VS Code 1.143.1, macOS 26.4.1 on Apple Silicon. Both the GitHub release package and the Marketplace package were looked at.
 
 ## Short verdict

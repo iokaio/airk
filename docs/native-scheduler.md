@@ -5,12 +5,12 @@ The native scheduler persists indexing requests under the selected data root. Fr
 Full rebuild requests are durably enqueued even while the collection writer is busy; only the executing worker prepares the rebuild. Waiters retrieve the report for their satisfied intent revision, including coalesced intents. Completion history keeps four passes per binding, bounded globally to 128 records / 16 MiB. If an older result has expired or predates this history, the waiter reports that it was superseded instead of returning the latest pass's report. Queue status still exposes the latest report.
 
 ```console
-airk --root /projects/example --data-dir /indexes --collection example schedule enqueue
-airk --root /projects/example --data-dir /indexes --collection example schedule status
-airk --root /projects/example --data-dir /indexes --collection example schedule run
-airk --root /projects/example --data-dir /indexes --collection example schedule run --watch
-airk --root /projects/example --data-dir /indexes --collection example index --scheduled
+airkctl --root /projects/example --data-dir /indexes --collection example index
+airkctl --root /projects/example --data-dir /indexes --collection example status
+airkctl --root /projects/example --data-dir /indexes --collection example watch on
 ```
+
+> Note (12 Nov 2026, split): the `schedule …`, `index --scheduled`, `index --paths`, `semantic run` and `service plan`/`service install` commands described in this document predate the AIRK split and no longer exist. The AIRK service owns the queue and its worker; `airkctl index` queues indexing, `airkctl status` reports job status, `airkctl watch on|off` controls native source watching and `airkctl pause`/`resume` pause work. The text below records the scheduler behavior those commands exposed.
 
 `schedule enqueue` registers the selected root and records an automatic request; `--full` requests re-extraction. `schedule run` executes at most one due collection, returning `idle`, `busy`, `indexed` or `failed`. `--watch` keeps an explicit foreground worker running until Ctrl+C; `--poll-ms` accepts 250–60000 milliseconds. The watch worker receives native filesystem events through `notify`: ReadDirectoryChangesW on Windows, FSEvents on macOS and inotify on Linux.
 
@@ -31,13 +31,13 @@ The VS Code extension does not need this service to finish semantic indexing. It
 An installed worker uses the same queue, root bindings, aliases, quotas and locks as a foreground worker. Installation is optional, never performed by MCP reads or extension activation. An explicit data directory is required:
 
 ```console
-airk --root /projects/example --data-dir /indexes --collection example service plan
-airk --root /projects/example --data-dir /indexes --collection example service install
 airkctl --root /projects/example --data-dir /indexes --collection example service status
 airkctl --root /projects/example --data-dir /indexes --collection example service stop
 airkctl --root /projects/example --data-dir /indexes --collection example service start
-airk --root /projects/example --data-dir /indexes --collection example service uninstall
+airkctl --root /projects/example --data-dir /indexes --collection example service uninstall
 ```
+
+Install the service with the AIRK Service installer ([service installation](service-installation.md)); the former `service plan` and `service install` commands no longer exist.
 
 `plan` returns the definition and destination without writing configuration or starting a process. `status` reads the owned configuration and queries the OS manager; a manager failure is reported as unknown, not as a stopped service. `install` writes a configuration and integrity receipt, enables login startup and starts the worker. `stop` stops this session's process while preserving startup at the next login; `start` restarts it. `uninstall` stops the worker and removes only its matching registration, definition and receipt. Collection evidence and source files remain intact. If registration fails after writing configuration, the error reports the retained state; inspect status and use start or uninstall.
 
@@ -64,10 +64,11 @@ The 1.3.0 source extension observes `index --progress` without putting progress 
 Automatic batches wait for two seconds of quiet, with a thirty-second maximum delay and five-second minimum interval after completion. Extension timing controls batch its own events before submission. A manual request runs immediately when its collection worker and execution capacity become available. Edits submitted while a job runs advance the requested revision, including automatic notifications from another editor; completing the captured revision leaves later work pending. Completed batches advance their pending timestamp so a continuously edited root yields to older waiting collections.
 
 ```console
-airk schedule pause
-airk schedule resume
-airk schedule forget
+airkctl pause
+airkctl resume
 ```
+
+The former `schedule forget` command no longer exists.
 
 Pause persists even before the first request. It prevents automatic jobs but permits explicit manual indexing, without resetting the pause. A failed index preserves the prior evidence and records a blocked pending request. Resume or a new explicit enqueue clears the block; the worker does not retry a persistent error continuously. Forget removes scheduling registration and pending intents without deleting indexed evidence. Collection removal obtains only that collection’s worker lock and removes its pending registration so a worker cannot recreate the deleted index.
 
@@ -90,7 +91,7 @@ Collection-scoped semantic tests verify that foreign source requests remain queu
 
 ## Resuming a queued request (1.3.0)
 
-`airk index --scheduled` persists a request before joining its collection worker. If its 240-second join budget expires, the CLI reports `scheduled_index_pending` with `requested_revision` in structured error mode. This means the request remains queued; it does not mark the native job blocked. `airk schedule wait <revision> --progress` continues that exact request without enqueueing another revision or clearing errors or pause. Completion is checked before the join deadline so a completed request returns its saved report immediately. Unknown revisions fail explicitly.
+In 1.3.0, the former `index --scheduled` command persisted a request before joining its collection worker. If its 240-second join budget expires, the CLI reports `scheduled_index_pending` with `requested_revision` in structured error mode. This means the request remains queued; it does not mark the native job blocked. The former `schedule wait <revision> --progress` command continued that exact request without enqueueing another revision or clearing errors or pause. Completion is checked before the join deadline so a completed request returns its saved report immediately. Unknown revisions fail explicitly.
 
 VS Code uses this continuation automatically and displays waiting separately from active scan progress. Trust, shutdown and collection binding are checked between invocations; native pause and blocked errors stop the join. Each helper invocation remains bounded. A late native completion can supersede this specific historical wait failure in diagnostics, but cannot supersede unrelated errors or claim complete retained-data verification.
 

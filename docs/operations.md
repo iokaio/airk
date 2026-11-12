@@ -42,9 +42,9 @@ Refresh generated client configuration and reconnect agents after replacing a he
 Use --root for the source workspace, --data-dir for the user-controlled index location and --collection for its stable local collection ID. Example:
 
 ~~~console
-airk --root /projects/a --data-dir /fast-disk/airk --collection project-a setup --client codex
+airkctl --root /projects/a --data-dir /fast-disk/airk --collection project-a agents connect --client codex --connection-id <id>
 airkctl --root /projects/a --data-dir /fast-disk/airk --collection project-a index
-airk --root /projects/a --data-dir /fast-disk/airk --collection project-a coverage --refresh
+airkctl --root /projects/a --data-dir /fast-disk/airk --collection project-a inspect
 airkctl --root /projects/a --data-dir /fast-disk/airk --collection project-a usage report
 ~~~
 
@@ -52,7 +52,7 @@ Windows accepts a path such as D:/indexes/airk. State is stored under <data-dir>
 
 Unsupported binary, empty extracted document and oversized files are reported as skipped. Arbitrary UTF-8 files remain eligible without an extension allowlist. The next successful index removes excluded entries. Ignore-excluded content is not traversed and does not generate per-file skip records. Reports retain at most 1000 detailed skip records and count further omissions. Corpus/extracted-text limits or filesystem failures retain the previous current index.
 
-Publication attempts bounded unreferenced-object cleanup. `airk collections maintain` repeats it without publishing; inspect `removed_files`, `removed_bytes`, `pending` and indexing's `maintenance_error`. Historical retention is unsupported.
+Publication attempts bounded unreferenced-object cleanup. A `maintain` job (`airkctl service requests prepare --project <binding> --kind maintain`, then `airkctl service requests retry <nonce>`) repeats it without publishing; inspect `removed_files`, `removed_bytes`, `pending` and indexing's `maintenance_error`. Historical retention is unsupported.
 
 ## One-container deployment
 
@@ -73,27 +73,28 @@ Several agents may use the same scoped native command or docker-exec command at 
 ## Scheduled indexing and local inspection
 
 ```console
-airk index --scheduled
-airk schedule enqueue
-airk schedule run --watch
-airk schedule status
-airk schedule pause
-airk schedule resume
-airk coverage --refresh
+airkctl index
+airkctl watch on
+airkctl status
+airkctl pause
+airkctl resume
+airkctl inspect
 airkctl usage report --format markdown
 ```
 
-Supply the same root/data-dir/collection options as the workspace. The [native scheduler](native-scheduler.md) persists revisions, full/manual requests, pause and blocked failures. Explicit indexing can run while automatic work is paused. A foreground watch worker consumes registered intents and periodically runs bounded coverage inventories for those registered roots, queueing saved changes without an editor. It never discovers arbitrary source trees. Paused/blocked collections are skipped; scan errors wait the five-minute reconciliation interval. The extension also supplies coalesced requests and periodically reconciles [coverage](index-coverage.md). Usage commands expose [content-free aggregates and signed estimates](usage-reporting.md); disabling/clearing usage does not delete the index.
+The pre-split `index --scheduled`, `schedule …` and `coverage --refresh` commands no longer exist: the AIRK service owns the queue and its worker, `airkctl watch on` keeps the index current after edits and `airkctl inspect` refreshes coverage. Supply the same root/data-dir/collection options as the workspace. The [native scheduler](native-scheduler.md) persists revisions, full/manual requests, pause and blocked failures. Explicit indexing can run while automatic work is paused. A foreground watch worker consumes registered intents and periodically runs bounded coverage inventories for those registered roots, queueing saved changes without an editor. It never discovers arbitrary source trees. Paused/blocked collections are skipped; scan errors wait the five-minute reconciliation interval. The extension also supplies coalesced requests and periodically reconciles [coverage](index-coverage.md). Usage commands expose [content-free aggregates and signed estimates](usage-reporting.md); disabling/clearing usage does not delete the index.
 
 Lexical retrieval needs no model. Optional vector/hybrid modes require explicitly supplied, digest-checked [local model assets](local-models.md). Model changes publish a new coherent generation during indexing; invalid assets preserve the preceding revision. No remote fallback is used.
 
 ## Space management
 
 ```console
-airk --data-dir /fast-disk/airk collections list
-airk --root /projects/a --data-dir /fast-disk/airk --collection project-a collections maintain
-airk --data-dir /fast-disk/airk collections remove old-project
+airkctl projects
+airkctl service requests prepare --project <binding> --kind maintain
+airkctl service requests retry <nonce>
 ```
+
+The former `collections list`, `collections maintain` and `collections remove` commands no longer exist; a project is removed with its unregister operation ([project retirement](service-project-retirement.md)).
 
 Listing reports logical managed bytes and current indexed counts. Cleanup proves ownership before deleting bounded unreferenced current objects. Removal obtains writer, scheduler, usage and request exclusion and removes only the selected managed collection and its registration. Source files and other collections remain untouched. Active requests can block it; idle kernels cannot. Unknown ownership, corrupt state and links require diagnosis rather than blind deletion.
 
@@ -109,7 +110,7 @@ Refresh also verifies a bounded page of retained source and extraction objects. 
 
 The report checks known project agent configurations and the Codex user configuration for saved AIRK entries targeting this collection. A different helper path can explain why an agent still uses an older cached executable after an update. Review the current entry through **Connect Coding Agent**, merge it into the client's settings and restart its MCP session. Unsupported, oversized or redirected configuration reads remain partial; no client configuration is automatically changed, and a matching entry does not prove a live connection.
 
-The scoped CLI equivalent is `airk collections diagnose`. Defaults are 128 files and 32 MiB per page; use `--max-files` and `--max-bytes` to reduce the work. Continuation requires both `--revision` from `publication.token` and `--after` from `next_after`. A changed revision rejects continuation; restart from the current head. `complete` means enumeration reached the end: also inspect `failed_objects`, `skipped_large`, verified input counts and whether verification began at the first page. The command does not recover journals or modify retained objects.
+The former scoped CLI equivalent, `collections diagnose`, no longer exists and has no `airkctl` replacement. Defaults are 128 files and 32 MiB per page; use `--max-files` and `--max-bytes` to reduce the work. Continuation requires both `--revision` from `publication.token` and `--after` from `next_after`. A changed revision rejects continuation; restart from the current head. `complete` means enumeration reached the end: also inspect `failed_objects`, `skipped_large`, verified input counts and whether verification began at the first page. The command does not recover journals or modify retained objects.
 
 The view's other helper commands keep normal startup recovery: a valid captured journal can be replayed when opening the collection. The dedicated retained-data verifier observes pending publication without replaying it. Neither path rebuilds evidence from changed source files during journal recovery.
 

@@ -1,5 +1,7 @@
 # Open issue analysis
 
+> Note (12 Nov 2026, split): the `airk …` commands named below predate the AIRK split; user commands are now `airkctl …` (docs/cli-reference.md), and `airk mcp` and `airk runtime …` no longer exist.
+
 Analyzed 2 and 3 November 2026 against `feat/finetuning` at commit `b72fbc8`
 (1.9.0 candidate). Nine issues are open, filed by two outside testers against
 the published 1.8.7 build: #58 and #59 on Windows x64 (Marketplace package),

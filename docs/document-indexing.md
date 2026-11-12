@@ -39,7 +39,7 @@ Row metadata carries at most 32 cells; individual cell facts retain their own co
 
 ## Explicit local OCR
 
-Native discovery still uses PDF text layers and never invokes OCR automatically. For a scanned PDF or a single PNG/JPEG/BMP image, use `airk ocr scans/requirements.pdf --request /indexes/ocr.json` with explicitly provisioned local Tesseract, language assets and, for PDF input, Poppler `pdftoppm`:
+Native discovery still uses PDF text layers and never invokes OCR automatically. For a scanned PDF or a single PNG/JPEG/BMP image, the former `ocr scans/requirements.pdf --request /indexes/ocr.json` command (no longer available; `airkctl` has no OCR command) used explicitly provisioned local Tesseract, language assets and, for PDF input, Poppler `pdftoppm`:
 
 ~~~json
 {

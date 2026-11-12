@@ -1,5 +1,7 @@
 # AIRK Guidance — Implementation Plan v4
 
+> Note (12 Nov 2026, split): the `airk …` commands named below predate the AIRK split; user commands are now `airkctl …` (docs/cli-reference.md). `airk setup` was replaced by the AIRK Service installer and `airkctl agents connect`; the proposed `airk guidance` commands were never implemented.
+
 **Status:** forward plan, not current behavior. Nothing described here is implemented. The other files in `docs/explorer/` are the historical 1.4/1.5 Explorer design baseline (see `docs/explorer/README.md`); current shipped behavior is in `docs/vscode-extension.md` and `docs/unified-mcp.md`.
 **Feature:** evidence-driven evaluation, generation and **user-chosen management** of agent-guidance artifacts from the AIRK index and the live source. The artifacts are instruction files (AGENTS.md, CLAUDE.md, engine-specific instruction files), agent **skills** (`SKILL.md` directories), agent **settings files** (for example `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, `.mcp.json`, `.vscode/mcp.json`), decision records and glossaries.
 **Surfaces:** new `guidance_*` tools and a `draft_guidance` proposal tool on the unified `airk` MCP server, `airk guidance` CLI commands, a **Guidance** workspace in AIRK Explorer, and plain-Markdown agent skill files.
