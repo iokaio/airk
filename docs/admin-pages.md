@@ -50,6 +50,12 @@ session ends; open the pages again once it is running.
 A search scope can be chosen among existing indexes (`search.select_scope`);
 the grant lives only in the browser session.
 
+**Not in this version (1.8.30):** there is no Index library page, so an index
+cannot be created, changed or retired from the pages, and no Usage page. The
+VS Code Explorer's Indexing page cannot do this either (U6, U97). The split
+completion work in progress adds both pages, typed confirmation for destructive
+actions (U98) and matching `airkctl index`/`set` commands.
+
 **Not yet served** (the API answers `not_yet_served`): searching under that
 scope (it needs a new scoped-read authority in the service), destructive
 actions (catalog apply and split apply, recovery plan execution, storage

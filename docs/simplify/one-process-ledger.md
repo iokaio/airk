@@ -230,7 +230,7 @@ Planning findings (read-only exploration, not test results):
 - The HTTPS listener starts only with a catalog gate (`service_runtime/http.rs`
   `Owner::start`).
 
-**Resume point (update after every step).** 12 Nov (overnight, `4dd7a8b2`): Phases 0–7 first slices, Linux/macOS installers, signatures and U89, packaging/CI, release assembly slices 1–2, native CI harnesses on the split pair, docs cleanup and 1.8.24 are on `feat/split`. A signed local Windows installer and the UI-only VSIX are built (row "1.8.24 local Windows build"); installing them removes the pre-split installation and needs the user. W4/A2 selection reads have a reviewed spec and wait for the user's Q2–Q5 (`docs/split/selection-authority-spec.md` §6). Then: Step C/S of that spec, SMAppService login and the U40 fallback, open harness rows (`ci-local.ps1`, `check-issuer-rotation.py`, container/macOS login checks), the cold-client repetitions owner, installed-editor suite rewrite (needs authorization), first hosted CI run on a PR, Phase 8 qualification and the U34 rename. Build env: `--target-dir artifacts/v190/p10-target --static-environment artifacts/local/one-airk-1.8.14/static-environment-supplement.json`; full runs add `--fixture-base artifacts/one-process/native-fixtures-private`; installer/runtime builds need the supplement's `environment` variables set; Linux script tests run in Docker `python:3.13-slim` (repository read-only, tmpfs `artifacts/`).
+**Resume point (update after every step).** 12 Nov (after the 1.8.30 manual install, `04277074`): the user installed 1.8.30 and found no way to create an index (admin pages have no Index library; Explorer Indexing fails with `catalog_control_connection_unavailable`). Phases 5 and 6 are **incomplete**, not done: see "Split completion (12 November 2026)" below for the gap map and milestones M0–M7, which the user approved with decisions U97–U99 (Q2–Q5 answered). Work proceeds M0 → M7; 1.8.31 (Windows installer + VSIX) is built only after M7's gates. Still open after that: Step C/S of the selection spec until M1/M3 land, SMAppService login and the U40 fallback, open harness rows (`ci-local.ps1`, `check-issuer-rotation.py`, container/macOS login checks), the cold-client repetitions owner, installed-editor suite rewrite (needs authorization), first hosted CI run on a PR, Phase 8 qualification and the U34 rename. Build env: `--target-dir artifacts/v190/p10-target --static-environment artifacts/local/one-airk-1.8.14/static-environment-supplement.json`; full runs add `--fixture-base artifacts/one-process/native-fixtures-private`; installer/runtime builds need the supplement's `environment` variables set; Linux script tests run in Docker `python:3.13-slim` (repository read-only, tmpfs `artifacts/`).
 
 #### Phase 3 decomposition (11 November 2026)
 
@@ -405,6 +405,55 @@ Neo for Unix-touched code, full Python suite at handback.
 | U61 deletion review | done | `docs/split/inventory/deletion-review.md`: 118 rows — 17 confirmed, 94 conditional on named later steps, 7 rejected (live duties). 12 inventory corrections listed in its §5. |
 | Phase 0 exit | done | All P0 outputs reviewed by the primary at summary level; deletion rows independently reviewed (U61). Open technical items carried into Phase 1: C1–C11 per `contracts.md`; G5 two-cut cycle correction in Phase 2; P0.3b differential live capture and Linux capture in Phase 3. No user stop (U45). |
 | S0.5 Neo readiness | done | `feat/split` pushed to origin (U44). Neo `~/code/airk` was clean on `feat/finetuning`; switched to `feat/split` at `850c2a0f` (U68); `~/.airk-signing/keychain-pass` present, mode 600. rustc 1.98.0; system `python3` is 3.9.6, which runs `scripts/dev-check.py` but not the 3.11+ packaging suites (use Windows or Docker for those). `python3 scripts/dev-check.py -p airk-core --incremental off`: pass, 17 s; log and Cargo timing report kept in `~/airk-evidence/split/`; `cargo clean` afterwards (278 GiB free). |
+
+## Split completion (12 November 2026)
+
+**Report (user, 1.8.30 manual install):** no way to create an index from the
+Explorer; Indexing shows `catalog_control_connection_unavailable`. The user
+asked for the split plan to be finished properly and a 1.8.31 installer and
+VSIX built. Plan approved with U97 (read-only Explorer Indexing plus Open AIRK
+Admin, in VS Code or the browser), U98 (typed destructive confirmation) and U99
+(selection Q2–Q5; 1.8.31 Windows-only).
+
+**Why it fails (source review, no runs):** `AirkctlExplorerHost`
+(`packages/vscode/src/airkctl/features/explorerHost.ts`) supplies a read-only
+`ControlSource` with no catalog methods and none of the window-context, scope,
+prefill, usage or handoff host members, so `ExplorerControl.catalog` is
+undefined and every Indexing action throws at `indexingCatalogController.ts`
+`run`. Index setup moved to the admin pages (U6), but `packages/admin` has no
+Index library or Usage page; the admin plane fills only top-level request keys
+(`admin_plane/mutations.rs` `KEYED`), so nested catalog keys
+(`IndexSetupSelection.key`, `CatalogRequest.caller/key`) cannot be produced;
+destructive rows are refused for want of a confirmation form; storage and
+login rows are deferred; admin search and window reads wait for selection
+authority. `airkctl` has no catalog/index/set/grant/plan/storage/login
+commands, against the P0 decision; `service rpc` was the only route.
+
+**Gap map:** admin pages (missing Index library and index sets, Usage; Storage,
+Recovery execute, login startup, resources, Overview version/leftovers, plans,
+events stream, search and evidence under the admin grant, `packages/ui`);
+admin rows (nested keys, U98, source/grant/split-recover/setup-resume/usage
+rows, rate limits, semaphore, coverage test); selection authority Step C, S1
+(W4), S2 (A2); `airkctl` management commands and `admin open|url --page`;
+extension host wiring (window context, W4 scope, prefill, Workbench toggle,
+Assistance subscription, handoffs), webview (read-only Indexing, admin
+opener, removal of `manage`/`usage`/`runtimeUpgrade`/split UI), Workbench
+scope picker, deletion of modules that leave the extension, parity through
+the real session transport; known failing tests (`publishing.test`,
+`a_missing_installation_or_service_exits_three`) and harness scripts still on
+the old `airk` CLI; no scripted T2 installed-product run.
+
+| Milestone | Status | Evidence |
+|---|---|---|
+| M0 record decisions and gap map | done (docs) | U97–U99 in `split-plan.md` §2.1; spec §6 answers; this section; `docs/admin-pages.md` status |
+| M1.1 selection authority Step C (contract) | not started | |
+| M1.2 I3 amendment: key paths, U98 field, new rows | not started | |
+| M2 admin plane serves every row (keys, U98, storage, Windows login, A2, events, limits, coverage test) | not started | |
+| M3 selection authority S1 (W4 window reads, Q3–Q5) | not started | |
+| M4 `airkctl` management commands and parity | not started | |
+| M5 admin pages (Index library, Usage, filled pages, `packages/ui` search/evidence) | not started | |
+| M6 extension (host wiring, read-only Indexing, admin opener, removals, parity) | not started | |
+| M7 gates, 1.8.31 bump, signed Windows installer + VSIX, scripted T2 | not started | |
 
 ## Reported HTTP cleanup refusal (10 November 2026)
 

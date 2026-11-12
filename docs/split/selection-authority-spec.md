@@ -852,20 +852,20 @@ Tests:
 1. **Decided (review F5):** reads require at least one project. Grants without
    projects are still accepted and their reads answer
    `scoped_read_unavailable` (§3.5).
-2. **D8 approval.** Do you approve the optional-field change to
+2. **Decided (U99): approved.** **D8 approval.** Do you approve the optional-field change to
    `ScopedReadRef`, `ScopeObservation` and `SelectedScopeObservation`, the new
    domain `airk/scoped-read-authority/selection/1` and the new fixture file?
    These are additive for catalog grants, but a reader that requires `grant`
    (`packages/vscode/src/scopeSelection.ts:49` reads `observation.grant`;
    `read_retry.rs:83-84`) must handle its absence.
-3. **Re-check cost.** A full `scope_grant::check` on every M3 call, versus a
+3. **Decided (U99): the full check.** **Re-check cost.** A full `scope_grant::check` on every M3 call, versus a
    cheaper clock-only check (namespace and revision equal) plus the existing
    fences and the live-nonce set. This spec proposes the full check.
-4. **Revision drift.** Any catalog revision change invalidates every
+4. **Decided (U99): the session re-selects automatically, once.** **Revision drift.** Any catalog revision change invalidates every
    selection grant (exact-revision rule), so the extension or admin page must
    re-select. Should an automatic re-select on `scoped_read_unavailable` be
    specified for the session (I2), or stay a user action?
-5. **Lease renewal.** Should a read under a W4 grant renew the window, as a
+5. **Decided (U99): a W4 read renews the window.** **Lease renewal.** Should a read under a W4 grant renew the window, as a
    successful W4 does (ledger 3f.2 reading), or should only W2 renew?
 
 ## 7. Unverified items carried forward
