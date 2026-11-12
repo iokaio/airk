@@ -34,14 +34,26 @@ fn version_answers_locally_in_both_formats() {
     let (code, stdout, _) = run_line(&["--output", "json", "version"]);
     assert_eq!(code, 0);
     let document: Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(document["capabilities"], serde_json::json!(["tools/1"]));
+    assert_eq!(
+        document["capabilities"],
+        serde_json::json!([
+            "session/2",
+            "events/1",
+            "journal/1",
+            "tools/1",
+            "explorer/1",
+            "agents/1",
+            "agents-launch/1",
+            "agents-verify/1"
+        ])
+    );
 }
 
 #[test]
 fn unserved_commands_and_argument_errors_keep_their_classes() {
     for unserved in [
         &["explorer", "templates"][..],
-        &["agents", "connect"],
+        &["service", "login", "status"],
         &["admin", "url"],
     ] {
         let (code, _, stderr) = run_line(unserved);

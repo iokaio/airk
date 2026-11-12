@@ -26,8 +26,21 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Capabilities of the served operations of this build (contracts §3.5).
-const CAPABILITIES: &[&str] = &["tools/1"];
+/// Capabilities of the served operations of this build (contracts §3.5); an
+/// unserved operation's capability is absent. Not yet: `window-scope/1` and
+/// `assistance/1` (W4 and window reads, Phase 5), `handoff/1` (M12),
+/// `admin-launch/1` (A1, Phase 5), `offline-recovery/1` (trust and issuer
+/// recovery, 3e.5; login status, Phase 7).
+const CAPABILITIES: &[&str] = &[
+    "session/2",
+    "events/1",
+    "journal/1",
+    "tools/1",
+    "explorer/1",
+    "agents/1",
+    "agents-launch/1",
+    "agents-verify/1",
+];
 
 /// The streams and environment one run uses.
 pub struct Io<'a> {
@@ -319,6 +332,15 @@ enum ExplorerCommand {
         #[arg(long)]
         draft: PathBuf,
         /// New file for the result (must not exist).
+        #[arg(long)]
+        output_file: PathBuf,
+    },
+    /// Write a handoff a VS Code window shared through its session (M12).
+    GetHandoff {
+        /// The handoff id the window published.
+        #[arg(long)]
+        handoff_id: airk_core::identity::Incarnation,
+        /// New file for the handoff (must not exist).
         #[arg(long)]
         output_file: PathBuf,
     },
@@ -1496,7 +1518,15 @@ fn explorer_command(cx: &mut Context, selection: Selection, action: ExplorerComm
             _ => Err("--args must be one JSON object".into()),
         }
     };
+    if let ExplorerCommand::GetHandoff {
+        handoff_id,
+        output_file,
+    } = action
+    {
+        return explorer_handoff(cx, selection, handoff_id, output_file);
+    }
     let (operation, output, input) = match action {
+        ExplorerCommand::GetHandoff { .. } => return ExitClass::Internal.code(),
         ExplorerCommand::DraftSearch { io } => {
             (Op::DraftSearch, io.output_file.clone(), parsed(&io))
         }
@@ -1571,6 +1601,35 @@ fn explorer_command(cx: &mut Context, selection: Selection, action: ExplorerComm
         );
     }
     printed
+}
+
+/// `explorer get-handoff` (M12): the published handoff, written to a new file.
+fn explorer_handoff(
+    cx: &mut Context,
+    selection: Selection,
+    handoff_id: airk_core::identity::Incarnation,
+    output: PathBuf,
+) -> u8 {
+    let control = match selection.control {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    let handoff = match crate::service::request(
+        &control,
+        ControlMethod::ExplorerHandoff { handoff_id },
+        VERSION,
+    ) {
+        Ok(ControlResponse::ExplorerHandoff { handoff }) => handoff,
+        Ok(other) => return fail(cx, &crate::service::refusal(&other)),
+        Err(line) => return fail(cx, &line),
+    };
+    if let Err(message) = write_new(&output, &handoff) {
+        return fail(cx, &crate::registration::failed(&message));
+    }
+    json_line(cx, &serde_json::json!({"written": output, "ok": true}))
 }
 
 /// `settings <view> [--validate-file]` (step 3c.5c): N1.

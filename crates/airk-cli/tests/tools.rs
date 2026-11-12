@@ -2211,6 +2211,81 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `airkctl explorer get-handoff` (M12): a handoff a window published is
+/// written to a new file; an unknown id is refused and writes nothing.
+#[test]
+fn airkctl_explorer_get_handoff_reads_a_published_handoff() -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse};
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let service = common::Service::reviewed(source.path(), data.path(), "ctl-handoff");
+    let control = service.control.to_str().unwrap().to_owned();
+    let ControlResponse::WindowOpened {
+        window_id, lease, ..
+    } = service.request(ControlMethod::WindowOpen {
+        label: "handoff test".into(),
+        owner_pid: std::process::id(),
+    })
+    else {
+        anyhow::bail!("window did not open");
+    };
+    let handoff = serde_json::json!({"kind": "search", "query": "parity"});
+    let ControlResponse::HandoffPublished { handoff_id, .. } =
+        service.request(ControlMethod::HandoffPublish {
+            window_id,
+            lease,
+            handoff: handoff.clone(),
+            ttl_ms: 60_000,
+        })
+    else {
+        anyhow::bail!("handoff was not published");
+    };
+    let out = tempfile::tempdir()?;
+    let get = |id: String, file: &std::path::Path| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = [
+            "airkctl",
+            "--service-runtime-dir",
+            control.as_str(),
+            "explorer",
+            "get-handoff",
+            "--handoff-id",
+            id.as_str(),
+            "--output-file",
+            file.to_str().unwrap(),
+        ]
+        .into_iter()
+        .map(std::ffi::OsString::from)
+        .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let written = out.path().join("handoff.json");
+    let (code, stdout, stderr) = get(handoff_id.to_string(), &written);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(serde_json::from_str::<Value>(&stdout)?["ok"], true);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&written)?)?,
+        handoff
+    );
+    let missing = out.path().join("missing.json");
+    let unknown = airk_kernel::service_broker::new_instance_id()?.to_string();
+    let (code, _, _) = get(unknown, &missing);
+    assert_ne!(code, 0);
+    assert!(!missing.exists());
+    Ok(())
+}
+
 /// `airkctl session` on a real service (split step 3f.3): `hello` opens a
 /// window the service lists (W1, W5), an `invoke` prints what the one-shot
 /// command printed, and end of input closes the window (W3). No frame carries
