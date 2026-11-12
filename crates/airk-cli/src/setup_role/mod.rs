@@ -491,6 +491,12 @@ impl Setup {
             "location_refused: {}",
             problems.join("; ")
         );
+        if self.mode == Mode::Prepare
+            && !plan::removes(self.operation.kind)
+            && let Some(blocker) = effects::old_extension_blocker(VERSION)
+        {
+            bail!("{blocker}");
+        }
         // The I4 readers require the program folder itself to be private;
         // Inno would create it with the parent's inherited ACL, so setup
         // creates it owner-only before placement (Windows).
@@ -1069,6 +1075,13 @@ impl Setup {
         let predecessors = effects::predecessors(&candidate, &operation)?;
         let mut unretired = effects::unretired_items()?;
         let problems = self.location_problems()?;
+        let blockers: Vec<String> = if plan::removes(self.operation.kind) {
+            Vec::new()
+        } else {
+            effects::old_extension_blocker(VERSION)
+                .into_iter()
+                .collect()
+        };
         let mut text = String::new();
         let found: Vec<Value> = predecessors
             .iter()
@@ -1117,6 +1130,12 @@ impl Setup {
                 text.push_str(&format!("  - {problem}\r\n"));
             }
         }
+        if !blockers.is_empty() {
+            text.push_str("Setup cannot continue yet:\r\n");
+            for blocker in &blockers {
+                text.push_str(&format!("  - {blocker}\r\n"));
+            }
+        }
         let report = json!({
             "schema": "airk-setup-plan/1",
             "operation_id": self.operation.operation_id,
@@ -1124,6 +1143,7 @@ impl Setup {
             "predecessors": found,
             "leftovers": unretired,
             "location_problems": problems,
+            "blockers": blockers,
             "existing_installation": self.existing.as_ref().map(|installed| json!({
                 "install_id": installed.record.install_id,
                 "version": installed.record.version,

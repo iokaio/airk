@@ -62,7 +62,9 @@ pre-split installer flow described in the rest of this page
   elevation, default `%LOCALAPPDATA%\AIRK Service\program` (`bin\airkctl.exe`,
   `service\airk.exe`, `notices\`), a data-location page (index data and state;
   cache and logs), a disclosure page listing earlier AIRK installations found
-  by `setup --plan`, a preflight (`--prepare`) before files are replaced,
+  by `setup --plan`, a preflight (`--prepare`) before files are replaced
+  (it refuses while VS Code runs a pre-split AIRK extension: update the
+  extension first or close VS Code),
   the "AIRK Admin" Start-menu shortcut and `bin\` on the user `PATH` under its
   ownership receipt. Unattended: `/DIR=`, `/DATA=`, `/CACHE=`,
   `/ACKNOWLEDGE-RESET` (required when an earlier installation will be

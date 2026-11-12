@@ -131,6 +131,31 @@ pub(crate) fn retire(install: &Path, candidate: &str, operation: &str) -> Result
     crate::runtime_install::replace_installation(install, candidate, Some(operation), None)
 }
 
+/// The blocker a running pre-split AIRK editor extension raises for placing
+/// operations, or `None`. Such an extension sets the pre-split runtime up
+/// again after setup retires it, so setup waits until it is updated or its
+/// editor is closed. An incomplete observation is reported, not ignored.
+pub(crate) fn old_extension_blocker(version: &str) -> Option<String> {
+    let audit = crate::legacy_processes::audit_where(&super::plan::pre_split_extension_image);
+    if !audit.complete {
+        return Some(format!(
+            "process_observation_incomplete: running editor extensions could not all be observed ({})",
+            audit.failure.as_deref().unwrap_or("unobserved")
+        ));
+    }
+    (!audit.matching_executable_pids.is_empty()).then(|| {
+        let pids = audit
+            .matching_executable_pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "old_extension_running: VS Code (or another editor) is running an AIRK extension older than 1.8.24 (process {pids}); it would set up the old AIRK again. Update the AIRK extension to {version} or close the editor, then retry"
+        )
+    })
+}
+
 /// The retirement operation identity the replacement receipts record: a
 /// 64-hex digest bound to this setup operation, stable across resumes.
 pub(crate) fn retirement_operation(operation_id: Incarnation) -> String {

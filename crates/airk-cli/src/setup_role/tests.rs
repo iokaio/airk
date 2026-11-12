@@ -413,3 +413,30 @@ fn a_leftover_is_reported_to_the_installer_and_nothing_else_is() {
         "AIRK Service is installed, but setup could not remove these earlier AIRK items. They are still installed and may still be running:\n  - C:\\Users\\fixture\\AppData\\Local\\AIRK\\runtime: captured runtime manager command differs from its installation\n    (this can start the old AIRK service again at sign-in)\n  - stale trust: not found\n"
     );
 }
+
+#[test]
+fn only_a_pre_split_extensions_native_airk_blocks_setup() {
+    for path in [
+        r"C:\Users\fixture\.vscode\extensions\iokaio.airk-1.8.23\native\runtime\airk.exe",
+        r"C:\Users\fixture\.vscode-insiders\extensions\IOKAIO.AIRK-1.7.4-win32-x64\native\airk.exe",
+        "/home/fixture/.vscode-server/extensions/iokaio.airk-1.8.23/native/runtime/airk",
+        "/Users/fixture/.cursor/extensions/iokaio.airk-1.8.20-darwin-arm64/native/runtime/airk",
+    ] {
+        assert!(
+            plan::pre_split_extension_image(std::path::Path::new(path)),
+            "{path}"
+        );
+    }
+    for path in [
+        r"C:\Users\fixture\AppData\Local\AIRK Service\program\service\airk.exe",
+        r"C:\Users\fixture\AppData\Local\AIRK\runtime\runtimes\ab\airk.exe",
+        r"C:\Users\fixture\.vscode\extensions\iokaio.airk-1.8.23\native\runtime\airkctl.exe",
+        r"C:\Users\fixture\.vscode\extensions\other.airk-1.0.0\airk.exe",
+        r"C:\Users\fixture\extensions-old\iokaio.airk-1.8.23\airk.exe",
+    ] {
+        assert!(
+            !plan::pre_split_extension_image(std::path::Path::new(path)),
+            "{path}"
+        );
+    }
+}

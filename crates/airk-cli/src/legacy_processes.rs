@@ -72,23 +72,27 @@ fn matches(actual: &Path, expected: &Path) -> bool {
     }
 }
 pub(crate) fn audit(executable: &Path) -> Audit {
-    let mut result = platform(executable).unwrap_or_else(|_| Audit::unavailable());
+    audit_where(&|actual| matches(actual, executable))
+}
+/// Same-user processes whose executable path satisfies `matcher`.
+pub(crate) fn audit_where(matcher: &dyn Fn(&Path) -> bool) -> Audit {
+    let mut result = platform(matcher).unwrap_or_else(|_| Audit::unavailable());
     result.matching_executable_pids.sort_unstable();
     result.matching_executable_pids.dedup();
     result
 }
 #[cfg(target_os = "linux")]
-fn proc_executable_matches(actual: &Path, expected: &Path) -> bool {
+fn proc_executable_matches(actual: &Path, matcher: &dyn Fn(&Path) -> bool) -> bool {
     use std::os::unix::ffi::OsStrExt;
-    matches(actual, expected)
+    matcher(actual)
         || actual
             .as_os_str()
             .as_bytes()
             .strip_suffix(b" (deleted)")
-            .is_some_and(|bytes| matches(Path::new(std::ffi::OsStr::from_bytes(bytes)), expected))
+            .is_some_and(|bytes| matcher(Path::new(std::ffi::OsStr::from_bytes(bytes))))
 }
 #[cfg(target_os = "linux")]
-fn platform(executable: &Path) -> Result<Audit> {
+fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
     use std::os::unix::fs::MetadataExt;
     // SAFETY: read-only native effective-user identity, independent of environment.
     let uid = unsafe { libc::geteuid() };
@@ -125,7 +129,7 @@ fn platform(executable: &Path) -> Result<Audit> {
             continue;
         }
         match std::fs::read_link(entry.path().join("exe")) {
-            Ok(path) if proc_executable_matches(&path, executable) => result.matched(pid),
+            Ok(path) if proc_executable_matches(&path, matcher) => result.matched(pid),
             Ok(_) => (),
             Err(_) => result.missed(),
         }
@@ -133,7 +137,7 @@ fn platform(executable: &Path) -> Result<Audit> {
     Ok(result)
 }
 #[cfg(windows)]
-fn platform(executable: &Path) -> Result<Audit> {
+fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
     use std::{
         ffi::OsString,
         os::windows::{
@@ -174,7 +178,12 @@ fn platform(executable: &Path) -> Result<Audit> {
         // SAFETY: read-only query rights; no terminate/suspend/write capability.
         let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if process.is_null() {
-            result.missed();
+            // Limited query access is granted to a process's own user at any
+            // integrity level, so a denial is another account's process and
+            // an invalid parameter is one that exited after enumeration.
+            if !other_or_gone(std::io::Error::last_os_error().raw_os_error()) {
+                result.missed();
+            }
             continue;
         }
         // SAFETY: a successful OpenProcess transfers one owned native handle.
@@ -191,7 +200,7 @@ fn platform(executable: &Path) -> Result<Audit> {
             continue;
         }
         let path = PathBuf::from(OsString::from_wide(&path[..length as usize]));
-        if !matches(&path, executable) {
+        if !matcher(&path) {
             continue;
         }
         match crate::local_ipc::process_user(pid) {
@@ -202,8 +211,15 @@ fn platform(executable: &Path) -> Result<Audit> {
     }
     Ok(result)
 }
+/// Pure (Windows): an `OpenProcess` failure that does not hide a process of
+/// this user: access denied (5, another account) or invalid parameter (87,
+/// the process exited after enumeration).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn other_or_gone(error: Option<i32>) -> bool {
+    matches!(error, Some(5) | Some(87))
+}
 #[cfg(target_os = "macos")]
-fn platform(executable: &Path) -> Result<Audit> {
+fn platform(matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
     #[link(name = "proc")]
     unsafe extern "C" {
@@ -245,14 +261,14 @@ fn platform(executable: &Path) -> Result<Audit> {
             .position(|byte| *byte == 0)
             .context("unterminated native process path")?;
         path.truncate(end);
-        if matches(&PathBuf::from(OsString::from_vec(path)), executable) {
+        if matcher(&PathBuf::from(OsString::from_vec(path))) {
             result.matched(pid as u32);
         }
     }
     Ok(result)
 }
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn platform(_executable: &Path) -> Result<Audit> {
+fn platform(_matcher: &dyn Fn(&Path) -> bool) -> Result<Audit> {
     Ok(Audit::unavailable())
 }
 
@@ -288,6 +304,14 @@ mod tests {
             "deleted owned fixture not observed: {observation:?}"
         );
         Ok(())
+    }
+    #[test]
+    fn only_another_accounts_or_an_exited_process_is_not_a_miss() {
+        assert!(other_or_gone(Some(5)));
+        assert!(other_or_gone(Some(87)));
+        for error in [None, Some(0), Some(6), Some(1314)] {
+            assert!(!other_or_gone(error), "{error:?}");
+        }
     }
     #[test]
     fn same_user_exact_executable_audit_finds_self_without_a_stop_capability() -> Result<()> {

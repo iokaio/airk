@@ -126,6 +126,18 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   every process running exactly an installed image (except this one) must
   exit by itself within 15 s (`installation_files_in_use`); nothing is
   terminated. Re-observed until `placed` (or `login_unregistered`) is durable.
+  Process observation (`legacy_processes`) counts as unobserved only a
+  process that could be this user's: on Windows an `OpenProcess` denial (5,
+  another account) or invalid parameter (87, exited) is not a miss.
+- Old editor extensions: for placing kinds, `--plan` reports and `--prepare`
+  refuses (`old_extension_running`) while any process runs the native `airk`
+  of a pre-split AIRK editor extension (`plan::pre_split_extension_image`:
+  `…/extensions/iokaio.airk-*/…/airk[.exe]`), because that extension sets the
+  pre-split runtime up again after retirement. `plan.json` carries them in
+  `blockers`; the Inno data page does not advance while either
+  `location_problems` or `blockers` is non-empty and warns to update or close
+  VS Code first (a closed editor cannot be observed). The Unix installers stop
+  at the `--prepare` refusal.
 - `verify_placement`: every inventory file matches size and SHA-256; version
   equals this `airk`; the placed `airkctl --version` reports the same
   version; admin digests equal the embedded bundle's; the inventory names a

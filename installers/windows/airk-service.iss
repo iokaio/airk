@@ -307,7 +307,7 @@ begin
   Text := ReadText(ExtractFileDir(Operation) + '\plan.txt');
   Json := ReadText(ExtractFileDir(Operation) + '\plan.json');
   NeedsAcknowledgement := Pos('"removed":true', Json) > 0;
-  Result := Pos('"location_problems":[]', Json) > 0;
+  Result := (Pos('"location_problems":[]', Json) > 0) and (Pos('"blockers":[]', Json) > 0);
 end;
 
 { ---------- User PATH under an ownership receipt (reused from airk.iss) ---------- }
@@ -508,7 +508,9 @@ begin
     'Where should AIRK keep its indexes, service state, cache and logs?',
     'AIRK keeps index data and service state in one folder, and cache and logs in another. ' +
     'Choose folders that only your account uses. Index data moves later only through the ' +
-    'AIRK admin Storage page or airkctl, never by this installer.',
+    'AIRK admin Storage page or airkctl, never by this installer.' + #13#10 + #13#10 +
+    'Before you continue, update the AIRK extension in VS Code to {#AirkVersion} or later, or close ' +
+    'VS Code. An older AIRK extension sets up the old AIRK again.',
     False, '');
   DataPage.Add('Index data and service state');
   DataPage.Add('Cache and logs');
@@ -548,7 +550,7 @@ begin
   if CurPageID = DataPage.ID then begin
     try
       if not LoadPlan(Text) then begin
-        MsgBox(Text + #13#10 + #13#10 + 'Choose other folders on this page, then click Next.',
+        MsgBox(Text + #13#10 + #13#10 + 'Resolve the items above (choose other folders on this page, or update or close VS Code), then click Next.',
           mbError, MB_OK);
         Result := False;
         Exit;

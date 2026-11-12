@@ -81,6 +81,22 @@ pub(crate) enum Action {
 }
 
 /// Uninstall and purge remove an installation; every other kind places one.
+/// Pure: `path` is the native `airk` of a pre-split AIRK editor extension
+/// (`…/extensions/iokaio.airk-<version>/…/airk[.exe]`, any VS Code-family
+/// editor). Split VSIXs (1.8.24 and later) carry no native files, so any such
+/// process is a pre-split extension, which sets the old AIRK up again.
+pub(crate) fn pre_split_extension_image(path: &Path) -> bool {
+    let text = path.to_string_lossy().to_lowercase();
+    let parts: Vec<&str> = text.split(['/', '\\']).collect();
+    let named_airk = parts
+        .last()
+        .is_some_and(|name| *name == "airk" || *name == "airk.exe");
+    named_airk
+        && parts
+            .windows(2)
+            .any(|pair| pair[0] == "extensions" && pair[1].starts_with("iokaio.airk-"))
+}
+
 pub(crate) fn removes(kind: OperationKind) -> bool {
     matches!(kind, OperationKind::Uninstall | OperationKind::Purge)
 }
