@@ -298,3 +298,78 @@ fn record_error_requires_an_absolute_root_and_an_operation() {
         }
     );
 }
+
+#[test]
+fn service_foreground_takes_an_absolute_root_and_a_bounded_idle_grace() {
+    let root = if cfg!(windows) {
+        r"C:\airk\control"
+    } else {
+        "/airk/control"
+    };
+    assert_eq!(
+        parse(&args(&[
+            "airk",
+            SELECTOR,
+            "service-foreground",
+            "--runtime-dir",
+            root
+        ]))
+        .unwrap()
+        .unwrap(),
+        RoleRequest::ServiceForeground {
+            runtime_dir: PathBuf::from(root),
+            idle_exit_seconds: None,
+        }
+    );
+    assert_eq!(
+        parse(&args(&[
+            "airk",
+            SELECTOR,
+            "service-foreground",
+            "--runtime-dir",
+            root,
+            "--idle-exit-seconds",
+            "30"
+        ]))
+        .unwrap()
+        .unwrap(),
+        RoleRequest::ServiceForeground {
+            runtime_dir: PathBuf::from(root),
+            idle_exit_seconds: Some(30),
+        }
+    );
+    for refused in [
+        &["airk", SELECTOR, "service-foreground"][..],
+        &[
+            "airk",
+            SELECTOR,
+            "service-foreground",
+            "--runtime-dir",
+            "relative",
+        ],
+        &[
+            "airk",
+            SELECTOR,
+            "service-foreground",
+            "--runtime-dir",
+            root,
+            "--idle-exit-seconds",
+            "0",
+        ],
+        &[
+            "airk",
+            SELECTOR,
+            "service-foreground",
+            "--runtime-dir",
+            root,
+            "--bogus",
+            "x",
+        ],
+    ] {
+        let error = parse(&args(refused)).unwrap().unwrap_err().to_string();
+        assert!(
+            error.starts_with("role_admission_refused"),
+            "{refused:?}: {error}"
+        );
+    }
+}

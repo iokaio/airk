@@ -23,8 +23,9 @@ use std::{
 /// The pre-parse selector for private roles.
 pub const SELECTOR: &str = "__airk_role";
 /// Roles named by the contract, in the order of `fixtures/split/i4/role_admission.json`.
-pub const ROLES: [&str; 5] = [
+pub const ROLES: [&str; 6] = [
     "service-detached",
+    "service-foreground",
     "service-login",
     "pdf-child",
     "record-error",
@@ -37,6 +38,12 @@ pub enum RoleRequest {
     ServiceDetached {
         runtime_dir: PathBuf,
         nonce: Incarnation,
+    },
+    /// Phase 4: the service in the foreground on an explicit control root,
+    /// for development, tests and an external supervisor (was `airk serve`).
+    ServiceForeground {
+        runtime_dir: PathBuf,
+        idle_exit_seconds: Option<u64>,
     },
     /// U75: append one client error while the service is down (step 3b.2).
     RecordError {
@@ -94,6 +101,40 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
             Ok(RoleRequest::ServiceDetached {
                 runtime_dir,
                 nonce: nonce.context("role_admission_refused: --start-request is required")?,
+            })
+        }
+        "service-foreground" => {
+            let mut runtime_dir = None;
+            let mut idle_exit_seconds = None;
+            let mut rest = arguments[1..].iter();
+            while let Some(flag) = rest.next() {
+                let value = rest
+                    .next()
+                    .context("role_admission_refused: missing role argument value")?;
+                match flag.to_str() {
+                    Some("--runtime-dir") if runtime_dir.is_none() => {
+                        runtime_dir = Some(PathBuf::from(value));
+                    }
+                    Some("--idle-exit-seconds") if idle_exit_seconds.is_none() => {
+                        let seconds = value
+                            .to_str()
+                            .and_then(|value| value.parse::<u64>().ok())
+                            .filter(|seconds| (1..=3600).contains(seconds))
+                            .context("role_admission_refused: invalid --idle-exit-seconds")?;
+                        idle_exit_seconds = Some(seconds);
+                    }
+                    _ => bail!("role_admission_refused: unexpected role argument"),
+                }
+            }
+            let runtime_dir =
+                runtime_dir.context("role_admission_refused: --runtime-dir is required")?;
+            ensure!(
+                runtime_dir.is_absolute(),
+                "role_admission_refused: --runtime-dir must be absolute"
+            );
+            Ok(RoleRequest::ServiceForeground {
+                runtime_dir,
+                idle_exit_seconds,
             })
         }
         "record-error" => {
@@ -190,6 +231,18 @@ pub async fn run(request: RoleRequest) -> Result<()> {
             // The saved Stop and any pending lifecycle record are settled once
             // the service holds its single-instance lease (step 3b.1e-2).
             crate::service_runtime::serve_admitted(&runtime_dir, mode).await
+        }
+        RoleRequest::ServiceForeground {
+            runtime_dir,
+            idle_exit_seconds,
+        } => {
+            // The single-instance lease and the owner-only control root are
+            // the service's own admission, exactly as `airk serve` had them.
+            crate::service_runtime::serve_with_idle(
+                &runtime_dir,
+                idle_exit_seconds.map(std::time::Duration::from_secs),
+            )
+            .await
         }
         RoleRequest::RecordError {
             runtime_dir,

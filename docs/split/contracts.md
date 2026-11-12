@@ -800,6 +800,7 @@ nothing.
 |---|---|---|
 | `service-login` | Task Scheduler task / SMAppService agent / systemd unit | `--install-id` equals the pointer's; own image path and digest equal the record's `airk`; the login receipt names this registration. No dependency on an installer parent |
 | `service-detached` | `airk` with no arguments, or `airkctl service start` | `--start-request <nonce>`: owner-private file in `state/service/start/`, ≤ 30 s old, consumed atomically; `mode: explicit` clears a saved Stop, `automatic` honors it (exits `service_explicitly_stopped`) |
+| `service-foreground` [served, Phase 4] | Development, tests and an external supervisor (was `airk serve`) | `--runtime-dir <absolute>` `[--idle-exit-seconds 1..3600]`: the service's own admission as `serve` had it (owner-only control root for the current user, single-instance lease); reads no installation |
 | `pdf-child` (today `__airk_pdf_worker`, admission-free [V `airk-ingest/src/pdf_worker.rs:26`]) | The service | stdin/stdout are pipes, not a console; first frame `{schema:"airk-pdf-child/1", parent_instance, nonce}` within 5 s; opens no file |
 | `setup` | Installer wrapper or `airkctl service uninstall` | `--operation <path>` passes §5.5 checks; own signature or pinned digest verified; single use |
 | Others kept as private roles (P0 decision) | Workers, guardian, foreground/container entries, build verification | Each gets a row in `role_admission.json` with its authority |
