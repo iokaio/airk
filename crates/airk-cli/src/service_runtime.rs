@@ -110,6 +110,8 @@ struct State {
     lifecycle: Mutex<Option<airk_core::service_lifecycle::LifecycleRecord>>,
     /// W1-W8 and M12 (split step 3f.2): this instance's windows, in memory.
     windows: Mutex<window_plane::WindowPlane>,
+    /// A1 launch codes and admin sessions (split Phase 5), in memory.
+    admin: Arc<crate::admin_plane::AdminPlane>,
 }
 
 /// The window plane with the system clock (Unix milliseconds) and the OS
@@ -607,6 +609,15 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::HttpIssuerRotation { action } => {
                 rotation::response(&state.control_root, action).await
             }
+            // A1 (contracts §2.7): owner pipe only; the code is in this reply only.
+            ControlMethod::AdminLaunchCode {} => {
+                match state.http.get().map(|owner| owner.descriptor()) {
+                    Some(Ok(descriptor)) => state.admin.launch_code(descriptor.url.port()),
+                    _ => ControlResponse::Failure {
+                        code: "admin_listener_unavailable".into(),
+                    },
+                }
+            }
             ControlMethod::AbandonLifecycle { id } => {
                 match lifecycle::abandon(&state.control_root, state.instance, id) {
                     Ok(record) => ControlResponse::LifecycleAbandoned { record },
@@ -708,6 +719,18 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         state.shutdown.notify_one();
     }
     Ok(())
+}
+
+/// The admin plane's calls reach this instance's own control endpoint, so
+/// they run the same canonical handlers as every pipe client.
+fn admin_dispatch(
+    control: std::path::PathBuf,
+    instance: airk_core::identity::Incarnation,
+) -> crate::admin_plane::Dispatch {
+    Arc::new(move |method: ControlMethod| {
+        let control = control.clone();
+        Box::pin(async move { request_for_instance(&control, method, instance).await })
+    })
 }
 
 pub async fn serve(root: &Path) -> Result<()> {
@@ -894,6 +917,10 @@ async fn serve_with_admission(
         native_caller: local_ipc::caller_identity()?,
         lifecycle: Mutex::new(None),
         windows: Mutex::new(windows(instance)),
+        admin: Arc::new(crate::admin_plane::AdminPlane::new(
+            admin_dispatch(root.canonicalize()?, instance),
+            instance,
+        )),
     });
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
     {

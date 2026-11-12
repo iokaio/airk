@@ -885,6 +885,48 @@
           "bytes": "{\"status\":\"http_issuer_rotation_refused\"}"
         }
       ]
+    },
+    {
+      "variant": "admin_launch_code",
+      "method": "A1",
+      "methods": [
+        {
+          "name": "issue",
+          "bytes": "{\"admin_launch_code\":{}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "with_ttl",
+          "bytes": "{\"admin_launch_code\":{\"ttl_ms\":600000}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "issued",
+          "bytes": "{\"status\":\"admin_launch_code\",\"code\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\",\"port\":41234,\"expires_in_ms\":60000}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "padded_code",
+          "bytes": "{\"status\":\"admin_launch_code\",\"code\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\",\"port\":41234,\"expires_in_ms\":60000}"
+        },
+        {
+          "name": "short_code",
+          "bytes": "{\"status\":\"admin_launch_code\",\"code\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ\",\"port\":41234,\"expires_in_ms\":60000}"
+        },
+        {
+          "name": "non_canonical_final_character",
+          "bytes": "{\"status\":\"admin_launch_code\",\"code\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQF\",\"port\":41234,\"expires_in_ms\":60000}"
+        },
+        {
+          "name": "without_port",
+          "bytes": "{\"status\":\"admin_launch_code\",\"code\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\",\"expires_in_ms\":60000}"
+        }
+      ]
     }
   ]
 }

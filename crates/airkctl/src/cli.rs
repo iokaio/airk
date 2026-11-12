@@ -29,8 +29,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Capabilities of the served operations of this build (contracts §3.5); an
 /// unserved operation's capability is absent. Not yet: `window-scope/1` and
 /// `assistance/1` (W4 and window reads, Phase 5), `handoff/1` (M12),
-/// `admin-launch/1` (A1, Phase 5), `offline-recovery/1` (trust and issuer
-/// recovery, 3e.5; login status, Phase 7).
+/// `offline-recovery/1` (trust and issuer recovery, 3e.5; login status,
+/// Phase 7).
 const CAPABILITIES: &[&str] = &[
     "session/2",
     "events/1",
@@ -40,6 +40,7 @@ const CAPABILITIES: &[&str] = &[
     "agents/1",
     "agents-launch/1",
     "agents-verify/1",
+    "admin-launch/1",
 ];
 
 /// The streams and environment one run uses.
@@ -145,6 +146,11 @@ enum Command {
         #[command(subcommand)]
         action: AgentsCommand,
     },
+    /// AIRK Admin in the browser: open it, or print a single-use sign-in URL.
+    Admin {
+        #[command(subcommand)]
+        action: AdminCommand,
+    },
     /// Offline Explorer drafts, validation and templates; results go to a new --output-file.
     Explorer {
         #[command(subcommand)]
@@ -200,6 +206,28 @@ enum Command {
     },
     #[command(flatten)]
     Evidence(Box<EvidenceCommand>),
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
+enum AdminCommand {
+    /// Open AIRK Admin in this computer's default browser, signed in.
+    ///
+    /// Needs a local graphical session (refused over SSH). The single-use
+    /// sign-in link goes through an owner-only file, never a command line.
+    Open {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Print a single-use AIRK Admin sign-in URL (valid 60 seconds) for manual use.
+    ///
+    /// The URL is a secret: open it only in your own browser and never paste it into a page.
+    Url {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1771,6 +1799,37 @@ fn this_airkctl() -> Result<PathBuf, ErrorLine> {
         .map_err(|error| crate::registration::failed(&error.to_string()))
 }
 
+/// `admin open|url` (split Phase 5): A1 over the owner pipe.
+fn admin_command(cx: &mut Context, selection: Selection, action: AdminCommand) -> u8 {
+    let (AdminCommand::Open { runtime_dir } | AdminCommand::Url { runtime_dir }) = &action;
+    let control = match runtime_dir.clone().or(selection.control) {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    match action {
+        AdminCommand::Url { .. } => match crate::admin::url(&control, VERSION) {
+            Ok(url) => {
+                let _ = writeln!(cx.io.stderr, "airkctl: {}", crate::admin::URL_WARNING);
+                match cx.output {
+                    Output::Json => json_line(cx, &serde_json::json!({ "url": url })),
+                    Output::Text => {
+                        let result = writeln!(cx.io.stdout, "{url}");
+                        written(cx, result)
+                    }
+                }
+            }
+            Err(line) => fail(cx, &line),
+        },
+        AdminCommand::Open { .. } => match crate::admin::open(&control, VERSION) {
+            Ok(_) => 0,
+            Err(line) => fail(cx, &line),
+        },
+    }
+}
+
 /// `agents …` (split 3e).
 fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand) -> u8 {
     use crate::agents::manage;
@@ -2945,6 +3004,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             session::serve(options)
         }
         Command::Agents { action } => agents_command(cx, selection, action),
+        Command::Admin { action } => admin_command(cx, selection, action),
         Command::ModelCatalog => {
             let control = match selection.control.clone() {
                 Some(control) => control,

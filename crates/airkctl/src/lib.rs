@@ -5,6 +5,7 @@
 //! classes, the version handshake and the editor session frames. It reaches the
 //! service only over I1 plus the documented exceptions, and never links the
 //! kernel, store, retrieval, ingest or MCP crates (U27).
+pub mod admin;
 pub mod agents;
 pub mod cli;
 pub mod contract;

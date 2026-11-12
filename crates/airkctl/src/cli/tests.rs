@@ -44,7 +44,8 @@ fn version_answers_locally_in_both_formats() {
             "explorer/1",
             "agents/1",
             "agents-launch/1",
-            "agents-verify/1"
+            "agents-verify/1",
+            "admin-launch/1"
         ])
     );
 }
@@ -54,7 +55,6 @@ fn unserved_commands_and_argument_errors_keep_their_classes() {
     for unserved in [
         &["explorer", "templates"][..],
         &["service", "login", "status"],
-        &["admin", "url"],
     ] {
         let (code, _, stderr) = run_line(unserved);
         assert_eq!(code, 5, "{unserved:?}");

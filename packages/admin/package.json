@@ -1,0 +1,20 @@
+{
+  "name": "airk-admin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AIRK admin web shell served by the service at /admin/ (split Phase 5, I3).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "check": "tsc -p tsconfig.json && node build.mjs --check"
+  },
+  "dependencies": {
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

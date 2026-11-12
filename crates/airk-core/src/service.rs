@@ -632,6 +632,10 @@ pub enum ControlMethod {
     ExplorerHandoff {
         handoff_id: Incarnation,
     },
+    /// A1 (contracts §2.7): a single-use admin launch code for this
+    /// service's `/admin` plane. Owner pipe only: never relayed by a session
+    /// and never over HTTP. A struct variant, so an unknown field is refused.
+    AdminLaunchCode {},
 }
 
 impl ControlMethod {
@@ -652,7 +656,9 @@ impl ControlMethod {
             | Self::UpgradeRecoveryProbe { .. }
             | Self::ReleaseUpgradeAdmission { .. }
             | Self::HttpEnroll { .. }
-            | Self::HttpRevoke { .. } => {
+            | Self::HttpRevoke { .. }
+            // A1 is owner pipe only (contracts §2.7, §3.8).
+            | Self::AdminLaunchCode {} => {
                 return Some("console_private_setup_forbidden");
             }
             // M2 is an `airkctl` read (split step 3a.1); the retiring console relay
@@ -1617,6 +1623,56 @@ pub enum ControlResponse {
         explicitly_stopped: bool,
         pending: Option<crate::service_lifecycle::LifecycleRecord>,
     },
+    /// A1: the launch code (this reply only), the listener's port and the
+    /// code's remaining lifetime.
+    AdminLaunchCode {
+        code: AdminLaunchSecret,
+        port: u16,
+        expires_in_ms: u64,
+    },
+}
+
+/// An A1 launch code (contracts §2.7): 32 random bytes as unpadded
+/// base64url (43 characters, canonical final character). `Debug` never shows
+/// it; the service stores only its SHA-256.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct AdminLaunchSecret(String);
+
+impl AdminLaunchSecret {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for AdminLaunchSecret {
+    type Error = String;
+    fn try_from(value: String) -> std::result::Result<Self, String> {
+        let bytes = value.as_bytes();
+        // 43 characters carry 258 bits; the final two must be zero.
+        if bytes.len() == 43
+            && bytes
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-' || *byte == b'_')
+            && b"AEIMQUYcgkosw048".contains(&bytes[42])
+        {
+            Ok(Self(value))
+        } else {
+            Err("invalid admin launch code".into())
+        }
+    }
+}
+
+impl From<AdminLaunchSecret> for String {
+    fn from(code: AdminLaunchSecret) -> String {
+        code.0
+    }
+}
+
+impl std::fmt::Debug for AdminLaunchSecret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AdminLaunchSecret(<redacted>)")
+    }
 }
 
 #[derive(Serialize, Deserialize)]

@@ -458,3 +458,4 @@ Development payload repair now requires an exact native preview and stopped owne
 The [Explorer code review and implementation follow-up](explorer/code-review-action-plan.md) records the chronological branch audit, corrective work, local validation and remaining qualification.
 
 The [1.5.12 process changes](service-installation.md#process-lifetime-and-recognizable-names) cover client-owned MCP cleanup, distinct installed worker names and single-engine downloads.
+- [Admin pages](admin-pages.md): the local management web interface (`airkctl admin open`), its sign-in and what this version serves.

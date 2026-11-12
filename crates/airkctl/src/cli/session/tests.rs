@@ -490,6 +490,7 @@ fn one_shot_commands_and_budget_violations_are_refused_before_running() {
     for argv in [
         json!(["agents", "credential"]),
         json!(["--output", "json", "admin", "url"]),
+        json!(["admin", "open"]),
         json!(["service", "uninstall"]),
         json!(["session"]),
         json!(["tools", "shell"]),
@@ -714,6 +715,16 @@ fn scope_grant_release_and_the_control_relay_follow_the_window_plane() {
         client.ask(&brokerage),
         json!({"id": id(0x0c), "outcome": {"status": "control", "response": {
             "status": "failure", "code": "console_brokerage_forbidden"}}})
+    );
+    // A1 is owner pipe only (contracts §2.7, §3.8): refused before the pipe.
+    let launch_code = frame(
+        0x0d,
+        json!({"control": {"method": {"admin_launch_code": {}}}}),
+    );
+    assert_eq!(
+        client.ask(&launch_code),
+        json!({"id": id(0x0d), "outcome": {"status": "failed",
+            "code": "session_command_refused", "retryable": false}})
     );
     let (_, code, text) = client.eof();
     assert_eq!(code, 0);

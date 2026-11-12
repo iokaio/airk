@@ -7,6 +7,9 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 ## Contents
 
 - [`airkctl`](#airkctl)
+- [`airkctl admin`](#airkctl-admin)
+- [`airkctl admin open`](#airkctl-admin-open)
+- [`airkctl admin url`](#airkctl-admin-url)
 - [`airkctl agents`](#airkctl-agents)
 - [`airkctl agents connect`](#airkctl-agents-connect)
 - [`airkctl agents credential`](#airkctl-agents-credential)
@@ -107,6 +110,7 @@ Commands:
   model-catalog  Print the offline model catalog and the CPU choice for this host
   session        Serve one editor window's framed session (protocol 2) on stdin/stdout
   agents         Agent connections and configuration: endpoint, info, list, connect, repair, remove, verify, credential, launch and revoke
+  admin          AIRK Admin in the browser: open it, or print a single-use sign-in URL
   explorer       Offline Explorer drafts, validation and templates; results go to a new --output-file
   settings       Read one project setting view; read-only
   configure      Apply a guarded project configuration draft from --file or --stdin (JSON with an "operation")
@@ -181,6 +185,176 @@ Options:
 
   -V, --version
           Print version
+```
+
+## airkctl admin
+
+```text
+AIRK Admin in the browser: open it, or print a single-use sign-in URL
+
+Usage: airkctl admin [OPTIONS] <COMMAND>
+
+Commands:
+  open  Open AIRK Admin in this computer's default browser, signed in
+  url   Print a single-use AIRK Admin sign-in URL (valid 60 seconds) for manual use
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl admin open
+
+```text
+Open AIRK Admin in this computer's default browser, signed in.
+
+Needs a local graphical session (refused over SSH). The single-use sign-in link goes through an owner-only file, never a command line.
+
+Usage: airkctl admin open [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## airkctl admin url
+
+```text
+Print a single-use AIRK Admin sign-in URL (valid 60 seconds) for manual use.
+
+The URL is a secret: open it only in your own browser and never paste it into a page.
+
+Usage: airkctl admin url [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## airkctl agents

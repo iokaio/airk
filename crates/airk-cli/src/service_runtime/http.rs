@@ -134,6 +134,7 @@ impl Owner {
                 settle: state.supervisor.read_settlement_requester(),
             },
         )?;
+        gateway.set_admin(state.admin.clone());
         http_endpoint::publish_descriptor(
             &root,
             &binding,

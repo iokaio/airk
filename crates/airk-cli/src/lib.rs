@@ -2,8 +2,11 @@
 //! Native adapter primitives shared by service/client executable modes.
 extern crate self as airk_cli;
 /// I3 admin HTTP contract (split C5): leaf types, pure admission decisions and
-/// the generated-schema owner. No handler uses it before Phase 5.
+/// the generated-schema owner. `admin_plane` is its handler (Phase 5).
 pub mod admin_contract;
+/// The service's `/admin` plane (split Phase 5): launch codes, sessions,
+/// embedded assets and admin dispatch.
+pub(crate) mod admin_plane;
 pub(crate) mod catalog_admission;
 pub(crate) mod catalog_authority;
 pub(crate) mod catalog_coordinator;

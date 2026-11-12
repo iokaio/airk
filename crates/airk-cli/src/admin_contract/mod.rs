@@ -4,8 +4,8 @@
 //! `docs/split/security-review-i3.md`).
 //!
 //! Contract step C5: types, pure decision functions and their reviewed
-//! fixtures (`fixtures/split/i3/*.json`). No listener, handler, routing or
-//! consumer uses this module yet; handlers land in Phase 5. It is a leaf: it
+//! fixtures (`fixtures/split/i3/*.json`). Its one consumer is the Phase 5
+//! admin plane handler. It is a leaf: it
 //! depends only on serde, serde_json and schemars, never on another module of
 //! this crate.
 //!

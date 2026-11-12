@@ -96,6 +96,10 @@ struct State {
     native_gate: NativeCatalogAdmission,
     admit: AdmitRequest,
     settle: airk_mcp::read_attempt::WorkerSettlementRequester,
+    /// The listener's port (the exact `Host` and `Origin` of `/admin`).
+    port: u16,
+    /// The `/admin` plane (split Phase 5); set once by the service owner.
+    admin: std::sync::OnceLock<Arc<crate::admin_plane::AdminPlane>>,
 }
 #[derive(Clone)]
 pub struct Gateway(Arc<State>);
@@ -127,7 +131,14 @@ impl Gateway {
             native_gate: native.gate,
             admit: native.admit,
             settle: native.settle,
+            port: endpoint.url.port(),
+            admin: std::sync::OnceLock::new(),
         })))
+    }
+    /// Serve `/admin` through `plane`. Without it every admin-plane target
+    /// answers `not_yet_served`; other targets are unaffected.
+    pub(crate) fn set_admin(&self, plane: Arc<crate::admin_plane::AdminPlane>) {
+        let _ = self.0.admin.set(plane);
     }
     /// Called after native credential revocation/rotation commits. Authentication
     /// still rereads the ledger, so a missed notification cannot grant a read.
@@ -218,6 +229,8 @@ impl Gateway {
                     let Ok(connection)=self.0.connections.clone().try_acquire_owned() else{continue;};
                     let Ok(handshake)=self.0.handshakes.clone().try_acquire_owned() else{continue;};
                     let gateway=self.clone();let acceptor=self.0.tls.borrow().clone();
+                    // The 4-tuple for the admin plane's same-user peer proof (H1).
+                    let admin_peer=socket.local_addr().ok().map(|server|crate::admin_plane::ConnectionPeer::new(peer,server));
                     tasks.spawn(async move {
                         let _connection=connection;
                         let delivery=ConnectionFence::new(gateway.0.native_gate.clone());
@@ -229,8 +242,9 @@ impl Gateway {
                         drop(handshake);
                         let disconnected=gateway.0.closed.child_token();let cleanup=CancelOnDrop{token:disconnected.clone(),armed:true};
                         let socket_delivery=delivery.clone();
-                        let requests=service_fn(move|request:Request<Incoming>|{
+                        let requests=service_fn(move|mut request:Request<Incoming>|{
                             let gateway=gateway.clone();let canceled=disconnected.child_token();let delivery=delivery.clone();
+                            if let Some(admin_peer)=admin_peer.clone(){request.extensions_mut().insert(admin_peer);}
                             async move {Ok::<_,Infallible>(gateway.handle_on_connection(request,canceled,delivery).await)}
                         });
                         let mut builder=http1::Builder::new();builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(15)).max_buf_size(16*1024).max_headers(64);
@@ -309,7 +323,36 @@ impl Gateway {
             token: context.cancellation().clone(),
             armed: true,
         };
-        let response = match delivery.bind_request(context.clone()).await {
+        let bound = delivery.bind_request(context.clone()).await;
+        // Targets `admin_contract::route` places in the admin plane never reach
+        // the bearer dispatch; every other target is handled as before.
+        if is_admin_target(&request) {
+            let response = match (bound, self.0.admin.get()) {
+                (Ok(()), Some(plane)) => {
+                    let peer = request
+                        .extensions()
+                        .get::<crate::admin_plane::ConnectionPeer>()
+                        .cloned();
+                    plane
+                        .handle(request, peer, self.0.port, self.0.closed.is_cancelled())
+                        .await
+                }
+                (Ok(()), None) => {
+                    crate::admin_plane::refusal(crate::admin_contract::AdminCode::NotYetServed)
+                }
+                (Err(_), _) => {
+                    crate::admin_plane::refusal(crate::admin_contract::AdminCode::AdminInternal)
+                }
+            };
+            cleanup.armed = false;
+            let (parts, body) = response.into_parts();
+            return Response::from_parts(
+                parts,
+                OutputBody::new(body, self.0.output.clone(), OUTPUT_BYTES, context)
+                    .with_delivery(delivery),
+            );
+        }
+        let response = match bound {
             Ok(()) => self.dispatch(&mut request, &mut context, &delivery).await,
             Err(_) => Err(error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -371,6 +414,17 @@ impl Gateway {
         }
         if request.headers().contains_key(http::header::ORIGIN) {
             return Err(error(StatusCode::FORBIDDEN, "origin_refused"));
+        }
+        // The planes stay separate (L6): the exact admin cookie is refused
+        // here, after the existing Host and `Origin` checks.
+        let cookies: Vec<String> = request
+            .headers()
+            .get_all(http::header::COOKIE)
+            .iter()
+            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+            .collect();
+        if crate::admin_contract::bearer_plane_cookie(&cookies).is_some() {
+            return Err(error(StatusCode::FORBIDDEN, "cookie_on_bearer_plane"));
         }
         if request
             .headers()
@@ -1180,6 +1234,21 @@ impl Drop for CancelOnDrop {
             self.token.cancel();
         }
     }
+}
+/// Whether `admin_contract::route` places the origin-form request target in
+/// the admin plane. An absolute-form target is never admin-routed.
+fn is_admin_target<B>(request: &Request<B>) -> bool {
+    let uri = request.uri();
+    uri.scheme().is_none()
+        && uri.authority().is_none()
+        && !matches!(
+            crate::admin_contract::route(
+                uri.path_and_query()
+                    .map_or("", |target| target.as_str())
+                    .as_bytes()
+            ),
+            crate::admin_contract::PathMatch::NotAdmin
+        )
 }
 fn now_ms() -> u64 {
     SystemTime::now()

@@ -65,6 +65,7 @@ const REQUEST_STACK_BYTES: usize = 8 * 1024 * 1024;
 const REFUSED_COMMANDS: &[(&str, &str)] = &[
     ("agents", "credential"),
     ("admin", "url"),
+    ("admin", "open"),
     ("service", "uninstall"),
     ("tools", "shell"),
     // Relays any I1 method, so it would bypass the `control` refusals.
@@ -620,8 +621,9 @@ fn relay_rule(method: &ControlMethod) -> Relay {
         | M::WindowScopeGrant { .. }
         | M::WindowScopeRelease { .. }
         | M::AssistanceDrain { .. }
-        | M::HandoffPublish { .. } => Relay::Refuse,
-        // TODO(A1): refuse `AdminLaunchCode` here once the variant lands.
+        | M::HandoffPublish { .. }
+        // A1 is owner pipe only (contracts §2.7, §3.8).
+        | M::AdminLaunchCode {} => Relay::Refuse,
         _ => Relay::Forward,
     }
 }

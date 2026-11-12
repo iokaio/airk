@@ -4,8 +4,8 @@ Owner of the I3 admin HTTP contract between the service's `/admin` plane and
 the browser adapter (split plan §7; [contracts](../../../../docs/split/contracts.md)
 §4, amended by §4.11 and the adopted
 [security review](../../../../docs/split/security-review-i3.md)). Contract step
-C5: types, pure decisions and fixtures only. No listener, handler, routing or
-consumer uses this module before Phase 5.
+C5: types, pure decisions and fixtures only. Its one consumer is the Phase 5
+handler [`admin_plane`](../admin_plane/CONTRACT.md).
 
 ## Interface
 

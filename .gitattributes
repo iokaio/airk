@@ -1,3 +1,5 @@
 * text=auto eol=lf
 *.png binary
 *.pdf binary
+# The embedded admin bundle is sealed by SHA-256 digests; keep its bytes exact.
+crates/airk-cli/admin-assets/** -text
