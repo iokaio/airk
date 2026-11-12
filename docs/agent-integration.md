@@ -167,7 +167,7 @@ Source owners are the [extension client catalog and serializers](../packages/vsc
 [native setup serializer](../crates/airk-cli/src/main.rs),
 [native setup contract tests](../crates/airk-cli/src/http_setup_tests.rs),
 [owned configuration locations](../packages/vscode/src/agentMigration.ts),
-[Codex project configuration](../packages/vscode/src/agentConnections.ts) and
+[Codex and Claude configuration editors in `airkctl`](../crates/airkctl/src/agents/config/edit.rs) and
 [Claude project configuration](../packages/vscode/src/agentConfig.ts).
 The [implementation ledger](research/one-airk-implementation.md) retains the
 dated Codex TLS spike and installed-extension evidence with their original

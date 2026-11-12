@@ -53,7 +53,7 @@ Inspected live files and contracts:
 - [Root configuration](../../crates/airk-store/src/roots.rs) supports 16 explicit
   aliases. Combining sources must honor existing overlap, isolation, coordinate
   and imported-analysis restrictions; this feature does not qualify new ones.
-- [Workspace bindings](../../packages/vscode/src/serviceWorkspace.ts) reconcile
+- [Workspace bindings](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceWorkspace.ts) reconcile
   opened folders with native registrations and save choices by opened path.
   [Launch assembly](../../packages/vscode/src/model.ts) builds a primary root plus
   additional roots from those selections, rather than an independent window set.

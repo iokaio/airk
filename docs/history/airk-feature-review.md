@@ -1158,7 +1158,7 @@ pending.**
     restored. The Explorer panel sits outside the replaceable module graph, so
     exactly one panel survives.
 - **Native runtime bootstrap**
-  ([`serviceBootstrap.ts`](../../packages/vscode/src/serviceBootstrap.ts)). The
+  ([`serviceBootstrap.ts`](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceBootstrap.ts)). The
   installed VSIX is the trust source.
   - The manifest's schema, version and target are checked, along with an
     inventory hash and a bounded walk of the payload. Symlinks, hard links and
@@ -1179,7 +1179,7 @@ pending.**
   - Resolving re-checks the generation and the scope.
 - **Editing agent configuration safely**
   ([`agentConfig.ts`](../../packages/vscode/src/agentConfig.ts),
-  [`agentSetup.ts`](../../packages/vscode/src/agentSetup.ts)).
+  [`agentSetup.ts`](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/agentSetup.ts)).
   - Only a regular, unlinked, strict UTF-8 file of at most 1 MiB is accepted, and
     the inode must not change between check and open.
   - A merge only inserts missing entries. A conflicting server of the same name

@@ -21,6 +21,9 @@ const CONTENT_TYPES = {
   '.json': 'application/json',
 };
 
+// The repository's license header, first in every emitted script and stylesheet.
+const SPDX = '/* SPDX-License-Identifier: Apache-2.0 */';
+
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const sri = (bytes) => `sha256-${createHash('sha256').update(bytes).digest('base64')}`;
 const contentType = (name) => {
@@ -68,6 +71,7 @@ async function bundle() {
     minify: true,
     sourcemap: false,
     legalComments: 'eof',
+    banner: { js: SPDX },
     charset: 'utf8',
     jsx: 'automatic',
     jsxImportSource: 'preact',
@@ -78,6 +82,7 @@ async function bundle() {
   const css = await esbuild.build({
     entryPoints: [join(here, 'src', 'app.css')],
     bundle: true,
+    banner: { css: SPDX },
     minify: true,
     charset: 'utf8',
     write: false,

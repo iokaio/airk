@@ -505,7 +505,7 @@ remain separate qualification gates recorded in the working release ledger.
 
 The source owners are [runtime verification](../crates/airk-cli/src/runtime_install.rs),
 [the native builder](../scripts/build-service-runtime.py), and
-[extension verification](../packages/vscode/src/serviceBootstrap.ts).
+[extension verification](../packages/vscode/src/airkctl/verify.ts).
 
 ## Process lifetime and recognizable names
 

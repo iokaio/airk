@@ -101,7 +101,7 @@ Experiment: 200 distinct nearby out-of-scope vectors and one more distant docume
 
 ### F05 — P2: Refuse hard-linked shell profiles during CLI setup
 
-**Reproduced.** [appendProfile](../../packages/vscode/src/cliInstall.ts#L43) rejects symlinks and non-files but accepts regular files with multiple hard links, then appends through the path. The existing [agent-config installer](../../packages/vscode/src/agentConfig.ts#L64) already rejects `nlink !== 1`.
+**Reproduced.** [appendProfile](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/cliInstall.ts#L43) rejects symlinks and non-files but accepts regular files with multiple hard links, then appends through the path. The existing [agent-config installer](../../packages/vscode/src/agentConfig.ts#L64) already rejects `nlink !== 1`.
 
 Experiment: hard-link a temporary `.profile` to a separate temporary text file and invoke the exported `configureShellPath` with an isolated home and a POSIX-style CLI directory. It returned no errors and appended the AIRK PATH block to the other file. This exercised the function on Windows; it does not qualify an installed Linux/macOS shell workflow.
 

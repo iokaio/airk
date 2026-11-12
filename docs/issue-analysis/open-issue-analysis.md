@@ -98,9 +98,9 @@ macOS packages and installed-editor behavior as "not verified".
 **Every integrity check then correctly refuses the workaround.**
 [`safe_file`](../../crates/airk-cli/src/runtime_install.rs#L631-L641) rejects
 symlinks and hard links (`nlink == 1`), the extension's CLI installer applies
-the same rule ([cliInstall.ts:252](../../packages/vscode/src/cliInstall.ts#L252)),
+the same rule ([cliInstall.ts:252](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/cliInstall.ts#L252)),
 and the bootstrap refuses an unverified payload
-([serviceBootstrap.ts:308](../../packages/vscode/src/serviceBootstrap.ts#L308)).
+([serviceBootstrap.ts:308](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceBootstrap.ts#L308)).
 These are deliberate anti-aliasing guards, so the fix belongs in how the
 launcher is produced, not in the guards.
 
@@ -298,7 +298,7 @@ survives in-memory state. The only code that deletes the helper row is the
 ([line 1317](../../crates/airk-cli/src/project_supervisor.rs#L1317)); the
 Management **Retry semantic indexing** action reaches the same path through
 `start_embedding`
-([serviceConsoleController.ts:736-739](../../packages/vscode/src/serviceConsoleController.ts#L736-L739)).
+([serviceConsoleController.ts:736-739](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceConsoleController.ts#L736-L739)).
 There is no reset on a successful start and no time-based decay.
 [docs/service-embedding.md](../service-embedding.md) line 59 documents this as
 "three helper start attempts per service lifetime".
@@ -756,10 +756,10 @@ trusted. All commands stay in the palette.
 [`ServiceExtension.trusted`](../../packages/vscode/src/serviceExtension.ts#L170-L174)
 throws `ServiceError('runtime_client_no_longer_authorized')` when
 `vscode.workspace.isTrusted` is false. The same code is thrown for an untrusted
-window in [serviceConsole.ts](../../packages/vscode/src/serviceConsole.ts#L140)
-(lines 140, 158, 187, 199), [serviceWorkspace.ts:64](../../packages/vscode/src/serviceWorkspace.ts#L64),
-[serviceConsoleController.ts:70](../../packages/vscode/src/serviceConsoleController.ts#L70)
-and [serviceBootstrap.ts:199](../../packages/vscode/src/serviceBootstrap.ts#L199),
+window in [serviceConsole.ts](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceConsole.ts#L140)
+(lines 140, 158, 187, 199), [serviceWorkspace.ts:64](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceWorkspace.ts#L64),
+[serviceConsoleController.ts:70](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceConsoleController.ts#L70)
+and [serviceBootstrap.ts:199](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceBootstrap.ts#L199),
 and it is also the code for "controller disposed" and "generation changed",
 so one code covers three unrelated conditions. The command wrapper `safe`
 ([serviceExtension.ts:1049-1050](../../packages/vscode/src/serviceExtension.ts#L1049-L1050))
@@ -824,7 +824,7 @@ which canonicalizes the data path and therefore requires it to exist.
 which resolves a planned location through `data_scope::canonical_location`
 and accepts a missing leaf. The extension never hits this: it reserves the
 project and then runs `service prepare-storage`
-([serviceBootstrap.ts:447](../../packages/vscode/src/serviceBootstrap.ts#L447)),
+([serviceBootstrap.ts:447](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceBootstrap.ts#L447)),
 which creates the reserved directory chain with mode 0700
 ([service_registration.rs:13-60](../../crates/airk-cli/src/service_registration.rs#L13-L60))
 after re-validating the planned identity. That step is documented in

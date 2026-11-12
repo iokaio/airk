@@ -39,7 +39,7 @@ The proposed plan has two halves. First, add overlap and repository awareness to
 For each open folder, in order ([serviceExtension.ts:851-882](../../packages/vscode/src/serviceExtension.ts#L851-L882)):
 
 1. A missing folder is logged and skipped.
-2. `ServiceWorkspace.reconcileStartup` looks for an active native project whose root equals the folder's `realpath`. If exactly one matches, or the saved choice selects one, the folder is bound to it ([serviceWorkspace.ts:93-121](../../packages/vscode/src/serviceWorkspace.ts#L93-L121)). An inactive (removed) match yields `removed`, which is respected.
+2. `ServiceWorkspace.reconcileStartup` looks for an active native project whose root equals the folder's `realpath`. If exactly one matches, or the saved choice selects one, the folder is bound to it ([serviceWorkspace.ts:93-121](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceWorkspace.ts#L93-L121)). An inactive (removed) match yields `removed`, which is respected.
 3. A folder declined during the first-use review is skipped. A **home folder or filesystem/volume root** is skipped unless it was approved ([serviceExtension.ts:564-568](../../packages/vscode/src/serviceExtension.ts#L564-L568)).
 4. Otherwise the folder is registered with collection `collectionId(canonical)`. That is `project-` plus the first 24 hex digits of SHA-256 of the canonical path, lower-cased only on Windows ([model.ts:22-25](../../packages/vscode/src/model.ts#L22-L25)). Registration also enables automatic watching and schedules model setup and indexing ([service_registry.rs:795-811](../../crates/airk-store/src/service/registry.rs#L795-L811)).
 
@@ -171,7 +171,7 @@ Offer two explicit shapes for case 4 and case 7:
 1. **Per-repository projects.** Register selected child repositories as separate projects. This is the recommended default for unrelated repositories.
 2. **One combined project that excludes registered descendants.** Add a native per-project option, `exclude_registered_descendants`. Discovery and the watcher then prune any directory that is the root of another registered project, and coverage lists each pruned root as `excluded: registered_project <binding>`. Without this, a combined project duplicates its children.
 
-For users who want one index across *separate* folders (code plus specifications), the Service Console already provides **Add source root** aliases ([serviceConsole.ts:250](../../packages/vscode/src/serviceConsole.ts#L250)). The multi-root review can offer "combine these folders into one index" using those aliases. The review must state the existing limits: 16 aliases, shared budgets, and rejection of imported LSP and ctags analysis for aliased collections ([code-facts-and-relationships.md](../code-facts-and-relationships.md)).
+For users who want one index across *separate* folders (code plus specifications), the Service Console already provides **Add source root** aliases ([serviceConsole.ts:250](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceConsole.ts#L250)). The multi-root review can offer "combine these folders into one index" using those aliases. The review must state the existing limits: 16 aliases, shared budgets, and rejection of imported LSP and ctags analysis for aliased collections ([code-facts-and-relationships.md](../code-facts-and-relationships.md)).
 
 ### Phase 5: stable, per-project agent connections in multi-root windows
 

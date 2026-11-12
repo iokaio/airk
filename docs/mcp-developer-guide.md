@@ -591,7 +591,7 @@ out-of-scope rows, ambiguous definitions and incomplete enumeration fail closed.
 }
 ```
 
-**Implementation:** [tools.ts](../packages/vscode/src/explorerAssistance/tools.ts). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](../packages/vscode/src/test/explorerAssistanceHost.test.ts).
+**Implementation:** [tools.ts](../packages/vscode/src/explorerAssistance/tools.ts). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/test/explorerAssistanceHost.test.ts) (pre-split; removed in split Phase 6, Assistance over the session is pending).
 
 ## draft_strategy
 
@@ -675,7 +675,7 @@ out-of-scope rows, ambiguous definitions and incomplete enumeration fail closed.
 }
 ```
 
-**Implementation:** [unified.rs](../crates/airk-mcp/src/unified.rs). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](../packages/vscode/src/test/explorerAssistanceHost.test.ts).
+**Implementation:** [unified.rs](../crates/airk-mcp/src/unified.rs). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/test/explorerAssistanceHost.test.ts) (pre-split; removed in split Phase 6, Assistance over the session is pending).
 
 ## validate_draft
 
@@ -720,7 +720,7 @@ out-of-scope rows, ambiguous definitions and incomplete enumeration fail closed.
 }
 ```
 
-**Implementation:** [tools.ts](../packages/vscode/src/explorerAssistance/tools.ts). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](../packages/vscode/src/test/explorerAssistanceHost.test.ts).
+**Implementation:** [tools.ts](../packages/vscode/src/explorerAssistance/tools.ts). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/test/explorerAssistanceHost.test.ts) (pre-split; removed in split Phase 6, Assistance over the session is pending).
 
 ## get_handoff
 
@@ -738,7 +738,7 @@ out-of-scope rows, ambiguous definitions and incomplete enumeration fail closed.
 }
 ```
 
-**Implementation:** [explorerHandoffs.ts](../packages/vscode/src/explorerHandoffs.ts). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](../packages/vscode/src/test/explorerAssistanceHost.test.ts).
+**Implementation:** [explorerHandoffs.ts](../packages/vscode/src/explorerHandoffs.ts). **Contract/regression evidence:** [explorerAssistanceHost.test.ts](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/test/explorerAssistanceHost.test.ts) (pre-split; removed in split Phase 6, Assistance over the session is pending).
 
 ## Workflows and maintenance
 
