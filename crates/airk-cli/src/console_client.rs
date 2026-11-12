@@ -63,7 +63,8 @@ async fn handle(
         | ControlMethod::ClientRequestForget { .. }
         | ControlMethod::PlanRegistration { .. }
         | ControlMethod::PrepareStorage { .. }
-        | ControlMethod::PrepareConfiguration { .. } => {
+        | ControlMethod::PrepareConfiguration { .. }
+        | ControlMethod::UsageDocument { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

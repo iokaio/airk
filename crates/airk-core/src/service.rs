@@ -517,6 +517,39 @@ pub enum ControlMethod {
         project: ProjectBinding,
         draft: crate::service_configuration::ConfigurationDraft,
     },
+    /// N1 (split step 3c.5c; amended from per-page reads): one complete
+    /// settings or usage document, paged and reassembled in the service by
+    /// the CLI's own reader, for the project or a reviewed catalog session.
+    UsageDocument {
+        project: ProjectBinding,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        catalog: Option<ScopedConnectRequest>,
+        read: UsageDocumentRead,
+    },
+}
+
+/// What N1 reads, as `settings` and `usage report|policy` asked for it.
+/// Paths are absolute: the service opens them, never the client.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum UsageDocumentRead {
+    Settings {
+        view: crate::native_reads::SettingsView,
+    },
+    ValidateSettingsFile {
+        view: crate::native_reads::SettingsView,
+        path: String,
+    },
+    Report {
+        days: u16,
+        format: crate::native_reads::ReportFormat,
+    },
+    ReportFile {
+        days: u16,
+        format: crate::native_reads::ReportFormat,
+        price_scenario_path: String,
+    },
+    Policy,
 }
 
 /// Which registration rule M4a applies, as the pre-split CLI chose it.
@@ -622,6 +655,9 @@ pub enum ToolsCatalogDetail {
 
 /// The largest M2 response frame (contracts §2.8): the catalog with schemas.
 pub const MAX_TOOLS_CATALOG_RESPONSE_BYTES: usize = 1024 * 1024;
+/// N1's response budget (contracts §2.8): the CLI reassembled at most 8 MiB
+/// of records; JSON escaping of a text report can double it.
+pub const MAX_USAGE_DOCUMENT_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// The largest tool argument object, as the pre-split CLI bounded it.
 pub const MAX_TOOL_ARGUMENT_BYTES: usize = 64 * 1024;
 /// The largest M3 request frame (contracts §2.8): arguments, selection and
@@ -643,6 +679,7 @@ impl ControlMethod {
         match self {
             Self::ToolsCatalog { .. } => MAX_TOOLS_CATALOG_RESPONSE_BYTES,
             Self::ToolsCall { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
+            Self::UsageDocument { .. } => MAX_USAGE_DOCUMENT_RESPONSE_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -1091,6 +1128,16 @@ pub enum ControlResponse {
     /// M4b: the reserved storage exists; the registry's registration.
     StoragePrepared {
         registration: ProjectRegistration,
+    },
+    /// N1: the complete document `airk` printed (a report in CSV or Markdown
+    /// is a string).
+    UsageDocument {
+        document: serde_json::Value,
+    },
+    /// N1 failed. `message` is the full error chain bounded to 4,096
+    /// characters, as the pre-split CLI's `operation_failed` line carried it.
+    UsageReadFailed {
+        message: String,
     },
     /// M9: the guarded configuration request.
     ConfigurationPrepared {

@@ -493,6 +493,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 collection,
                 storage,
             } => registration::plan(&root, &data_root, &collection, storage),
+            // N1 lands its handler in step 3c.5c-2; until then the typed refusal.
+            ControlMethod::UsageDocument { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::PrepareConfiguration { project, draft } => {
                 configuration::prepare(&state.control_root, project, draft).await
             }

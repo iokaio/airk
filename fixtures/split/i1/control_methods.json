@@ -525,6 +525,84 @@
           "bytes": "{\"status\":\"configuration_prepared\",\"request\":{\"incarnation\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"settings\":\"abababababababababababababababababababababababababababababababab\",\"configuration\":{\"operation\":\"vectors\",\"enabled\":false},\"submitted\":true}}"
         }
       ]
+    },
+    {
+      "variant": "usage_document",
+      "method": "N1",
+      "methods": [
+        {
+          "name": "settings",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"settings\":{\"view\":\"roots\"}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 16777216
+        },
+        {
+          "name": "validate_settings_file",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"validate_settings_file\":{\"view\":\"scan_limits\",\"path\":\"/home/fixture/limits.json\"}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 16777216
+        },
+        {
+          "name": "report_markdown",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"report\":{\"days\":7,\"format\":\"markdown\"}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 16777216
+        },
+        {
+          "name": "report_file",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"report_file\":{\"days\":30,\"format\":\"csv\",\"price_scenario_path\":\"/home/fixture/prices.json\"}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 16777216
+        },
+        {
+          "name": "policy_by_catalog_session",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"catalog\":{\"schema\":1,\"context_key\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"namespace\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_catalog_revision\":3,\"grant_id\":\"grt_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"expected_grant_revision\":2,\"index_id\":\"idx_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"project_ids\":[\"prj_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\"]},\"read\":\"policy\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 16777216
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_view",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"settings\":{\"view\":\"secrets\"}}}}"
+        },
+        {
+          "name": "unknown_format",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"report\":{\"days\":7,\"format\":\"pdf\"}}}}"
+        },
+        {
+          "name": "read_extra_field",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\",\"read\":{\"report\":{\"days\":7,\"format\":\"json\",\"cursor\":\"x\"}}}}"
+        },
+        {
+          "name": "without_read",
+          "bytes": "{\"usage_document\":{\"project\":\"abababababababababababababababababababababababababababababababab\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "json_document",
+          "bytes": "{\"status\":\"usage_document\",\"document\":{\"days\":7,\"requests\":0}}"
+        },
+        {
+          "name": "text_document",
+          "bytes": "{\"status\":\"usage_document\",\"document\":\"# Usage\\n\"}"
+        },
+        {
+          "name": "failed",
+          "bytes": "{\"status\":\"usage_read_failed\",\"message\":\"usage report days must be 1..30\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "document_missing",
+          "bytes": "{\"status\":\"usage_document\"}"
+        },
+        {
+          "name": "failed_without_message",
+          "bytes": "{\"status\":\"usage_read_failed\"}"
+        }
+      ]
     }
   ]
 }
