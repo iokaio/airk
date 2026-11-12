@@ -3,23 +3,44 @@
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import type { ParsedResponse } from './envelope';
+import { IndexLibrary } from './indexLibrary';
 import { Activity, Agents, Help, Logs, Overview, Recovery, Search, Service, Storage } from './pages';
 import { Text } from './render';
-import { currentSession, logout, onSessionChange, type Session } from './session';
+import { currentSession, logout, onSessionChange, takeInitialRoute, type Session } from './session';
+import { Usage } from './usage';
 
 const PAGES = [
   ['overview', 'Overview'],
+  ['index-library', 'Index library'],
   ['activity', 'Activity'],
   ['agents', 'Agents'],
   ['storage', 'Storage'],
   ['recovery', 'Recovery'],
   ['service', 'Service'],
   ['logs', 'Logs'],
+  ['usage', 'Usage'],
   ['search', 'Search'],
   ['help', 'Help'],
 ] as const;
 
 type PageId = (typeof PAGES)[number][0];
+
+/**
+ * A page route from the fragment, `#<page>[?<query>]`, for example
+ * `#index-library?root=<folder>` (U97). A route only selects a page and
+ * prefills fields; it never starts an action. `seq` changes on every route so
+ * a page can apply the same prefill again.
+ */
+export type Route = { page: PageId; params: URLSearchParams; seq: number };
+
+function parseRoute(text: string, seq: number): Route | null {
+  const fragment = text.startsWith('#') ? text.slice(1) : text;
+  const mark = fragment.indexOf('?');
+  const id = mark < 0 ? fragment : fragment.slice(0, mark);
+  const entry = PAGES.find(([page]) => page === id);
+  if (entry === undefined) return null;
+  return { page: entry[0], params: new URLSearchParams(mark < 0 ? '' : fragment.slice(mark + 1)), seq };
+}
 
 /** Why the shell has no session. */
 export type Gate =
@@ -113,7 +134,30 @@ function Signed(props: { gate: Gate }): JSX.Element {
 export function App(props: { initialGate: Gate }): JSX.Element {
   const [session, setSession] = useState<Session | null>(currentSession());
   const [gate, setGate] = useState<Gate>(props.initialGate);
-  const [page, setPage] = useState<PageId>('overview');
+  const [route, setRoute] = useState<Route>(() => {
+    const initial = takeInitialRoute();
+    return (initial === null ? null : parseRoute(initial, 1)) ?? { page: 'overview', params: new URLSearchParams(), seq: 0 };
+  });
+  const page = route.page;
+  const setPage = (id: PageId): void => {
+    setRoute((current) => ({ page: id, params: new URLSearchParams(), seq: current.seq + 1 }));
+    // Keeps a same-tab reload on this page; replaceState fires no hashchange.
+    window.history.replaceState(null, '', `#${id}`);
+  };
+
+  useEffect(() => {
+    const onHash = (): void => {
+      const hash = window.location.hash;
+      // A launch code never stays in the address bar (review M1); it is used once, on load.
+      if (hash.startsWith('#c=')) {
+        window.history.replaceState(null, '', window.location.pathname);
+        return;
+      }
+      setRoute((current) => parseRoute(hash, current.seq + 1) ?? current);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   useEffect(
     () =>
@@ -165,6 +209,9 @@ export function App(props: { initialGate: Gate }): JSX.Element {
       </nav>
       <main>
         {page === 'overview' ? <Overview /> : null}
+        {page === 'index-library' ? (
+          <IndexLibrary params={route.params} seq={route.seq} onActivity={() => setPage('activity')} />
+        ) : null}
         {page === 'activity' ? <Activity /> : null}
         {page === 'agents' ? <Agents /> : null}
         {page === 'storage' ? <Storage /> : null}
@@ -173,6 +220,7 @@ export function App(props: { initialGate: Gate }): JSX.Element {
           <Service onLifecycle={(action) => endWith({ kind: action === 'stop' ? 'stopped' : 'restarted' })} />
         ) : null}
         {page === 'logs' ? <Logs /> : null}
+        {page === 'usage' ? <Usage /> : null}
         {page === 'search' ? <Search /> : null}
         {page === 'help' ? <Help /> : null}
       </main>

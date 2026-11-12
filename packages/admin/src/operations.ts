@@ -8,7 +8,10 @@
 // (crates/airk-core/src/service.rs, snake_case variants, deny_unknown_fields;
 // fixtures/split/i1/control_methods.json). Journal fields (`caller`, `key`) are
 // omitted: contracts §4.1 and RequestProgress say the admin handler generates the
-// request key and it never reaches the browser.
+// request key and it never reaches the browser. Rows with a `request_key` rule
+// (contracts §4.3b, U98) omit exactly the fields at the rule's paths: a
+// "generate" row is sent as the bare method and answers a `review` token; a
+// "review" row is sent as a ReviewedCall (api.ts `reviewedCall`) naming it.
 export const OPS = {
   health: 'service.health',
   resources: 'service.resources',
@@ -16,6 +19,30 @@ export const OPS = {
   indexesList: 'indexes.list',
   indexesPause: 'indexes.pause',
   catalogPage: 'catalog.page',
+  catalogDetail: 'catalog.detail',
+  catalogPreview: 'catalog.preview',
+  catalogApply: 'catalog.apply',
+  catalogReceipt: 'catalog.receipt',
+  catalogIndexSetupDraft: 'catalog.index_setup_draft',
+  catalogIndexSetupApply: 'catalog.index_setup_apply',
+  catalogIndexSetupReceipt: 'catalog.index_setup_receipt',
+  catalogSourceDraft: 'catalog.source_draft',
+  catalogSourceObservation: 'catalog.source_observation',
+  catalogPendingSource: 'catalog.pending_source',
+  catalogSourceResolve: 'catalog.source_resolve',
+  catalogSplitSourceState: 'catalog.split_source_state',
+  catalogSplitDraft: 'catalog.split_draft',
+  catalogSplitApply: 'catalog.split_apply',
+  catalogSplitStatus: 'catalog.split_status',
+  catalogSplitReceipt: 'catalog.split_receipt',
+  catalogSplitRecover: 'catalog.split_recover',
+  catalogSplitRecoveryReceipt: 'catalog.split_recovery_receipt',
+  catalogPolicyStatus: 'catalog.policy_status',
+  catalogPolicyResume: 'catalog.policy_resume',
+  catalogPolicyResumeReceipt: 'catalog.policy_resume_receipt',
+  catalogRetirementEvidence: 'catalog.retirement_evidence',
+  catalogGrantDraft: 'catalog.grant_draft',
+  usageDocument: 'usage.document',
   eventsPage: 'events.page',
   jobsGet: 'jobs.get',
   jobsRetry: 'jobs.retry',
@@ -54,6 +81,122 @@ export function isIncarnation(value: string): boolean {
 
 export const MAX_PAGE_LIMIT = 500;
 
+/** Catalog ids (`index_catalog.rs` catalog_id!): a prefix and 32 lowercase hex. */
+export type CatalogPrefix = 'prj_' | 'idx_' | 'src_' | 'ctx_' | 'grt_' | 'deny_';
+
+export function isCatalogId(prefix: CatalogPrefix, value: string): boolean {
+  return value.startsWith(prefix) && HEX32.test(value.slice(prefix.length));
+}
+
+/** A fresh `prj_` id; the CLI allocates CreateProject ids on the client too. */
+export function newProjectId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return `prj_${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** CatalogKind (catalog_management.rs). */
+export type CatalogKind = 'projects' | 'indexes' | 'memberships' | 'contexts' | 'grants' | 'sources';
+
+/** CatalogPageRequest budgets: limit ≤ MAX_SELECTION (32), max_bytes ≤ MAX_PAGE_BYTES. */
+export const CATALOG_PAGE_LIMIT = 32;
+export const CATALOG_PAGE_BYTES = 48 * 1024;
+
+/** CatalogEntity (internally tagged by `kind`). */
+export type CatalogEntity =
+  | { kind: 'project'; id: string }
+  | { kind: 'index'; id: string }
+  | { kind: 'membership'; project_id: string; index_id: string }
+  | { kind: 'grant'; id: string }
+  | { kind: 'source'; id: string };
+
+/** CatalogRequest without `caller`/`key` (the catalog.preview/apply rule paths). */
+export type CatalogRequestBody = {
+  expected_catalog_revision: number;
+  operation: Record<string, unknown> & { operation: string };
+};
+
+/** ScopeAtom. */
+export type ScopeAtom = { source_root_id: string; kind: 'exact' | 'subtree'; path: string };
+
+/** IndexSetupSelection without `key` (catalog.index_setup_draft rule `selection.key`). */
+export type IndexSetupSelectionBody = {
+  expected_catalog_revision: number;
+  name: string;
+  primary_root: string;
+  data_root: string;
+  collection: string;
+  additional_roots: { alias: string; path: string }[];
+  setup_watch: boolean;
+};
+
+/** SourceMutationSelection (tag `operation`). */
+export type SourceMutationSelection =
+  | { operation: 'add_root'; alias: string; path: string }
+  | { operation: 'remove_root'; alias: string }
+  | { operation: 'trim_path'; source_root_id: string; kind: 'exact' | 'subtree'; path: string }
+  | { operation: 'unblock_path'; rule_id: string }
+  | { operation: 'retire_index' };
+
+/** SplitDraftSelection without `key` (catalog.split_draft rule `selection.key`). */
+export type SplitDraftSelectionBody = {
+  expected_catalog_revision: number;
+  index_id: string;
+  selectors: ScopeAtom[];
+  destination_name: string;
+  destination_data_root: string;
+  destination_collection: string;
+  projects: unknown[];
+  capacity: {
+    destination_growth: number;
+    destination_temporary: number;
+    original_rewrite: number;
+    cleanup_allowance: number;
+  };
+  require_semantic_ready: boolean;
+  destination_watch_enabled: boolean;
+};
+
+/** SplitRecoveryRequest without `caller`/`key` (catalog.split_recover rule). */
+export type SplitRecoveryBody = {
+  operation_id: string;
+  request_digest: string;
+  expected_receipt_digest: string;
+  expected_finalization_revision?: number;
+  action: 'resume' | 'cancel';
+};
+
+/** UsageDocumentRead (externally tagged; `policy` is a unit variant). */
+export type UsageRead =
+  | { settings: { view: string } }
+  | { report: { days: number; format: 'json' | 'csv' | 'markdown' } }
+  | 'policy';
+
+/**
+ * CatalogPageRequest. `sources` needs exactly `index_id`; `memberships` takes
+ * either filter; other kinds take none. A continuation repeats its revision.
+ */
+function catalogPage(
+  kind: CatalogKind,
+  filter: { indexId?: string | null; projectId?: string | null },
+  after: unknown,
+  expectedRevision: number | null,
+) {
+  return {
+    catalog_page: {
+      request: {
+        kind,
+        index_id: filter.indexId ?? null,
+        project_id: filter.projectId ?? null,
+        after: after ?? null,
+        expected_catalog_revision: expectedRevision,
+        limit: CATALOG_PAGE_LIMIT,
+        max_bytes: CATALOG_PAGE_BYTES,
+      },
+    },
+  };
+}
+
 export const body = {
   health: () => 'health',
   resources: () => 'resources',
@@ -63,19 +206,62 @@ export const body = {
   }),
   indexesPause: (project: string, paused: boolean) => ({ pause: { project, paused } }),
   /** CatalogPageRequest; limit ≤ MAX_SELECTION (32), max_bytes ≤ 48 KiB. */
-  catalogIndexes: (expectedRevision: number | null) => ({
-    catalog_page: {
-      request: {
-        kind: 'indexes',
-        index_id: null,
-        project_id: null,
-        after: null,
-        expected_catalog_revision: expectedRevision,
-        limit: 32,
-        max_bytes: 48 * 1024,
-      },
+  catalogIndexes: (expectedRevision: number | null) => catalogPage('indexes', {}, null, expectedRevision),
+  catalogPage,
+  catalogDetail: (entity: CatalogEntity, expectedRevision: number | null) => ({
+    catalog_detail: { entity, expected_catalog_revision: expectedRevision },
+  }),
+  /** Generate row: the service fills `request.caller`/`request.key`. */
+  catalogPreview: (request: CatalogRequestBody) => ({ catalog_preview: { request } }),
+  /** Review row method; send inside `reviewedCall` with the preview's or draft's token. */
+  catalogApply: (request: unknown, previewDigest: string) => ({
+    catalog_apply: { request, preview_digest: previewDigest },
+  }),
+  catalogReceipt: () => ({ catalog_receipt: {} }),
+  indexSetupDraft: (selection: IndexSetupSelectionBody) => ({ catalog_index_setup_draft: { selection } }),
+  /** `draft` exactly as catalog.index_setup_draft returned it (identity removed). */
+  indexSetupApply: (draft: unknown) => ({ catalog_index_setup_apply: { draft } }),
+  indexSetupReceipt: () => ({ catalog_index_setup_receipt: {} }),
+  sourceDraft: (expectedRevision: number, indexId: string, change: SourceMutationSelection) => ({
+    catalog_source_mutation_draft: {
+      selection: { expected_catalog_revision: expectedRevision, index_id: indexId, change },
     },
   }),
+  sourceObservation: (beginOperation: string) => ({
+    catalog_source_change_observation: { begin_operation: beginOperation },
+  }),
+  pendingSource: (indexId: string) => ({ catalog_pending_source_change: { index_id: indexId } }),
+  sourceResolve: (beginOperation: string) => ({
+    catalog_source_change_resolve: { begin_operation: beginOperation },
+  }),
+  splitSourceState: (indexId: string, expectedRevision: number) => ({
+    catalog_split_source_state: { index_id: indexId, expected_catalog_revision: expectedRevision },
+  }),
+  splitDraft: (selection: SplitDraftSelectionBody) => ({ catalog_split_draft: { selection } }),
+  /** `draft` exactly as catalog.split_draft returned it (identity removed). */
+  splitApply: (draft: unknown) => ({ catalog_split_apply: { draft } }),
+  splitStatus: (operationId: string) => ({ catalog_split_status: { operation_id: operationId } }),
+  splitReceipt: () => ({ catalog_split_receipt: {} }),
+  splitRecover: (request: SplitRecoveryBody) => ({ catalog_split_recover: { request } }),
+  splitRecoveryReceipt: (operationId: string) => ({
+    catalog_split_recovery_receipt: { operation_id: operationId },
+  }),
+  policyStatus: (indexId: string) => ({ catalog_policy_status: { index_id: indexId } }),
+  /** Generate row: the service fills `caller`/`key`. */
+  policyResume: (indexId: string, operationId: string) => ({
+    catalog_policy_resume: { index_id: indexId, operation_id: operationId },
+  }),
+  policyResumeReceipt: (indexId: string, operationId: string) => ({
+    catalog_policy_resume_receipt: { index_id: indexId, operation_id: operationId },
+  }),
+  retirementEvidence: (indexId: string) => ({ catalog_index_retirement_evidence: { index_id: indexId } }),
+  grantDraft: (contextKey: string, expectedRevision: number, projectIds: string[], indexIds: string[] | null) => ({
+    catalog_grant_draft: {
+      context_key: contextKey,
+      selection: { expected_catalog_revision: expectedRevision, project_ids: projectIds, index_ids: indexIds },
+    },
+  }),
+  usageDocument: (project: string, read: UsageRead) => ({ usage_document: { project, read } }),
   eventsPage: (project: string | null, cursor: unknown, limit: number) => ({
     events: { project, cursor: cursor ?? null, limit },
   }),

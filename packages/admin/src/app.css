@@ -289,6 +289,88 @@ pre {
   color: var(--airk-danger);
 }
 
+/* Index library: catalog rows, summaries and reviewed changes. */
+h3 {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+h4 {
+  margin: 0.8rem 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.items {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+}
+
+.item {
+  border-top: 1px solid var(--airk-border);
+  padding: 0.4rem 0;
+  overflow-wrap: anywhere;
+}
+
+.item.retired {
+  opacity: 0.7;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.8rem;
+  font-size: 0.8rem;
+  color: var(--airk-muted);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.2rem 0.8rem;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.summary dt {
+  color: var(--airk-muted);
+}
+
+.summary dd {
+  margin: 0;
+}
+
+.summary ul,
+.summary-lines {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.reviewed,
+.apply {
+  margin: 0.4rem 0;
+}
+
+.apply {
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--airk-border);
+}
+
+details > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--airk-muted);
+}
+
 @media (max-width: 720px) {
   .layout {
     grid-template-columns: 1fr;

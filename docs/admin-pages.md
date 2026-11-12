@@ -50,17 +50,33 @@ session ends; open the pages again once it is running.
 A search scope can be chosen among existing indexes (`search.select_scope`);
 the grant lives only in the browser session.
 
-**Not in this version (1.8.30):** there is no Index library page, so an index
-cannot be created, changed or retired from the pages, and no Usage page. The
-VS Code Explorer's Indexing page cannot do this either (U6, U97). The split
-completion work in progress adds both pages, typed confirmation for destructive
-actions (U98) and matching `airkctl index`/`set` commands.
+**Index library** (U6, U97, U98). The index library lists indexes, index
+sets and grants, with their sources, memberships, policy and split state.
+
+- **Set up an index:** fill in the name, folder, data location, collection,
+  extra folders and watching. The service's full review is shown, then
+  **Create index** applies exactly that review.
+- **Index sets:** create, rename, add or remove member indexes, delete.
+- **Index changes:** rename, source changes, policy resume, split and retire.
+- **Grants:** draft and revoke.
+
+Every change is drafted or previewed by the service and shown in full before
+it is applied. The request identity stays in the service session, so the
+page holds only a review token.
+
+Removing or retiring something asks you to type the target's name (the
+grant's id for a revoke; for a split, the original index's name). A wrong
+name is refused and nothing is sent.
+
+The page can be opened on a route: `airkctl admin open --page index-library
+--for-folder <folder>` prefills a new index for that folder. The VS Code
+Explorer's **Create an index for this folder** uses this route.
+
+**Usage** shows the usage report, policy and settings documents.
 
 **Not yet served** (the API answers `not_yet_served`): searching under that
-scope (it needs a new scoped-read authority in the service), destructive
-actions (catalog apply and split apply, recovery plan execution, storage
-purge), storage inventory and login-startup rows (Phase 7), and the live event
-stream. Indexed evidence is always shown as text.
+scope (it needs a new scoped-read authority in the service), storage inventory
+and purge, the login-startup rows, and the live event stream. Indexed evidence is always shown as text.
 
 The pages are built from `packages/admin` (`npm run build`; `npm run check`
 fails when the committed bundle in `crates/airk-cli/admin-assets/` differs

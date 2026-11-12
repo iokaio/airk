@@ -47,11 +47,45 @@ function publish(session: Session | null): void {
  */
 export function takeLaunchCode(): string | null {
   const hash = window.location.hash;
-  const code = hash.startsWith('#c=') ? hash.slice(3) : '';
-  if (hash !== '' || window.location.pathname !== SHELL_PATH || window.location.search !== '') {
-    window.history.replaceState(null, '', SHELL_PATH);
+  let code = '';
+  let route: string | null = null;
+  if (hash.startsWith('#c=')) {
+    // `#c=<code>[&route=<encoded page route>]`; the code alphabet is base64url.
+    const [first, ...rest] = hash.slice(3).split('&');
+    code = first ?? '';
+    for (const part of rest) {
+      if (part.startsWith('route=')) {
+        try {
+          route = decodeURIComponent(part.slice(6));
+        } catch {
+          route = null;
+        }
+      }
+    }
+  } else if (hash.length > 1) {
+    route = hash.slice(1);
+  }
+  initialRoute = route !== null && PAGE_ROUTE.test(route) ? route : null;
+  const keep = initialRoute === null ? SHELL_PATH : `${SHELL_PATH}#${initialRoute}`;
+  if (
+    hash !== (initialRoute === null ? '' : `#${initialRoute}`) ||
+    window.location.pathname !== SHELL_PATH ||
+    window.location.search !== ''
+  ) {
+    window.history.replaceState(null, '', keep);
   }
   return code.length > 0 ? code : null;
+}
+
+/** A page route such as `index-library?root=…`: a page id and an optional query. */
+const PAGE_ROUTE = /^[a-z][a-z-]{0,31}(\?[^#\s]*)?$/;
+let initialRoute: string | null = null;
+
+/** The page route the document was opened with (after any launch code), or null. */
+export function takeInitialRoute(): string | null {
+  const route = initialRoute;
+  initialRoute = null;
+  return route;
 }
 
 function storageKeys(): string[] {

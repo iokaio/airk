@@ -11,6 +11,43 @@ export const NOT_RUNNING =
 
 export type CallResult = ParsedResponse | { kind: 'no_session' };
 
+/**
+ * The body of a review-mode or destructive row (contracts §4.3b, U98): the
+ * method without the rule's fields, the session-held review token and the
+ * typed confirmation text where the row needs one.
+ */
+export type ReviewedCall = { method: unknown; review?: string; confirm_text?: string };
+
+export function reviewedCall(method: unknown, review: string | null, confirmText?: string | null): ReviewedCall {
+  const reviewed: ReviewedCall = { method };
+  if (review !== null) reviewed.review = review;
+  if (confirmText !== undefined && confirmText !== null) reviewed.confirm_text = confirmText;
+  return reviewed;
+}
+
+const REVIEW_TOKEN = /^[0-9a-f]{32}$/;
+
+/**
+ * The success envelope's `review` token, issued by a generate-mode row (a
+ * draft, preview or keyed mutation). Read defensively: the generated
+ * SuccessEnvelope type may predate the field.
+ */
+export function reviewOf(result: CallResult): string | null {
+  if (result.kind !== 'ok') return null;
+  const review = (result.envelope as { review?: unknown }).review;
+  return typeof review === 'string' && REVIEW_TOKEN.test(review) ? review : null;
+}
+
+/** Sends a ReviewedCall for a review-mode or destructive row. */
+export function callReviewed(
+  operation: Operation,
+  method: unknown,
+  review: string | null,
+  confirmText?: string | null,
+): Promise<CallResult> {
+  return call(operation, reviewedCall(method, review, confirmText));
+}
+
 export async function call(operation: Operation, body: unknown): Promise<CallResult> {
   const session = currentSession();
   if (session === null) return { kind: 'no_session' };

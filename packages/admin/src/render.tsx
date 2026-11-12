@@ -4,7 +4,7 @@
 // C0/C1 control characters are shown as visible escapes.
 import type { ComponentChildren, JSX } from 'preact';
 import { useState } from 'preact/hooks';
-import { call, NOT_RUNNING, type CallResult } from './api';
+import { call, NOT_RUNNING, reviewOf, type CallResult } from './api';
 import type { Operation } from './operations';
 
 // C0 except tab/newline, DEL, C1, ALM, LRM/RLM, LRE..RLO, LRI..PDI, BOM.
@@ -99,6 +99,13 @@ const REQUEST_STATE_TEXT: Record<string, string> = {
   unknown: 'Outcome unknown. Check Activity → Saved requests before trying again.',
 };
 
+/** Reviewed-call codes (contracts §4.3b, U98). */
+const ERROR_TEXT: Record<string, string> = {
+  admin_review_unknown: 'Review expired; run the review again.',
+  admin_confirmation_mismatch:
+    "The typed text did not equal the target's current name exactly, so nothing was sent. Reload the details, then type the name exactly as shown.",
+};
+
 export function Outcome(props: { state: CallState }): JSX.Element | null {
   const s = props.state;
   if (s.phase === 'idle') return null;
@@ -124,6 +131,7 @@ export function Outcome(props: { state: CallState }): JSX.Element | null {
             {e.retryable ? ' — retryable' : ''}
             {typeof e.retry_after_ms === 'number' ? ` after ${e.retry_after_ms} ms` : ''}
           </p>
+          {ERROR_TEXT[e.code] !== undefined ? <p class="error">{ERROR_TEXT[e.code]}</p> : null}
           {e.native !== undefined ? <JsonBlock name={file} value={e.native} /> : null}
         </div>
       );
@@ -136,6 +144,12 @@ export function Outcome(props: { state: CallState }): JSX.Element | null {
             <p class={`request request-${request.state}`}>
               Request <code>{request.nonce}</code>: {request.state}.{' '}
               {REQUEST_STATE_TEXT[request.state] ?? ''}
+            </p>
+          ) : null}
+          {reviewOf(r) !== null ? (
+            <p class="muted">
+              This review is held by this session; its request identity stays in the service and is not
+              part of the result below.
             </p>
           ) : null}
           <DocumentText result={r.envelope.result} />
