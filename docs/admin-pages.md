@@ -74,9 +74,23 @@ Explorer's **Create an index for this folder** uses this route.
 
 **Usage** shows the usage report, policy and settings documents.
 
+**Storage** lists the service's locations with their sizes (U100):
+program, data, state, cache and logs.
+
+- **Clean up the cache:** deletes every cache file.
+- **Clean up closed logs:** deletes old log files, never the one being
+  written.
+
+Each purge first shows the exact plan, and runs only after you type the
+location's path. Indexes are removed in the Index library, never here.
+
+**Service** › **Start at sign-in** (Windows, U101) shows, turns on or turns
+off login startup. Turning it off is refused while the service itself was
+started at sign-in; stop it and run `airkctl service login uninstall`.
+
 **Not yet served** (the API answers `not_yet_served`): searching under that
-scope (it needs a new scoped-read authority in the service), storage inventory
-and purge, the login-startup rows, and the live event stream. Indexed evidence is always shown as text.
+scope (it needs a new scoped-read authority in the service) and the live
+event stream. Indexed evidence is always shown as text.
 
 The pages are built from `packages/admin` (`npm run build`; `npm run check`
 fails when the committed bundle in `crates/airk-cli/admin-assets/` differs

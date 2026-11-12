@@ -3,6 +3,7 @@
 // shows complete native results as text.
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { reviewedCall } from './api';
 import { body, isDigest, isIncarnation, MAX_PAGE_LIMIT, OPS } from './operations';
 import {
   bindingsIn,
@@ -254,18 +255,72 @@ export function Agents(): JSX.Element {
   );
 }
 
+/** Field `name` of an object result, or undefined. */
+function field(value: unknown, name: string): unknown {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[name] : undefined;
+}
+
+/** One purgeable location (U100): plan, read every file, type the path, purge. */
+function PurgeLocation(props: { kind: 'cache' | 'logs'; title: string }): JSX.Element {
+  const [plan, runPlan] = useCall();
+  const [purge, runPurge] = useCall();
+  const [typed, setTyped] = useState('');
+  const result = plan.phase === 'done' && plan.result.kind === 'ok' ? plan.result.envelope.result : undefined;
+  const digest = field(result, 'plan_digest');
+  const path = field(field(result, 'plan'), 'path');
+  const ready = typeof digest === 'string' && isDigest(digest) && typeof path === 'string';
+  return (
+    <Panel title={props.title}>
+      <p>
+        {props.kind === 'cache'
+          ? 'Deletes every file in the service cache; the service re-creates what it needs.'
+          : 'Deletes closed log files only; the log the service is writing stays.'}{' '}
+        Nothing is deleted until you review the plan and type the location&apos;s path.
+      </p>
+      <button type="button" onClick={() => void runPlan(OPS.storagePurgePlan, body.storagePurgePlan(props.kind))}>
+        Review purge plan
+      </button>
+      <Outcome state={plan} />
+      {ready ? (
+        <div class="row">
+          <Field label={`Type ${String(path)} to confirm`} wide value={typed} onInput={setTyped} />
+          <button
+            type="button"
+            class="danger"
+            disabled={typed !== path}
+            onClick={() =>
+              void runPurge(
+                OPS.storagePurge,
+                reviewedCall(body.storagePurge(props.kind, String(digest)), null, typed),
+              )
+            }
+          >
+            Purge exactly this plan
+          </button>
+        </div>
+      ) : null}
+      <Outcome state={purge} />
+    </Panel>
+  );
+}
+
 export function Storage(): JSX.Element {
   const [inventory, runInventory] = useCall();
   return (
-    <Panel title="Storage inventory">
-      <button
-        type="button"
-        onClick={() => void runInventory(OPS.storageInventory, body.storageInventory())}
-      >
-        Load
-      </button>
-      <Outcome state={inventory} />
-    </Panel>
+    <>
+      <Panel title="Storage inventory">
+        <p>The service&apos;s locations with their sizes. Indexes are removed in the Index library, never here.</p>
+        <button
+          type="button"
+          onClick={() => void runInventory(OPS.storageInventory, body.storageInventory())}
+        >
+          Load
+        </button>
+        <Outcome state={inventory} />
+      </Panel>
+      <PurgeLocation kind="cache" title="Clean up the cache" />
+      <PurgeLocation kind="logs" title="Clean up closed logs" />
+    </>
   );
 }
 
@@ -300,6 +355,32 @@ export function Recovery(): JSX.Element {
         </button>
       </div>
       <Outcome state={items} />
+    </Panel>
+  );
+}
+
+/** U101: start the service when you sign in to Windows. */
+function LoginStartup(): JSX.Element {
+  const [login, runLogin] = useCall();
+  return (
+    <Panel title="Start at sign-in">
+      <p>
+        Starts AIRK Service when you sign in to Windows. Removing it while the service was started at sign-in is
+        refused (<code>login_startup_in_use</code>); stop the service and use <code>airkctl service login uninstall</code>.
+        Other platforms report that this is not managed here.
+      </p>
+      <div class="row">
+        <button type="button" onClick={() => void runLogin(OPS.loginStatus, body.loginStartup('status'))}>
+          Status
+        </button>
+        <button type="button" onClick={() => void runLogin(OPS.loginInstall, body.loginStartup('install'))}>
+          Turn on
+        </button>
+        <button type="button" onClick={() => void runLogin(OPS.loginUninstall, body.loginStartup('uninstall'))}>
+          Turn off
+        </button>
+      </div>
+      <Outcome state={login} />
     </Panel>
   );
 }
@@ -341,6 +422,7 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
         <Command text="airkctl service trust remove --expected-ca-sha256 <issuer-sha256>" />
         <Command text="airkctl service issuer-rotation status" />
       </Panel>
+      <LoginStartup />
       <Panel title="Restart or stop">
         <p>
           A restart or stop ends this admin session. After a stop, start the service again with{' '}

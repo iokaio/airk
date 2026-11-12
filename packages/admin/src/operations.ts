@@ -51,6 +51,11 @@ export const OPS = {
   recoveryPlan: 'recovery.plan',
   recoveryPlanItems: 'recovery.plan_items',
   storageInventory: 'storage.inventory',
+  storagePurgePlan: 'storage.purge_plan',
+  storagePurge: 'storage.purge',
+  loginStatus: 'service.login_startup_status',
+  loginInstall: 'service.login_startup_install',
+  loginUninstall: 'service.login_startup_uninstall',
   logsRecent: 'logs.recent',
   agentsConnection: 'agents.connection',
   agentsOwnership: 'agents.ownership',
@@ -274,6 +279,13 @@ export const body = {
     plan_items: { id, after, limit },
   }),
   storageInventory: () => ({ storage_inventory: {} }),
+  /** U100: only the cache and closed logs are purgeable. */
+  storagePurgePlan: (kind: 'cache' | 'logs') => ({ storage_purge_plan: { kind } }),
+  storagePurge: (kind: 'cache' | 'logs', planDigest: string) => ({
+    storage_purge: { kind, plan_digest: planDigest },
+  }),
+  /** U101: Windows login startup. */
+  loginStartup: (action: 'status' | 'install' | 'uninstall') => ({ login_startup: { action } }),
   logsRecent: (limit: number) => ({ logs: { limit } }),
   agentsConnection: (connectionId: string) => ({ agent_connection_info: { connection_id: connectionId } }),
   agentsOwnership: (connectionId: string) => ({

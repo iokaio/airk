@@ -56,7 +56,8 @@ fn version_answers_locally_in_both_formats() {
 fn unserved_commands_and_argument_errors_keep_their_classes() {
     for unserved in [
         &["explorer", "templates"][..],
-        &["service", "login", "status"],
+        // `service login` is served since U101; another unknown subcommand.
+        &["library", "export"],
     ] {
         let (code, _, stderr) = run_line(unserved);
         assert_eq!(code, 5, "{unserved:?}");

@@ -740,6 +740,37 @@ enum ServiceCommand {
         #[arg(long)]
         stdin: bool,
     },
+    /// The service's locations (program, data, state, cache, logs) with sizes (U100).
+    Inventory {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// The exact files a purge of the cache or the closed logs would delete now, and its plan digest.
+    PurgePlan {
+        #[arg(long, value_parser = ["cache", "logs"])]
+        kind: String,
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Delete exactly the plan --plan-digest names; --confirm must be the location's path as `inventory` lists it.
+    Purge {
+        #[arg(long, value_parser = ["cache", "logs"])]
+        kind: String,
+        #[arg(long)]
+        plan_digest: String,
+        #[arg(long)]
+        confirm: Option<String>,
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Login startup on Windows: status, install or uninstall (U101).
+    Login {
+        #[arg(value_parser = ["status", "install", "uninstall"])]
+        action: String,
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
         /// The service's control directory (default: --service-runtime-dir).
@@ -2969,6 +3000,33 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
         } => {
             return requests(cx, selection, runtime_dir, action);
         }
+        ServiceCommand::Inventory { runtime_dir } => {
+            return storage::inventory(cx, &selection, runtime_dir);
+        }
+        ServiceCommand::PurgePlan { kind, runtime_dir } => {
+            return storage::purge_plan(cx, &selection, runtime_dir, &kind);
+        }
+        ServiceCommand::Purge {
+            kind,
+            plan_digest,
+            confirm,
+            runtime_dir,
+        } => {
+            return storage::purge(
+                cx,
+                &selection,
+                runtime_dir,
+                &kind,
+                &plan_digest,
+                confirm.as_deref(),
+            );
+        }
+        ServiceCommand::Login {
+            action,
+            runtime_dir,
+        } => {
+            return storage::login(cx, &selection, runtime_dir, &action);
+        }
         ServiceCommand::RecordError {
             runtime_dir,
             operation,
@@ -3356,5 +3414,6 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
 mod library;
 pub mod session;
 mod shell;
+mod storage;
 #[cfg(test)]
 mod tests;

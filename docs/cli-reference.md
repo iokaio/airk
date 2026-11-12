@@ -66,11 +66,15 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl service`](#airkctl-service)
 - [`airkctl service abandon-lifecycle`](#airkctl-service-abandon-lifecycle)
 - [`airkctl service health`](#airkctl-service-health)
+- [`airkctl service inventory`](#airkctl-service-inventory)
 - [`airkctl service issuer-rotation`](#airkctl-service-issuer-rotation)
+- [`airkctl service login`](#airkctl-service-login)
 - [`airkctl service logs`](#airkctl-service-logs)
 - [`airkctl service prepare-configuration`](#airkctl-service-prepare-configuration)
 - [`airkctl service prepare-registration`](#airkctl-service-prepare-registration)
 - [`airkctl service prepare-storage`](#airkctl-service-prepare-storage)
+- [`airkctl service purge`](#airkctl-service-purge)
+- [`airkctl service purge-plan`](#airkctl-service-purge-plan)
 - [`airkctl service record-error`](#airkctl-service-record-error)
 - [`airkctl service register`](#airkctl-service-register)
 - [`airkctl service requests`](#airkctl-service-requests)
@@ -4142,6 +4146,10 @@ Commands:
   prepare-storage        Create the reserved index storage for an already reserved project (owner-only on Unix)
   requests               Saved client requests: list, prepare, retry or forget by nonce
   rpc                    Send one raw management request (ControlMethod JSON) and print the service's answer
+  inventory              The service's locations (program, data, state, cache, logs) with sizes (U100)
+  purge-plan             The exact files a purge of the cache or the closed logs would delete now, and its plan digest
+  purge                  Delete exactly the plan --plan-digest names; --confirm must be the location's path as `inventory` lists it
+  login                  Login startup on Windows: status, install or uninstall (U101)
   health                 Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise
   shutdown               Ask the service for --runtime-dir to drain its workers and exit
 
@@ -4303,6 +4311,61 @@ Options:
           Print help
 ```
 
+## airkctl service inventory
+
+```text
+The service's locations (program, data, state, cache, logs) with sizes (U100)
+
+Usage: airkctl service inventory [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
 ## airkctl service issuer-rotation
 
 ```text
@@ -4323,6 +4386,65 @@ Options:
 
       --runtime-dir <RUNTIME_DIR>
           The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl service login
+
+```text
+Login startup on Windows: status, install or uninstall (U101)
+
+Usage: airkctl service login [OPTIONS] <ACTION>
+
+Arguments:
+  <ACTION>
+          [possible values: status, install, uninstall]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -4561,6 +4683,128 @@ Options:
 
 
       --project <PROJECT>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl service purge
+
+```text
+Delete exactly the plan --plan-digest names; --confirm must be the location's path as `inventory` lists it
+
+Usage: airkctl service purge [OPTIONS] --kind <KIND> --plan-digest <PLAN_DIGEST>
+
+Options:
+      --kind <KIND>
+          [possible values: cache, logs]
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --plan-digest <PLAN_DIGEST>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --confirm <CONFIRM>
+
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl service purge-plan
+
+```text
+The exact files a purge of the cache or the closed logs would delete now, and its plan digest
+
+Usage: airkctl service purge-plan [OPTIONS] --kind <KIND>
+
+Options:
+      --kind <KIND>
+          [possible values: cache, logs]
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
 
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
