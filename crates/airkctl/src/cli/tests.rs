@@ -39,7 +39,11 @@ fn version_answers_locally_in_both_formats() {
 
 #[test]
 fn unserved_commands_and_argument_errors_keep_their_classes() {
-    for unserved in [&["index"][..], &["agents", "connect"], &["tools", "shell"]] {
+    for unserved in [
+        &["explorer", "templates"][..],
+        &["agents", "connect"],
+        &["tools", "shell"],
+    ] {
         let (code, _, stderr) = run_line(unserved);
         assert_eq!(code, 5, "{unserved:?}");
         assert!(stderr.contains("not served"), "{unserved:?}: {stderr}");

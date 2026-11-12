@@ -111,6 +111,15 @@ enum Command {
         #[command(subcommand)]
         action: ToolsCommand,
     },
+    /// Queue indexing for the project (full rebuilds need a reviewed maintenance preview).
+    Index {
+        #[arg(long)]
+        full: bool,
+    },
+    /// Queue the explicit model setup job for the project.
+    SetupModel,
+    /// Queue an inspection of the project's configuration and index.
+    Inspect,
     /// Pause work for the project.
     Pause,
     /// Resume work paused with `pause`.
@@ -133,6 +142,28 @@ enum Command {
     },
     #[command(flatten)]
     Evidence(Box<EvidenceCommand>),
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
+enum RequestsCommand {
+    /// Save a job request (--kind index, inspect, reconcile, vectors, model_setup, verify, recover or maintain).
+    Prepare {
+        #[arg(long)]
+        project: ProjectBinding,
+        #[arg(long, default_value = "index", value_parser = ["index", "inspect", "reconcile", "vectors", "model_setup", "verify", "recover", "maintain"])]
+        kind: String,
+    },
+    /// List saved client requests and their outcomes.
+    List,
+    /// Submit, or resubmit after an unknown outcome, a saved request by its nonce.
+    Retry {
+        nonce: airk_core::identity::Incarnation,
+    },
+    /// Discard a saved request record by its nonce.
+    Forget {
+        nonce: airk_core::identity::Incarnation,
+    },
 }
 
 #[derive(Subcommand)]
@@ -190,6 +221,14 @@ enum ServiceCommand {
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
         operation: String,
+    },
+    /// Saved client requests: list, prepare, retry or forget by nonce.
+    Requests {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: RequestsCommand,
     },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
@@ -731,6 +770,103 @@ fn project_control(
     }
 }
 
+/// A job command (`index`, `setup-model`, `inspect`; step 3c.3c), as
+/// `airk` ran it: journal the keyed request, name it on stderr, submit it,
+/// print the job and forget the record.
+fn job(cx: &mut Context, selection: Selection, kind: airk_core::service::JobKind) -> u8 {
+    if let Err(code) = administrative(cx, &selection) {
+        return code;
+    }
+    let (control, registration) = match project_for(cx, &selection) {
+        Ok(found) => found,
+        Err(code) => return code,
+    };
+    let nonce = match crate::journal::prepare(&control, VERSION, registration.binding, kind) {
+        Ok(nonce) => nonce,
+        Err(line) => return fail(cx, &line),
+    };
+    let _ = writeln!(
+        cx.io.stderr,
+        "Saved CLI request {nonce}; use 'airkctl service requests --runtime-dir <control> list/retry' for uncertain outcomes."
+    );
+    let response = match crate::journal::submit(&control, VERSION, nonce) {
+        Ok(response) => response,
+        Err(line) => return fail(cx, &line),
+    };
+    let printed = print_compact(cx, &response);
+    if let Err(line) = crate::journal::forget(&control, VERSION, nonce) {
+        return fail(cx, &line);
+    }
+    printed
+}
+
+/// `service requests …` (step 3c.3c), printing what `airk service requests`
+/// printed.
+fn requests(
+    cx: &mut Context,
+    selection: Selection,
+    runtime_dir: Option<PathBuf>,
+    action: RequestsCommand,
+) -> u8 {
+    let control = match runtime_dir.or(selection.control) {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    let line = |cx: &mut Context, value: serde_json::Value| {
+        let result = writeln!(cx.io.stdout, "{value}");
+        written(cx, result)
+    };
+    match action {
+        // Each entry prints in its field order (nonce, project, kind), as `airk`
+        // printed its records; a JSON value would sort the keys.
+        RequestsCommand::List => match crate::journal::list(&control, VERSION) {
+            Ok(pending) => match serde_json::to_string(&pending) {
+                Ok(text) => {
+                    let result = writeln!(cx.io.stdout, "{text}");
+                    written(cx, result)
+                }
+                Err(_) => ExitClass::Internal.code(),
+            },
+            Err(error) => fail(cx, &error),
+        },
+        RequestsCommand::Prepare { project, kind } => {
+            let Ok(kind) = serde_json::from_value(serde_json::json!(kind)) else {
+                return usage(cx, "unknown job kind");
+            };
+            match crate::journal::prepare(&control, VERSION, project, kind) {
+                Ok(nonce) => line(
+                    cx,
+                    serde_json::json!({"prepared": nonce, "submitted": false}),
+                ),
+                Err(error) => fail(cx, &error),
+            }
+        }
+        RequestsCommand::Retry { nonce } => {
+            match crate::journal::submit(&control, VERSION, nonce) {
+                Ok(response) => {
+                    let printed = print_compact(cx, &response);
+                    match crate::journal::forget(&control, VERSION, nonce) {
+                        Ok(_) => printed,
+                        Err(error) => fail(cx, &error),
+                    }
+                }
+                Err(error) => fail(cx, &error),
+            }
+        }
+        RequestsCommand::Forget { nonce } => match crate::journal::forget(&control, VERSION, nonce)
+        {
+            Ok(_) => line(
+                cx,
+                serde_json::json!({"forgotten": nonce, "native_work_canceled": false}),
+            ),
+            Err(error) => fail(cx, &error),
+        },
+    }
+}
+
 /// `projects [--runtime-dir]` (step 3c.2): every registered project, as
 /// `airk projects` listed them.
 fn projects(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>) -> u8 {
@@ -1258,6 +1394,12 @@ fn record_error_service(
 
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        ServiceCommand::Requests {
+            runtime_dir,
+            action,
+        } => {
+            return requests(cx, selection, runtime_dir, action);
+        }
         ServiceCommand::RecordError {
             runtime_dir,
             operation,
@@ -1365,6 +1507,13 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
     match command {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
+        Command::Index { full: true } => usage(
+            cx,
+            "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC",
+        ),
+        Command::Index { full: false } => job(cx, selection, airk_core::service::JobKind::Index),
+        Command::SetupModel => job(cx, selection, airk_core::service::JobKind::ModelSetup),
+        Command::Inspect => job(cx, selection, airk_core::service::JobKind::Inspect),
         Command::Pause => project_control(cx, selection, |project| ControlMethod::Pause {
             project,
             paused: true,

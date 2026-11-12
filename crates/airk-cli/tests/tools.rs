@@ -1036,3 +1036,155 @@ fn the_request_journal_follows_its_contract_rules() -> anyhow::Result<()> {
     ));
     Ok(())
 }
+
+/// `airkctl index|inspect` and `service requests …` run the journal as
+/// `airk` did (split step 3c.3c): the same job kind and project, the same
+/// guidance line (nonce normalized, `airk` → `airkctl`), the same listing.
+#[test]
+fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-jobs");
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    let control = service.control.to_str().unwrap().to_owned();
+    let binding = service.project.binding.to_string();
+    let ctl = |arguments: &[&str]| -> (u8, String, String) {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: false,
+        };
+        let line = std::iter::once("airkctl")
+            .chain(arguments.iter().copied())
+            .map(std::ffi::OsString::from)
+            .collect();
+        let code = airkctl::cli::run(line, &mut io);
+        (
+            code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    };
+    let nonce = regex_free_nonce;
+    for command in ["inspect", "index"] {
+        let old = common::command(root.path(), state.path(), "ctl-jobs")
+            .arg(command)
+            .output()?;
+        assert!(
+            old.status.success(),
+            "{}",
+            String::from_utf8_lossy(&old.stderr)
+        );
+        let (code, stdout, stderr) = ctl(&[
+            "--service-runtime-dir",
+            &control,
+            "--service-project",
+            &binding,
+            command,
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+        let old_job: Value = serde_json::from_slice(&old.stdout)?;
+        let new_job: Value = serde_json::from_str(&stdout)?;
+        assert_eq!(new_job["status"], "job");
+        assert_eq!(
+            (&new_job["job"]["project"], &new_job["job"]["kind"]),
+            (&old_job["job"]["project"], &old_job["job"]["kind"]),
+            "{command}"
+        );
+        let old_line = nonce(
+            String::from_utf8_lossy(&old.stderr)
+                .lines()
+                .last()
+                .unwrap_or_default(),
+        )
+        .replace("'airk service", "'airkctl service");
+        assert_eq!(
+            nonce(stderr.lines().last().unwrap_or_default()),
+            old_line,
+            "{command}"
+        );
+    }
+    let (code, prepared, stderr) = ctl(&[
+        "service",
+        "requests",
+        "--runtime-dir",
+        &control,
+        "prepare",
+        "--project",
+        &binding,
+        "--kind",
+        "inspect",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let prepared: Value = serde_json::from_str(&prepared)?;
+    assert_eq!(prepared["submitted"], false);
+    let saved = prepared["prepared"].as_str().unwrap().to_owned();
+    let old_list = command_in(
+        &control,
+        &["service", "requests", "--runtime-dir", &control, "list"],
+    )?;
+    let (code, new_list, _) = ctl(&["service", "requests", "--runtime-dir", &control, "list"]);
+    assert_eq!((code, new_list.as_str()), (0, old_list.as_str()));
+    assert!(new_list.contains(&saved), "{new_list}");
+    let (code, retried, stderr) = ctl(&[
+        "service",
+        "requests",
+        "--runtime-dir",
+        &control,
+        "retry",
+        &saved,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&retried)?["job"]["kind"],
+        "inspect"
+    );
+    let (code, forgotten, _) = ctl(&[
+        "service",
+        "requests",
+        "--runtime-dir",
+        &control,
+        "forget",
+        &saved,
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&forgotten)?,
+        json!({"forgotten": saved, "native_work_canceled": false})
+    );
+    let (_, emptied, _) = ctl(&["service", "requests", "--runtime-dir", &control, "list"]);
+    assert_eq!(emptied.trim(), "[]");
+    Ok(())
+}
+
+/// A line with its 32-hex request nonce replaced by `<nonce>`.
+fn regex_free_nonce(line: &str) -> String {
+    let marker = "Saved CLI request ";
+    match line.find(marker) {
+        Some(start) => {
+            let begin = start + marker.len();
+            let end = (begin + 32).min(line.len());
+            format!("{}<nonce>{}", &line[..begin], &line[end..])
+        }
+        None => line.to_owned(),
+    }
+}
+
+/// `airk` with only these arguments, its stdout.
+fn command_in(_control: &str, arguments: &[&str]) -> anyhow::Result<String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .args(arguments)
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?)
+}
