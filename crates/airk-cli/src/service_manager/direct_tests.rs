@@ -124,3 +124,58 @@ fn captured_runtime_rejects_crossed_paths_arguments_and_schema() -> Result<()> {
     assert!(manager.check_owned().is_err());
     Ok(())
 }
+
+/// A pre-split installation's receipt and Task Scheduler definition, in the
+/// exact form pre-split AIRK wrote them (observed on a real 1.8.2x install,
+/// with this fixture's root, principal and runtime digest substituted).
+/// Split setup must accept it for retirement and must never launch it.
+#[cfg(windows)]
+#[test]
+fn a_pre_split_windows_registration_is_owned_for_removal_but_never_launched() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let mut manager = shared(Platform::Windows, root.path());
+    manager.principal = "S-1-5-21-1-2-3-1002".into();
+    let data = manager.data.clone();
+    let runtime_sha256 = "40".repeat(32);
+    let executable = format!(r"{data}\runtimes\{runtime_sha256}\airk.exe");
+    let captured = RuntimeExecution {
+        executable: PathBuf::from(&executable),
+        arguments: vec![
+            "runtime".into(),
+            "managed-serve".into(),
+            "--install-dir".into(),
+            data.clone(),
+        ],
+        runtime_sha256: runtime_sha256.clone(),
+        executable_sha256: "47".repeat(32),
+    };
+    manager.validate_runtime_execution(&captured)?;
+    let id = &manager.id;
+    let user = &manager.principal;
+    let command = executable.trim_start_matches(r"\\?\");
+    let definition = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\"><RegistrationInfo><Description>AIRK managed per-user scheduler {id}</Description></RegistrationInfo><Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers><Principals><Principal id=\"User\"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context=\"User\"><Exec><Command>{command}</Command><Arguments>&quot;runtime&quot; &quot;managed-serve&quot; &quot;--install-dir&quot; &quot;{data}&quot;</Arguments></Exec></Actions></Task>\n"
+    );
+    let bytes = manager.definition_bytes(&definition);
+    let receipt = serde_json::json!({
+        "schema": 2,
+        "id": id,
+        "data_root": data,
+        "definition_sha256": format!("{:x}", Sha256::digest(&bytes)),
+        "runtime": {
+            "executable": executable,
+            "arguments": captured.arguments,
+            "runtime_sha256": runtime_sha256,
+            "executable_sha256": captured.executable_sha256,
+        },
+    });
+    write_new(&manager.definition, &bytes)?;
+    write_new(&manager.receipt, &serde_json::to_vec(&receipt)?)?;
+    assert!(manager.check_owned()?);
+    assert_eq!(
+        manager.execution()?,
+        (captured.executable, captured.arguments)
+    );
+    assert!(manager.check_launchable().is_err());
+    Ok(())
+}

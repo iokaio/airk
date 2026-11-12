@@ -407,6 +407,20 @@ impl ServiceManager {
         ]
     }
 
+    /// The command every pre-split installation captured in its schema-2
+    /// receipt, before the interim selector (U93) prefixed it. Accepted only
+    /// so a predecessor stays inspectable and removable (split setup
+    /// retirement); `check_launchable` still requires `runtime_arguments`,
+    /// so it is never started.
+    fn pre_split_runtime_arguments(&self) -> Vec<String> {
+        vec![
+            "runtime".into(),
+            "managed-serve".into(),
+            "--install-dir".into(),
+            self.data.clone(),
+        ]
+    }
+
     fn validate_runtime_execution(&self, captured: &RuntimeExecution) -> Result<()> {
         ensure!(
             self.is_direct_runtime(),
@@ -420,7 +434,9 @@ impl ServiceManager {
             .join(&captured.runtime_sha256)
             .join(crate::install_files::main_name());
         ensure!(
-            captured.executable == expected && captured.arguments == self.runtime_arguments(),
+            captured.executable == expected
+                && (captured.arguments == self.runtime_arguments()
+                    || captured.arguments == self.pre_split_runtime_arguments()),
             "captured runtime manager command differs from its installation"
         );
         Ok(())

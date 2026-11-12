@@ -114,6 +114,11 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   root needs removal. A root that cannot be retired is a leftover with its
   reason; a leftover that can restart an old service is listed first. The
   pre-split Inno `standalone` folder is reported, not removed (U74 pending).
+  A pre-split shared-manager receipt names the pre-U93 command
+  `runtime managed-serve --install-dir <root>`; `service_manager` accepts it
+  (with the interim form) for ownership and removal only, never for launch.
+  On close, leftovers are written to `leftovers.txt` beside the operation
+  (`leftover_notice`), which the Inno installer shows after placement.
 - `drain`: for the operation's and the existing record's control roots, a
   `Health` from this user's service whose reported image SHA-256 is the
   existing record's or the payload's `airk`, then `Shutdown` fenced to its

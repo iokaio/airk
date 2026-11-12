@@ -391,3 +391,25 @@ fn a_location_parent_may_be_readable_by_others_but_an_existing_location_may_not(
     );
     Ok(())
 }
+
+#[test]
+fn a_leftover_is_reported_to_the_installer_and_nothing_else_is() {
+    assert_eq!(super::leftover_notice(&[]), None);
+    let notice = super::leftover_notice(&[
+        airk_core::install_record::Leftover {
+            item: r"C:\Users\fixture\AppData\Local\AIRK\runtime".into(),
+            reason: "captured runtime manager command differs from its installation".into(),
+            restarts_old_service: true,
+        },
+        airk_core::install_record::Leftover {
+            item: "stale trust".into(),
+            reason: "not found".into(),
+            restarts_old_service: false,
+        },
+    ])
+    .expect("a notice");
+    assert_eq!(
+        notice,
+        "AIRK Service is installed, but setup could not remove these earlier AIRK items. They are still installed and may still be running:\n  - C:\\Users\\fixture\\AppData\\Local\\AIRK\\runtime: captured runtime manager command differs from its installation\n    (this can start the old AIRK service again at sign-in)\n  - stale trust: not found\n"
+    );
+}

@@ -628,6 +628,11 @@ begin
         RaiseException('AIRK Service files are installed, but setup did not complete:' + #13#10 +
           SetupFailure(SetupOperation));
       AddOwnedUserPath;
+      { Earlier installations setup could not remove are still installed. }
+      if FileExists(ExtractFileDir(SetupOperation) + '\leftovers.txt') then
+        MsgBox(Trim(ReadText(ExtractFileDir(SetupOperation) + '\leftovers.txt')) + #13#10 + #13#10 +
+          'Details are in the setup receipt; "airkctl service status" shows the new service.',
+          mbInformation, MB_OK);
     except
       MsgBox(GetExceptionMessage + #13#10 + #13#10 +
         'Run "airkctl service status" for details; running this installer again repairs the installation.',

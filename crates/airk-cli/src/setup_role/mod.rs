@@ -210,6 +210,24 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
     }
 }
 
+/// Pure: the notice an installer shows when earlier installations were left
+/// in place, or `None` when nothing was left.
+pub(crate) fn leftover_notice(leftovers: &[Leftover]) -> Option<String> {
+    if leftovers.is_empty() {
+        return None;
+    }
+    let mut text = String::from(
+        "AIRK Service is installed, but setup could not remove these earlier AIRK items. They are still installed and may still be running:\n",
+    );
+    for leftover in leftovers {
+        text.push_str(&format!("  - {}: {}\n", leftover.item, leftover.reason));
+        if leftover.restarts_old_service {
+            text.push_str("    (this can start the old AIRK service again at sign-in)\n");
+        }
+    }
+    Some(text)
+}
+
 fn files_receipt_path(state: &Path, operation_id: Incarnation) -> String {
     state
         .join("setup")
@@ -1022,6 +1040,15 @@ impl Setup {
         }
         self.receipt.closed = true;
         self.record(SetupPhase::Complete, "closed", "")?;
+        // What setup could not remove stays installed and may still run; the
+        // platform installer shows `leftovers.txt` (best effort, not removed
+        // with the operation files below).
+        if let (Some(notice), Some(folder)) = (
+            leftover_notice(&self.receipt.leftovers),
+            self.operation_path.parent(),
+        ) {
+            let _ = files::write_owner_file(folder, "leftovers.txt", notice.as_bytes());
+        }
         // Single use: the operation file and its folder go once the receipt
         // is closed; a replay then finds the closed receipt.
         let _ = std::fs::remove_file(&self.operation_path);
