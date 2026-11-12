@@ -152,7 +152,7 @@ def compile_installer(steps, iscc, layout, output, artifact, uninstallers=None, 
         definitions["AirkUninstallers"] = uninstallers
     if any(any(char in str(value) for char in ("\r", "\n", '"')) for value in definitions.values()):
         raise ValueError("Unsafe Inno Setup definition")
-    command = [iscc, "/Qp", "/NI", *[f"/D{key}={value}" for key, value in definitions.items()], SCRIPT]
+    command = [iscc, "/Qp", *[f"/D{key}={value}" for key, value in definitions.items()], SCRIPT]
     if allow_failure:
         try:
             steps.run(name, command)
