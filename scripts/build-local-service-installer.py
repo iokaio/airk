@@ -2,9 +2,10 @@
 """Force a local Windows AIRK Service installer build (split plan §10.5.1, U21, U22, U37).
 
 Entry point: scripts/build-local-service-installer.ps1 -ForceBuild. Steps, stopping at the first
-failure: prerequisites; the admin bundle check (`npm run check` in packages/admin); release `airk`
-(shipping inference, through build-service-runtime.py's cargo owner and its verified static ORT
-inputs) and `airkctl`; the §9.5 staged layout (bin/, service/, notices/) with
+failure: prerequisites; the admin bundle check (scripts/build-admin-assets.py: `npm ci` and
+`npm run check` in packages/admin); release `airk` (shipping inference) and lightweight `airkctl`,
+both through build-service-runtime.py's one Cargo owner, with its verified static ORT inputs and
+airkctl dependency proof; the §9.5 staged layout (bin/, service/, notices/) with
 `payload-inventory.json` (airk-service-payload/1, setup_role CONTRACT.md); signing; the Inno
 script installers/windows/airk-service.iss; a receipt. Nothing is installed, started, trusted or
 published.
@@ -30,7 +31,6 @@ import tomllib
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = "x86_64-pc-windows-msvc"
 SCRIPT = ROOT / "installers/windows/airk-service.iss"
-ADMIN_ASSETS = ROOT / "crates/airk-cli/admin-assets"
 INVENTORY_SCHEMA = "airk-service-payload/1"
 OUTPUT = ROOT / "artifacts/local-service-installer"
 
@@ -47,32 +47,10 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def framed_digest(domain, fields):
-    """airk_core::identity::framed_digest: magic, then each field with a u64 BE length."""
-    hash = hashlib.sha256(b"AIRK-DIGEST-1\0")
-    for field in [domain, *fields]:
-        hash.update(len(field).to_bytes(8, "big"))
-        hash.update(field)
-    return hash.hexdigest()
-
-
 def admin_digests():
-    """The I4 admin digests the airk image computes from its embedded bundle
-    (admin_plane::embedded_asset_digests): name order, inventory = name, SHA-256 and content
-    type; bundle = name and bytes."""
-    manifest = json.loads((ADMIN_ASSETS / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("schema") != "airk-admin-assets/1":
-        raise RuntimeError("Unexpected admin asset manifest schema")
-    inventory, bundle = [], []
-    for name in sorted(manifest["files"]):
-        entry = manifest["files"][name]
-        data = (ADMIN_ASSETS / name).read_bytes()
-        if hashlib.sha256(data).hexdigest() != entry["sha256"]:
-            raise RuntimeError(f"Stale admin asset {name}; rebuild the admin bundle")
-        inventory += [name.encode(), entry["sha256"].encode(), entry["content_type"].encode()]
-        bundle += [name.encode(), data]
-    return {"inventory_sha256": framed_digest(b"airk/admin-asset-inventory/1", inventory),
-            "bundle_sha256": framed_digest(b"airk/admin-asset-bundle/1", bundle)}
+    """The I4 admin digests the airk image computes from its embedded bundle; one owner:
+    scripts/build-admin-assets.py."""
+    return load_script("build-admin-assets").digests()
 
 
 class Steps:
@@ -104,20 +82,11 @@ class Steps:
 def prerequisites(iscc):
     if sys.platform != "win32":
         raise SystemExit("The local service installer is built on Windows")
-    missing = [tool for tool in ("cargo", "rustc", "npm", "node", "pwsh") if shutil.which(tool) is None]
+    missing = [tool for tool in ("cargo", "rustc", "npm", "node", "pwsh", "git") if shutil.which(tool) is None]
     if not iscc.is_file():
         missing.append(f"Inno Setup ISCC ({iscc})")
     if missing:
         raise SystemExit("Missing prerequisites: " + ", ".join(missing))
-
-
-def cargo_airkctl(steps):
-    steps.run("airkctl", ["cargo", "build", "--locked", "--release", "-p", "airkctl", "--bin", "airkctl",
-                          "--timings"])
-    executable = ROOT / "target/release/airkctl.exe"
-    if not executable.is_file():
-        raise RuntimeError("Cargo did not produce airkctl.exe")
-    return executable
 
 
 def stage(layout, airk, airkctl, version, signing):
@@ -170,6 +139,8 @@ def main():
         raise SystemExit("scripts/sign-native.py has no local Trusted Signing adapter yet (U70); "
                          "a signed installer cannot be built. Pass --unsigned for a labeled packaging check.")
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    if not load_script("split_receipts").split_version(version):
+        raise SystemExit(f"Version {version} predates the split; increment the patch version before a local build")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     run = OUTPUT / time.strftime("%Y%m%d-%H%M%S")
@@ -178,12 +149,15 @@ def main():
     receipt = {"schema": "airk-local-service-installer/1", "version": version, "target": TARGET,
                "commit": commit, "dirty": dirty, "signed": False, "result": "failed"}
     try:
-        steps.run("admin-npm-ci", ["npm", "ci"], cwd=ROOT / "packages/admin")
-        steps.run("admin-check", ["npm", "run", "check"], cwd=ROOT / "packages/admin")
+        admin = load_script("build-admin-assets")
+        # The shared owner runs npm ci and the drift check, then writes the checked inventory.
+        admin.check(run / "admin-assets.json", runner=lambda command, cwd: steps.run(
+            "admin-" + command[1], [admin._resolve(command[0]), *command[1:]], cwd=cwd))
         runtime = load_script("build-service-runtime")
         steps.call("static-ort-inputs", runtime.verify_static_inputs)
         airk = steps.call("airk", lambda: runtime.cargo_binary("airk", "release", "local-inference"))
-        airkctl = cargo_airkctl(steps)
+        steps.call("airkctl-dependencies", runtime.check_lightweight_dependencies)
+        airkctl = steps.call("airkctl", lambda: runtime.cargo_binary("airkctl", "release", None, package="airkctl"))
         layout = run / "layout"
         signing = None
         if local_signing is not None:
@@ -205,13 +179,20 @@ def main():
                         "installer_sha256": digest(installer),
                         "payload_inventory_sha256": digest(layout / "payload-inventory.json"),
                         "files": inventory["files"], "admin_assets": inventory["admin_assets"]})
+    except Exception as error:  # Reported with the receipt; no older installer is announced.
+        receipt["error"] = f"{type(error).__name__}: {error}"
     finally:
         receipt["steps"] = steps.records
         (run / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    if receipt["result"] != "built":
+        print(f"FAILED: {receipt['error']}", file=sys.stderr)
+        print(f"Receipt: {run / 'receipt.json'}", file=sys.stderr)
+        return 1
     print(f"AIRK Service {version} {TARGET} ({'signed' if receipt['signed'] else 'UNSIGNED'}), commit {commit}"
           f"{' (dirty)' if dirty else ''}: {receipt['installer']}")
     print(f"Receipt: {run / 'receipt.json'}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

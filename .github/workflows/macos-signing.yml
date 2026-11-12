@@ -43,6 +43,9 @@ jobs:
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
       - name: Prepare pinned static CPU inference inputs
         run: python scripts/provision-static-onnx-runtime.py --destination target/static-onnx-runtime/${{ matrix.target }} --target ${{ matrix.target }} --download --download-tools --build --parallel 2 --github-env
+      # Build order (split §10.5.3): the admin bundle is checked before native compilation.
+      - name: Check the locked admin bundle before the native build
+        run: python scripts/build-admin-assets.py --output artifacts/admin/admin-assets.json
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
       - run: cargo test --workspace --all-features --locked --target ${{ matrix.target }}
@@ -52,12 +55,16 @@ jobs:
         run: ./scripts/check-repo.ps1
       - run: git diff --check
       - run: python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
+      # TODO(split 10.5.2, harness row): the extension no longer starts or embeds airk; this
+      # AIRK_TEST_BINARY consumer needs an airkctl/service split before it observes anything.
       - name: Extension contracts and real native MCP adapter
         env:
           AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/AIRK.app/Contents/MacOS/airk
         run: npm test --prefix packages/vscode
       - name: Use TCP for Apple ticket requests on Mac runners
         uses: ./.github/actions/macos-ticket-network
+      # TODO(split §9.4): the pair signing step below must sign airkctl as nested code before the
+      # AIRK.app bundle (sign-native.py signing_names); it signs airk only today.
       - name: Sign and notarize using an isolated temporary keychain
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -70,21 +77,11 @@ jobs:
         run: python scripts/ci-macos-sign.py --cleanup
       - name: Package and reverify signed native candidate
         run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
-      - name: Package matching stable VSIX
-        run: python scripts/package-extension.py --target ${{ matrix.target }} --channel stable
       - name: Retain signed native candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-signed-native-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/native/${{ matrix.target }}/publish/
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-      - name: Retain matching VSIX with signed helper
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: airk-signed-vsix-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/extension/${{ matrix.target }}/publish/
           if-no-files-found: error
           retention-days: 7
           compression-level: 0

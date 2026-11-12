@@ -191,6 +191,104 @@ class RuntimeTransferTests(unittest.TestCase):
                         runtime.resume(transfer, destination, TARGET)
 
 
+_native_spec = importlib.util.spec_from_file_location("split_native_fixture", Path(__file__).with_name("test_package_native.py"))
+native_fixture = importlib.util.module_from_spec(_native_spec)
+_native_spec.loader.exec_module(native_fixture)
+
+
+class SplitTransferTests(unittest.TestCase):
+    """airk-ci-runtime/2: both images, the admin binding and current source identity."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.source = {"sha256": "1" * 64, "files": 4}
+        self.admin = {"inventory_sha256": "3" * 64, "bundle_sha256": "4" * 64}
+        self.version = native_fixture.SPLIT_VERSION
+        (self.root / "Cargo.toml").write_text(f'[workspace.package]\nversion="{self.version}"\n', encoding="utf-8")
+        self.builder = runtime.package.runtime_builder()
+        self.builder.source_identity = lambda: self.source
+        original_load = self.builder.load_script
+        admin = type("Admin", (), {"digests": staticmethod(lambda: dict(self.admin))})
+        self.builder.load_script = lambda name: admin if name == "build-admin-assets" else original_load(name)
+        for mock in (patch.object(runtime, "ROOT", self.root),
+                     patch.object(runtime, "identity", return_value=IDENTITY),
+                     patch.object(runtime.package, "runtime_builder", return_value=self.builder),
+                     patch.object(native_fixture.package, "runtime_builder", return_value=self.builder),
+                     patch.dict(os.environ, GITHUB_RUN_ATTEMPT="1")):
+            mock.start()
+            self.addCleanup(mock.stop)
+        self.original = self.root / "original"
+        self.original.mkdir()
+        self.pair, self.build = native_fixture.split_runtime(self.original, TARGET, self.source, self.version)
+        self.transfer = self.root / "transfer"
+        runtime.seal(self.original, self.transfer, TARGET)
+
+    def receipt(self):
+        return json.loads((self.transfer / "transfer.json").read_text(encoding="utf-8"))
+
+    def test_seal_binds_both_images_and_admin_and_restores_the_exact_pair(self):
+        receipt = self.receipt()
+        self.assertEqual(receipt["schema"], "airk-ci-runtime/2")
+        self.assertEqual(receipt["airk_sha256"], runtime.package.sha256(self.original / "airk"))
+        self.assertEqual(receipt["airkctl_sha256"], runtime.package.sha256(self.original / "airkctl"))
+        self.assertEqual(receipt["admin_assets"], {"inventory_sha256": "3" * 64, "bundle_sha256": "4" * 64})
+        self.assertEqual(receipt["source"], {"sha256": "1" * 64, "files": 4})
+        with patch.dict(os.environ, GITHUB_RUN_ATTEMPT="2"):
+            runtime.restore(self.transfer, self.root / "restored", TARGET)
+        self.assertEqual(runtime.package.inventory(self.original), runtime.package.inventory(self.root / "restored"))
+        with zipfile.ZipFile(self.transfer / "runtime.zip") as archive:
+            for name in ("airk", "airkctl"):
+                self.assertEqual((archive.getinfo(name).external_attr >> 16) & 0o777, 0o755)
+
+    def test_changed_frontend_or_admin_input_rejects_reuse_before_extraction(self):
+        # A frontend-only change changes source_identity(); a different embedded bundle changes the digests.
+        for change in ("source", "admin"):
+            with self.subTest(change=change):
+                saved_source, saved_admin = self.source, self.admin
+                if change == "source":
+                    self.source = {"sha256": "2" * 64, "files": 5}
+                else:
+                    self.admin = {"inventory_sha256": "5" * 64, "bundle_sha256": "4" * 64}
+                destination = self.root / f"refused-{change}"
+                with self.assertRaisesRegex(ValueError, "other source or frontend inputs" if change == "source"
+                                            else "different admin bundle"):
+                    runtime.restore(self.transfer, destination, TARGET)
+                self.assertFalse(destination.exists())
+                self.source, self.admin = saved_source, saved_admin
+
+    def test_schema_gating_both_directions(self):
+        receipt = self.receipt()
+        for schema in ("airk-ci-runtime/1", "airk-ci-runtime/3"):
+            with self.subTest(schema=schema):
+                (self.transfer / "transfer.json").write_text(json.dumps({**receipt, "schema": schema}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "another source"):
+                    runtime.restore(self.transfer, self.root / "refused", TARGET)
+        (self.transfer / "transfer.json").write_text(json.dumps(receipt), encoding="utf-8")
+        # The split receipt never qualifies a pre-split checkout.
+        (self.root / "Cargo.toml").write_text('[workspace.package]\nversion="1.8.23"\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "another source"):
+            runtime.restore(self.transfer, self.root / "refused", TARGET)
+        self.assertFalse((self.root / "refused").exists())
+
+    def test_receipt_missing_an_image_digest_or_admin_binding_is_refused(self):
+        receipt = self.receipt()
+        for key in ("airkctl_sha256", "admin_assets"):
+            with self.subTest(key=key):
+                (self.transfer / "transfer.json").write_text(
+                    json.dumps({k: v for k, v in receipt.items() if k != key}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "split contract: missing_field"):
+                    runtime.restore(self.transfer, self.root / "refused", TARGET)
+
+    def test_payload_without_airk_cannot_be_sealed(self):
+        (self.original / "airk").unlink()
+        native_fixture.seal_split(self.original, self.pair, self.build)
+        with self.assertRaisesRegex(ValueError, "executable missing: airk"):
+            runtime.seal(self.original, self.root / "other-transfer", TARGET)
+        self.assertFalse((self.root / "other-transfer").exists())
+
+
 class WorkflowSplitTests(unittest.TestCase):
     def test_validation_needs_successful_build_and_cannot_rebuild_or_publish_before_smoke(self):
         workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")

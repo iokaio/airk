@@ -25,6 +25,29 @@ class PlanTests(unittest.TestCase):
         self.assertIn("--target ${{ matrix.target }} --download --download-tools --build --parallel 2 --github-env",extended)
         self.assertIn("--destination artifacts/qualification/runtime --profile release",extended)
 
+    def test_split_build_order_universal_vsix_and_airkctl_checks(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        extension = workflow.split("\n  extension:\n", 1)[1].split("\n  native-build:\n", 1)[0]
+        build = workflow.split("\n  native-build:\n", 1)[1].split("\n  native:\n", 1)[0]
+        validation = workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
+        # The universal VSIX is built from the extension's own outputs, without native bytes.
+        self.assertIn('run: python scripts/package-extension.py --channel "$AIRK_CHANNEL"', extension)
+        self.assertIn("name: airk-vsix-universal-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", extension)
+        self.assertIn("path: artifacts/extension/universal/publish/", extension)
+        self.assertNotIn("download-artifact", extension)
+        self.assertNotIn("--target", extension)
+        self.assertNotIn("package-extension.py", validation)
+        self.assertNotIn("airk-vsix-${{ matrix.target }}", workflow)
+        # Admin bundle check before any native compilation and before the runtime build.
+        admin = build.index("run: python scripts/build-admin-assets.py --output artifacts/admin/admin-assets.json")
+        self.assertLess(build.index("actions/setup-node@"), admin)
+        for later in ("cargo nextest", "cargo check", "cargo clippy", "build-service-runtime.py"):
+            self.assertLess(admin, build.index(later), later)
+        self.assertIn("cargo nextest run --profile ci -p airkctl --locked --target ${{ matrix.target }}", build)
+        self.assertIn("cargo tree --locked -p airkctl", build)
+        self.assertIn("grep -Ex 'ort|ort-sys|tokenizers|tract-.*'", build)
+        self.assertIn("cargo clippy -p airkctl --all-targets --locked --target ${{ matrix.target }} -- -D warnings", build)
+
     def test_only_verified_pinned_repair_can_skip_rebuilding_on_main(self):
         with patch.object(plan, "repair_scope", return_value={}) as verified:
             for event in ("pull_request", "push"):
@@ -49,6 +72,36 @@ class PlanTests(unittest.TestCase):
                       [".github/workflows/ci.yml"], ["Dockerfile"], [], ["scripts/package-native.py"]):
             with self.subTest(paths=paths):
                 self.assertTrue(all(plan.classify(paths, "pull_request").values()))
+
+    def test_admin_bundle_inputs_rebuild_the_service_but_not_the_vsix(self):
+        admin = dict(native=True, container=True, extension=False, contracts=True)
+        for paths in (["packages/admin/src/main.tsx"], ["packages/admin/package-lock.json"],
+                      ["packages/admin/build.mjs"], ["packages/admin/README.md"],
+                      ["crates/airk-cli/admin-assets/manifest.json"],
+                      # A rebuilt bundle deletes the old hashed name and adds the new one.
+                      ["crates/airk-cli/admin-assets/app.d9071619.js", "crates/airk-cli/admin-assets/app.0123abcd.js"],
+                      ["packages/admin/src/app.css", "docs/a.md"]):
+            with self.subTest(paths=paths):
+                self.assertEqual(plan.classify(paths, "pull_request"), admin)
+
+    def test_split_inputs_outside_the_admin_bundle_fail_closed(self):
+        for paths in (["crates/airkctl/src/main.rs"], ["crates/airkctl/Cargo.toml"],
+                      ["packages/contracts-gen/generate.mjs"], ["packages/ui/src/view.ts"],
+                      ["fixtures/split/receipts/vsix_universal.json"], ["scripts/build-admin-assets.py"],
+                      ["scripts/split_receipts.py"], ["scripts/signing-identity.json"],
+                      ["installers/windows/airk-service.iss"], ["packages/unknown/file.ts"],
+                      ["crates/airk-cli/admin-assets-old/app.js"],
+                      # A move out of the admin package into an unknown location.
+                      ["packages/admin/src/view.tsx", "packages/shared/view.tsx"]):
+            with self.subTest(paths=paths):
+                self.assertTrue(all(plan.classify(paths, "pull_request").values()))
+
+    def test_extension_only_changes_keep_the_current_native_adapter_policy(self):
+        self.assertEqual(plan.classify(["packages/vscode/src/airkctl/index.ts"], "pull_request"),
+                         dict(native=True, container=False, extension=True, contracts=False))
+        # Moving code between the extension and the admin shell needs both products.
+        self.assertTrue(all(plan.classify(["packages/vscode/src/view.ts", "packages/admin/src/view.tsx"],
+                                          "pull_request").values()))
 
     def test_main_and_manual_build_full_candidates(self):
         for event in ("push", "workflow_dispatch", "workflow_call"):

@@ -41,8 +41,17 @@ def artifact_name(expected):
     return f"airk-runtime-{expected['target']}-{expected['commit']}-{expected['run_id']}"
 
 
+def current_version():
+    return tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+
+
+def transfer_schema(version):
+    """Split pairs travel as airk-ci-runtime/2; every earlier version keeps /1. Neither qualifies the other."""
+    return "airk-ci-runtime/2" if package.runtime_builder().split_pair_version(version) else "airk-ci-runtime/1"
+
+
 def validate(runtime, target):
-    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    version = current_version()
     source = package.runtime_builder().source_identity()
     files, executables = package.validate_runtime(runtime, version, target, source)
     build = package.bounded_json(runtime / "airk-build.json", 65_536)
@@ -57,8 +66,17 @@ def seal(runtime, transfer, target):
     transfer.mkdir(parents=True, exist_ok=False)
     archive = transfer / "runtime.zip"
     package.write_archive(runtime, archive, files, executables)
-    receipt = dict(schema="airk-ci-runtime/1", **expected, build_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
-                   payload=files, archive_sha256=package.sha256(archive))
+    schema = transfer_schema(current_version())
+    if schema == "airk-ci-runtime/2":
+        build = package.bounded_json(runtime / "airk-build.json", 65_536)
+        receipt = dict(schema=schema, **expected, build_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                       source=build["source"], payload=files, archive_sha256=package.sha256(archive),
+                       airk_sha256=files[executables[0]], airkctl_sha256=files[executables[1]],
+                       admin_assets={key: build["admin_assets"][key] for key in ("inventory_sha256", "bundle_sha256")})
+        package.runtime_builder().split_receipts().validate_ci_runtime(receipt)
+    else:
+        receipt = dict(schema=schema, **expected, build_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                       payload=files, archive_sha256=package.sha256(archive))
     (transfer / "transfer.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
 
@@ -77,11 +95,25 @@ def restore(transfer, runtime, target):
     if set(path.name for path in transfer.iterdir()) != {"runtime.zip", "transfer.json"}:
         raise ValueError("Unexpected runtime transfer entries")
     receipt = package.bounded_json(transfer / "transfer.json", 524_288)
-    if (receipt.get("schema") != "airk-ci-runtime/1" or any(receipt.get(key) != value for key, value in expected.items())
+    version = current_version()
+    schema = transfer_schema(version)
+    if (receipt.get("schema") != schema or any(receipt.get(key) != value for key, value in expected.items())
             or type(receipt.get("build_attempt")) is not int
             or not 1 <= receipt["build_attempt"] <= int(os.environ["GITHUB_RUN_ATTEMPT"])):
         raise ValueError("Runtime transfer belongs to another source, target, run or qualification")
     payload_names(receipt.get("payload"))
+    if schema == "airk-ci-runtime/2":
+        builder = package.runtime_builder()
+        try:
+            builder.split_receipts().validate_ci_runtime(receipt)
+        except ValueError as error:
+            raise ValueError("Runtime transfer receipt differs from the split contract: " + str(error)) from error
+        # Reuse is refused before extraction when any consumed input changed, including
+        # frontend/admin production inputs (source_identity covers them) or the sealed bundle.
+        if receipt["source"] != builder.source_identity():
+            raise ValueError("Runtime transfer was built from other source or frontend inputs")
+        if receipt["admin_assets"] != builder.load_script("build-admin-assets").digests():
+            raise ValueError("Runtime transfer embeds a different admin bundle")
     archive = transfer / "runtime.zip"
     if archive.is_symlink() or package.sha256(archive) != receipt.get("archive_sha256"):
         raise ValueError("Runtime transfer archive digest differs")
@@ -89,7 +121,6 @@ def restore(transfer, runtime, target):
     # packager enforces exact inventory, per-file hashes and executable modes.
     operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     builder = package.runtime_builder()
-    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     executables = tuple(dict.fromkeys((*builder.runtime_executables(operating_system, version), builder.launcher_name(operating_system, version))))
     with zipfile.ZipFile(archive) as zipped:
         if sum(info.file_size for info in zipped.infolist()) > package.MAX_PAYLOAD_BYTES:
@@ -111,6 +142,11 @@ def restore(transfer, runtime, target):
         files, _ = validate(staging, target)
         if files != receipt["payload"]:
             raise ValueError("Restored runtime differs from transfer inventory")
+        if schema == "airk-ci-runtime/2":
+            build = package.bounded_json(staging / "airk-build.json", 65_536)
+            if (build["admin_assets"]["inventory_sha256"], build["admin_assets"]["bundle_sha256"]) != (
+                    receipt["admin_assets"]["inventory_sha256"], receipt["admin_assets"]["bundle_sha256"]):
+                raise ValueError("Restored runtime admin binding differs from its transfer receipt")
         staging.rename(runtime)
     return receipt
 

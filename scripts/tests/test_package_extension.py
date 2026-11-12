@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,6 +13,62 @@ import zipfile
 spec = importlib.util.spec_from_file_location("package_extension", Path(__file__).parents[1] / "package-extension.py")
 package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
+
+SPLIT = "1.8.24"
+COMMIT = "a" * 40
+TREE = "c" * 40
+MANIFEST = '<PackageManifest><Metadata><Identity Id="airk" Publisher="iokaio" Version="{version}"{platform}/><DisplayName>AIRK</DisplayName><Properties>{flag}</Properties></Metadata></PackageManifest>'
+
+
+def vsix_manifest(version, platform=None, preview=False):
+    return MANIFEST.format(version=version, platform=f' TargetPlatform="{platform}"' if platform else "",
+                           flag='<Property Id="Microsoft.VisualStudio.Code.PreRelease" Value="true"/>' if preview else "")
+
+
+def write_vsix(archive, values, manifest, modes=None):
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for name, data in values.items():
+            stored = "readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name
+            info = zipfile.ZipInfo("extension/" + stored)
+            info.external_attr = (modes or {}).get(name, 0o100644) << 16
+            zipped.writestr(info, data)
+        zipped.writestr("[Content_Types].xml", "<Types/>")
+        zipped.writestr("extension.vsixmanifest", manifest)
+
+
+def universal_values(version=SPLIT):
+    """A sealed, fictional universal stage: the loader graph, legal files and its inventory."""
+    values = {name: b"fictional sealed interface asset: " + name.encode() for name in package.update_inventory_paths()}
+    values["package.json"] = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
+    values["README.md"] = b"Fictional listing without images"
+    values["LICENSE"] = b"fixture license"
+    values["airk-update.json"] = package.encode_update_inventory(
+        {name: package.digest(values[name]) for name in package.update_inventory_paths()},
+        version, values["package.json"].decode())
+    return values
+
+
+def universal_candidate(directory, version=SPLIT, preview=False, commit=COMMIT, tree=TREE):
+    """A complete universal candidate directory (archive, C7 receipt, SHA256SUMS)."""
+    directory.mkdir(parents=True)
+    values = universal_values(version)
+    archive = directory / f"airk-{version}.vsix"
+    write_vsix(archive, values, vsix_manifest(version, preview=preview))
+    expected = {name: package.digest(data) for name, data in values.items()}
+    receipt = {"schema": "airk-extension-candidate/2", "version": version, "commit": commit, "tree": tree,
+               "extension_id": "iokaio.airk", "display_name": "AIRK", "pre_release": preview, "target": "universal",
+               "i2_contracts": [1], "required_capabilities": ["session/2", "tools/1"],
+               "ui_inventory_sha256": package.digest(values["airk-update.json"]),
+               "locks": {"packages/vscode/package-lock.json": package.digest((package.ROOT / package.LOCK).read_bytes())},
+               "node": "v24.15.0", "vsce": "4.0.1-3", "archive": archive.name,
+               "archive_sha256": package.digest(archive.read_bytes()), "payload": expected,
+               "qualification": "verified universal package; installed-editor qualification separate"}
+    package.receipts.validate_vsix(receipt)
+    (directory / "manifest.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    (directory / "SHA256SUMS").write_text(
+        f"{package.digest(archive.read_bytes())}  {archive.name}\n"
+        f"{package.digest((directory / 'manifest.json').read_bytes())}  manifest.json\n", encoding="utf-8")
+    return receipt, archive
 
 
 class VsixContracts(unittest.TestCase):
@@ -29,16 +86,15 @@ class VsixContracts(unittest.TestCase):
                     zipped.writestr("[Content_Types].xml", "<Types/>")
                     zipped.writestr("extension.vsixmanifest", '<PackageManifest><Identity Id="airk" Publisher="iokaio"/></PackageManifest>')
                 if image.startswith('![Workbench](https:'):
-                    package.verify_vsix(archive, expected, "airk")
+                    package.verify_vsix(archive, expected)
                 else:
                     with self.assertRaisesRegex(ValueError, "absolute HTTPS"):
-                        package.verify_vsix(archive, expected, "airk")
+                        package.verify_vsix(archive, expected)
 
     def test_uninstall_hook_survives_packaging_without_development_scripts(self):
         source = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
         staged = package.runtime_package(source)
         self.assertEqual(staged["scripts"], {"vscode:uninstall": "node ./out/uninstallHook.js"})
-        self.assertIn("extensionUninstall.js", package.MODULES)
         self.assertIn("uninstallHook.js", package.MODULES)
         self.assertNotIn("devDependencies", staged)
         self.assertIn("test", source["scripts"])
@@ -65,14 +121,20 @@ class VsixContracts(unittest.TestCase):
                     "dependencies": manifest["dependencies"]}), encoding="utf-8")
                 (root / "README.md").write_text("AIRK packaging fixture", encoding="utf-8")
                 (root / "LICENSE").write_text("Fixture legal file", encoding="utf-8")
-                for name in ("out/fixture.js", "out/fixture.css", "native/airk.exe", "images/fixture.png", "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+                for name in ("out/fixture.js", "out/airkctl/agents/fixture.js", "out/fixture.css", "images/fixture.png",
+                             "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
                     file = root / name
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(b"public packaging fixture")
                 expected = {file.relative_to(root).as_posix(): package.digest(file.read_bytes()) for file in root.rglob("*") if file.is_file()}
                 archive = root / "fixture.vsix"
-                subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root), "win32-x64", str(archive)], check=True, capture_output=True)
-                package.verify_vsix(archive, expected, "airk.exe", "win32-x64", "1.1.2", False)
+                subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root), str(archive)], check=True, capture_output=True)
+                # Universal: VSCE wrote no TargetPlatform and the archive holds only the stage.
+                package.verify_vsix(archive, expected, version="1.1.2", pre_release=False)
+                refused = subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root),
+                                          "win32-x64", str(root / "platform.vsix")], capture_output=True)
+                self.assertNotEqual(refused.returncode, 0, "the packager never accepts a target platform")
+                self.assertFalse((root / "platform.vsix").exists())
             source = stage / "lib" / "umd" / "main.js"
             source.write_text('require("./missing");', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Unpackaged jsonc-parser dependency"):
@@ -81,10 +143,12 @@ class VsixContracts(unittest.TestCase):
     def test_update_inventory_seals_the_complete_staged_host_ui_and_parser_graph(self):
         with tempfile.TemporaryDirectory() as temporary:
             stage = Path(temporary)
-            expected_paths = {"package.json", "native/manifest.json", "images/airk.svg"}
+            expected_paths = {"package.json", "images/airk.svg"}
             expected_paths.update("out/" + name for name in package.MODULES + package.BUNDLES)
             expected_paths.update("node_modules/jsonc-parser/" + name for name in package.JSONC_FILES
                                   if name.endswith((".js", ".json")))
+            self.assertNotIn("native/manifest.json", package.update_inventory_paths())
+            self.assertEqual(set(package.update_inventory_paths(native=True)) - expected_paths, {"native/manifest.json"})
             for name in expected_paths:
                 file = stage / name
                 file.parent.mkdir(parents=True, exist_ok=True)
@@ -104,37 +168,48 @@ class VsixContracts(unittest.TestCase):
             (stage / "out/explorerWebview.css").write_text("fictional replacement", encoding="utf-8")
             package.write_update_inventory(stage, "1.8.12")
             self.assertNotEqual(json.loads((stage / "airk-update.json").read_text())["files"]["out/explorerWebview.css"], before)
-            (stage / "out/serviceExtension.js").unlink()
+            (stage / "out/airkctl/index.js").unlink()
             with self.assertRaises(FileNotFoundError):
                 package.write_update_inventory(stage, "1.8.12")
 
+    def test_sealed_names_follow_the_update_loader_rule(self):
+        # The loader (extensionUpdateLoader.ts) refuses any inventory name outside its
+        # pattern; read it from the TypeScript owner rather than trusting the copy here.
+        loader = (package.EXTENSION / "src" / "extensionUpdateLoader.ts").read_text(encoding="utf-8")
+        pattern = re.search(r"if \(!/\^\(\?:(.*?)\)\$/\.test\(name\)", loader)
+        self.assertIsNotNone(pattern, "update loader name rule not found")
+        rule = re.compile("(?:" + pattern.group(1).replace("\\/", "/") + ")")
+        self.assertEqual(rule.pattern, package.LOADER_NAME.pattern)
+        for name in package.update_inventory_paths():
+            self.assertRegex(name, package.LOADER_NAME)
+        # The loader's required set is part of every sealed inventory.
+        required = re.search(r"for \(const required of \[(.*?)\]\)", loader).group(1)
+        for name in re.findall(r"'([^']+)'", required):
+            self.assertIn(name, package.update_inventory_paths())
+
     def test_finished_vsix_checks_the_loader_inventory_even_when_outer_hashes_are_resealed(self):
-        version, platform = "1.8.12", "darwin-arm64"
-        bodies = {name: b"fictional sealed interface asset" for name in package.update_inventory_paths()}
-        bodies["package.json"] = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
-        bodies["native/manifest.json"] = json.dumps({"version": version, "vsix_target": platform}).encode()
-        def sealed(values):
-            values = dict(values)
-            values["airk-update.json"] = package.encode_update_inventory(
-                {name: package.digest(values[name]) for name in package.update_inventory_paths()},
-                version, values["package.json"].decode())
-            return values
-        original = sealed(bodies)
+        original = universal_values()
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "fixture.vsix"
-            for mutation in (None, "signed_wrapper", "ui", "missing", "incomplete", "snapshot", "metadata"):
+            for mutation in (None, "native_entry", "ui", "missing", "incomplete", "snapshot", "metadata", "outside_rule"):
                 with self.subTest(mutation=mutation):
                     values = dict(original)
-                    if mutation == "signed_wrapper":
-                        values["native/manifest.json"] = json.dumps({"version": version, "vsix_target": platform, "signed": True}).encode()
+                    if mutation == "native_entry":
+                        inventory = json.loads(values["airk-update.json"])
+                        values["native/manifest.json"] = b'{"version": "1.8.24"}'
+                        inventory["files"]["native/manifest.json"] = package.digest(values["native/manifest.json"])
+                        values["airk-update.json"] = json.dumps(inventory).encode()
                     elif mutation == "ui":
                         values["out/explorerWebview.js"] += b" changed"
                     elif mutation == "missing":
                         del values["airk-update.json"]
-                    elif mutation in ("incomplete", "snapshot"):
+                    elif mutation in ("incomplete", "snapshot", "outside_rule"):
                         inventory = json.loads(values["airk-update.json"])
                         if mutation == "incomplete":
                             del inventory["files"]["out/explorerController.js"]
+                        elif mutation == "outside_rule":
+                            values["out/generated/i2.js"] = b"fictional unreachable module"
+                            inventory["files"]["out/generated/i2.js"] = package.digest(values["out/generated/i2.js"])
                         else:
                             inventory["package_manifest"] += " "
                         values["airk-update.json"] = json.dumps(inventory).encode()
@@ -143,17 +218,103 @@ class VsixContracts(unittest.TestCase):
                         # after VS Code installation, accepts __metadata rewrites.
                         manifest = json.loads(values["package.json"])
                         values["package.json"] = json.dumps({**manifest, "__metadata": {"installedTimestamp": 1}}).encode()
-                    with zipfile.ZipFile(archive, "w") as zipped:
-                        for name, data in values.items():
-                            zipped.writestr("extension/" + name, data)
-                        zipped.writestr("[Content_Types].xml", "<Types/>")
-                        zipped.writestr("extension.vsixmanifest", f'<PackageManifest><Identity Id="airk" Publisher="iokaio" Version="{version}" TargetPlatform="{platform}"/></PackageManifest>')
+                    write_vsix(archive, values, vsix_manifest(SPLIT))
                     expected = {name: package.digest(data) for name, data in values.items()}
                     if mutation is None:
-                        package.verify_vsix(archive, expected, "airk", platform, version)
+                        package.verify_vsix(archive, expected, version=SPLIT)
+                    elif mutation == "native_entry":
+                        with self.assertRaisesRegex(ValueError, r"forbidden content \(native subtree\)"):
+                            package.verify_vsix(archive, expected, version=SPLIT)
                     else:
                         with self.assertRaisesRegex(ValueError, "update inventory|Reviewed extension"):
-                            package.verify_vsix(archive, expected, "airk", platform, version)
+                            package.verify_vsix(archive, expected, version=SPLIT)
+
+    def test_universal_vsix_refuses_native_and_executable_content(self):
+        cases = {
+            "native/runtime/airk.exe": (b"fictional", 0o100644, "native subtree"),
+            "out/helper.dll": (b"fictional", 0o100644, "suffix"),
+            "out/addon.node": (b"fictional", 0o100644, "suffix"),
+            "out/libort.so": (b"fictional", 0o100644, "suffix"),
+            "out/tool.js": (b"console.log(1)", 0o100755, "executable permission"),
+            "images/disguised.png": (b"MZ\x90\x00fictional PE", 0o100644, "executable image header"),
+            "images/elf.png": (b"\x7fELF fictional", 0o100644, "executable image header"),
+            "images/macho.png": (b"\xcf\xfa\xed\xfe fictional", 0o100644, "executable image header"),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "fixture.vsix"
+            for name, (data, mode, reason) in cases.items():
+                with self.subTest(name=name):
+                    values = {**universal_values(), name: data}
+                    write_vsix(archive, values, vsix_manifest(SPLIT), {name: mode})
+                    expected = {key: package.digest(value) for key, value in values.items()}
+                    with self.assertRaisesRegex(ValueError, "forbidden content.*" + reason):
+                        package.verify_vsix(archive, expected, version=SPLIT)
+            # The same rule runs on the stage before VSCE, so nothing is packaged.
+            stage = Path(temporary) / "stage"
+            (stage / "out").mkdir(parents=True)
+            (stage / "out" / "extension.js").write_text("'use strict';", encoding="utf-8")
+            package.check_stage_content(stage)
+            (stage / "out" / "helper.exe").write_bytes(b"fictional")
+            with self.assertRaisesRegex(ValueError, "stage contains forbidden content"):
+                package.check_stage_content(stage)
+
+    def test_universal_identity_channel_and_tampering(self):
+        values = universal_values()
+        expected = {name: package.digest(data) for name, data in values.items()}
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "fixture.vsix"
+            write_vsix(archive, values, vsix_manifest(SPLIT, preview=True))
+            package.verify_vsix(archive, expected, version=SPLIT, pre_release=True, display_name="AIRK")
+            with self.assertRaisesRegex(ValueError, "pre-release flag differs"):
+                package.verify_vsix(archive, expected, pre_release=False)
+            with self.assertRaisesRegex(ValueError, "display name differs"):
+                package.verify_vsix(archive, expected, display_name="Other label")
+            # The sealed inventory names the version too; it refuses first.
+            with self.assertRaisesRegex(ValueError, "inventory manifest identity differs"):
+                package.verify_vsix(archive, expected, version="1.8.25")
+            with self.assertRaisesRegex(ValueError, "payload differs"):
+                package.verify_vsix(archive, dict(expected, **{"out/extension.js": "0" * 64}))
+            with self.assertRaisesRegex(ValueError, "platform VSIX is not accepted"):
+                package.verify_vsix(archive, expected, version=SPLIT, platform="win32-x64")
+            write_vsix(archive, values, vsix_manifest(SPLIT, platform="win32-x64"))
+            with self.assertRaisesRegex(ValueError, "must not declare a TargetPlatform"):
+                package.verify_vsix(archive, expected, version=SPLIT)
+            with zipfile.ZipFile(archive, "w") as zipped:
+                for name, data in values.items():
+                    stored = "readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name
+                    zipped.writestr("extension/" + stored, data)
+                zipped.writestr("extension/private.env", "fixture must fail")
+                zipped.writestr("[Content_Types].xml", "<Types/>")
+                zipped.writestr("extension.vsixmanifest", vsix_manifest(SPLIT))
+            with self.assertRaisesRegex(ValueError, "payload differs"):
+                package.verify_vsix(archive, expected)
+
+    def test_universal_receipt_is_the_validated_c7_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, archive = universal_candidate(Path(directory) / "candidate")
+            stage = Path(directory) / "stage"
+            stage.mkdir()
+            (stage / "airk-update.json").write_bytes(universal_values()["airk-update.json"])
+            package_json = {"name": "airk", "publisher": "iokaio", "version": SPLIT, "displayName": "AIRK",
+                            "devDependencies": {"@vscode/vsce": "4.0.1-3"}}
+            built = package.universal_receipt(package=package_json, commit=COMMIT, tree=TREE, pre_release=False,
+                                              stage=stage, vsix=archive, expected=receipt["payload"],
+                                              node_version="v24.15.0", requirements=([1], ["session/2", "tools/1"]))
+            self.assertEqual(built, receipt)
+            for name in ("native/runtime/airk.exe", "out/helper.dll"):
+                with self.assertRaises(package.receipts.ReceiptError):
+                    package.universal_receipt(package=package_json, commit=COMMIT, tree=TREE, pre_release=False,
+                                              stage=stage, vsix=archive, expected={**receipt["payload"], name: "0" * 64},
+                                              node_version="v24.15.0", requirements=([1], []))
+
+    def test_universal_packaging_starts_at_the_split_version(self):
+        self.assertEqual(package.receipts.SPLIT_VERSION, (1, 8, 24))
+        self.assertFalse(package.receipts.split_version("1.8.23"))
+        self.assertTrue(package.receipts.split_version("1.8.24"))
+        self.assertTrue(package.receipts.split_version("1.9.0"))
+        for invalid in ("1.8", "v1.8.24", "1.08.24", ""):
+            with self.assertRaises(ValueError):
+                package.receipts.split_version(invalid)
 
     def test_listing_product_screenshots_are_explicit_bounded_public_assets(self):
         listing = (package.EXTENSION / "README.md").read_text(encoding="utf-8")
@@ -186,34 +347,47 @@ class VsixContracts(unittest.TestCase):
     def test_runtime_import_closure_includes_controls_without_test_extras(self):
         with tempfile.TemporaryDirectory() as directory:
             compiled = Path(directory) / "compiled"
-            compiled.mkdir()
             for name in package.MODULES:
+                (compiled / name).parent.mkdir(parents=True, exist_ok=True)
                 (compiled / name).write_text('"use strict";\n', encoding="utf-8")
             (compiled / "extension.js").write_text(
-                'require("vscode"); require("./serviceExtension"); require("./serviceConsole");', encoding="utf-8")
-            (compiled / "serviceExtension.js").write_text('require("./native.js");', encoding="utf-8")
-            (compiled / "native.js").write_text('require("node:fs"); require("./model");', encoding="utf-8")
+                'require("vscode"); require("./serviceExtension"); require("./extensionUpdateLoader.js");', encoding="utf-8")
+            (compiled / "serviceExtension.js").write_text(
+                'require("./airkctl/index"); require("./airkctl/agents/index.js");', encoding="utf-8")
+            (compiled / "airkctl" / "index.js").write_text('require("node:fs"); require("../model"); require("./runner");', encoding="utf-8")
             (compiled / "test").mkdir()
             (compiled / "test" / "private.test.js").write_text("not runtime", encoding="utf-8")
             (compiled / "extension.js.map").write_text("not runtime", encoding="utf-8")
+            (compiled / "generated").mkdir()
+            (compiled / "generated" / "i2.js").write_text("not runtime", encoding="utf-8")
             stage = Path(directory) / "stage"
             package.stage_runtime_modules(compiled, stage)
-            self.assertEqual({p.name for p in stage.iterdir()}, set(package.MODULES))
+            self.assertEqual({p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}, set(package.MODULES))
             for name in package.MODULES:
                 self.assertEqual((stage / name).read_bytes(), (compiled / name).read_bytes())
-            for missing in ("./futureControl", "./test/private.test", "../outside"):
-                (compiled / "serviceExtension.js").write_text('require("' + missing + '");', encoding="utf-8")
-                rejected = Path(directory) / "rejected"
-                with self.assertRaisesRegex(ValueError, "Runtime import outside allowlisted stage"):
-                    package.stage_runtime_modules(compiled, rejected)
-                self.assertFalse(rejected.exists(), "Validate closure before staging any runtime modules")
+            # A directory import is unloadable by the isolated update loader (x, x.js, x.json only).
+            for source, missing in (("serviceExtension.js", "./futureControl"), ("serviceExtension.js", "./test/private.test"),
+                                    ("serviceExtension.js", "../outside"), ("serviceExtension.js", "./airkctl"),
+                                    ("serviceExtension.js", "./generated/i2"), ("airkctl/index.js", "../../escape"),
+                                    ("airkctl/index.js", "./agents")):
+                with self.subTest(source=source, request=missing):
+                    original = (compiled / source).read_bytes()
+                    (compiled / source).write_text('require("' + missing + '");', encoding="utf-8")
+                    rejected = Path(directory) / "rejected"
+                    with self.assertRaisesRegex(ValueError, "Runtime import outside allowlisted stage"):
+                        package.stage_runtime_modules(compiled, rejected)
+                    self.assertFalse(rejected.exists(), "Validate closure before staging any runtime modules")
+                    (compiled / source).write_bytes(original)
 
     @unittest.skipUnless((package.EXTENSION / "out" / "extension.js").is_file(), "compiled extension unavailable")
     def test_actual_compiled_runtime_imports_are_all_staged(self):
         with tempfile.TemporaryDirectory() as directory:
             stage = Path(directory) / "out"
             package.stage_runtime_modules(package.EXTENSION / "out", stage)
-            self.assertEqual({p.name for p in stage.iterdir()}, set(package.MODULES))
+            self.assertEqual({p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}, set(package.MODULES))
+            contracts, capabilities = package.extension_requirements(Path(directory))
+            self.assertEqual(contracts, [1])
+            self.assertIn("session/2", capabilities)
 
     def test_bundles_are_self_contained_and_carry_the_preact_notice(self):
         banner = "/*! AIRK Explorer webview. Includes Preact 10.0.0 (MIT).\nPermission is hereby granted\n*/\n"
@@ -273,63 +447,32 @@ class VsixContracts(unittest.TestCase):
             self.assertIn("Permission is hereby granted", (stage / "explorerWebview.js").read_text(encoding="utf-8"))
 
     def test_lock_pins_esbuild_binaries_for_release_targets(self):
+        # The universal VSIX is built on any CI host; each host compiles with the locked esbuild.
         lock = json.loads((package.EXTENSION / "package-lock.json").read_text(encoding="utf-8"))["packages"]
         manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
         version = manifest["devDependencies"]["esbuild"]
         self.assertEqual(lock["node_modules/esbuild"]["version"], version)
-        for platform in package.TARGETS.values():
+        for platform in ("win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"):
             entry = lock.get("node_modules/@esbuild/" + platform)
             self.assertIsNotNone(entry, "lockfile lacks the esbuild binary for " + platform)
             self.assertEqual(entry["version"], version)
             self.assertTrue(entry.get("optional"))
 
-    def test_platform_identity_payload_tampering_and_permission_checks(self):
+    def test_historical_platform_identity_and_permission_checks(self):
+        # Pre-split platform VSIXs stay verifiable through the explicit platform path.
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "fixture.vsix"
             files = {"package.json": b"{}", "README.md": b"fixture readme", "LICENSE": b"fixture license", "native/airk": b"fixture executable"}
             expected = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
-            with zipfile.ZipFile(archive, "w") as zipped:
-                for name, data in files.items():
-                    output_name = "readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name
-                    info = zipfile.ZipInfo("extension/" + output_name)
-                    info.external_attr = (0o100755 if name == "native/airk" else 0o100644) << 16
-                    zipped.writestr(info, data)
-                zipped.writestr("[Content_Types].xml", "<Types/>")
-                zipped.writestr("extension.vsixmanifest", '<PackageManifest><Identity Id="airk" Publisher="iokaio" Version="0.1.0" TargetPlatform="linux-x64"/><DisplayName>AIRK (Beta)</DisplayName><Property Id="Microsoft.VisualStudio.Code.PreRelease" Value="true"/></PackageManifest>')
-            package.verify_vsix(archive, expected, "airk", "linux-x64", "0.1.0", True, "AIRK (Beta)")
-            with self.assertRaisesRegex(ValueError, "pre-release flag differs"):
-                package.verify_vsix(archive, expected, "airk", pre_release=False)
-            with self.assertRaisesRegex(ValueError, "display name differs"):
-                package.verify_vsix(archive, expected, "airk", display_name="Other label")
+            write_vsix(archive, files, vsix_manifest("0.1.0", "linux-x64", preview=True), {"native/airk": 0o100755})
+            package.verify_vsix(archive, expected, platform="linux-x64", version="0.1.0", pre_release=True, display_name="AIRK")
             with self.assertRaisesRegex(ValueError, "platform differs"):
-                package.verify_vsix(archive, expected, "airk", "darwin-arm64", "0.1.0")
-            with self.assertRaisesRegex(ValueError, "version differs"):
-                package.verify_vsix(archive, expected, "airk", "linux-x64", "0.2.0")
-            with self.assertRaisesRegex(ValueError, "payload differs"):
-                package.verify_vsix(archive, dict(expected, **{"native/airk": "0" * 64}), "airk")
-            with zipfile.ZipFile(archive, "a") as zipped:
-                zipped.writestr("extension/private.env", "fixture must fail")
-            with self.assertRaisesRegex(ValueError, "payload differs"):
-                package.verify_vsix(archive, expected, "airk")
-
-    def test_mac_standalone_launcher_image_keeps_its_executable_permission(self):
-        with tempfile.TemporaryDirectory() as directory:
-            archive = Path(directory) / "fixture.vsix"
-            name = "native/runtime/AIRK.app/Contents/MacOS/airk-launcher-image"
-            body = b"fictional standalone launcher"
-            expected = {name: hashlib.sha256(body).hexdigest()}
-            for mode in (0o100755, 0o100644):
-                with zipfile.ZipFile(archive, "w") as zipped:
-                    info = zipfile.ZipInfo("extension/" + name)
-                    info.external_attr = mode << 16
-                    zipped.writestr(info, body)
-                    zipped.writestr("[Content_Types].xml", "<Types/>")
-                    zipped.writestr("extension.vsixmanifest", '<PackageManifest><Identity Id="airk" Publisher="iokaio"/></PackageManifest>')
-                if mode == 0o100755:
-                    package.verify_vsix(archive, expected, "airk")
-                else:
-                    with self.assertRaisesRegex(ValueError, "native executable permission"):
-                        package.verify_vsix(archive, expected, "airk")
+                package.verify_vsix(archive, expected, platform="darwin-arm64", version="0.1.0")
+            with self.assertRaisesRegex(ValueError, "native subtree"):
+                package.verify_vsix(archive, expected, version="0.1.0")
+            write_vsix(archive, files, vsix_manifest("0.1.0", "linux-x64"), {"native/airk": 0o100644})
+            with self.assertRaisesRegex(ValueError, "native executable permission"):
+                package.verify_vsix(archive, expected, platform="linux-x64")
 
     def test_path_escape_refused(self):
         for name in ("../private", "/private", "native/../../private", "C:/private", "native\\private",

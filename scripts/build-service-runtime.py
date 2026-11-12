@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Build and seal a host-native runtime; never package/publish a VSIX."""
 import argparse
+import functools
 import hashlib
 import importlib.util
 import json
@@ -26,6 +27,15 @@ def load_script(name):
     return module
 
 
+@functools.cache
+def split_receipts():
+    """The C7 owner, loaded beside this file (not through ROOT, which tests may relocate)."""
+    specification = importlib.util.spec_from_file_location("airk_split_receipts", Path(__file__).with_name("split_receipts.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def stage_inference_runtime(staging, operating_system, architecture):
     provisioner = load_script("provision-onnx-runtime")
     target = operating_system + "-" + architecture
@@ -38,15 +48,17 @@ def stage_inference_runtime(staging, operating_system, architecture):
 
 
 def verify_embedded_models(staging, operating_system, version="1.8.13"):
-    executable = runtime_executables(operating_system, version)[0 if single_image_version(version) else 1]
+    executable = (service_executable(operating_system, version) if single_image_version(version)
+                  else runtime_executables(operating_system, version)[1])
     report = json.loads(subprocess.check_output(
         [str(staging / executable), "--verify-bundled-models"],
         text=True, encoding="utf-8"))
     return load_script("int8-policy").verify_embedded(report)
 
 
-def cargo_binary(name, profile, features):
-    command = ["cargo", "build", "--locked", "-p", "airk-cli", "--bin", name,
+def cargo_binary(name, profile, features, package="airk-cli"):
+    """The one Cargo build owner: `airk` from airk-cli (shipping features), `airkctl` from its crate."""
+    command = ["cargo", "build", "--locked", "-p", package, "--bin", name,
                "--no-default-features", "--message-format=json-render-diagnostics", "--timings"]
     if profile == "release":
         command.append("--release")
@@ -66,14 +78,18 @@ def cargo_binary(name, profile, features):
 
 
 def check_lightweight_dependencies():
+    """The CLI image's normal dependency closure has no inference crate (split plan §10.5.2)."""
     result = subprocess.check_output([
-        "cargo", "tree", "--locked", "-p", "airk-cli", "--no-default-features",
+        "cargo", "tree", "--locked", "-p", "airkctl", "--no-default-features",
         "--edges", "normal", "--prefix", "none", "--format", "{p}"],
         cwd=ROOT, text=True, encoding="utf-8")
     dependencies = {line.split()[0] for line in result.splitlines() if line.strip()}
-    forbidden = sorted(name for name in dependencies if name in ("tokenizers", "ort", "ort-sys") or name.startswith("tract-"))
+    if "airkctl" not in dependencies:
+        raise RuntimeError("Cargo tree did not report the airkctl package")
+    forbidden = sorted(name for name in dependencies
+                       if name in ("tokenizers", "ort") or name.startswith(("ort-", "tract-")))
     if forbidden:
-        raise RuntimeError(f"Main executable includes inference dependencies: {forbidden}")
+        raise RuntimeError(f"airkctl includes inference dependencies: {forbidden}")
 
 
 def verify_static_inputs():
@@ -220,8 +236,39 @@ def verify_static_imports(executable, operating_system):
             "external_onnxruntime_imports": False}
 
 
+# Byte markers that only an image linking inference code contains: the ONNX Runtime C API
+# entry symbol and the registry source paths Rust embeds in panic locations of the
+# inference crates. airkctl must contain none of them.
+INFERENCE_MARKERS = (b"OrtGetApiBase", b"onnxruntime_c_api", b"tokenizers-0.", b"ort-sys-2.", b"tract-onnx")
+MAX_CLI_IMAGE_BYTES = 256 << 20
+
+
+def scan_inference_markers(path):
+    """Bounded, chunked scan of the CLI image for INFERENCE_MARKERS; oversize fails closed."""
+    size = path.stat().st_size
+    if not 0 < size <= MAX_CLI_IMAGE_BYTES:
+        raise RuntimeError("CLI image is empty or exceeds its inspection bound")
+    overlap = max(len(marker) for marker in INFERENCE_MARKERS) - 1
+    found, tail = set(), b""
+    with path.open("rb") as stream:
+        while block := stream.read(1 << 20):
+            window = tail + block
+            found.update(marker for marker in INFERENCE_MARKERS if marker in window)
+            tail = window[-overlap:]
+    return sorted(marker.decode() for marker in found)
+
+
+def verify_cli_imports(executable, operating_system):
+    """airkctl: no external ONNX Runtime import and no linked inference code."""
+    report = verify_static_imports(executable, operating_system)
+    markers = scan_inference_markers(Path(executable))
+    if markers:
+        raise RuntimeError(f"airkctl image contains inference code markers: {markers}")
+    return {**report, "inference_symbols": False}
+
+
 def verify_model_smoke(staging, operating_system, version):
-    executable = runtime_executables(operating_system, version)[0]
+    executable = service_executable(operating_system, version)
     report = json.loads(subprocess.check_output([str(staging / executable), "--verify-model-smoke"],
                                               text=True, encoding="utf-8", timeout=120))
     if (type(report.get("schema")) is not int or report["schema"] != 1 or report.get("source") != "embedded"
@@ -239,6 +286,15 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+# Admin/UI production inputs embedded in airk (split §10.5.4): sources, manifests, locks,
+# the build script, generated contracts and the operations table build.mjs reads. The sealed
+# bundle crates/airk-cli/admin-assets is already under "crates". No Node toolchain pin file
+# exists (the pin is the workflow node-version); receipts record the Node/npm actually used.
+FRONTEND_INPUTS = ("packages/admin", "packages/ui", "packages/contracts-gen",
+                   "fixtures/split/i3/admin_operations.json", "scripts/build-admin-assets.py",
+                   "scripts/split_receipts.py", "scripts/standalone-installer-contract.py")
+
+
 def source_identity():
     names = subprocess.check_output([
         "git", "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z",
@@ -250,7 +306,8 @@ def source_identity():
         "scripts/adopt-neo-static-onnx-runtime.py",
         "scripts/static-onnx-link-closure.py",
         "scripts/macho-identity.py",
-        "scripts/license-notices.py", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party"], cwd=ROOT)
+        "scripts/license-notices.py", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party",
+        *FRONTEND_INPUTS], cwd=ROOT)
     result = hashlib.sha256()
     files = sorted(set(name for name in names.split(b"\0") if name))
     for name in files:
@@ -293,8 +350,21 @@ def seal_install_payload(staging, version, operating_system, architecture):
     (staging / "airk-install.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def write_pair_metadata(staging, version, operating_system, architecture):
+def write_pair_metadata(staging, version, operating_system, architecture, admin_inventory_sha256=None):
     executables = runtime_executables(operating_system, version)
+    if split_pair_version(version):
+        i1, i2 = interface_versions()
+        manifest = {"schema": 3, "version": version, "os": operating_system, "arch": architecture,
+                    "airk_sha256": digest(staging / executables[0]), "airkctl_sha256": digest(staging / executables[1]),
+                    "i1_protocol": i1, "i2_contract": i2, "admin_inventory_sha256": admin_inventory_sha256}
+        split_receipts().validate_pair_metadata(manifest)
+        (staging / "airk-runtime.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        for executable in executables:
+            identity = subprocess.check_output(version_command(staging, executable, version),
+                                               text=True, encoding="utf-8").strip()
+            if identity != f"{Path(executable).stem} {version}":
+                raise RuntimeError(f"Unexpected executable identity: {identity}")
+        return manifest
     manifest = {"schema": 2 if single_image_version(version) else 1,
                 "version": version, "os": operating_system, "arch": architecture,
                 "airk_sha256": digest(staging / executables[0])}
@@ -319,14 +389,63 @@ def single_image_version(version):
     return tuple(int(value) for value in version.split(".")) >= (1, 8, 14)
 
 
+def split_pair_version(version):
+    """The split pair gate (`airk` service + `airkctl` CLI); one owner in split_receipts.py."""
+    return split_receipts().split_version(version)
+
+
+def split_images(operating_system):
+    images = split_receipts().IMAGES[operating_system]
+    return (images["airk"], images["airkctl"])
+
+
 def runtime_executables(operating_system, version):
+    if split_pair_version(version):
+        return split_images(operating_system)
     names = runtime_names(operating_system)
     return names[:1] if single_image_version(version) else names
+
+
+def service_executable(operating_system, version):
+    """The service image by name: model checks, smoke and self-test never run on airkctl."""
+    if split_pair_version(version):
+        return split_images(operating_system)[0]
+    return runtime_executables(operating_system, version)[0]
+
+
+def version_command(staging, executable, version):
+    """`--version` probe. The split service image parses arguments only behind the U93 interim role."""
+    path = str(staging / executable)
+    if split_pair_version(version) and Path(executable).name in ("airk", "airk.exe"):
+        return [path, "__airk_role", "setup-interim", "--version"]
+    return [path, "--version"]
+
+
+def _rust_constant(relative, name):
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    values = re.findall(rf"^pub const {name}: u32 = ([0-9]+);$", text, re.MULTILINE)
+    if len(values) != 1:
+        raise RuntimeError(f"Expected exactly one {name} in {relative}")
+    return int(values[0])
+
+
+def interface_versions():
+    """(I1 protocol, I2 contract) read from their Rust owners, which source_identity() covers."""
+    return (_rust_constant("crates/airk-core/src/service.rs", "PROTOCOL_VERSION"),
+            _rust_constant("crates/airkctl/src/contract/mod.rs", "I2_CONTRACT"))
 
 
 def runtime_metadata_matches(metadata, version, operating_system, architecture, files):
     """Strict versioned decoder: absence of a legacy helper is never inferred."""
     names = runtime_executables(operating_system, version)
+    if split_pair_version(version):
+        try:
+            split_receipts().validate_pair_metadata(metadata)
+        except ValueError:
+            return False
+        return (all(files.get(name) for name in names) and metadata["version"] == version
+                and (metadata["os"], metadata["arch"]) == (operating_system, architecture)
+                and (metadata["airk_sha256"], metadata["airkctl_sha256"]) == (files[names[0]], files[names[1]]))
     expected = {"schema": 2 if single_image_version(version) else 1,
                 "version": version, "os": operating_system, "arch": architecture,
                 "airk_sha256": files.get(names[0])}
@@ -398,7 +517,8 @@ def macos_bundle_files(version):
 
 def arrange_macos_bundle(staging, version):
     executables = runtime_executables("macos", version)
-    for source, destination in zip(("airk", "airk-embed"), executables):
+    sources = ("airk", "airkctl") if split_pair_version(version) else ("airk", "airk-embed")
+    for source, destination in zip(sources, executables):
         target = staging / destination
         target.parent.mkdir(parents=True, exist_ok=True)
         (staging / source).rename(target)
@@ -426,6 +546,11 @@ def sign_development_macos_bundle(staging):
         if not single_image_version(version):
             subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
                             "--timestamp=none", str(staging / name)], check=True)
+    # The split CLI is nested code: sign it before sealing the bundle.
+    cli = staging / "AIRK.app/Contents/MacOS/airkctl"
+    if cli.exists():
+        subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
+                        "--timestamp=none", str(cli)], check=True)
     image = staging / "AIRK.app/Contents/MacOS/airk-launcher-image"
     if image.exists():
         subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
@@ -439,6 +564,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--profile", choices=["debug", "release"], default="debug")
+    parser.add_argument("--admin-inventory", type=Path, default=ROOT / "artifacts/admin/admin-assets.json",
+                        help="Split versions: the inventory scripts/build-admin-assets.py wrote after its checks")
     args = parser.parse_args()
     if platform.system() == "Darwin":
         configured = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.3")
@@ -454,6 +581,17 @@ def main():
         # This tree no longer contains the airk-embed helper target. Historical
         # pair payloads are built from their tagged sources and build scripts.
         raise SystemExit(f"Version {version} needs a historical runtime pair; build it from its tagged source")
+    split = split_pair_version(version)
+    admin_block = None
+    if split:
+        # The sealed admin bundle is verified before compiling: the checked inventory must
+        # equal the committed bundle (a stale or edited bundle stops the build).
+        if not args.admin_inventory.is_file():
+            raise SystemExit("Split builds need the admin inventory; run scripts/build-admin-assets.py first")
+        admin = load_script("build-admin-assets")
+        admin_inventory = json.loads(args.admin_inventory.read_text(encoding="utf-8"))
+        admin_block = admin.block_from_inventory(admin_inventory)
+        check_lightweight_dependencies()
     source = source_identity()
     load_script("int8-policy").catalog()
     static_inputs = verify_static_inputs()
@@ -461,6 +599,9 @@ def main():
         staging = Path(temporary)
         main_binary = cargo_binary("airk", args.profile, "local-inference")
         shutil.copy2(main_binary, staging / main_binary.name)
+        if split:
+            cli_binary = cargo_binary("airkctl", args.profile, None, package="airkctl")
+            shutil.copy2(cli_binary, staging / cli_binary.name)
         operating_system = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}.get(platform.system())
         architecture = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}.get(platform.machine().lower())
         if not operating_system or not architecture:
@@ -472,18 +613,31 @@ def main():
             raise RuntimeError("Native source changed during the runtime build; staging was not published")
         if operating_system == "macos":
             sign_development_macos_bundle(staging)
-        imports = verify_static_imports(staging / runtime_executables(operating_system, version)[0], operating_system)
+        imports = verify_static_imports(staging / service_executable(operating_system, version), operating_system)
+        cli_imports = (verify_cli_imports(staging / runtime_executables(operating_system, version)[1], operating_system)
+                       if split else None)
         model_smoke = verify_model_smoke(staging, operating_system, version)
         if verify_static_inputs() != static_inputs:
             raise RuntimeError("Static ORT compiled inputs changed during the build")
         stage_static_notices(staging, static_inputs)
-        manifest = write_pair_metadata(staging, version, operating_system, architecture)
+        if split:
+            manifest = write_pair_metadata(staging, version, operating_system, architecture, admin_block["inventory_sha256"])
+        else:
+            manifest = write_pair_metadata(staging, version, operating_system, architecture)
         if source_identity() != source:
             raise RuntimeError("Native source changed during the paired build; staging was not published")
-        receipt = {"schema": 1, "source": source, "profile": args.profile,
-                   "runtime": manifest, "rustc": subprocess.check_output(
-                       ["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip(),
-                   "static_ort": static_inputs, "static_imports": imports, "embedded_model_smoke": model_smoke}
+        rustc = subprocess.check_output(["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip()
+        if split:
+            if load_script("build-admin-assets").block_from_inventory(admin_inventory) != admin_block:
+                raise RuntimeError("Admin bundle changed during the build; staging was not published")
+            receipt = {"schema": 2, "source": source, "profile": args.profile, "runtime": manifest, "rustc": rustc,
+                       "static_ort": static_inputs, "static_imports": imports, "airkctl_static_imports": cli_imports,
+                       "embedded_model_smoke": model_smoke, "admin_assets": admin_block}
+            split_receipts().validate_build_receipt(receipt)
+        else:
+            receipt = {"schema": 1, "source": source, "profile": args.profile,
+                       "runtime": manifest, "rustc": rustc,
+                       "static_ort": static_inputs, "static_imports": imports, "embedded_model_smoke": model_smoke}
         receipt_text = json.dumps(receipt, indent=2) + "\n"
         if len(receipt_text.encode("utf-8")) > 16_384:
             raise RuntimeError("Complete build receipt exceeds the native metadata bound")

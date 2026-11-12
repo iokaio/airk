@@ -122,11 +122,14 @@ jobs:
     needs: [plan, quick]
     if: needs.plan.outputs.extension == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24.15.0'
@@ -135,6 +138,24 @@ jobs:
       - run: npm test --prefix packages/vscode
       - name: Verify compiled extension staging and listing contracts
         run: python -m unittest discover -s scripts/tests -p test_package_extension.py -v
+      # The UI-only universal VSIX (U29) needs no native artifact; it branches after the
+      # extension's own compilation (split §10.5.3) and never waits for native-build.
+      - name: Package and verify the universal UI-only VSIX
+        env:
+          AIRK_CHANNEL: ${{ inputs.channel || 'stable' }}
+        run: python scripts/package-extension.py --channel "$AIRK_CHANNEL"
+      # TODO(split 10.5.2): scripts/ci-candidates.py select_artifacts/promote/release-inputs still
+      # expect per-target airk-vsix-<target>-... artifacts; switch them to this single
+      # airk-vsix-universal-<commit>-<run>-<attempt> artifact (split_receipts.catalog_names).
+      # Until then main promotion falls back to the complete build.
+      - name: Retain the universal extension and checksums
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: airk-vsix-universal-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/extension/universal/publish/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
   native-build:
     needs: [plan, quick, contracts, extension]
     if: ${{ !cancelled() && needs.plan.outputs.native == 'true' && needs.quick.result == 'success' && (needs.contracts.result == 'success' || needs.contracts.result == 'skipped') && (needs.extension.result == 'success' || needs.extension.result == 'skipped') }}
@@ -193,6 +214,11 @@ jobs:
         with:
           node-version: '24.15.0'
           package-manager-cache: false
+      # Build order (split §10.5.3): admin bundle check/seal before any native compilation;
+      # `airk` embeds crates/airk-cli/admin-assets and a stale bundle must stop the build.
+      - name: Check the locked admin bundle before the native build
+        if: steps.resume.outputs.restored != 'true'
+        run: python scripts/build-admin-assets.py --output artifacts/admin/admin-assets.json
       - name: Record runner capacity before native compilation
         run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-before.json
       - name: Prepare pinned bundled model build inputs
@@ -207,6 +233,23 @@ jobs:
       - name: Compile the separate lightweight CLI component configuration
         if: steps.resume.outputs.restored != 'true'
         run: python scripts/ci-metrics.py run --name lightweight-component-compile -- cargo check -p airk-cli --no-default-features --all-targets --locked --target ${{ matrix.target }}
+      - name: Prove the airkctl CLI carries no inference dependency
+        if: steps.resume.outputs.restored != 'true'
+        shell: bash
+        # Write the tree first so a failing cargo tree cannot hide inside the grep condition.
+        run: |
+          cargo tree --locked -p airkctl --target ${{ matrix.target }} --edges normal --prefix none --format '{p}' > "$RUNNER_TEMP/airkctl-dependencies.txt"
+          test -s "$RUNNER_TEMP/airkctl-dependencies.txt"
+          if awk '{print $1}' "$RUNNER_TEMP/airkctl-dependencies.txt" | grep -Ex 'ort|ort-sys|tokenizers|tract-.*'; then
+            echo "::error::airkctl depends on an inference crate"
+            exit 1
+          fi
+      - name: airkctl unit and contract tests
+        if: steps.resume.outputs.restored != 'true'
+        run: python scripts/ci-metrics.py run --name airkctl-tests -- cargo nextest run --profile ci -p airkctl --locked --target ${{ matrix.target }}
+      - name: Clippy for the airkctl CLI on hosts without workspace Clippy
+        if: ${{ steps.resume.outputs.restored != 'true' && matrix.os != 'ubuntu-24.04' && !inputs.qualification }}
+        run: python scripts/ci-metrics.py run --name airkctl-clippy -- cargo clippy -p airkctl --all-targets --locked --target ${{ matrix.target }} -- -D warnings
       - name: Native platform ownership and retrieval regressions
         if: ${{ steps.resume.outputs.restored != 'true' && matrix.os != 'ubuntu-24.04' && !inputs.qualification }}
         env:
@@ -298,6 +341,15 @@ jobs:
         run: python scripts/ci-runtime.py restore --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --transfer artifacts/runtime-transfer/${{ matrix.target }}
       - name: Record runner capacity before native validation
         run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-before.json
+      # TODO(split 10.5.2, harness row): `airk` is service-only. Inventory each consumer below
+      # as service, CLI or matched pair: check-service-clients.py, check-service-install.py and
+      # the --binary harnesses (check-transformer-model, benchmark-code, check-retrieval-quality,
+      # check-document-tables, check-storage-lifecycle, check-usage-inputs,
+      # check-publication-faults) still drive user commands through matrix.executable (airk);
+      # they need the airkctl path (or --runtime-dir) per scripts/ci-plan.py NATIVE_ROWS, which
+      # has no airkctl column yet. AIRK_TEST_BINARY below also points at airk, and
+      # packages/vscode/src/test/nativeSmoke.test.ts was removed in Phase 6, so the MCP smoke
+      # step has no test file until an airkctl session smoke replaces it.
       - name: Native direct clients, retained reads and shared offline inference
         run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
       - name: Installed process roles and client lifetime
@@ -349,11 +401,8 @@ jobs:
           done
       - name: Package and verify allowlisted native payload
         run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }}
-      - name: Package and verify platform VSIX
-        env:
-          AIRK_CHANNEL: ${{ inputs.channel || 'stable' }}
-        shell: pwsh
-        run: python scripts/package-extension.py --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL
+      # The VSIX is universal and UI-only (U29); the extension job packages it once without
+      # native bytes. A universal VSIX never replaces this per-target native evidence.
       - name: Retain native candidate and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -373,14 +422,6 @@ jobs:
             artifacts/benchmarks/${{ matrix.target }}-retrieval.json
           if-no-files-found: error
           retention-days: 7
-      - name: Retain matching extension and checksums
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: airk-vsix-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/extension/${{ matrix.target }}/publish/
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
       - name: Summarize phase durations and slow tests
         if: always()
         run: python scripts/ci-metrics.py summary

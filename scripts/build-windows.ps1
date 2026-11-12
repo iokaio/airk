@@ -74,7 +74,8 @@ try {
         Invoke-AirkTool git @('diff', '--check')
     }
     Invoke-AirkTool $airkPython @('scripts/package-native.py', '--target', $airkTarget, '--runtime-dir', $airkRuntime, '--output', (Join-Path $airkOutput 'native'))
-    Invoke-AirkTool $airkPython @('scripts/package-extension.py', '--target', $airkTarget, '--native-dir', (Join-Path $airkOutput 'native/publish'), '--output', (Join-Path $airkOutput 'vscode'))
+    # The VSIX is universal and UI-only (split U29): it takes no native input.
+    Invoke-AirkTool $airkPython @('scripts/package-extension.py', '--output', (Join-Path $airkOutput 'vscode'))
     $airkReceipt = Get-Content (Join-Path $airkOutput 'vscode/publish/manifest.json') -Raw | ConvertFrom-Json
     $airkVsix = Join-Path $airkOutput "vscode/publish/$($airkReceipt.archive)"
     if ($RunEditorTests -or $OpenReview) {

@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Revalidate all platform VSIX receipts before granting them to the publisher."""
+"""Revalidate the release VSIX receipts before granting them to the publisher.
+
+Split versions (split_receipts.SPLIT_VERSION and later) release exactly one
+universal, UI-only VSIX (U29); earlier versions released four platform VSIXs.
+"""
 import argparse
 import importlib.util
 import json
@@ -19,11 +23,40 @@ def read_receipt(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def verify_universal(directory, commit, version, channel, *, receipts=None, tree=None):
+    """Exactly one universal VSIX with its C7 receipt; no native entry of any kind."""
+    receipts = sorted(directory.glob("*/manifest.json")) if receipts is None else receipts
+    if len(receipts) != 1:
+        raise ValueError("Expected exactly one universal VSIX receipt")
+    receipt_path, = receipts
+    receipt = read_receipt(receipt_path)
+    package.receipts.validate_vsix(receipt)
+    if (not package.same_source(receipt, commit, tree) or receipt["version"] != version
+            or receipt["extension_id"] != "iokaio.airk" or receipt["pre_release"] is not (channel == "preview")
+            or receipt["locks"] != {package.LOCK: package.digest((ROOT / package.LOCK).read_bytes())}):
+        raise ValueError("Release identity/channel/lock differs")
+    name = receipt["archive"]
+    package.safe_name(name)
+    if name != f"airk-{version}.vsix":
+        raise ValueError("Unexpected release archive name")
+    archive = receipt_path.parent / name
+    if archive.is_symlink() or package.digest(archive.read_bytes()) != receipt["archive_sha256"]:
+        raise ValueError("Release archive digest mismatch")
+    package.verify_vsix(archive, receipt["payload"], version=version, pre_release=channel == "preview",
+                        display_name=receipt["display_name"])
+    with zipfile.ZipFile(archive) as zipped:
+        if package.digest(zipped.read("extension/airk-update.json")) != receipt["ui_inventory_sha256"]:
+            raise ValueError("Release UI inventory differs from its receipt")
+    return [str(archive.resolve())]
+
+
 def verify(directory, commit, version, channel, *, receipts=None, tree=None):
     if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Expected full commit SHA and numeric extension version")
     if channel not in ("preview", "stable"):
         raise ValueError("Unknown release channel")
+    if package.receipts.split_version(version):
+        return verify_universal(directory, commit, version, channel, receipts=receipts, tree=tree)
     platforms = set(package.TARGETS.values())
     archives = []
     receipts = sorted(directory.glob("*/manifest.json")) if receipts is None else receipts
@@ -50,9 +83,8 @@ def verify(directory, commit, version, channel, *, receipts=None, tree=None):
         archive = receipt_path.parent / name
         if archive.is_symlink() or package.digest(archive.read_bytes()) != receipt["archive_sha256"]:
             raise ValueError("Release archive digest mismatch")
-        executable = "airk.exe" if platform == "win32-x64" else "airk"
-        package.verify_vsix(archive, receipt["payload"], executable, platform, version,
-                            channel == "preview", receipt["display_name"])
+        package.verify_vsix(archive, receipt["payload"], platform=platform, version=version,
+                            pre_release=channel == "preview", display_name=receipt["display_name"])
         with zipfile.ZipFile(archive) as zipped:
             paired = tuple(int(part) for part in version.split(".")[:2]) >= (1, 4)
             native_bytes = zipped.read("extension/native/candidate.json" if paired else "extension/native/manifest.json")
@@ -100,7 +132,7 @@ def main():
     args = parser.parse_args()
     archives = verify(args.directory, args.commit, args.version, args.channel, tree=package.source_tree(args.commit))
     args.output.write_text(json.dumps(archives, indent=2) + "\n", encoding="utf-8")
-    print(f"Verified all {len(archives)} VSIX packages for {args.version} ({args.channel}) at {args.commit}")
+    print(f"Verified {len(archives)} VSIX package(s) for {args.version} ({args.channel}) at {args.commit}")
 
 
 if __name__ == "__main__":

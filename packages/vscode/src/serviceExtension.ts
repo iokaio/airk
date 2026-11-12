@@ -6,7 +6,9 @@
 //! pages (`airkctl admin open`).
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState } from './airkctl';
+// Name index modules explicitly: the isolated update loader resolves only `x`, `x.js` and
+// `x.json` (extensionUpdateLoader.ts), and the packager applies the same rule.
+import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState } from './airkctl/index';
 import { systemVerifyHost } from './airkctl/verify';
 import { AirkctlToolSession } from './airkctl/tools';
 import { AirkctlExplorerHost, describe } from './airkctl/features/explorerHost';
@@ -14,7 +16,7 @@ import { ACTION_LABELS, guidance, type GuidanceAction } from './airkctl/status/g
 import {
     connectAgent, connectionInfo, connectionUrl, credentialHeader, inputCredential, listAgents, removeAgents, repairAgents,
     reportedConnections, sweepWithoutService, type Client, type RemovedEntry,
-} from './airkctl/agents';
+} from './airkctl/agents/index';
 import { setEvidenceTransport } from './explorerEvidence';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';

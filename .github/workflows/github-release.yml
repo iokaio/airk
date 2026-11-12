@@ -13,6 +13,15 @@ on:
       - scripts/tests/test_standalone_*.py
       - scripts/tests/test_github_release.py
       - scripts/tests/test_ci_*_signing.py
+      # Split release-tool inputs (split §10.5.2): receipt/catalog owner, signing identity and
+      # the admin identity bound into native receipts.
+      - scripts/split_receipts.py
+      - scripts/tests/test_split_receipts.py
+      - fixtures/split/receipts/**
+      - scripts/signing-identity.json
+      - scripts/build-admin-assets.py
+      - packages/admin/**
+      - crates/airk-cli/admin-assets/**
   workflow_dispatch:
     inputs:
       candidate_run_id:
@@ -56,6 +65,7 @@ jobs:
           python -m unittest discover -s scripts/tests -p test_release_1_4_4_repair.py -v
           python -m unittest discover -s scripts/tests -p 'test_ci_*_signing.py' -v
           python -m unittest discover -s scripts/tests -p 'test_standalone_*.py' -v
+          python -m unittest discover -s scripts/tests -p test_split_receipts.py -v
   preflight:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -198,6 +208,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'ci-candidates.py' }} download --target ${{ matrix.target }} --output artifacts/tested-native
+      # TODO(split 10.5.2): for split versions the producer has one universal VSIX
+      # (airk-vsix-universal-...), not --kind vsix per target; scripts/ci-candidates.py download
+      # and scripts/promote-vsix.py source still assume per-target VSIXs and native candidate /2.
+      # The source record must come from github-release.py write_source_record over the
+      # airk-native-candidate/3 receipt alone.
       - name: Download pinned native and compiled VSIX artifacts
         shell: bash
         if: ${{ !inputs.repair_1_4_4 }}
@@ -211,6 +226,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'github-release.py' }} stage-signing --directory artifacts/tested-native --target ${{ matrix.target }}
+      # TODO(split 10.5.2, §9.4): the Windows (ci-windows-sign.py prepare/list/record) and
+      # macOS pair signing steps below must sign and verify both airk and airkctl (sign-native.py
+      # signing_names/read_verified_pair, airk-service-pair-signing/1); the Windows installer
+      # steps must package installers/windows/airk-service.iss (Phase 7) instead of airk.iss.
       - name: Stage Windows signing copy
         if: runner.os == 'Windows'
         run: python scripts/ci-windows-sign.py prepare --pair
@@ -337,6 +356,9 @@ jobs:
         shell: pwsh
         run: python scripts/package-extension.py --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
+      # TODO(split 10.5.2): split versions only package the signed native pair here
+      # (package-native.py writes airk-native-candidate/3). The universal VSIX is not re-packaged
+      # per target: promote-vsix.py channel rewrites only channel metadata, once, in assembly.
       - name: Package signed bytes using CI metadata and compiled extension
         if: ${{ !inputs.repair_1_4_4 }}
         env:
@@ -371,6 +393,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      # TODO(split 10.5.2): no per-target signed VSIX exists for split versions; remove this
+      # upload with the release catalog step (split_receipts.catalog_names has no signed VSIX).
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-signed-vsix-${{ matrix.target }}-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
@@ -427,6 +451,9 @@ jobs:
           AIRK_CHANNEL: ${{ inputs.channel }}
         run: python scripts/package-extension.py --target x86_64-unknown-linux-gnu --channel "$AIRK_CHANNEL"
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
+      # TODO(split 10.5.2): split versions promote only the Linux native package here; the
+      # universal VSIX is downloaded once (airk-vsix-universal-...) and channel-rewritten with
+      # `promote-vsix.py channel` in one place, not per target.
       - name: Promote unchanged Linux CI packages (adjust channel only when requested)
         if: ${{ !inputs.repair_1_4_4 }}
         env:
@@ -465,6 +492,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      # TODO(split 10.5.2): replace with the single airk-vsix-universal-<commit>-<run> release input
+      # (split_receipts.catalog_names release_inputs).
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-vsix-x86_64-unknown-linux-gnu-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
@@ -518,6 +547,10 @@ jobs:
           pattern: airk-installer-*-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
           path: artifacts/candidates
           merge-multiple: false
+      # TODO(split 10.5.2): github-release.py assemble/verify_bundle/stage_marketplace_bundle and
+      # ci-candidates.py release-inputs must implement the split catalog (airk-release-catalog/1:
+      # four native targets with both images and the admin identity, one airk-<version>.vsix,
+      # installers) before a split version can be assembled; they still expect per-target VSIXs.
       - name: Verify complete signed platform set and stage public downloads
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}

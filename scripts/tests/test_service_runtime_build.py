@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Runtime staging preserves source identity and runnable Mac development bundles."""
+import hashlib
 import importlib.util
 import os
 import plistlib
@@ -101,7 +102,7 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
         specification = importlib.util.spec_from_file_location("single_image_builder", script)
         builder = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(builder)
-        for version in ("1.8.14", "1.9.0"):
+        for version in ("1.8.14", "1.8.23"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 (root / "airk").write_bytes(b"single compiled main")
@@ -319,10 +320,14 @@ int main(int argc, char **argv) {
             helper = root / f"airk-embed{suffix}"
             main.write_bytes(b"Original main build fixture.")
             helper.write_bytes(b"Original inference build fixture.")
+            cli = root / f"airkctl{suffix}"
+            cli.write_bytes(b"Original CLI build fixture.")
+            inventory = root / "admin-assets.json"
+            inventory.write_text("{}", encoding="utf-8")
             destination = root / "runtime"
 
-            def artifact(name, _profile, _features):
-                return helper if name == "airk-embed" else main
+            def artifact(name, _profile, _features, package="airk-cli"):
+                return {"airk-embed": helper, "airkctl": cli}.get(name, main)
 
             def identity(arguments, **_kwargs):
                 self.assertEqual(arguments[1], "--version")
@@ -340,11 +345,13 @@ int main(int argc, char **argv) {
                   mock.patch.object(builder, "source_identity", side_effect=[
                       {"sha256": "a" * 64, "files": 1}, {"sha256": "b" * 64, "files": 1}]),
                   mock.patch.object(builder.subprocess, "check_output", side_effect=identity),
-                  mock.patch.object(sys, "argv", [str(script), "--destination", str(destination)])):
+                  mock.patch.object(sys, "argv", [str(script), "--destination", str(destination),
+                                                  "--admin-inventory", str(inventory)])):
                 with self.assertRaisesRegex(RuntimeError, "source changed"):
                     builder.main()
             self.assertFalse(destination.exists())
             self.assertFalse(any(path.name.startswith(".airk-runtime-stage-") for path in root.iterdir()))
+            self.assertEqual(cli.read_bytes(), b"Original CLI build fixture.")
             self.assertEqual(main.read_bytes(), b"Original main build fixture.")
             self.assertEqual(helper.read_bytes(), b"Original inference build fixture.")
 
@@ -363,6 +370,147 @@ int main(int argc, char **argv) {
                   mock.patch.dict(builder.os.environ, {"MACOSX_DEPLOYMENT_TARGET": "13.3"}),
                   mock.patch.object(sys, "argv", [str(script), "--destination", str(destination)])):
                 with self.assertRaisesRegex(SystemExit, "historical runtime pair"):
+                    builder.main()
+            self.assertFalse(destination.exists())
+
+
+def load_builder(name):
+    script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+    specification = importlib.util.spec_from_file_location(name, script)
+    builder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder)
+    return builder
+
+
+class SplitPairBuildTests(unittest.TestCase):
+    """Split versions (>= 1.8.24) build and inventory airk and airkctl; earlier versions are unchanged."""
+
+    def test_split_roster_selects_images_by_name(self):
+        builder = load_builder("split_roster_builder")
+        expected = {"windows": ("airk.exe", "airkctl.exe"), "linux": ("airk", "airkctl"),
+                    "macos": ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airkctl")}
+        for os_name, images in expected.items():
+            with self.subTest(os_name=os_name):
+                self.assertEqual(builder.runtime_executables(os_name, "1.8.24"), images)
+                self.assertEqual(builder.service_executable(os_name, "1.8.24"), images[0])
+                self.assertEqual(builder.signing_names(os_name, "1.8.24"), images)
+                self.assertEqual(builder.runtime_executables(os_name, "1.8.23"), images[:1])
+        self.assertEqual(builder.version_command(Path("s"), "airk.exe", "1.8.24"),
+                         [str(Path("s/airk.exe")), "__airk_role", "setup-interim", "--version"])
+        self.assertEqual(builder.version_command(Path("s"), "airkctl.exe", "1.8.24"), [str(Path("s/airkctl.exe")), "--version"])
+        self.assertEqual(builder.version_command(Path("s"), "airk.exe", "1.8.23"), [str(Path("s/airk.exe")), "--version"])
+
+    def test_interface_versions_come_from_the_rust_owners(self):
+        # Reviewed values: airk_core::service::PROTOCOL_VERSION and airkctl::contract::I2_CONTRACT.
+        self.assertEqual(load_builder("interface_builder").interface_versions(), (1, 1))
+
+    def test_split_pair_metadata_is_schema_3_and_checks_both_identities(self):
+        builder = load_builder("split_metadata_builder")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "airk").write_bytes(b"service image")
+            (root / "airkctl").write_bytes(b"cli image")
+            calls = []
+
+            def identity(command, **_kwargs):
+                calls.append(command[1:])
+                return ("airk" if command[1] == "__airk_role" else "airkctl") + " 1.8.24\n"
+            with mock.patch.object(builder.subprocess, "check_output", side_effect=identity):
+                metadata = builder.write_pair_metadata(root, "1.8.24", "linux", "x86_64", "3" * 64)
+            self.assertEqual(calls, [["__airk_role", "setup-interim", "--version"], ["--version"]])
+            self.assertEqual(metadata, {"schema": 3, "version": "1.8.24", "os": "linux", "arch": "x86_64",
+                                        "airk_sha256": hashlib.sha256(b"service image").hexdigest(),
+                                        "airkctl_sha256": hashlib.sha256(b"cli image").hexdigest(),
+                                        "i1_protocol": 1, "i2_contract": 1, "admin_inventory_sha256": "3" * 64})
+            files = {"airk": metadata["airk_sha256"], "airkctl": metadata["airkctl_sha256"]}
+            self.assertTrue(builder.runtime_metadata_matches(metadata, "1.8.24", "linux", "x86_64", files))
+            self.assertFalse(builder.runtime_metadata_matches(metadata, "1.8.24", "linux", "x86_64", {"airk": files["airk"]}))
+            self.assertFalse(builder.runtime_metadata_matches({**metadata, "schema": 2}, "1.8.24", "linux", "x86_64", files))
+            self.assertFalse(builder.runtime_metadata_matches({**metadata, "embed_sha256": "0" * 64}, "1.8.24", "linux", "x86_64", files))
+            with mock.patch.object(builder.subprocess, "check_output", return_value="airk 1.8.24\n"):
+                with self.assertRaisesRegex(RuntimeError, "Unexpected executable identity"):
+                    builder.write_pair_metadata(root, "1.8.24", "linux", "x86_64", "3" * 64)
+
+    def test_cli_image_has_no_inference_dependency_import_or_code(self):
+        builder = load_builder("split_cli_builder")
+        with mock.patch.object(builder.subprocess, "check_output", return_value="airkctl v1.8.24\nairk-core v1.8.24\nserde v1.0.0\n") as tree:
+            builder.check_lightweight_dependencies()
+            self.assertEqual(tree.call_args.args[0][:5], ["cargo", "tree", "--locked", "-p", "airkctl"])
+        for dependency in ("ort v2.0.0", "ort-sys v2.0.0", "tokenizers v0.21.0", "tract-onnx v0.21.0"):
+            with self.subTest(dependency=dependency), mock.patch.object(
+                    builder.subprocess, "check_output", return_value=f"airkctl v1.8.24\n{dependency}\n"):
+                with self.assertRaisesRegex(RuntimeError, "inference dependencies"):
+                    builder.check_lightweight_dependencies()
+        with mock.patch.object(builder.subprocess, "check_output", return_value="airk-cli v1.8.24\n"):
+            with self.assertRaisesRegex(RuntimeError, "did not report the airkctl package"):
+                builder.check_lightweight_dependencies()
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "airkctl"
+            image.write_bytes(b"\0" * (1 << 20) + b"plain cli code")
+            with mock.patch.object(builder.subprocess, "run", return_value=mock.Mock(stdout="NEEDED libc.so.6")):
+                report = builder.verify_cli_imports(image, "linux")
+            self.assertEqual(report, {"schema": 1, "command": ["readelf", "-d", str(image)], "stdout": "NEEDED libc.so.6",
+                                      "external_onnxruntime_imports": False, "inference_symbols": False})
+            # A marker straddling the 1 MiB read boundary is still found.
+            image.write_bytes(b"\0" * ((1 << 20) - 4) + b"OrtGetApiBase")
+            with mock.patch.object(builder.subprocess, "run", return_value=mock.Mock(stdout="NEEDED libc.so.6")):
+                with self.assertRaisesRegex(RuntimeError, "inference code markers: \\['OrtGetApiBase'\\]"):
+                    builder.verify_cli_imports(image, "linux")
+            image.write_bytes(b"")
+            with self.assertRaisesRegex(RuntimeError, "inspection bound"):
+                builder.scan_inference_markers(image)
+
+    def test_split_mac_bundle_nests_and_signs_airkctl_before_the_bundle(self):
+        builder = load_builder("split_mac_builder")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "airk").write_bytes(b"service")
+            (root / "airkctl").write_bytes(b"cli")
+            builder.arrange_macos_bundle(root, "1.8.24")
+            self.assertEqual(sorted(p.name for p in (root / "AIRK.app/Contents/MacOS").iterdir()), ["airk", "airkctl"])
+            self.assertFalse((root / "airkctl").exists())
+            with mock.patch.object(builder.subprocess, "run") as signing:
+                builder.sign_development_macos_bundle(root)
+            targets = [call.args[0][-1] for call in signing.call_args_list]
+            self.assertEqual(targets, [str(root / "AIRK.app/Contents/MacOS/airkctl"), str(root / "AIRK.app"), str(root / "AIRK.app")])
+            self.assertIn("--verify", signing.call_args_list[2].args[0])
+
+    def test_source_identity_covers_frontend_production_inputs(self):
+        builder = load_builder("split_source_builder")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            names = ["crates/airk-cli/src/lib.rs", "packages/admin/src/app.tsx", "packages/admin/package-lock.json",
+                     "packages/contracts-gen/i3.ts", "fixtures/split/i3/admin_operations.json"]
+            for name in names:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text("original " + name, encoding="utf-8")
+            listing = mock.Mock(return_value=b"\0".join(name.encode() for name in names))
+            with mock.patch.object(builder, "ROOT", root), mock.patch.object(builder.subprocess, "check_output", listing):
+                original = builder.source_identity()
+                pathspec = listing.call_args.args[0]
+                for required in ("packages/admin", "packages/ui", "packages/contracts-gen", "crates",
+                                 "fixtures/split/i3/admin_operations.json", "scripts/build-admin-assets.py",
+                                 "scripts/split_receipts.py"):
+                    self.assertIn(required, pathspec)
+                for frontend in names[1:]:
+                    (root / frontend).write_text("changed frontend input", encoding="utf-8")
+                    self.assertNotEqual(builder.source_identity(), original, frontend)
+                    (root / frontend).write_text("original " + frontend, encoding="utf-8")
+                self.assertEqual(builder.source_identity(), original)
+
+    def test_split_build_needs_the_checked_admin_inventory_before_compiling(self):
+        builder = load_builder("split_admin_gate_builder")
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="1.8.24"\n', encoding="utf-8")
+            destination = root / "runtime"
+            with (mock.patch.object(builder, "ROOT", root),
+                  mock.patch.object(builder, "cargo_binary", side_effect=AssertionError("no Cargo build")),
+                  mock.patch.dict(builder.os.environ, {"MACOSX_DEPLOYMENT_TARGET": "13.3"}),
+                  mock.patch.object(sys, "argv", [str(script), "--destination", str(destination),
+                                                  "--admin-inventory", str(root / "missing.json")])):
+                with self.assertRaisesRegex(SystemExit, "build-admin-assets.py"):
                     builder.main()
             self.assertFalse(destination.exists())
 

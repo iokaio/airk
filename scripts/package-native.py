@@ -16,6 +16,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 MAX_PAYLOAD_BYTES = 4_294_967_296
 MAX_PAYLOAD_FILES = 2049
+# Rust triple -> pre-split VSIX platform. Split versions use only the triples (the VSIX is
+# universal, U29); historical readers keep the platform values.
 TARGETS = {
     "x86_64-unknown-linux-gnu": "linux-x64",
     "x86_64-pc-windows-msvc": "win32-x64",
@@ -128,17 +130,27 @@ def validate_runtime(runtime, version, target, source):
     build = bounded_json(runtime / "airk-build.json", 65_536)
     operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     architecture = "aarch64" if target.startswith("aarch64-") else "x86_64"
+    builder = runtime_builder()
+    split = builder.split_pair_version(version)
     for metadata in (install, pair):
-        expected_schema = 2 if metadata is pair and runtime_builder().single_image_version(version) else 1
+        expected_schema = (3 if split else 2 if builder.single_image_version(version) else 1) if metadata is pair else 1
         if metadata.get("schema") != expected_schema or metadata.get("version") != version or metadata.get("os") != operating_system or metadata.get("arch") != architecture:
             raise ValueError("Runtime pair platform/version differs")
     expected = {name: value for name, value in files.items() if name != "airk-install.json"}
     if install.get("files") != expected:
         raise ValueError("Runtime install inventory differs from complete payload")
-    if build.get("schema") != 1 or build.get("source") != source or build.get("runtime") != pair:
+    if build.get("schema") != (2 if split else 1) or build.get("source") != source or build.get("runtime") != pair:
         raise ValueError("Runtime build receipt differs from current source/pair")
-    builder = runtime_builder()
     executables = builder.runtime_executables(operating_system, version)
+    if split:
+        # Both images, by name: a payload missing either one (including airkctl without airk) is refused.
+        missing = [name for name in executables if name not in files]
+        if missing:
+            raise ValueError("Runtime pair executable missing: " + ", ".join(missing))
+        try:
+            builder.split_receipts().validate_build_receipt(build)
+        except ValueError as error:
+            raise ValueError("Runtime build receipt differs from the split receipt contract: " + str(error)) from error
     main = executables[0]
     launcher = builder.launcher_name(operating_system, version)
     if launcher != main and launcher not in files:
@@ -186,6 +198,22 @@ def validate_runtime(runtime, version, target, source):
     if not builder.runtime_metadata_matches(pair, version, operating_system, architecture, files):
         raise ValueError("Runtime pair executable digests differ")
     return files, tuple(dict.fromkeys((*executables, launcher)))
+
+
+def split_candidate(common, files, executables, runtime, model_smoke):
+    """`airk-native-candidate/3` (split C7): both image digests, the admin binding from the
+    validated build receipt and the interface versions; no `vsix_target` (U29)."""
+    pair = bounded_json(runtime / "airk-runtime.json", 4096)
+    build = bounded_json(runtime / "airk-build.json", 65_536)
+    receipt = {"schema": "airk-native-candidate/3", **common,
+               "airk_sha256": files[executables[0]], "airkctl_sha256": files[executables[1]],
+               "admin_assets": {"inventory_sha256": build["admin_assets"]["inventory_sha256"],
+                                "bundle_sha256": build["admin_assets"]["bundle_sha256"]},
+               "i1_protocol": pair["i1_protocol"], "i2_contract": pair["i2_contract"],
+               "embedded_model_smoke": model_smoke,
+               "qualification": "native service pair candidate; installed acceptance and oldest OS not qualified"}
+    runtime_builder().split_receipts().validate_native_candidate(receipt)
+    return receipt
 
 
 def source_packaging_metadata(path, target, signed):
@@ -265,42 +293,65 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             with zipped.open(name) as source, destination.open("xb") as output_file:
                 shutil.copyfileobj(source, output_file, length=1_048_576)
+    operating_system = "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux"
+    split = builder.split_pair_version(version)
     for name in executables:
         (smoke / name).chmod(0o755)
         identity = "airk" if name.endswith("/airk-launcher-image") else Path(name).stem
-        if capture(str(smoke / name), "--version") != identity + " " + version:
+        if capture(*builder.version_command(smoke, name, version)) != identity + " " + version:
             raise SystemExit("Archived executable version differs")
-    result = json.loads(capture(str(smoke / executable), "runtime", "self-test"))
+    service = builder.service_executable(operating_system, version)
+    self_test = ([str(smoke / service), "__airk_role", "setup-interim", "runtime", "self-test"] if split
+                 else [str(smoke / executable), "runtime", "self-test"])
+    result = json.loads(capture(*self_test))
     if result.get("self_test") != "passed" or result.get("version") != version:
         raise SystemExit("Archived native service pair self-test failed")
-    model_report = json.loads(capture(str(smoke / executable), "model-catalog"))
     catalog = json.loads((ROOT / "crates/airk-retrieval/src/model_catalog.json").read_text(encoding="utf-8"))
-    selected = model_report.get("selection", {}).get("profile_id")
-    profile = next((p for p in catalog["profiles"] if p["id"] == selected), None)
-    if profile is None or model_report.get("bundled_model", {}).get("manifest") != profile["manifest"]:
-        raise SystemExit("Archived model metadata differs from source catalog")
-    embedded = builder.verify_embedded_models(smoke, "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux", version)
-    model_smoke = builder.verify_model_smoke(smoke, "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux", version) if builder.single_image_version(version) else None
+    embedded = builder.verify_embedded_models(smoke, operating_system, version)
+    model_smoke = builder.verify_model_smoke(smoke, operating_system, version) if builder.single_image_version(version) else None
+    if split:
+        # The split service answers `model-catalog` only over its control endpoint (no running
+        # service here), so the offline smoke selects the profile; the source catalog names its manifest.
+        selected = model_smoke["profile"]
+        profile = next((p for p in catalog["profiles"] if p["id"] == selected), None)
+        if profile is None:
+            raise SystemExit("Archived inference probe selected a profile outside the source catalog")
+        bundled_model = {"manifest": profile["manifest"]}
+    else:
+        model_report = json.loads(capture(str(smoke / executable), "model-catalog"))
+        selected = model_report.get("selection", {}).get("profile_id")
+        profile = next((p for p in catalog["profiles"] if p["id"] == selected), None)
+        if profile is None or model_report.get("bundled_model", {}).get("manifest") != profile["manifest"]:
+            raise SystemExit("Archived model metadata differs from source catalog")
+        bundled_model = model_report["bundled_model"]
     if model_smoke is not None and model_smoke["profile"] != selected:
         raise SystemExit("Archived inference probe selected a different CPU model profile")
-    receipt = {
-        "schema": "airk-native-candidate/2", "version": version,
-        "bundled_model": model_report["bundled_model"],
-        "embedded_models": embedded,
-        "source": builder.source_identity(), "install_manifest_sha256": files["airk-install.json"],
-        "target": args.target, "vsix_target": TARGETS[args.target],
+    common = {
+        "version": version, "target": args.target,
         "commit": capture("git", "rev-parse", "HEAD"),
         "tree": capture("git", "rev-parse", "HEAD^{tree}"),
         "dirty_checkout": bool(capture("git", "status", "--porcelain")),
+        "source": builder.source_identity(),
         "cargo_lock_sha256": sha256(ROOT / "Cargo.lock"),
         "toolchain_file_sha256": sha256(ROOT / "rust-toolchain.toml"),
         "rustc": compiler, "cargo": source_manifest["cargo"] if source_manifest else capture("cargo", "--version"),
         "archive": archive.name, "archive_sha256": sha256(archive),
-        "payload": files, "signed_distribution": signing is not None, "signing": signing,
-        "qualification": "native CLI candidate; installed editor and oldest OS not qualified",
+        "install_manifest_sha256": files["airk-install.json"], "payload": files,
+        "bundled_model": bundled_model, "embedded_models": embedded,
+        "signed_distribution": signing is not None, "signing": signing,
     }
-    if model_smoke is not None:
-        receipt["embedded_model_smoke"] = model_smoke
+    if split:
+        receipt = split_candidate(common, files, executables, runtime, model_smoke)
+    else:
+        # Pre-split /2 keeps its original key order (its manifest bytes are digested downstream).
+        order = ("version", "bundled_model", "embedded_models", "source", "install_manifest_sha256", "target",
+                 "vsix_target", "commit", "tree", "dirty_checkout", "cargo_lock_sha256", "toolchain_file_sha256",
+                 "rustc", "cargo", "archive", "archive_sha256", "payload", "signed_distribution", "signing")
+        values = {**common, "vsix_target": TARGETS[args.target]}
+        receipt = {"schema": "airk-native-candidate/2", **{key: values[key] for key in order},
+                   "qualification": "native CLI candidate; installed editor and oldest OS not qualified"}
+        if model_smoke is not None:
+            receipt["embedded_model_smoke"] = model_smoke
     (publish / "manifest.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     (publish / "SHA256SUMS").write_text(
         sha256(archive) + "  " + archive.name + "\n" +

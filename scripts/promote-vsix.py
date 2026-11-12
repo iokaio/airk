@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Reuse CI extension bytes; change only native payloads and channel metadata."""
+"""Reuse CI extension bytes; change only channel metadata (and, before the split, native payloads).
+
+Split versions (split_receipts.SPLIT_VERSION and later) ship one universal,
+UI-only VSIX: `channel` rewrites only the pre-release property of
+extension.vsixmanifest and proves every extension/ byte unchanged. The pre-split
+`source`/`package` commands, which splice signed native payloads into platform
+VSIXs, remain for historical versions only.
+"""
 import argparse
 import copy
 import io
@@ -18,7 +25,81 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
 
+def channel_manifest(data, channel):
+    """extension.vsixmanifest with only its pre-release property set for `channel`."""
+    metadata = ET.fromstring(data)
+    properties = next((node for node in metadata.iter() if node.tag.rsplit("}", 1)[-1] == "Properties"), None)
+    if properties is None:
+        raise ValueError("VSIX channel metadata has no Properties element")
+    for node in list(properties):
+        if node.get("Id") == "Microsoft.VisualStudio.Code.PreRelease":
+            properties.remove(node)
+    namespace = properties.tag.rsplit("}", 1)[0] + "}" if "}" in properties.tag else ""
+    if channel == "preview":
+        ET.SubElement(properties, namespace + "Property", Id="Microsoft.VisualStudio.Code.PreRelease", Value="true")
+    return ET.tostring(metadata, encoding="utf-8", xml_declaration=True)
+
+
+def verified_universal(directory, commit, version, tree=None):
+    """The CI universal VSIX and its C7 receipt, rechecked against this source and lock."""
+    package = release.extension.package
+    if not package.receipts.split_version(version):
+        raise ValueError("A universal VSIX requires a split version")
+    receipt, archive = release.candidate(directory)
+    package.receipts.validate_vsix(receipt)
+    if (not package.same_source(receipt, commit, tree) or receipt["version"] != version
+            or receipt["extension_id"] != "iokaio.airk"
+            or receipt["locks"] != {package.LOCK: release.digest(ROOT / package.LOCK)}
+            or archive.name != f"airk-{version}.vsix"):
+        raise ValueError("CI universal VSIX differs from this source/lock/version")
+    package.verify_vsix(archive, receipt["payload"], version=version, pre_release=receipt["pre_release"],
+                        display_name=receipt["display_name"])
+    return receipt, archive
+
+
+def promote_universal(vsix_directory, output, commit, version, channel, tree=None):
+    """Copy the tested universal VSIX, rewriting only its channel metadata when needed."""
+    if channel not in ("stable", "preview"):
+        raise ValueError("Unknown release channel")
+    receipt, archive = verified_universal(vsix_directory, commit, version, tree)
+    output.mkdir(parents=True, exist_ok=False)
+    if receipt["pre_release"] == (channel == "preview"):
+        for name in (archive.name, "manifest.json", "SHA256SUMS"):
+            shutil.copyfile(vsix_directory / name, output / name)
+        return receipt
+    destination = output / archive.name
+    expected = {"readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name: value
+                for name, value in receipt["payload"].items()}
+    with zipfile.ZipFile(archive) as original_zip, \
+            zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as result:
+        for info in original_zip.infolist():
+            emitted = copy.copy(info)
+            emitted.compress_type = zipfile.ZIP_DEFLATED
+            data = original_zip.read(info)
+            if info.filename == "extension.vsixmanifest":
+                data = channel_manifest(data, channel)
+            elif info.filename.startswith("extension/") and expected.get(info.filename.removeprefix("extension/")) != hashlib.sha256(data).hexdigest():
+                raise ValueError("CI extension bytes changed during promotion")
+            result.writestr(emitted, data)
+    release.extension.package.verify_vsix(destination, receipt["payload"], version=version,
+                                          pre_release=channel == "preview", display_name=receipt["display_name"])
+    # same_source admitted the receipt: an equal commit (its tree stands) or an identical tree.
+    receipt = {**receipt, "commit": commit, "tree": tree or receipt["tree"], "pre_release": channel == "preview",
+               "archive_sha256": release.digest(destination)}
+    release.extension.package.receipts.validate_vsix(receipt)
+    (output / "manifest.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    (output / "SHA256SUMS").write_text(f"{release.digest(destination)}  {destination.name}\n"
+        f"{release.digest(output / 'manifest.json')}  manifest.json\n", encoding="utf-8")
+    return receipt
+
+
+def pre_split(version):
+    if release.extension.package.receipts.split_version(version):
+        raise ValueError("Split versions ship one universal VSIX; use the channel command")
+
+
 def verified_vsix(directory, native_directory, target, commit, version, tree=None):
+    pre_split(version)
     receipt, archive = release.candidate(directory)
     original = release.extension.read_receipt(native_directory / "manifest.json")
     if (receipt.get("schema") != "airk-extension-candidate/1"
@@ -30,9 +111,8 @@ def verified_vsix(directory, native_directory, target, commit, version, tree=Non
             or receipt.get("native_manifest_sha256") != release.digest(native_directory / "manifest.json")
             or receipt.get("native_archive_sha256") != original["archive_sha256"]):
         raise ValueError("CI VSIX differs from its native candidate/source/lock")
-    executable = "airk.exe" if "windows" in target else "airk"
-    release.extension.package.verify_vsix(archive, receipt["payload"], executable,
-        receipt["platform"], version, receipt["pre_release"], receipt["display_name"])
+    release.extension.package.verify_vsix(archive, receipt["payload"], platform=receipt["platform"], version=version,
+                                          pre_release=receipt["pre_release"], display_name=receipt["display_name"])
     with zipfile.ZipFile(archive) as zipped:
         raw = zipped.read("extension/native/candidate.json")
         if hashlib.sha256(raw).hexdigest() != receipt["native_manifest_sha256"]:
@@ -94,17 +174,7 @@ def promote(vsix_directory, original_directory, native_directory, output, target
                 # replaced below. Preserve every reviewed host/UI/parser digest.
                 continue
             if name == "extension.vsixmanifest" and receipt["pre_release"] != (channel == "preview"):
-                metadata = ET.fromstring(original_zip.read(info))
-                properties = next((node for node in metadata.iter() if node.tag.rsplit("}", 1)[-1] == "Properties"), None)
-                if properties is None:
-                    raise ValueError("VSIX channel metadata has no Properties element")
-                for node in list(properties):
-                    if node.get("Id") == "Microsoft.VisualStudio.Code.PreRelease":
-                        properties.remove(node)
-                namespace = properties.tag.rsplit("}", 1)[0] + "}" if "}" in properties.tag else ""
-                if channel == "preview":
-                    ET.SubElement(properties, namespace + "Property", Id="Microsoft.VisualStudio.Code.PreRelease", Value="true")
-                write(info, io.BytesIO(ET.tostring(metadata, encoding="utf-8", xml_declaration=True)))
+                write(info, io.BytesIO(channel_manifest(original_zip.read(info), channel)))
             else:
                 with original_zip.open(info) as source:
                     value = write(info, source)
@@ -134,9 +204,8 @@ def promote(vsix_directory, original_directory, native_directory, output, target
                 info = zipfile.ZipInfo("extension/airk-update.json")
                 info.external_attr = (stat.S_IFREG | 0o644) << 16
                 write(info, io.BytesIO(data))
-    executable = "airk.exe" if "windows" in target else "airk"
-    release.extension.package.verify_vsix(destination, payload, executable, native["vsix_target"],
-                                        version, channel == "preview", receipt["display_name"])
+    release.extension.package.verify_vsix(destination, payload, platform=native["vsix_target"], version=version,
+                                          pre_release=channel == "preview", display_name=receipt["display_name"])
     receipt = {**receipt, "commit": commit, "tree": tree, "pre_release": channel == "preview",
                "native_archive_sha256": native["archive_sha256"],
                "native_manifest_sha256": release.digest(native_directory / "manifest.json"),
@@ -149,17 +218,24 @@ def promote(vsix_directory, original_directory, native_directory, output, target
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("source", "package"))
-    parser.add_argument("--native", type=Path, required=True)
+    parser.add_argument("command", choices=("channel", "source", "package"),
+                        help="channel: split universal VSIX; source/package: pre-split platform VSIXs")
+    parser.add_argument("--native", type=Path)
     parser.add_argument("--vsix", type=Path, required=True)
     parser.add_argument("--original", type=Path)
     parser.add_argument("--record", type=Path, default=Path("artifacts/producer.json"))
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--target", choices=release.native.TARGETS, required=True)
+    parser.add_argument("--target", choices=release.native.TARGETS)
     parser.add_argument("--channel", choices=("stable", "preview"), default="stable")
     args = parser.parse_args()
     commit, version, _ = release.context()
     tree = release.extension.package.source_tree(commit)
+    if args.command == "channel":
+        promote_universal(args.vsix, args.output, commit, version, args.channel, tree)
+        return
+    if args.native is None or args.target is None:
+        parser.error("source and package require --native and --target")
+    pre_split(version)
     if args.command == "source":
         release.verify_native(args.native, args.target, commit, version, False, tree=tree)
         verified_vsix(args.vsix, args.native, args.target, commit, version, tree)

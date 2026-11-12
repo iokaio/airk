@@ -29,6 +29,12 @@ FULL_MAIN_INPUTS = ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "Dockerfi
                     "scripts/provision-static-onnx-tools.py", "scripts/static-onnx-tools-lock.json",
                     "scripts/static-onnx-link-closure.py")
 FULL_MAIN_PREFIXES = (".cargo/",)
+# The admin shell (split §10.4) is embedded in `airk`; its source, lock, build script and
+# committed bundle need the admin check, a native rebuild with served-asset validation and the
+# container (split §10.5.3). The universal VSIX does not consume it. Every other new split
+# input (crates/airkctl, packages/contracts-gen, fixtures/split, packages/ui, installers,
+# scripts) stays on the fail-closed full plan below.
+ADMIN_PREFIXES = ("packages/admin/", "crates/airk-cli/admin-assets/")
 
 
 def candidates():
@@ -90,6 +96,8 @@ def classify(paths, event):
             # TS/manifest changes require the real native adapter on every OS.
             if not (path.endswith(".md") or path.startswith("packages/vscode/media/")):
                 plan["native"] = True
+        elif path.startswith(ADMIN_PREFIXES):
+            plan["native"] = plan["container"] = plan["contracts"] = True
         elif path.startswith("scripts/"):
             plan["contracts"] = True
             # Packaging and smoke tests operate on compiled outputs. Changes to

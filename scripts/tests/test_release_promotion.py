@@ -24,6 +24,7 @@ candidates = load("producer_fixtures", Path(__file__).with_name("test_ci_candida
 release = promotion.release
 COMMIT = fixtures.COMMIT
 VERSION = fixtures.PAIR_VERSION
+universal = load("universal_fixtures", Path(__file__).with_name("test_package_extension.py"))
 
 
 def producer():
@@ -40,7 +41,7 @@ class PromotionContracts(unittest.TestCase):
         with zipfile.ZipFile(archive) as zipped:
             entries = {info.filename: (info, zipped.read(info)) for info in zipped.infolist()}
         package = release.extension.package
-        for name in package.update_inventory_paths():
+        for name in package.update_inventory_paths(native=True):
             key = "extension/" + name
             if name == "package.json":
                 data = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
@@ -49,7 +50,7 @@ class PromotionContracts(unittest.TestCase):
             else:
                 data = b"fictional captured interface bytes"
             entries[key] = (zipfile.ZipInfo(key), data)
-        files = {name: package.digest(entries["extension/" + name][1]) for name in package.update_inventory_paths()}
+        files = {name: package.digest(entries["extension/" + name][1]) for name in package.update_inventory_paths(native=True)}
         snapshot = entries["extension/package.json"][1].decode()
         key = "extension/airk-update.json"
         entries[key] = (zipfile.ZipInfo(key), package.encode_update_inventory(files, version, snapshot))
@@ -401,6 +402,54 @@ class PromotionContracts(unittest.TestCase):
                 remote.assert_called_once_with(record, COMMIT)
                 github.assert_not_called()
                 mutation.assert_not_called()
+
+
+    def test_universal_channel_rewrite_changes_only_the_prerelease_property(self):
+        package = release.extension.package
+        for start, channel in (("stable", "preview"), ("preview", "stable"), ("stable", "stable")):
+            with self.subTest(start=start, channel=channel), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                original, archive = universal.universal_candidate(root / "ci", preview=start == "preview", commit=COMMIT)
+                result = promotion.promote_universal(root / "ci", root / "out", COMMIT, universal.SPLIT, channel)
+                promoted = root / "out" / archive.name
+                self.assertEqual(sorted(path.name for path in (root / "out").iterdir()),
+                                 sorted([archive.name, "manifest.json", "SHA256SUMS"]))
+                self.assertIs(result["pre_release"], channel == "preview")
+                self.assertEqual(result["payload"], original["payload"])
+                self.assertEqual(result["ui_inventory_sha256"], original["ui_inventory_sha256"])
+                package.receipts.validate_vsix(result)
+                with zipfile.ZipFile(archive) as before, zipfile.ZipFile(promoted) as after:
+                    self.assertEqual(sorted(before.namelist()), sorted(after.namelist()))
+                    for name in before.namelist():
+                        if name != "extension.vsixmanifest":
+                            self.assertEqual(before.read(name), after.read(name), name)
+                package.verify_vsix(promoted, result["payload"], version=universal.SPLIT,
+                                    pre_release=channel == "preview", display_name="AIRK")
+                self.assertEqual(json.loads((root / "out" / "manifest.json").read_text()), result)
+
+    def test_universal_promotion_refuses_drift_and_mixed_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            receipt, archive = universal.universal_candidate(root / "ci", commit=COMMIT)
+            with self.assertRaisesRegex(ValueError, "source/lock/version"):
+                promotion.promote_universal(root / "ci", root / "other", "b" * 40, universal.SPLIT, "preview")
+            self.assertFalse((root / "other").exists())
+            with self.assertRaisesRegex(ValueError, "requires a split version"):
+                promotion.promote_universal(root / "ci", root / "old", COMMIT, "1.8.23", "preview")
+            with self.assertRaisesRegex(ValueError, "use the channel command"):
+                promotion.verified_vsix(root / "ci", root / "native", "x86_64-pc-windows-msvc", COMMIT, universal.SPLIT)
+            # Bytes changed after the receipt was sealed: refused before any output.
+            values = universal.universal_values()
+            values["out/extension.js"] = b"fictional tampered host"
+            universal.write_vsix(archive, values, universal.vsix_manifest(universal.SPLIT))
+            receipt["archive_sha256"] = release.digest(archive)
+            (root / "ci" / "manifest.json").write_text(json.dumps(receipt), encoding="utf-8")
+            (root / "ci" / "SHA256SUMS").write_text(
+                f"{release.digest(archive)}  {archive.name}\n{release.digest(root / 'ci' / 'manifest.json')}  manifest.json\n",
+                encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "payload differs|update inventory"):
+                promotion.promote_universal(root / "ci", root / "tampered", COMMIT, universal.SPLIT, "preview")
+            self.assertFalse((root / "tampered").exists())
 
     def test_workflow_keeps_publication_manual_and_only_historical_repair_builds(self):
         workflow = (ROOT / ".github/workflows/github-release.yml").read_text()

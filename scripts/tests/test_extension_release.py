@@ -11,6 +11,9 @@ spec = importlib.util.spec_from_file_location("release", Path(__file__).parents[
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 COMMIT = "a" * 40
+_fixtures = importlib.util.spec_from_file_location("universal_fixtures", Path(__file__).with_name("test_package_extension.py"))
+universal = importlib.util.module_from_spec(_fixtures)
+_fixtures.loader.exec_module(universal)
 
 
 def digest(data):
@@ -112,6 +115,46 @@ class ReleaseContracts(unittest.TestCase):
             receipt.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "duplicate release platform"):
                 release.verify(directory, COMMIT, "0.1.0", "preview")
+
+
+    def test_split_release_is_exactly_one_universal_vsix(self):
+        for channel in ("preview", "stable"):
+            with self.subTest(channel=channel), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                _, archive = universal.universal_candidate(directory / "universal", preview=channel == "preview",
+                                                           commit=COMMIT)
+                self.assertEqual(release.verify(directory, COMMIT, universal.SPLIT, channel), [str(archive.resolve())])
+                with self.assertRaisesRegex(ValueError, "identity/channel/lock"):
+                    release.verify(directory, "c" * 40, universal.SPLIT, channel)
+                with self.assertRaisesRegex(ValueError, "identity/channel/lock"):
+                    release.verify(directory, COMMIT, universal.SPLIT, "stable" if channel == "preview" else "preview")
+                universal.universal_candidate(directory / "second", preview=channel == "preview", commit=COMMIT)
+                with self.assertRaisesRegex(ValueError, "exactly one universal"):
+                    release.verify(directory, COMMIT, universal.SPLIT, channel)
+
+    def test_split_release_refuses_native_lock_inventory_and_byte_drift(self):
+        cases = {
+            "platform receipt field": (lambda r, a: r.update(platform="win32-x64"), "native_entry"),
+            "native payload": (lambda r, a: r["payload"].update({"native/runtime/airk.exe": "0" * 64}), "native_entry"),
+            "lock": (lambda r, a: r["locks"].update({"packages/vscode/package-lock.json": "0" * 64}), "identity/channel/lock"),
+            "ui inventory": (lambda r, a: r.update(ui_inventory_sha256="0" * 64), "UI inventory differs"),
+            "archive bytes": (lambda r, a: a.write_bytes(a.read_bytes() + b"tampered"), "digest mismatch"),
+            "pre-split schema": (lambda r, a: r.update(schema="airk-extension-candidate/1"), "schema_mismatch"),
+        }
+        for name, (change, message) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                receipt, archive = universal.universal_candidate(directory / "universal", commit=COMMIT)
+                change(receipt, archive)
+                (directory / "universal" / "manifest.json").write_text(json.dumps(receipt), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    release.verify(directory, COMMIT, universal.SPLIT, "stable")
+        with tempfile.TemporaryDirectory() as temporary:
+            # A pre-split version still requires the complete four-platform set.
+            directory = Path(temporary)
+            universal.universal_candidate(directory / "universal", commit=COMMIT)
+            with self.assertRaisesRegex(ValueError, "four platform"):
+                release.verify(directory, COMMIT, "1.8.23", "stable")
 
 
 if __name__ == "__main__":

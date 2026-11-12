@@ -223,10 +223,10 @@ def pair_vsix(directory, native_dir, files, native_receipt, executables):
              **{"native/runtime/" + name: data for name, data in files.items()}}
     if tuple(map(int, version.split("."))) >= (1, 8, 12):
         files["package.json"] = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
-        for name in release.extension.package.update_inventory_paths():
+        for name in release.extension.package.update_inventory_paths(native=True):
             files.setdefault(name, b"fictional extension update graph")
         update_files = {name: release.hashlib.sha256(files[name]).hexdigest()
-                        for name in release.extension.package.update_inventory_paths()}
+                        for name in release.extension.package.update_inventory_paths(native=True)}
         files["airk-update.json"] = release.extension.package.encode_update_inventory(
             update_files, version, files["package.json"].decode())
     archive = directory / f"airk-{version}-{platform}.vsix"

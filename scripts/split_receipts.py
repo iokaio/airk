@@ -37,6 +37,19 @@ INSTALLER_LOCAL = "airk-standalone-installer-local/1"
 HOSTED_PAIR_SIGNING = "airk-service-pair-signing/1"
 HOSTED_NATIVE_SIGNING = "airk-native-signing/1"
 
+# The first package version whose payload is the split pair (airk + airkctl), whose VSIX is
+# universal and whose receipts use the schemas below. U46 keeps interim split builds on 1.8.x
+# from 1.8.24; every earlier version keeps its pre-split decoder unchanged.
+SPLIT_VERSION = (1, 8, 24)
+
+
+def split_version(version):
+    """True when `version` ("x.y.z") is built and verified as a split product."""
+    if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+        raise ValueError("Expected a numeric x.y.z package version")
+    return tuple(int(part) for part in version.split(".")) >= SPLIT_VERSION
+
+
 TARGETS = tuple(standalone.TARGETS)
 IMAGES = {"windows": {"airk": "airk.exe", "airkctl": "airkctl.exe"},
           "linux": {"airk": "airk", "airkctl": "airkctl"},
@@ -66,7 +79,8 @@ _NUMBER = r"(?:0|[1-9][0-9]*)"
 _VERSION = rf"{_NUMBER}\.{_NUMBER}\.{_NUMBER}"
 _POSITIVE = r"[1-9][0-9]{0,18}"
 _THUMBPRINT = r"[0-9A-Fa-f]{40}"
-_CAPABILITY = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+# I2 capability names carry a version suffix ("session/2", contracts.md §3.5).
+_CAPABILITY = re.compile(r"[a-z][a-z0-9_./-]{0,63}")
 _DRIVE = re.compile(r"(?:^|[^A-Za-z])[A-Za-z]:[\\/]")
 _HOME = re.compile(r"/(?:Users|home)/")
 

@@ -49,6 +49,7 @@
   {"name": "unordered I2 contracts", "set": [[["i2_contracts"], [2, 1]]], "expect": "value_invalid"},
   {"name": "duplicate I2 contract", "set": [[["i2_contracts"], [1, 1]]], "expect": "value_invalid"},
   {"name": "string I2 contract", "set": [[["i2_contracts"], ["1"]]], "expect": "value_invalid"},
+  {"name": "valid I2 capability names with version suffixes", "set": [[["required_capabilities"], ["session/2", "tools/1"]]], "expect": "ok"},
   {"name": "unordered capabilities", "set": [[["required_capabilities"], ["session.v2", "evidence.read"]]], "expect": "value_invalid"},
   {"name": "uppercase capability", "set": [[["required_capabilities"], ["Session.v2"]]], "expect": "value_invalid"},
   {"name": "per-platform archive name", "set": [[["archive"], "airk-1.9.0-win32-x64.vsix"]], "expect": "value_invalid"},
