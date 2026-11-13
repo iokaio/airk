@@ -7,11 +7,12 @@
 use super::recognize::{self, Declaration, Recognized};
 use super::{Agent, Class, Finding, Observations, Ownership, Scope};
 use airk_core::identity::Incarnation;
-use serde::Serialize;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Transport {
     Stdio,
@@ -19,27 +20,45 @@ pub(crate) enum Transport {
 }
 
 /// One recognized entry, healthy ones included.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Entry {
     pub(crate) agent: Agent,
     pub(crate) scope: Scope,
     pub(crate) file: String,
+    /// Exact declaration container, carried unchanged from the native report.
     pub(crate) container_path: Vec<String>,
+    /// A proven helper or launcher can establish ownership with a custom key.
     pub(crate) server_key: String,
     pub(crate) transport: Transport,
     /// `None`: recognized, but an observation it needs is unavailable.
+    #[serde(deserialize_with = "entry_status")]
+    #[schemars(schema_with = "entry_status_schema", required)]
     pub(crate) status: Option<Class>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "entry_connection_schema")]
     pub(crate) connection_id: Option<Incarnation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) root: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) collection: Option<String>,
+}
+
+// Unlike optional observation fields, the report always emits status, including null.
+fn entry_status<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Class>, D::Error> {
+    Option::<Class>::deserialize(deserializer)
+}
+
+fn entry_status_schema(generator: &mut SchemaGenerator) -> Schema {
+    json_schema!({"anyOf": [generator.subschema_for::<Class>(), {"type": "null"}]})
+}
+
+fn entry_connection_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({"anyOf": [{"type": "string", "pattern": "^[0-9a-f]{32}$"}, {"type": "null"}]})
 }
 
 impl Entry {

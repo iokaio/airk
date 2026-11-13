@@ -752,6 +752,54 @@ The crate that owns these OS adapters under U27's edge limit is Q3.
   widened only if no false types appear (u64, `Option` presence, pilot W2/W4).
   Semantic rules stay hand-written and fixture-tested.
 
+### 3.12 Exact agent-entry removal input (R01; prepared, not served)
+
+Prepare the additive `airkctl agents remove --entry <JSON>` input before its
+handler or extension consumer. Each repeatable argument is one complete
+native `agents list` `entries` row (`Entry`, owned by
+`crates/airkctl/src/agents/config/classify.rs`), not a finding or a reduced
+path/key object. The existing camel-case report representation is unchanged:
+`agent`, `scope`, `file`, `containerPath`, `serverKey`, `transport` and explicit
+`status` (including null), with the existing optional `command`, `url`,
+`connectionId`, `root` and `collection`. Strict input decoding rejects unknown
+fields, missing required fields, unknown enum values and noncanonical IDs.
+Custom server/container keys remain exact strings: a proven helper or launcher
+can establish ownership without an `airk` key prefix. The same Rust type emits
+the I2 schema and generated TypeScript; consumers add no handwritten mirror.
+
+The selected-removal handler must enforce these rules when it lands:
+
+- `--entry` conflicts with `--connection-id`. Every supplied row must identify
+  exactly one current recognized row in the files enumerated by the command's
+  project/user scope. Duplicate, absent, changed and out-of-scope targets are
+  refused without widening selection; an empty or failed selector never falls
+  back to removal of all entries. Existing explicit removal forms remain.
+- Revalidate the complete observed row against live source inside the existing
+  config-edit boundary before deletion. Match all observed fields, including
+  transport, status and optional identities/locations. This is observed
+  identity/classification equality, not arbitrary declaration-byte equality.
+  Preserve unselected source bytes and retain the existing VS Code credential
+  input cleanup rule: remove an owned input only when no surviving entry uses it.
+- Existing session limits remain: 64 invocation arguments, 32 KiB per argument
+  and 192 KiB per request frame. Validate raw selector size before decoding in
+  one-shot and session commands. Refuse an oversized row, rather than omitting
+  fields or splitting into broader deletion requests. No source parser limit
+  or result representation changes in this step.
+- Preserve the existing `schema: 1`, `actions` and `blockers` removal result.
+  Every selected target's error remains visible; partial action errors are not
+  an overall success message or a reason to try unrestricted removal.
+- Advertise `agents-entry-remove/1` in version/session capabilities only once
+  the actual handler is served. Extension consumers require that capability
+  from the verified CLI and refuse selected removal on older clients, with
+  a clear reason and no unrestricted fallback. Product-version comparison is
+  not a capability check.
+
+This contract-only step adds the native schema and independent decoding cases
+in `fixtures/split/agents/entry_remove_cases.json`. It does not serve `--entry`,
+advertise its capability, change I1/MCP, change persisted state, or change
+existing list/removal output shapes. Actual selection/revalidation behavior and
+composed Reconnect regressions belong to the later handler/consumer step.
+
 ## 4. I3 — Admin HTTP contract
 
 **This section is the written input to the independent security review
@@ -929,6 +977,57 @@ Two optional columns, both in the reviewed fixture:
   session; 403 host/origin/fetch-site/anti-forgery; 404 unknown route or
   operation; 413 too large; 503 draining or `not_yet_served`; 500 internal.
   The body is always the envelope (no HTML error pages).
+
+R04 conformance target (handler repair pending): native catalog/source-change
+unknown outcomes are nonretryable `unavailable` failures (503), not completed
+mutations; source-change busy is a refusal (409). Keep complete native evidence
+except session-owned caller/key fields. Reviewed Make readable/setup applies
+retain their existing receipt token. Independent typed cases and accepted/
+completed controls are in `fixtures/split/i3/native_outcomes.json`.
+
+#### 4.4.1 Proposed R04 recovery handle — awaiting user D8 approval
+
+Source review found a further required recovery boundary: `catalog.policy_resume`
+and `catalog.split_recover` generate their mutation identity before dispatch,
+while `catalog.policy_resume_receipt` and `catalog.split_recovery_receipt` require
+a session review token. A native unknown result or double-lost reply currently
+returns without that token. Redacting and discarding the identity prevents the
+supported receipt lookup. A generated-read preview returning an unexpected
+unknown response is defensive coverage, not evidence of this mutation route.
+
+Proposed narrow exception to the wire freeze:
+
+- Add optional top-level `review` to `FailureEnvelope`, a canonical opaque
+  32-hex handle. Keep `ok:false`, 503/`unavailable`, `retryable:false`, complete
+  redacted native evidence when observed, and no completed `request` progress.
+  A lost reply invents no native answer. Existing failure fixtures stay valid
+  when the field is absent; the current browser parser already retains extra
+  envelope fields, but older UI does not gain receipt controls automatically.
+- Initially cover the two generated mutation/receipt pairs above. Pin their
+  applicability independently. Bind an unknown-result handle to its original
+  caller/key, session/service lifetime and the matching receipt operation only;
+  it cannot authorize apply, recovery mutation, a different receipt or replay.
+  Existing reviewed calls continue using their original token.
+- Reserve recovery custody before the mutation is sent, within the existing
+  review/session capacity and lifetime. Refuse before effects if custody cannot
+  be reserved; do not enlarge limits. Use a typed `admin_review_capacity`
+  refusal for this pre-dispatch condition. On normal success preserve the
+  existing success-token behavior; ordinary no-effect refusals and failed
+  generate/read drafts receive no recovery handle. Release unused reservations.
+- Preserve current keyed resend rules and exact identities. Receipt lookup is
+  read-only; the handle never creates a new key, replays a mutation, persists a
+  browser secret or survives the existing session/service lifetime. Session
+  end/expiry invalidates it; this is not a new durable recovery-state contract.
+- Land the Rust-owned I3 definition, code/applicability fixtures and generated
+  schema/TypeScript before adapter/UI consumers. Validate actual native handler
+  outcomes, both lost replies, capacity-before-effect refusal, redaction,
+  cross-operation/session rejection, expiry, and old/new envelope parsing.
+  UI reports unknown and offers the matching receipt read; it never advances
+  setup/Make readable or offers replay based on this handle.
+
+No new failure field, code or receipt-custody behavior is implemented or approved
+by this proposal. Without this exception, the narrower reviewed-flow repair can
+land, but generated-mutation recovery remains an explicit R04 release blocker.
 
 ### 4.5 Launch-code exchange [P, for review]
 

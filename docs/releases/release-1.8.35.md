@@ -4,7 +4,8 @@
 work restores extracted component test ownership and the one-shot `airkctl`
 command thread used by the pre-split CLI and session requests. The first P1
 correction fences automatic scope switching/reselection and retains both
-revocation obligations of an uncertain lease renewal. Targeted Windows
+revocation obligations of an uncertain lease renewal. Exact-entry removal has a
+prepared native contract; its handler is not served yet. Targeted Windows
 checks are recorded in the [execution ledger](../simplify/one-process-ledger.md).
 No installer or VSIX was rebuilt for this checkpoint; retained artifact receipts
 continue to identify their original sources. The candidate version stays 1.8.35.

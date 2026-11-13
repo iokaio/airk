@@ -98,11 +98,13 @@ COPY fixtures/split/i3/admission_cases.json ./fixtures/split/i3/admission_cases.
 COPY fixtures/split/i3/envelopes.json ./fixtures/split/i3/envelopes.json
 COPY fixtures/split/i3/headers.json ./fixtures/split/i3/headers.json
 COPY fixtures/split/i3/launch_exchange.json ./fixtures/split/i3/launch_exchange.json
+COPY fixtures/split/i3/native_outcomes.json ./fixtures/split/i3/native_outcomes.json
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
 COPY fixtures/split/i1/control_methods.json ./fixtures/split/i1/control_methods.json
 COPY fixtures/split/i1/window_plane.json ./fixtures/split/i1/window_plane.json
 COPY fixtures/split/i1/admin_launch_code.json ./fixtures/split/i1/admin_launch_code.json
 COPY fixtures/split/agents/config_cases.json ./fixtures/split/agents/config_cases.json
+COPY fixtures/split/agents/entry_remove_cases.json ./fixtures/split/agents/entry_remove_cases.json
 COPY fixtures/split/agents/credentials_ledger_v1.json ./fixtures/split/agents/credentials_ledger_v1.json
 COPY fixtures/split/agents/open_access.json ./fixtures/split/agents/open_access.json
 COPY fixtures/split/agents/registry-policy3-descriptions.objects.json ./fixtures/split/agents/registry-policy3-descriptions.objects.json

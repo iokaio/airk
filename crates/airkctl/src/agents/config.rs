@@ -13,6 +13,7 @@
 //! observations; `io` is the only module that touches the file system.
 //! Unknown observations are never reported as `ok` or as foreignness.
 use airk_core::identity::Incarnation;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -33,7 +34,7 @@ pub(crate) use locations::{PROJECT_FILES, Platform, UserEnv, user_locations};
 
 /// The agents whose files AIRK reads (`agentMigration.ts` `locations`).
 /// Only Claude Code, Codex and VS Code (`copilot`) can be connected (U91).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Agent {
     Codex,
@@ -89,7 +90,7 @@ impl Agent {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Scope {
     Project,
@@ -98,7 +99,7 @@ pub(crate) enum Scope {
 
 /// The §6.4 classes, plus `unreadable` for a present file that could not be
 /// read or parsed (it could hide a broken entry).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Class {
     StdioRetired,

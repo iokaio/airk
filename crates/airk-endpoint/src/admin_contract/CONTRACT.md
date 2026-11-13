@@ -68,6 +68,12 @@ handler [`admin_plane`](../../../airk-https/src/admin_plane/CONTRACT.md).
 - Decisions take injected observations and an injected clock; no I/O.
 - Contract values change only with a reviewed fixture change. Fixture
   expectations are written by hand in the generator, never computed by it.
+- R04's independently authored `fixtures/split/i3/native_outcomes.json` pins
+  unknown native outcomes as nonretryable `unavailable` failures, busy as a
+  refusal, and accepted/completed controls. Native bodies retain all evidence
+  except the existing session-owned caller/key redaction. The HTTPS adapter
+  repair consumes these cases separately; adding recovery handles to failures
+  remains the unapproved D8 proposal in contracts §4.4.1.
 
 ## Fixtures
 

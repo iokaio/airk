@@ -1,5 +1,33 @@
 {
   "$defs": {
+    "Agent": {
+      "description": "The agents whose files AIRK reads (`agentMigration.ts` `locations`).\nOnly Claude Code, Codex and VS Code (`copilot`) can be connected (U91).",
+      "enum": [
+        "codex",
+        "claude",
+        "copilot",
+        "gemini",
+        "antigravity",
+        "cursor",
+        "roo",
+        "junie"
+      ],
+      "type": "string"
+    },
+    "Class": {
+      "description": "The §6.4 classes, plus `unreadable` for a present file that could not be\nread or parsed (it could hide a broken entry).",
+      "enum": [
+        "stdio_retired",
+        "stdio_missing_command",
+        "https_unknown_connection",
+        "https_endpoint_mismatch",
+        "https_helper_missing",
+        "https_trust_missing",
+        "ok",
+        "unreadable"
+      ],
+      "type": "string"
+    },
     "ClientIdentity": {
       "additionalProperties": false,
       "properties": {
@@ -13,6 +41,91 @@
       "required": [
         "name",
         "version"
+      ],
+      "type": "object"
+    },
+    "Entry": {
+      "additionalProperties": false,
+      "description": "One recognized entry, healthy ones included.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/Agent"
+        },
+        "collection": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "connectionId": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "containerPath": {
+          "description": "Exact declaration container, carried unchanged from the native report.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "file": {
+          "type": "string"
+        },
+        "root": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "serverKey": {
+          "description": "A proven helper or launcher can establish ownership with a custom key.",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Class"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None`: recognized, but an observation it needs is unavailable."
+        },
+        "transport": {
+          "$ref": "#/$defs/Transport"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent",
+        "scope",
+        "file",
+        "containerPath",
+        "serverKey",
+        "transport",
+        "status"
       ],
       "type": "object"
     },
@@ -186,6 +299,13 @@
         "overflow",
         "native_gap",
         "service_restarted"
+      ],
+      "type": "string"
+    },
+    "Scope": {
+      "enum": [
+        "project",
+        "user"
       ],
       "type": "string"
     },
@@ -1024,6 +1144,13 @@
       ],
       "type": "object"
     },
+    "Transport": {
+      "enum": [
+        "stdio",
+        "https"
+      ],
+      "type": "string"
+    },
     "VersionDocument": {
       "description": "`airkctl version --output json`. Local only: it never starts or contacts\nthe service. Readers ignore unknown fields (forward-compatible handshake).",
       "properties": {
@@ -1135,7 +1262,8 @@
     "SessionRequest",
     "SessionResponse",
     "SessionEventFrame",
-    "ServiceStatus"
+    "ServiceStatus",
+    "Entry"
   ],
   "title": "airkctl I2 contract"
 }

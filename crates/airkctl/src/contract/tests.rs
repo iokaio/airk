@@ -8,6 +8,8 @@ const FRAMES: &str = include_str!("../../../../fixtures/wire/airkctl_session_fra
 const EXIT_CODES: &str = include_str!("../../../../fixtures/split/i2/exit_codes.json");
 const ERROR_LINES: &str = include_str!("../../../../fixtures/split/i2/error_lines.json");
 const VERSION: &str = include_str!("../../../../fixtures/split/i2/version.json");
+const ENTRY_REMOVE: &str =
+    include_str!("../../../../fixtures/split/agents/entry_remove_cases.json");
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).expect("fixture is JSON")
@@ -17,6 +19,67 @@ fn cases<'a>(fixture: &'a Value, key: &str) -> &'a [Value] {
     let cases = fixture[key].as_array().expect("fixture case list");
     assert!(!cases.is_empty(), "{key}: zero selected cases is a failure");
     cases
+}
+
+#[test]
+fn exact_agent_entry_contract_round_trips_and_rejects_malformed_selectors() {
+    let fixture = json(ENTRY_REMOVE);
+    assert_eq!(fixture["schema"], "airk.split-fixture.agent-entry-remove/1");
+    assert_eq!(fixture["capability"], "agents-entry-remove/1");
+    let document = schema_document();
+    let schema = &document["$defs"]["Entry"];
+    let mut required = schema["required"]
+        .as_array()
+        .expect("required fields")
+        .clone();
+    required.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    assert_eq!(Value::Array(required.clone()), fixture["required_fields"]);
+    for field in fixture["optional_fields"]
+        .as_array()
+        .expect("optional fields")
+    {
+        assert!(!required.contains(field), "optional field {field}");
+        assert!(schema["properties"].get(field.as_str().unwrap()).is_some());
+    }
+    assert_eq!(schema["additionalProperties"], false);
+    assert!(
+        schema["properties"]["status"]["anyOf"]
+            .as_array()
+            .expect("nullable status")
+            .iter()
+            .any(|choice| choice["type"] == "null")
+    );
+    for case in cases(&fixture, "documents") {
+        round_trip::<crate::agents::config::Entry>(case);
+    }
+    for case in cases(&fixture, "rejected") {
+        assert!(
+            serde_json::from_value::<crate::agents::config::Entry>(case["json"].clone()).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+    for case in cases(&fixture, "rejected_text") {
+        assert!(
+            serde_json::from_str::<crate::agents::config::Entry>(
+                case["json"].as_str().expect("raw Entry JSON")
+            )
+            .is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+    // Independent bounds retain the existing session admission contract. The
+    // future CLI handler must also apply them before decoding a raw --entry.
+    assert_eq!(fixture["budgets"]["max_invoke_args"], MAX_INVOKE_ARGS);
+    assert_eq!(
+        fixture["budgets"]["max_invoke_arg_bytes"],
+        MAX_INVOKE_ARG_BYTES
+    );
+    assert_eq!(
+        fixture["budgets"]["max_request_frame_bytes"],
+        MAX_REQUEST_FRAME_BYTES
+    );
 }
 
 fn round_trip<T: serde::de::DeserializeOwned + Serialize>(case: &Value) -> T {

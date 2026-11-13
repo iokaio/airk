@@ -44,6 +44,7 @@ pub fn document() -> serde_json::Value {
     root::<SessionResponse>(&mut generator, &mut roots);
     root::<SessionEventFrame>(&mut generator, &mut roots);
     root::<ServiceStatus>(&mut generator, &mut roots);
+    root::<crate::agents::config::Entry>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()

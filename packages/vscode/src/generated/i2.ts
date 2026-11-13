@@ -3,9 +3,48 @@
 // Owner: airkctl I2 contract (Rust). Semantic rules stay hand-written and fixture-tested.
 export const I2_CONTRACT = 1;
 
+/**
+ * The agents whose files AIRK reads (`agentMigration.ts` `locations`).
+ * Only Claude Code, Codex and VS Code (`copilot`) can be connected (U91).
+ */
+export type Agent = "codex" | "claude" | "copilot" | "gemini" | "antigravity" | "cursor" | "roo" | "junie";
+
+/**
+ * The §6.4 classes, plus `unreadable` for a present file that could not be
+ * read or parsed (it could hide a broken entry).
+ */
+export type Class = "stdio_retired" | "stdio_missing_command" | "https_unknown_connection" | "https_endpoint_mismatch" | "https_helper_missing" | "https_trust_missing" | "ok" | "unreadable";
+
 export type ClientIdentity = {
     name: string;
     version: string;
+};
+
+/**
+ * One recognized entry, healthy ones included.
+ */
+export type Entry = {
+    agent: Agent;
+    collection?: string | null;
+    command?: string | null;
+    connectionId?: string | null;
+    /**
+     * Exact declaration container, carried unchanged from the native report.
+     */
+    containerPath: Array<string>;
+    file: string;
+    root?: string | null;
+    scope: Scope;
+    /**
+     * A proven helper or launcher can establish ownership with a custom key.
+     */
+    serverKey: string;
+    /**
+     * `None`: recognized, but an observation it needs is unavailable.
+     */
+    status: Class | null;
+    transport: Transport;
+    url?: string | null;
 };
 
 /**
@@ -47,6 +86,8 @@ export type InstallationState = "complete" | "incomplete" | "not_found" | "unver
 export type PairState = "exact" | "mismatch";
 
 export type ResyncReason = "overflow" | "native_gap" | "service_restarted";
+
+export type Scope = "project" | "user";
 
 /**
  * Whether the service answers, and what it reports when it does.
@@ -242,6 +283,8 @@ export type SessionResponse = {
     id: string;
     outcome: SessionOutcome;
 };
+
+export type Transport = "stdio" | "https";
 
 /**
  * `airkctl version --output json`. Local only: it never starts or contacts

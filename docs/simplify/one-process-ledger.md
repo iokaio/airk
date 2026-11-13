@@ -2,6 +2,103 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- P1 authority milestone committed locally as `625c1766`, human DCO verified.
+  Automatic approval rejected its push because prior explicit approval named
+  only P0 commit `235d76be`. The user has been asked to approve the ready P1
+  commit and optionally subsequent reviewed/passing milestones to the same
+  `iokaio/airk` / `feat/advanced-split` destination. Local authorized work continues.
+  User subsequently approved this and future reviewed/passing milestone pushes
+  to that same branch; `625c1766` push succeeded. This authorization persists
+  for subsequent milestones and does not authorize PR, merge or publication.
+- Next isolated step: R01 native I2 exact-entry removal contract only. Owner
+  may edit native agents Entry/enums for strict Deserialize/JsonSchema, I2
+  schema root/fixture tests and owning contract docs, independently authored
+  entry-removal fixtures/version example, generated I2 schema/TypeScript,
+  Dockerfile/container-input roster for the new compiled fixture. No handler,
+  extension consumer, capability advertisement, state/I1/MCP/result-shape
+  change. Reuse existing Entry serialization exactly; its projection equality
+  covers observed identity/classification, not arbitrary declaration bytes.
+  Add optional capability `agents-entry-remove/1` only with the later handler;
+  old verified clients must refuse selected removal, never fall back to all.
+  T0 primary: existing agent config goldens plus new exact-entry fixture cases,
+  I2 schema drift/generation and version contract checks; scoped airkctl Clippy,
+  generated-TypeScript drift and container input checker. Commands/generation
+  follow existing I2 pilot; retain schema generation separately from validation.
+  Done when reviewed contract lands before any consumer. Initial checkpoint
+  remains 15 minutes; no broad build or qualification.
+- R04 tests-only preparation may run independently of R01's contract source:
+  owning files `airk-https/src/admin_plane/tests.rs` and independently authored
+  `fixtures/split/i3/native_outcomes.json`. Root cause: JSON status suffixes
+  misclassify native catalog/source-change unknown outcomes and busy as success;
+  mutation progress then defaults to completed. Moving those into failure
+  before existing redaction would expose generated/restored request identity.
+  Invariants: exhaustive typed classification in the HTTPS adapter, existing
+  error classes/envelope fields only, nonretryable unknown outcomes, complete
+  native evidence except session-owned caller/key, no new review token or
+  dependent setup/Make-readable advance. Capture real `AdminPlane::handle`
+  unknown/busy and accepted/completed controls, both generated and review-restored
+  identities, before production correction. Agent owns no contract or frontend
+  changes until reproduction. Primary owns execution and fixture container
+  integration; no overlapping edits to R01 container inputs. T0 intended
+  `cargo test -p airk-https --no-default-features --lib admin_plane --locked --timings`;
+  later frontend fixture/parser/progression checks use existing Admin test
+  runner and typecheck. Bundle boundary checks follow source validation; no
+  installer rebuild. Existing pure helper coverage cannot claim DOM qualification.
+- R19 needs a small behavior-preserving observation seam before correction:
+  extract the actual Activity job-read/action procedures and catalog list/detail
+  acceptance procedures into component-owned `.ts` modules, with current state
+  callbacks/request runners injected and existing unconditional/captured-state
+  behavior preserved. Wire current components to these same procedures. Capture
+  independent serial-state callback goldens first, then reproduce delayed A/B,
+  action-selection and page/filter races through the production procedures.
+  This is the named blocker's seam, not general UI restructuring or a new
+  framework/DOM substitute. Keep seam and behavior correction in separate
+  commits; regression assertions stay unchanged during correction. Agent may
+  edit only Activity/IndexLibrary and their two owned helper modules plus
+  separate serial-golden/race test files; use existing esbuild for test imports.
+  No native edits, new dependency, wire or result shape. Primary owns commands,
+  generated asset integration and review. Stop for any larger move/boundary;
+  a large mechanical move needs a reproducible committed script. T0 uses pinned
+  Node Admin tests/typecheck; asset-boundary checks after source review.
+- R01 schema generation completed: `p1-r01-schema-generate`, 1 selected/pass,
+  Cargo 10.07 s, receipt 11.09 s, incremental on/P10 target, inputs unchanged.
+  Python generated I2 TypeScript from that Rust schema; primary reviewed the
+  required nullable status, optional observations and canonical connection ID.
+  Existing serialization/capabilities/handlers remain unchanged. Contract
+  milestone also includes R04's independent native-outcome cases (no consumer
+  implementation), with both fixtures explicitly listed in Docker/manifest/
+  container allowlist and private exclusions preserved. Root source review
+  caught the missing allowlist entry before running the checker.
+- R04 full-flow review found a required contract decision: reviewed Make
+  readable/setup already keep a token, but generated policy resume and split
+  recovery can lose the only receipt identity on native/transport uncertainty.
+  The generated-preview fixture is defensive adapter coverage, not a reproduced
+  generated mutation. Proposal `contracts.md` §4.4.1 gives unknown failures an
+  optional receipt-only review handle and reserves original identity before
+  effects within existing capacity/lifetime. No replay or persisted key. User
+  D8 approval was requested; new wire/code/custody consumers wait for that
+  decision. Independent R01/R19 work continues. Narrower R04 classification
+  alone must not be reported as complete generated-mutation recovery.
+- Contract milestone validation: `p1-r01-contract-clippy` passes, airkctl/all
+  targets/no default features, Cargo 6.05 s (receipt 6.78 s), incremental on and
+  P10 reused. `p1-r01-contract-tests` pinned Nextest CI profile selects 21/21
+  passing contract/config tests, 60 skipped; existing config byte expectations
+  and complete report projections stay unchanged. Cargo reused compilation
+  (0.24 s); receipt 6.05 s, tests 0.182 s. Rust-generated I2 TypeScript compiles
+  with pinned Node 24.15.0; drift check passes. Container input checks 4/4 pass;
+  repository checks pass for 2,771 current public files, version 1.8.35 and
+  whitespace pass. Primary reviewed schemas, strict/nullable decode fixtures,
+  unchanged capabilities and explicit fixture inputs; no handler served yet.
+- R04 actual reproduction collected: `p1-r04-before`, 8 selected, 2 pass/6
+  fail, Cargo 40.26 s (receipt 41.37 s), unchanged input groups. Actual handler
+  returns 200/completed for unknown/busy and exposes restored caller/key even
+  in completed receipts, exactly the reviewed failure class. All five native
+  fixture cases decode/round-trip before their handler assertion; accepted Job
+  control passes. These regression tests remain uncommitted until correction;
+  the independently authored outcome fixture may land contract-first. Receipt
+  lookup after the failed assertion is not yet a passing qualification result.
+  Source-reviewed generated-mutation recovery still awaits D8 approval.
+
 - P0 milestone committed as `235d76be` with configured human DCO verified.
   Push was initially refused by automatic review because destination approval
   was absent from visible user messages; the user explicitly approved pushing

@@ -3,8 +3,9 @@
 **Advanced split source checkpoint (13 November 2026).** P0 restores extracted
 component test ownership and the `airkctl` one-shot command stack. The first P1
 correction fences automatic scope switching/reselection and retains both
-revocation obligations of an uncertain lease renewal. Candidate
-version remains 1.8.35; existing installer/VSIX receipts describe their original
+revocation obligations of an uncertain lease renewal. Exact-entry removal has a
+prepared native contract; its handler is not served yet. Candidate version
+remains 1.8.35; existing installer/VSIX receipts describe their original
 sources. See the [execution ledger](docs/simplify/one-process-ledger.md).
 
 **Split Phase 4: `airk` and `airkctl` (unpublished, non-shippable interim).**

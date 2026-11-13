@@ -1,0 +1,220 @@
+{
+  "schema": "airk.split.admin.native-outcomes/1",
+  "review": {
+    "operation": "catalog.preview",
+    "body": {
+      "catalog_preview": {
+        "request": {
+          "expected_catalog_revision": 3,
+          "operation": {
+            "operation": "create_project",
+            "id": "prj_02020202020202020202020202020202",
+            "name": "Docs"
+          }
+        }
+      }
+    },
+    "response": {
+      "status": "catalog_preview",
+      "preview": {
+        "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+        "catalog_revision": 3,
+        "next_revision": 4,
+        "operation": {
+          "operation": "create_project",
+          "id": "prj_02020202020202020202020202020202",
+          "name": "Docs"
+        },
+        "before": [],
+        "after": [],
+        "authority_fence_required": false,
+        "file_data_changes": false
+      },
+      "preview_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d"
+    },
+    "apply": {
+      "method": {
+        "catalog_apply": {
+          "request": {
+            "expected_catalog_revision": 3,
+            "operation": {
+              "operation": "create_project",
+              "id": "prj_02020202020202020202020202020202",
+              "name": "Docs"
+            }
+          },
+          "preview_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d"
+        }
+      },
+      "review": "06060606060606060606060606060606"
+    }
+  },
+  "cases": [
+    {
+      "name": "catalog_unknown",
+      "route": "review",
+      "operation": "catalog.apply",
+      "response": {
+        "status": "catalog_outcome_unknown",
+        "code": "catalog_apply_outcome_unknown",
+        "caller": "04040404040404040404040404040404",
+        "key": {
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "epoch": 7,
+          "nonce": "05050505050505050505050505050505"
+        },
+        "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+      },
+      "expect": {
+        "http": 503,
+        "ok": false,
+        "code": "catalog_apply_outcome_unknown",
+        "class": "unavailable",
+        "retryable": false,
+        "request_state": null,
+        "native": {
+          "status": "catalog_outcome_unknown",
+          "code": "catalog_apply_outcome_unknown",
+          "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+        }
+      }
+    },
+    {
+      "name": "source_resolution_unknown",
+      "route": "direct",
+      "operation": "catalog.source_resolve",
+      "body": {
+        "catalog_source_change_resolve": {
+          "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+        }
+      },
+      "response": {
+        "status": "source_change_resolution_outcome_unknown",
+        "code": "source_change_resolution_outcome_unknown",
+        "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+      },
+      "expect": {
+        "http": 503,
+        "ok": false,
+        "code": "source_change_resolution_outcome_unknown",
+        "class": "unavailable",
+        "retryable": false,
+        "request_state": null,
+        "native": {
+          "status": "source_change_resolution_outcome_unknown",
+          "code": "source_change_resolution_outcome_unknown",
+          "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+        }
+      }
+    },
+    {
+      "name": "source_change_busy",
+      "route": "review",
+      "operation": "catalog.apply",
+      "response": {
+        "status": "source_change_busy",
+        "code": "source_change_jobs_pending",
+        "busy": {
+          "index_id": "idx_01010101010101010101010101010101",
+          "pending_jobs": 2,
+          "running_jobs": 1
+        }
+      },
+      "expect": {
+        "http": 409,
+        "ok": false,
+        "code": "source_change_jobs_pending",
+        "class": "refused",
+        "retryable": false,
+        "request_state": null,
+        "native": {
+          "status": "source_change_busy",
+          "code": "source_change_jobs_pending",
+          "busy": {
+            "index_id": "idx_01010101010101010101010101010101",
+            "pending_jobs": 2,
+            "running_jobs": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "job_accepted",
+      "route": "direct",
+      "operation": "indexes.pause",
+      "body": {
+        "pause": {
+          "project": "abababababababababababababababababababababababababababababababab",
+          "paused": true
+        }
+      },
+      "response": {
+        "status": "job",
+        "job": {
+          "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+          "project": "abababababababababababababababababababababababababababababababab",
+          "kind": "inspect",
+          "state": "pending",
+          "fencing_generation": 0,
+          "attempts": 0,
+          "outcome": null
+        }
+      },
+      "expect": {
+        "http": 200,
+        "ok": true,
+        "request_state": "accepted",
+        "request_nonce": "04040404040404040404040404040404",
+        "native": {
+          "status": "job",
+          "job": {
+            "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+            "project": "abababababababababababababababababababababababababababababababab",
+            "kind": "inspect",
+            "state": "pending",
+            "fencing_generation": 0,
+            "attempts": 0,
+            "outcome": null
+          }
+        }
+      }
+    },
+    {
+      "name": "catalog_completed",
+      "route": "review",
+      "operation": "catalog.apply",
+      "response": {
+        "status": "catalog_applied",
+        "receipt": {
+          "schema": 1,
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "caller": "04040404040404040404040404040404",
+          "key": {
+            "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "epoch": 7,
+            "nonce": "05050505050505050505050505050505"
+          },
+          "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+          "catalog_revision": 4,
+          "authority_fence_required": false
+        }
+      },
+      "expect": {
+        "http": 200,
+        "ok": true,
+        "request_state": "completed",
+        "request_nonce": "07070707070707070707070707070707",
+        "native": {
+          "status": "catalog_applied",
+          "receipt": {
+            "schema": 1,
+            "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+            "catalog_revision": 4,
+            "authority_fence_required": false
+          }
+        }
+      }
+    }
+  ]
+}

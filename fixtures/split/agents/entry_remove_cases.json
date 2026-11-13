@@ -1,0 +1,34 @@
+{
+  "schema": "airk.split-fixture.agent-entry-remove/1",
+  "owner": "crates/airkctl/src/agents/config/classify.rs Entry",
+  "capability": "agents-entry-remove/1",
+  "note": "Contract-first preparation: advertise the capability only when the selected-removal handler is served. Entry equality describes observed identity/classification, not declaration-byte equality.",
+  "budgets": {"max_invoke_args": 64, "max_invoke_arg_bytes": 32768, "max_request_frame_bytes": 196608},
+  "required_fields": ["agent", "containerPath", "file", "scope", "serverKey", "status", "transport"],
+  "optional_fields": ["collection", "command", "connectionId", "root", "url"],
+  "documents": [
+    {"name": "orphaned Claude HTTPS entry", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "https", "status": "https_unknown_connection", "url": "https://127.0.0.1:62133/mcp", "connectionId": "0123456789abcdef0123456789abcdef"}},
+    {"name": "retired Codex stdio entry", "json": {"agent": "codex", "scope": "project", "file": "/fixture/a/.codex/config.toml", "containerPath": ["mcp_servers"], "serverKey": "airk-previous", "transport": "stdio", "status": "stdio_missing_command", "command": "/fixture/old/airk", "root": "/fixture/a", "collection": "notes"}},
+    {"name": "healthy Copilot entry remains representable", "json": {"agent": "copilot", "scope": "project", "file": "/fixture/a/.vscode/mcp.json", "containerPath": ["servers"], "serverKey": "airk", "transport": "https", "status": "ok", "url": "https://127.0.0.1:62133/mcp", "connectionId": "11111111111111111111111111111111"}},
+    {"name": "unknown observation retains explicit null status", "json": {"agent": "claude", "scope": "user", "file": "/fixture/home/.claude.json", "containerPath": ["projects", "/fixture/a", "mcpServers"], "serverKey": "custom-helper", "transport": "https", "status": null, "url": "https://127.0.0.1:62133/mcp", "connectionId": "22222222222222222222222222222222"}},
+    {"name": "proven helper may own an empty custom key", "json": {"agent": "codex", "scope": "user", "file": "/fixture/home/.codex/config.toml", "containerPath": ["profiles", "", "mcp_servers"], "serverKey": "", "transport": "https", "status": "https_endpoint_mismatch", "url": "https://127.0.0.1:62134/mcp", "connectionId": "33333333333333333333333333333333"}},
+    {"name": "verified user stdio launcher permits a non-AIRK key", "json": {"agent": "gemini", "scope": "user", "file": "/fixture/home/.gemini/settings.json", "containerPath": ["mcpServers"], "serverKey": "retrieval", "transport": "stdio", "status": "stdio_retired", "command": "/fixture/old/airk"}}
+  ],
+  "rejected_text": [
+    {"name": "duplicate exact key", "json": "{\"agent\":\"claude\",\"scope\":\"project\",\"file\":\"/fixture/a/.mcp.json\",\"containerPath\":[\"mcpServers\"],\"serverKey\":\"airk\",\"serverKey\":\"other\",\"transport\":\"stdio\",\"status\":\"stdio_retired\"}"}
+  ],
+  "rejected": [
+    {"name": "unknown entry field", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "stdio", "status": "stdio_retired", "removeAll": true}},
+    {"name": "unknown agent", "json": {"agent": "other", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "stdio", "status": "stdio_retired"}},
+    {"name": "unknown scope", "json": {"agent": "claude", "scope": "all", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "stdio", "status": "stdio_retired"}},
+    {"name": "unknown transport", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "http", "status": "stdio_retired"}},
+    {"name": "unknown status", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "stdio", "status": "remove"}},
+    {"name": "missing status is not an explicit unknown observation", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "stdio"}},
+    {"name": "missing exact key", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "transport": "stdio", "status": "stdio_retired"}},
+    {"name": "key must be a string", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": 7, "transport": "stdio", "status": "stdio_retired"}},
+    {"name": "container must contain string keys", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers", 7], "serverKey": "airk", "transport": "stdio", "status": "stdio_retired"}},
+    {"name": "uppercase connection identity", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "https", "status": "https_unknown_connection", "connectionId": "0123456789ABCDEF0123456789ABCDEF"}},
+    {"name": "short connection identity", "json": {"agent": "claude", "scope": "project", "file": "/fixture/a/.mcp.json", "containerPath": ["mcpServers"], "serverKey": "airk", "transport": "https", "status": "https_unknown_connection", "connectionId": "0123456789abcdef"}},
+    {"name": "nested target envelope is not an Entry", "json": {"entry": {"file": "/fixture/a/.mcp.json", "serverKey": "airk"}}}
+  ]
+}
