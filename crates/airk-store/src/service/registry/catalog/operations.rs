@@ -158,7 +158,7 @@ fn item(db: &Connection, kind: CatalogKind, id: &str) -> Result<CatalogItem> {
     Ok(match kind {
         CatalogKind::Projects => {
             let (name,a,b,c):(String,i64,i64,i64)=db.query_row("SELECT name,definition_revision,scope_revision,defaults_revision FROM query_projects WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
-            let value=QueryProject{id:id.parse()?,name,definition_revision:revision(a)?,scope_revision:revision(b)?,defaults_revision:revision(c)?,default_indexes:strings(db,"SELECT index_id FROM project_default_indexes WHERE project_id=?1 ORDER BY index_id",id)?.into_iter().map(|s|s.parse()).collect::<Result<_>>()?,description:None};
+            let value=QueryProject{id:id.parse()?,name,definition_revision:revision(a)?,scope_revision:revision(b)?,defaults_revision:revision(c)?,default_indexes:strings(db,"SELECT index_id FROM project_default_indexes WHERE project_id=?1 ORDER BY index_id",id)?.into_iter().map(|s|s.parse()).collect::<Result<_>>()?,description:super::descriptions::load(db,super::descriptions::DescriptionKind::Project,id)?};
             value.validate()?;
             CatalogItem::Project(value)
         }
@@ -184,7 +184,11 @@ fn item(db: &Connection, kind: CatalogKind, id: &str) -> Result<CatalogItem> {
                     "pending_metadata" => SourceImportState::PendingMetadata,
                     _ => anyhow::bail!("invalid source import"),
                 },
-                description: None,
+                description: super::descriptions::load(
+                    db,
+                    super::descriptions::DescriptionKind::Index,
+                    id,
+                )?,
             };
             value.validate()?;
             CatalogItem::Index(value)
@@ -559,10 +563,15 @@ fn mutate_with_context(
 ) -> Result<()> {
     let op = &request.operation;
     match op {
-        // U105 contract step: the description layout lands with the store step.
-        CatalogOperation::SetIndexDescription { .. }
-        | CatalogOperation::SetProjectDescription { .. } => {
-            anyhow::bail!("catalog descriptions are not supported yet")
+        // U105: the definition revision fences the edit; the first set
+        // installs the description layer in this transaction.
+        CatalogOperation::SetIndexDescription{id,expected_definition_revision,description}=>{
+            changed(db.execute("UPDATE index_definitions SET definition_revision=?1 WHERE id=?2 AND definition_revision=?3 AND tombstone=0",params![number(expected_definition_revision.next()?),id.to_string(),number(*expected_definition_revision)])?)?;
+            super::descriptions::store(db,super::descriptions::DescriptionKind::Index,&id.to_string(),description.as_deref())?;
+        }
+        CatalogOperation::SetProjectDescription{id,expected_definition_revision,description}=>{
+            changed(db.execute("UPDATE query_projects SET definition_revision=?1 WHERE id=?2 AND definition_revision=?3",params![number(expected_definition_revision.next()?),id.to_string(),number(*expected_definition_revision)])?)?;
+            super::descriptions::store(db,super::descriptions::DescriptionKind::Project,&id.to_string(),description.as_deref())?;
         }
         CatalogOperation::ChangeIndexPolicy { .. } => super::policy::mutate(db,request,context)?,
         CatalogOperation::BeginIndexSourceChange {..}

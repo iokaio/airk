@@ -59,6 +59,7 @@ pub mod split;
 
 pub mod adopted_authority;
 mod adopted_layout;
+mod descriptions;
 
 pub mod operations;
 
@@ -276,7 +277,22 @@ fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> 
     }
 }
 
+/// U105: the description layer sits over any authority-1 layout without a
+/// marker change. Its exact compiled objects are removed before the base
+/// layout is matched, so every base layout keeps one compiled identity.
 fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
+    if let Some(base) = descriptions::strip(objects)? {
+        let layout = base_catalog_layout(&base)?;
+        ensure!(
+            layout != CatalogLayout::Schema12Authority0,
+            "catalog descriptions require index authority one"
+        );
+        return Ok(layout);
+    }
+    base_catalog_layout(objects)
+}
+
+fn base_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
     if objects == expected_layout(CatalogLayout::Schema12Authority0)?.as_slice() {
         // Preserve the existing authority-0 path: do not build or inspect the
         // authority-1 expected shape until it is actually needed.

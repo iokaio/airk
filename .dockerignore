@@ -133,6 +133,8 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/agents/config_cases.json
 !fixtures/split/agents/credentials_ledger_v1.json
 !fixtures/split/agents/open_access.json
+!fixtures/split/agents/registry-policy3-descriptions.objects.json
+!fixtures/split/agents/registry-policy3-descriptions.meta.json
 !fixtures/split/i1/request_recovery.json
 !fixtures/split/i1/selection_authority.json
 !fixtures/split/i4/role_admission.json

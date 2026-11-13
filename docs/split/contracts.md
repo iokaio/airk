@@ -394,10 +394,23 @@ absent. Every consumer refuses the new values until its step lands.
 | `SelectionOwnerKind::Agent` | `airk_core::scoped_reads` | `"agent"`; `ScopeObservation::validate` admits empty memberships only for it | Never minted |
 | `OpenReadAuthority` | `airk_kernel::scoped_reads` | `{schema, backing, index_id, selection (owner agent), sources (≥ 1), source_revision, policy_epoch, policy_digest}`, domain `airk/scoped-read-authority/open/1`, one Subtree `""` atom per source; `Kernel::with_open_reads` | Host carrier `Command::InstallOpenScope`; the worker answers `Failed`. Source attribution refuses (no project) |
 | Descriptions | `airk_core::index_catalog` | `IndexDefinition.description`, `QueryProject.description`: `default` + `skip_serializing_if`, ≤ 1 KiB, not blank, no control characters except `
-` | Always absent (store reads `None`) |
-| `CatalogOperation::SetIndexDescription` / `SetProjectDescription` | `airk_core::catalog_management` | `{operation, id, expected_definition_revision, description: string\|null}`; no typed confirmation, no worker drain, no authority fence | The store refuses `catalog descriptions are not supported yet` |
+` | Served (step 2): loaded from `catalog_descriptions` only when that table exists |
+| `CatalogOperation::SetIndexDescription` / `SetProjectDescription` | `airk_core::catalog_management` | `{operation, id, expected_definition_revision, description: string\|null}`; no typed confirmation, no worker drain, no authority fence | Served (step 2): fenced by `expected_definition_revision` (bumps it; tombstoned index refused); the first `Some` installs the layer, `null` clears and never installs it |
 | `ControlMethod::AgentConnectionDefaults` → `ControlResponse::AgentConnectionDefaults` | `airk_core::service` | `{connection_id, expected_defaults_revision, index_ids?, index_set_ids?, agent_choice?}` (typed ids; `null` refused) → `{connection_id, open: OpenConnectionState}`; group `agent_connection_defaults` in `control_methods.json`; metadata relay `console_method_not_reviewed` | `not_yet_served` |
 | Refusal codes | `airk_core::service_http::open_refusal` | `agent_scope_choice_disabled`, `agent_default_scope_unset`, `scope_name_ambiguous`, `scope_name_unknown` | Unused |
+
+Description layer (step 2): `service_catalog_descriptions_v1.sql` adds
+`catalog_descriptions(kind, id, description)` (`kind` `index`/`project`,
+≤ 1 KiB, ≤ 2048 rows), a project-delete cascade trigger and the
+`catalog_write_*` barriers. It sits over any authority-1 layout (base or
+adopted, policy 0-3) with no marker change: `physical_catalog_layout` removes
+its exact compiled objects before matching the base layout, so retained
+`airk-state/1` fixtures are recognized unchanged and an untouched installation
+keeps its identity. Authority 0 refuses it. A predecessor refuses the layer as
+an unsupported physical shape (fail closed). Reviewed fixture:
+`fixtures/split/agents/registry-policy3-descriptions.{objects,meta}.json`
+(retained policy3 objects plus the layer DDL, rendered by Python `sqlite3`
+with the `s3_capture_schema.py` renderer).
 
 Fixtures: `fixtures/split/agents/open_access.json` (selections, agent
 observations, the open fingerprint, description cases),

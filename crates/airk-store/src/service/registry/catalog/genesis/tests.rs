@@ -708,3 +708,61 @@ fn current_reader_recognizes_every_retained_airk_state_1_registry_layout() -> Re
     }
     Ok(())
 }
+
+// ---- U105: the lazily installed description layer ----
+// Fixture: fixtures/split/agents/registry-policy3-descriptions.*, the retained
+// policy3 objects plus the layer DDL rendered by Python sqlite3 (independent
+// of this Rust path). Retained fixtures above never carry the layer.
+const U105_DESCRIPTION_FIXTURE: &[(&str, &str, &str)] = &[(
+    "registry-policy3-descriptions",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/split/agents/registry-policy3-descriptions.objects.json"
+    )),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/split/agents/registry-policy3-descriptions.meta.json"
+    )),
+)];
+
+#[test]
+fn description_layer_over_policy3_reproduces_its_reviewed_fixture() -> Result<()> {
+    for (label, objects, _) in S3_REGISTRY_FIXTURES {
+        assert!(
+            !objects.contains("catalog_descriptions"),
+            "{label}: a retained airk-state/1 fixture carries the U105 layer"
+        );
+    }
+    let temp = tempfile::tempdir()?;
+    let mut saved = s3_settled(temp.path(), false)?;
+    for apply in [
+        super::super::apply_policy_v1_layout,
+        super::super::apply_split_v2_layout,
+        super::super::apply_split_extraction_v3_layout,
+    ] {
+        let tx = saved.connection.transaction()?;
+        apply(&tx)?;
+        tx.commit()?;
+    }
+    s3_assert(
+        S3_REGISTRY_FIXTURES,
+        &saved.connection,
+        "service-1.4.policy3",
+    )?;
+    let tx = saved.connection.transaction()?;
+    super::super::descriptions::apply_layout(&tx)?;
+    // Idempotent: a second install is a no-op over the same identity.
+    super::super::descriptions::apply_layout(&tx)?;
+    tx.commit()?;
+    s3_assert(
+        U105_DESCRIPTION_FIXTURE,
+        &saved.connection,
+        "registry-policy3-descriptions",
+    )?;
+    assert_eq!(
+        super::super::validate_catalog_layout(&saved.connection)?,
+        super::super::CatalogLayout::Schema12Authority1Policy3
+    );
+    super::super::validate_existing(&saved.connection)?;
+    Ok(())
+}
