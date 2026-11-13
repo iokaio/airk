@@ -148,6 +148,12 @@
    "retryable": false
   },
   {
+   "code": "admin_review_capacity",
+   "class": "refused",
+   "status": 409,
+   "retryable": false
+  },
+  {
    "code": "admin_confirmation_mismatch",
    "class": "malformed",
    "status": 400,
@@ -307,6 +313,76 @@
     },
     "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
    }
+  },
+  {
+   "name": "lost_mutation_without_handle",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_request_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "lost_mutation_receipt_handle",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_request_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false
+    },
+    "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+   }
+  },
+  {
+   "name": "native_unknown_receipt_handle",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "catalog_metadata_saved_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false,
+     "native": {
+      "status": "failure",
+      "code": "catalog_metadata_saved_outcome_unknown"
+     }
+    },
+    "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+   }
+  },
+  {
+   "name": "native_catalog_unknown_without_handle",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "catalog_apply_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false,
+     "native": {
+      "status": "catalog_outcome_unknown",
+      "code": "catalog_apply_outcome_unknown"
+     }
+    }
+   }
+  },
+  {
+   "name": "recovery_custody_capacity",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "admin_review_capacity",
+     "class": "refused",
+     "retryable": false
+    }
+   }
   }
  ],
  "invalid": [
@@ -355,6 +431,36 @@
     "request": {
      "nonce": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e",
      "state": "queued"
+    }
+   }
+  },
+  {
+   "name": "recovery_handle_not_string",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_request_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false
+    },
+    "review": 12
+   }
+  },
+  {
+   "name": "failure_cannot_claim_completed_progress",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_request_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false
+    },
+    "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f",
+    "request": {
+     "nonce": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e",
+     "state": "completed"
     }
    }
   },
@@ -500,6 +606,74 @@
     "operation": "catalog.preview",
     "result": {},
     "review": "5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F"
+   }
+  },
+  {
+   "name": "uppercase_failure_review",
+   "reason": "envelope_review",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_request_outcome_unknown",
+     "class": "unavailable",
+     "retryable": false
+    },
+    "review": "5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F"
+   }
+  },
+  {
+   "name": "refusal_is_not_recovery",
+   "reason": "envelope_recovery_review",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "key_conflict",
+     "class": "refused",
+     "retryable": false
+    },
+    "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+   }
+  },
+  {
+   "name": "draining_is_not_recovery",
+   "reason": "envelope_recovery_review",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_draining",
+     "class": "unavailable",
+     "retryable": true
+    },
+    "review": "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+   }
+  },
+  {
+   "name": "unknown_is_not_retryable",
+   "reason": "error_retryable",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_request_outcome_unknown",
+     "class": "unavailable",
+     "retryable": true
+    }
+   }
+  },
+  {
+   "name": "unknown_is_not_known_no_effect_refusal",
+   "reason": "error_class",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "catalog_apply_outcome_unknown",
+     "class": "refused",
+     "retryable": false
+    }
    }
   }
  ],

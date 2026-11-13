@@ -974,7 +974,7 @@ Two optional columns, both in the reviewed fixture:
 ### 4.4 Envelopes [P]
 
 - Success: `{"schema":"airk-admin/1","ok":true,"operation":…,"result":<complete native result>,"request"?:{nonce,state},"review"?:<token>}` (`review` per §4.3b).
-- Failure: `{"schema":"airk-admin/1","ok":false,"error":{"code","class","retryable","retry_after_ms"?,"native"?:<complete native response>}}`.
+- Failure: `{"schema":"airk-admin/1","ok":false,"error":{"code","class","retryable","retry_after_ms"?,"native"?:<complete native response>},"review"?:<receipt-only recovery handle>}` (`review` only under §4.4.1).
 - HTTP status: 200 ok; 409 native refusal; 400 malformed; 401 no or expired
   session; 403 host/origin/fetch-site/anti-forgery; 404 unknown route or
   operation; 413 too large; 503 draining or `not_yet_served`; 500 internal.
@@ -987,7 +987,14 @@ except session-owned caller/key fields. Reviewed Make readable/setup applies
 retain their existing receipt token. Independent typed cases and accepted/
 completed controls are in `fixtures/split/i3/native_outcomes.json`.
 
-#### 4.4.1 Proposed R04 recovery handle — awaiting user D8 approval
+#### 4.4.1 Approved R04 receipt-only recovery handle
+
+**Narrow D8 exception approved by the user, 13 November 2026.** This
+authorizes the optional I3 failure handle and capacity code below, with their
+receipt-only custody and existing capacity/lifetime. It changes no I1/MCP,
+digest input, persisted format, installer identity or other wire contract.
+The contract step lands before adapter/UI consumers; contract availability
+alone does not mean that the running handler has implemented recovery custody.
 
 Source review found a further required recovery boundary: `catalog.policy_resume`
 and `catalog.split_recover` generate their mutation identity before dispatch,
@@ -997,7 +1004,7 @@ returns without that token. Redacting and discarding the identity prevents the
 supported receipt lookup. A generated-read preview returning an unexpected
 unknown response is defensive coverage, not evidence of this mutation route.
 
-Proposed narrow exception to the wire freeze:
+Approved boundary:
 
 - Add optional top-level `review` to `FailureEnvelope`, a canonical opaque
   32-hex handle. Keep `ok:false`, 503/`unavailable`, `retryable:false`, complete
@@ -1013,7 +1020,7 @@ Proposed narrow exception to the wire freeze:
 - Reserve recovery custody before the mutation is sent, within the existing
   review/session capacity and lifetime. Refuse before effects if custody cannot
   be reserved; do not enlarge limits. Use a typed `admin_review_capacity`
-  refusal for this pre-dispatch condition. On normal success preserve the
+  refusal (409/`refused`, nonretryable) for this pre-dispatch condition. On normal success preserve the
   existing success-token behavior; ordinary no-effect refusals and failed
   generate/read drafts receive no recovery handle. Release unused reservations.
 - Preserve current keyed resend rules and exact identities. Receipt lookup is
@@ -1027,9 +1034,12 @@ Proposed narrow exception to the wire freeze:
   UI reports unknown and offers the matching receipt read; it never advances
   setup/Make readable or offers replay based on this handle.
 
-No new failure field, code or receipt-custody behavior is implemented or approved
-by this proposal. Without this exception, the narrower reviewed-flow repair can
-land, but generated-mutation recovery remains an explicit R04 release blocker.
+The owning Rust I3 definition validates the optional field, unknown-outcome
+class/retry semantics and capacity code. The independent applicability and
+code cases are `fixtures/split/i3/recovery_reviews.json`; envelope/schema cases
+extend the existing I3 pilot. Unsupported mutations receive no recovery handle.
+Native classification, pre-dispatch reservation, receipt-only custody and UI
+consumers remain separate implementation work after this contract lands.
 
 ### 4.5 Launch-code exchange [P, for review]
 

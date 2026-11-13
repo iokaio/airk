@@ -46,7 +46,9 @@ pub const MAX_ASSET_NAME_BYTES: usize = 128;
 pub const MAX_OPERATION_BYTES: usize = 64;
 /// U98: the typed confirmation text of a destructive call.
 pub const MAX_CONFIRM_TEXT_BYTES: usize = 256;
-/// Review tokens a session holds; the oldest is dropped first (§2.4, U98).
+/// Review custody per session. Ordinary preview tokens retain their existing
+/// eviction policy; reserved receipt-only recovery custody (§4.4.1) must not
+/// be evicted to admit a mutation. The capacity is unchanged.
 pub const MAX_REVIEWS_PER_SESSION: usize = 32;
 
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
@@ -228,13 +230,16 @@ pub enum AdminCode {
     /// not hold (another session, logout, restart, eviction). Run the review
     /// again (U98).
     AdminReviewUnknown,
+    /// Receipt-only recovery custody could not be reserved before dispatch.
+    /// Nothing was sent; the existing review capacity is not enlarged.
+    AdminReviewCapacity,
     /// A destructive call's typed text does not equal the target's current
     /// display name, or its digest does not match the review (U98).
     AdminConfirmationMismatch,
 }
 
 impl AdminCode {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::AdminHostRefused,
         Self::AdminOriginRefused,
         Self::AdminFetchMetadataRefused,
@@ -257,6 +262,7 @@ impl AdminCode {
         Self::UpgradeInProgress,
         Self::CookieOnBearerPlane,
         Self::AdminReviewUnknown,
+        Self::AdminReviewCapacity,
         Self::AdminConfirmationMismatch,
     ];
 
@@ -278,6 +284,7 @@ impl AdminCode {
             | Self::AdminReviewUnknown
             | Self::AdminConfirmationMismatch => ErrorClass::Malformed,
             Self::AdminRequestTooLarge => ErrorClass::TooLarge,
+            Self::AdminReviewCapacity => ErrorClass::Refused,
             Self::AdminInternal => ErrorClass::Internal,
             Self::AdminStreamLimit
             | Self::AdminExchangeRateLimited
@@ -385,6 +392,38 @@ pub struct FailureEnvelope {
     #[schemars(schema_with = "schema::constant_false")]
     pub ok: bool,
     pub error: ErrorBody,
+    /// Receipt-only recovery handle for an unknown generated mutation
+    /// (§4.4.1). It holds the original identity in this admin session and
+    /// never authorizes another mutation or a different receipt operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "schema::incarnation_option")]
+    pub review: Option<String>,
+}
+
+/// The initial, reviewed generated-mutation recovery applicability (§4.4.1).
+/// A handle may restore its identity only into this matching read operation;
+/// ordinary U98 review tokens retain their existing applicability.
+pub fn recovery_receipt(operation: &str) -> Option<&'static str> {
+    match operation {
+        "catalog.policy_resume" => Some("catalog.policy_resume_receipt"),
+        "catalog.split_recover" => Some("catalog.split_recovery_receipt"),
+        _ => None,
+    }
+}
+
+/// Existing unknown-outcome codes whose failure envelope is unavailable,
+/// nonretryable and may carry a receipt-only handle when applicable. This is
+/// envelope validation, not classification of a native control response.
+pub fn is_unknown_outcome_code(code: &str) -> bool {
+    matches!(
+        code,
+        "service_request_outcome_unknown"
+            | "catalog_apply_outcome_unknown"
+            | "catalog_index_setup_outcome_unknown"
+            | "catalog_split_apply_outcome_unknown"
+            | "catalog_metadata_saved_outcome_unknown"
+            | "source_change_resolution_outcome_unknown"
+    )
 }
 
 /// Every admin API body, including the session exchange and logout.
@@ -439,6 +478,7 @@ impl FailureEnvelope {
                 retry_after_ms: None,
                 native: None,
             },
+            review: None,
         }
     }
 
@@ -456,11 +496,30 @@ impl FailureEnvelope {
         match AdminCode::parse(&error.code) {
             Some(code) if code.class() != error.class => return Err("error_class"),
             Some(code) if code.retryable() != error.retryable => return Err("error_retryable"),
+            None if is_unknown_outcome_code(&error.code) => {
+                if error.class != ErrorClass::Unavailable {
+                    return Err("error_class");
+                }
+                if error.retryable {
+                    return Err("error_retryable");
+                }
+            }
             None if error.class != ErrorClass::Refused => return Err("error_class"),
             _ => {}
         }
         if error.retry_after_ms.is_some() && !error.retryable {
             return Err("error_retry_after");
+        }
+        if let Some(review) = &self.review {
+            if !is_incarnation(review) {
+                return Err("envelope_review");
+            }
+            if !is_unknown_outcome_code(&error.code)
+                || error.class != ErrorClass::Unavailable
+                || error.retryable
+            {
+                return Err("envelope_recovery_review");
+            }
         }
         Ok(())
     }

@@ -7,7 +7,7 @@ export const I3_CONTRACT = 1;
  * Codes the admin plane itself produces. Native refusals keep their own
  * code with class `refused`.
  */
-export type AdminCode = "admin_host_refused" | "admin_origin_refused" | "admin_fetch_metadata_refused" | "admin_bearer_refused" | "admin_not_found" | "admin_operation_unknown" | "admin_method_not_allowed" | "admin_upgrade_refused" | "admin_malformed_request" | "admin_request_too_large" | "admin_stream_limit" | "admin_exchange_rate_limited" | "admin_internal" | "not_yet_served" | "service_draining" | "admin_peer_refused" | "admin_preflight_refused" | "admin_session_invalid" | "admin_launch_code_invalid" | "upgrade_in_progress" | "cookie_on_bearer_plane" | "admin_review_unknown" | "admin_confirmation_mismatch";
+export type AdminCode = "admin_host_refused" | "admin_origin_refused" | "admin_fetch_metadata_refused" | "admin_bearer_refused" | "admin_not_found" | "admin_operation_unknown" | "admin_method_not_allowed" | "admin_upgrade_refused" | "admin_malformed_request" | "admin_request_too_large" | "admin_stream_limit" | "admin_exchange_rate_limited" | "admin_internal" | "not_yet_served" | "service_draining" | "admin_peer_refused" | "admin_preflight_refused" | "admin_session_invalid" | "admin_launch_code_invalid" | "upgrade_in_progress" | "cookie_on_bearer_plane" | "admin_review_unknown" | "admin_review_capacity" | "admin_confirmation_mismatch";
 
 export type Authorization = "owner_pipe" | "window_lease" | "admin_session_csrf";
 
@@ -66,6 +66,12 @@ export type ExchangeResponse = {
 export type FailureEnvelope = {
     error: ErrorBody;
     ok: false;
+    /**
+     * Receipt-only recovery handle for an unknown generated mutation
+     * (§4.4.1). It holds the original identity in this admin session and
+     * never authorizes another mutation or a different receipt operation.
+     */
+    review?: string | null;
     schema: "airk-admin/1";
 };
 

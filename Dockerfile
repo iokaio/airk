@@ -99,6 +99,7 @@ COPY fixtures/split/i3/envelopes.json ./fixtures/split/i3/envelopes.json
 COPY fixtures/split/i3/headers.json ./fixtures/split/i3/headers.json
 COPY fixtures/split/i3/launch_exchange.json ./fixtures/split/i3/launch_exchange.json
 COPY fixtures/split/i3/native_outcomes.json ./fixtures/split/i3/native_outcomes.json
+COPY fixtures/split/i3/recovery_reviews.json ./fixtures/split/i3/recovery_reviews.json
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
 COPY fixtures/split/i1/control_methods.json ./fixtures/split/i1/control_methods.json
 COPY fixtures/split/i1/window_plane.json ./fixtures/split/i1/window_plane.json

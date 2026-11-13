@@ -127,6 +127,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i3/headers.json
 !fixtures/split/i3/launch_exchange.json
 !fixtures/split/i3/native_outcomes.json
+!fixtures/split/i3/recovery_reviews.json
 !fixtures/split/i4/i4_cases.json
 !fixtures/split/i1/control_methods.json
 !fixtures/split/i1/admin_launch_code.json

@@ -11,6 +11,7 @@ const LAUNCH: &str = include_str!("../../../../fixtures/split/i3/launch_exchange
 const HEADERS: &str = include_str!("../../../../fixtures/split/i3/headers.json");
 const ENVELOPES: &str = include_str!("../../../../fixtures/split/i3/envelopes.json");
 const OPERATIONS: &str = include_str!("../../../../fixtures/split/i3/admin_operations.json");
+const RECOVERY_REVIEWS: &str = include_str!("../../../../fixtures/split/i3/recovery_reviews.json");
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).expect("fixture is JSON")
@@ -265,6 +266,69 @@ fn error_codes_and_classes_match_the_catalog() {
         assert_eq!(row["retryable"], code.retryable(), "{}", row["code"]);
         FailureEnvelope::new(code).validate().unwrap();
     }
+}
+
+#[test]
+fn recovery_review_applicability_is_independent_and_receipt_only() {
+    let fixture = json(RECOVERY_REVIEWS);
+    assert_eq!(
+        fixture["schema"],
+        "airk.split-fixture.i3-recovery-reviews/1"
+    );
+    assert_eq!(fixture["max_reviews_per_session"], MAX_REVIEWS_PER_SESSION);
+    let operations = json(OPERATIONS);
+    let rows = operations["operations"].as_array().unwrap();
+    for case in cases(&fixture, "applicability") {
+        let operation = case["operation"].as_str().unwrap();
+        assert_eq!(
+            serialized(recovery_receipt(operation)),
+            case["receipt"],
+            "{operation}"
+        );
+        if let Some(receipt) = case["receipt"].as_str() {
+            let mutation = rows
+                .iter()
+                .find(|row| row["operation"] == operation)
+                .unwrap();
+            let read = rows.iter().find(|row| row["operation"] == receipt).unwrap();
+            assert_eq!(mutation["effect"], "mutation", "{operation}");
+            assert_eq!(mutation["request_key"]["mode"], "generate", "{operation}");
+            assert_eq!(read["effect"], "read", "{receipt}");
+            assert_eq!(read["request_key"]["mode"], "review", "{receipt}");
+        }
+    }
+    for code in strings(&fixture["unknown_codes"]) {
+        assert!(is_unknown_outcome_code(&code), "{code}");
+        let failure = FailureEnvelope {
+            schema: ENVELOPE_SCHEMA.to_owned(),
+            ok: false,
+            error: ErrorBody {
+                code,
+                class: ErrorClass::Unavailable,
+                retryable: false,
+                retry_after_ms: None,
+                native: None,
+            },
+            review: Some("5f".repeat(16)),
+        };
+        failure.validate().unwrap();
+    }
+    for code in strings(&fixture["not_unknown_codes"]) {
+        assert!(!is_unknown_outcome_code(&code), "{code}");
+    }
+}
+
+#[test]
+fn failure_without_recovery_handle_keeps_its_original_wire_bytes() {
+    let old = r#"{"schema":"airk-admin/1","ok":false,"error":{"code":"admin_internal","class":"internal","retryable":false}}"#;
+    let failure: FailureEnvelope = serde_json::from_str(old).unwrap();
+    assert_eq!(failure.review, None);
+    failure.validate().unwrap();
+    assert_eq!(serde_json::to_string(&failure).unwrap(), old);
+    assert_eq!(
+        serde_json::to_string(&FailureEnvelope::new(AdminCode::AdminInternal)).unwrap(),
+        old
+    );
 }
 
 fn validate(envelope: &Envelope) -> Result<(), &'static str> {

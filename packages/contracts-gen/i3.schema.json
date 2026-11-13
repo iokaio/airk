@@ -59,6 +59,11 @@
           "type": "string"
         },
         {
+          "const": "admin_review_capacity",
+          "description": "Receipt-only recovery custody could not be reserved before dispatch.\nNothing was sent; the existing review capacity is not enlarged.",
+          "type": "string"
+        },
+        {
           "const": "admin_confirmation_mismatch",
           "description": "A destructive call's typed text does not equal the target's current\ndisplay name, or its digest does not match the review (U98).",
           "type": "string"
@@ -255,6 +260,14 @@
         },
         "ok": {
           "const": false
+        },
+        "review": {
+          "description": "Receipt-only recovery handle for an unknown generated mutation\n(§4.4.1). It holds the original identity in this admin session and\nnever authorizes another mutation or a different receipt operation.",
+          "pattern": "^[0-9a-f]{32}$",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "schema": {
           "const": "airk-admin/1",

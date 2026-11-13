@@ -725,6 +725,7 @@ impl AdminPlane {
                         retry_after_ms: None,
                         native: Some(serde_json::json!({ "message": message })),
                     },
+                    review: None,
                 };
                 api(ErrorClass::Refused.status(), &envelope, None)
             }
@@ -937,6 +938,7 @@ fn outcome_unknown() -> HttpResponse {
             retry_after_ms: None,
             native: None,
         },
+        review: None,
     };
     api(ErrorClass::Unavailable.status(), &envelope, None)
 }
@@ -1040,6 +1042,7 @@ fn native_value(
             retry_after_ms: None,
             native: Some(value),
         },
+        review: None,
     };
     api(ErrorClass::Refused.status(), &envelope, None)
 }

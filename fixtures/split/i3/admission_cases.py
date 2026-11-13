@@ -431,7 +431,8 @@ CODES = [
     ("admin_internal", "internal", False), ("not_yet_served", "unavailable", False),
     ("service_draining", "unavailable", True), ("upgrade_in_progress", "unavailable", True),
     ("cookie_on_bearer_plane", "forbidden", False),
-    ("admin_review_unknown", "malformed", False), ("admin_confirmation_mismatch", "malformed", False),
+    ("admin_review_unknown", "malformed", False), ("admin_review_capacity", "refused", False),
+    ("admin_confirmation_mismatch", "malformed", False),
 ]
 STATUS = {"malformed": 400, "unauthenticated": 401, "forbidden": 403, "not_found": 404, "method_not_allowed": 405,
           "refused": 409, "too_large": 413, "internal": 500, "unavailable": 503}
@@ -446,9 +447,12 @@ def success(operation, result, request=None, review=None):
     return value
 
 
-def failure(code, klass, retryable, **extra):
-    return {"schema": "airk-admin/1", "ok": False,
-            "error": {"code": code, "class": klass, "retryable": retryable, **extra}}
+def failure(code, klass, retryable, review=None, **extra):
+    value = {"schema": "airk-admin/1", "ok": False,
+             "error": {"code": code, "class": klass, "retryable": retryable, **extra}}
+    if review is not None:
+        value["review"] = review
+    return value
 
 
 def envelopes_document():
@@ -480,6 +484,19 @@ def envelopes_document():
             # U98: a generate-mode draft names its review token; the request key stays in the session.
             {"name": "review_token", "json": success("catalog.index_setup_draft", {"draft": "elided"},
                                                      review="5f" * 16)},
+            # R04: an unknown mutation's optional handle authorizes only its
+            # matching receipt, never another apply or a new mutation key.
+            {"name": "lost_mutation_without_handle", "json": failure(
+                "service_request_outcome_unknown", "unavailable", False)},
+            {"name": "lost_mutation_receipt_handle", "json": failure(
+                "service_request_outcome_unknown", "unavailable", False, review="5f" * 16)},
+            {"name": "native_unknown_receipt_handle", "json": failure(
+                "catalog_metadata_saved_outcome_unknown", "unavailable", False, review="5f" * 16,
+                native={"status": "failure", "code": "catalog_metadata_saved_outcome_unknown"})},
+            {"name": "native_catalog_unknown_without_handle", "json": failure(
+                "catalog_apply_outcome_unknown", "unavailable", False,
+                native={"status": "catalog_outcome_unknown", "code": "catalog_apply_outcome_unknown"})},
+            {"name": "recovery_custody_capacity", "json": failure("admin_review_capacity", "refused", False)},
         ],
         "invalid": [
             {"name": "success_unknown_field", "json": {**success("service.health", {}), "token": "x"}},
@@ -488,6 +505,11 @@ def envelopes_document():
             {"name": "unknown_class", "json": failure("admin_internal", "teapot", False)},
             {"name": "request_unknown_state", "json": success("jobs.enqueue", {}, {"nonce": nonce,
                                                                                    "state": "queued"})},
+            {"name": "recovery_handle_not_string", "json": failure(
+                "service_request_outcome_unknown", "unavailable", False, review=12)},
+            {"name": "failure_cannot_claim_completed_progress", "json": {
+                **failure("service_request_outcome_unknown", "unavailable", False, review="5f" * 16),
+                "request": {"nonce": nonce, "state": "completed"}}},
             {"name": "neither_result_nor_error", "json": {"schema": "airk-admin/1", "ok": True,
                                                           "operation": "service.health"}},
         ],
@@ -511,6 +533,17 @@ def envelopes_document():
              "json": failure("key_conflict", "refused", False, retry_after_ms=10)},
             {"name": "uppercase_review", "reason": "envelope_review",
              "json": success("catalog.preview", {}, review=("5f" * 16).upper())},
+            {"name": "uppercase_failure_review", "reason": "envelope_review",
+             "json": failure("service_request_outcome_unknown", "unavailable", False,
+                             review=("5f" * 16).upper())},
+            {"name": "refusal_is_not_recovery", "reason": "envelope_recovery_review",
+             "json": failure("key_conflict", "refused", False, review="5f" * 16)},
+            {"name": "draining_is_not_recovery", "reason": "envelope_recovery_review",
+             "json": failure("service_draining", "unavailable", True, review="5f" * 16)},
+            {"name": "unknown_is_not_retryable", "reason": "error_retryable",
+             "json": failure("service_request_outcome_unknown", "unavailable", True)},
+            {"name": "unknown_is_not_known_no_effect_refusal", "reason": "error_class",
+             "json": failure("catalog_apply_outcome_unknown", "refused", False)},
         ],
         "stream_lines": [
             {"name": "event", "json": {"kind": "event", "cursor": "opaque-1", "event": {"kind": "job"}}},

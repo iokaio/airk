@@ -1,0 +1,33 @@
+{
+  "schema": "airk.split-fixture.i3-recovery-reviews/1",
+  "contract": "docs/split/contracts.md#441-approved-r04-receipt-only-recovery-handle",
+  "max_reviews_per_session": 32,
+  "applicability": [
+    {"operation": "catalog.policy_resume", "receipt": "catalog.policy_resume_receipt"},
+    {"operation": "catalog.split_recover", "receipt": "catalog.split_recovery_receipt"},
+    {"operation": "catalog.preview", "receipt": null},
+    {"operation": "catalog.index_setup_draft", "receipt": null},
+    {"operation": "catalog.index_setup_apply", "receipt": null},
+    {"operation": "catalog.apply", "receipt": null},
+    {"operation": "catalog.policy_resume_receipt", "receipt": null},
+    {"operation": "catalog.split_recovery_receipt", "receipt": null},
+    {"operation": "service.stop", "receipt": null},
+    {"operation": "catalog.future_mutation", "receipt": null}
+  ],
+  "unknown_codes": [
+    "service_request_outcome_unknown",
+    "catalog_apply_outcome_unknown",
+    "catalog_index_setup_outcome_unknown",
+    "catalog_split_apply_outcome_unknown",
+    "catalog_metadata_saved_outcome_unknown",
+    "source_change_resolution_outcome_unknown"
+  ],
+  "not_unknown_codes": [
+    "admin_review_capacity",
+    "source_change_jobs_pending",
+    "registry_busy",
+    "not_yet_served",
+    "future_outcome_unknown",
+    "catalog_apply_outcome_unknown_extra"
+  ]
+}

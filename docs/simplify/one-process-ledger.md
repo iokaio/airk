@@ -2,6 +2,23 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- Approved R04 contract-only milestone: primary reviewed optional failure
+  handle, exact unknown-code validation, two receipt-only operation pairs and
+  409/nonretryable capacity refusal. Existing absent-handle failure bytes are
+  unchanged. Rust schema generation passes one test (Cargo 62 s; timing copy
+  `p1-r04-contract-generate-cargo-timing.html`, persistent P10 target, Cargo
+  development incremental default). Generated schema/TypeScript and independent
+  envelope cases were separately reviewed by their author and primary.
+  `p1-r04-contract-clippy` passes endpoint/HTTPS all targets, no default
+  features (receipt 21.13 s); `p1-r04-contract-tests` selects 16/16 passing,
+  57 filtered (receipt 13.44 s). Both retain unchanged input seals and Cargo
+  timings, incremental on/P10. Independent generator/drift, ten Python
+  renderer/container checks and generated TypeScript compilation pass.
+  Recovery fixture is explicit in Docker, manifest and allowlist. Handler has
+  only mechanical absent-field initializers; classification, custody and UI
+  consumers remain pending. Candidate/version/artifact descriptions remain
+  1.8.35 source-only; this contract does not claim generated-mutation recovery.
+
 - R01 correction reviewed and qualified on Windows: whole-batch native Entry
   validation precedes writes; each selected edit reclassifies current source
   using refreshed observations and preserves the existing concurrent-byte
