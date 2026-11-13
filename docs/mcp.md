@@ -1,5 +1,25 @@
 # MCP tools
 
+**Open agent connections (1.8.35 split candidate, U105–U109).** An open
+connection reads its assigned set (the default scope AIRK Service stores for
+it) when a call names nothing. Read tools accept `index_ids` and
+`index_set_ids` (id, exact name or a unique case-insensitive name; union, at
+most 32 each). With agent choice off (the default) they only narrow inside the
+assigned set; anything outside is refused `agent_scope_choice_disabled` and
+`list_indexes` is not offered. With choice on they select any index or set, and
+`list_indexes` lists every index and index set with id, name, description and
+indexed folders. Every read that takes `limit` and can span several indexes
+also takes `limit_per_index` (1–100): each index gets exactly that many results
+and `limit` becomes the overall cap. Members report `index_name` and
+`elapsed_ms` and are read concurrently up to the query concurrency.
+**Parity:** `airkctl tools call --index/--set/--connection` (with
+`limit_per_index` in `--args`) and the Workbench's named-index selection and
+**Max results per index** reach the same service path and return the same
+complete result; only documented timing (`elapsed_ms`) differs between runs.
+Grant-bound connections are unchanged. Setup and limits: [agent integration](agent-integration.md#select-scope-and-provision-the-actual-client)
+and the [1.8.35 record](releases/release-1.8.35.md). The text below predates
+open connections.
+
 P7 adds explicit reviewed combined sessions, unique-index execution, shared
 budgets and complete member-qualified results. [Combined-read contracts](combined-reads.md)
 record selectors, discovery, publication vectors, plan verification and the

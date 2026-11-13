@@ -32,16 +32,22 @@ shows that state with **Download AIRK Service**, **Start** or **Check again**;
 (`airkctl admin open`) for index setup, sources, index sets, storage, agents
 and the service.
 
-**1.8.34 split candidate (13 November 2026).** This extension works with a
+**1.8.35 split candidate (13 November 2026).** This extension works with a
 separately installed AIRK Service ([split plan](https://github.com/iokaio/airk/blob/main/docs/split/split-plan.md) §8).
-Indexes and index sets are created and changed in AIRK Admin. The Explorer's
-Indexing view is read-only and opens AIRK Admin in VS Code or in your browser
-(setting `airk.admin.openIn`). The Explorer shows live indexing progress, job,
-watch and pause state, usage and recent activity, and offers the everyday
-actions for the current index: Index now, Pause/Resume, watching on/off, and
-Retry or Cancel a job. Without a chosen search scope it reads the folder's
-index through the index sets that hold it; an index in no index set shows
-"not readable" with **Make readable in AIRK Admin**. This candidate is unpublished and not
+Indexes are created and changed in AIRK Admin, which opens in VS Code or in
+your browser (setting `airk.admin.openIn`). The Explorer shows live indexing
+progress, job, watch and pause state, usage and recent activity, and offers the
+everyday actions for the current index: Index now, Pause/Resume, watching
+on/off, and Retry or Cancel a job. Search scope is the union of the checked
+index sets and indexes; an index in no index set gets a visible set named after
+it when applied, and the checked indexes can be saved as a new index set.
+Management › Agents connects coding agents with one click through an open
+connection that follows the window's search scope; **Let the agent choose
+indexes** is off by default, so an agent reads only, or part of, that scope.
+The Workbench reads the window's search scope or explicitly named indexes and
+index sets, and **Max results per index** in the Workbench and Explorer Search
+gives every index of a multi-index search the same number of results. This
+candidate is unpublished and not
 installed-editor qualified. Earlier release notes below describe the pre-split
 extension, which bundled and installed the native runtime. They are kept as
 history.

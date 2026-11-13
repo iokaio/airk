@@ -17,13 +17,70 @@ credential and CA trust. A saved configuration alone does not supply either.
 
 ## Select scope and provision the actual client
 
-In Explorer **Indexing → Search scope**, review indexes/index sets and choose
-**Apply selection**, then **Connect Coding Agent**. The host freezes the actual
-native selector; saving a URL does not grant access. Missing/revoked authority,
-a changed registration or stale review remains an explicit refusal. Imported
-connections keep their original native grant and genuine owned configuration or
-preexisting provider receipt. A multi-root predecessor retains the exact original
-union and requires an explicit project; the active editor does not narrow it.
+**Open connections (1.8.35 split candidate, U105).** In the Explorer, apply a
+search scope in **Indexing → Search scope**, then in **Management → Agents**
+choose the agent (Claude Code, Codex or VS Code / GitHub Copilot) and
+**Connect**. Connect enrolls an **open** connection (`airkctl agents connect
+--open`), writes AIRK's entry in the agent's configuration file and sets the
+connection's **default scope** to the window's search scope (`airkctl agents
+default`). An open connection's token admits the agent to the MCP endpoint; it
+carries no reviewed grant. The indexes it reads are the default scope that AIRK
+Service stores for the connection. A connection connected from the Explorer
+follows the window's search scope: applying another scope updates its default
+scope, and the change applies to the agent's next call without a reconnect or
+a configuration rewrite. Clearing the scope empties it, and reads then refuse
+`agent_default_scope_unset`. Creating, describing or changing indexes and index
+sets does not close an open connection: each call re-resolves its scope at the
+current catalog revision (U106f). Revocation, a pending catalog fence and the
+service's end still deny or close it; grant-bound connections keep their
+existing fencing.
+
+**Agent choice is off by default: never outside the assigned set.** The assigned
+set is the default indexes plus the members of the default index sets. Off, a
+call naming nothing reads the whole assigned set, and a call may narrow with
+`index_ids`/`index_set_ids` to a non-empty part of it (a set only when all of
+its members are inside). A call naming anything outside is refused
+`agent_scope_choice_disabled` with the outside indexes named, and
+`list_indexes` is neither listed nor served. Turn on **Let the agent choose
+indexes** (or `airkctl agents default --connection-id <id> --agent-choice on`)
+to let the agent name any indexes and index sets per call (union, at most 32
+each) and call `list_indexes`, which lists every index and index set with its
+id, name, description and indexed folders (a set lists its member indexes). A
+call naming nothing still reads the default scope. Names resolve by id
+(`idx_…`, `prj_…`), then exact name, then a unique case-insensitive name;
+ambiguous or unknown names refuse `scope_name_ambiguous` or
+`scope_name_unknown`.
+
+Results of a read over several indexes stay grouped by index (`members[]`), and
+each member reports `index_name` and `elapsed_ms`. `limit_per_index` (1–100)
+gives every index exactly that many results; `limit` is then the overall cap
+(default indexes × `limit_per_index`), and a product above the cap or above 100
+is refused `combined_limit_per_index_too_large`. Member reads run concurrently
+up to the machine's query concurrency. With choice on, any agent
+holding that token can read every index of this OS user: workspace isolation is
+a default, not a boundary. After the choice changes, a running agent may need to
+reload its tool list (Claude Code `/mcp`, restart Codex).
+
+A named index is read whole (every enabled source root); an index set is read as
+its member indexes, each whole. Index and index-set descriptions are edited in
+the Explorer's Search scope (**Edit description**) or with `airkctl library
+describe --index <idx_…>|--set <prj_…> --text <text>|--clear --yes`; without a
+stored description, `list_indexes` generates one from the name and source paths.
+**Disconnect** in Management → Agents removes the entries naming a connection
+and revokes an open connection that no remaining entry names.
+
+The 1.8.35 behavior is built for local manual testing only; installed-editor
+journeys and real-client qualification of open connections are not run. See the
+[1.8.35 record](releases/release-1.8.35.md).
+
+**Grant-bound connections.** Connections enrolled from a reviewed selection
+(AIRK Admin's Agents page, `airkctl agents connect --selection-file`) keep
+working unchanged and keep the scope they were connected with. Saving a URL does
+not grant access. Missing/revoked authority, a changed registration or stale
+review remains an explicit refusal. Imported connections keep their original
+native grant and genuine owned configuration or preexisting provider receipt. A
+multi-root predecessor retains the exact original union and requires an explicit
+project; the active editor does not narrow it.
 
 Historical helper-cache cleanup retains the native scope in its complete
 receipt. A native default installation reports `native-defaults`, covering its
@@ -323,6 +380,24 @@ After an [upgrade rebuild](upgrade-rebuild-fallback.md), old client files and
 credentials remain preserved but their original namespace does not grant access
 to the successor. Review and enroll the replacement scope explicitly; do not
 reuse an old namespace or silently broaden the client selection.
+
+### Open connection from a terminal
+
+Without the Explorer, enroll an open connection and set its default scope:
+
+```console
+airkctl agents connect --client codex --open
+airkctl agents default --connection-id <printed-id> --set <index-set-name> --index <index-name>
+airkctl tools call search --connection <printed-id> --args '{"query":"…"}'
+```
+
+`--index` and `--set` take ids or exact names and replace the whole default
+scope; `--clear` empties it; `--agent-choice off|on` sets agent choice.
+`airkctl tools call --connection <id>` reads exactly as that connection's MCP
+calls do, and `airkctl tools list --connection <id>` shows the catalog it sees.
+`airkctl tools call --index/--set` reads named indexes and sets through the same
+open read path without a connection. Pass `limit_per_index` in `--args`, for
+example `--args '{"query":"…","limit_per_index":5}'`.
 
 ### Existing reviewed selector
 

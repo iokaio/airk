@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for agents and AIRK Workbench, with complete cited results. Requires AIRK Service, installed separately from https://airk.ioka.io/#downloads.",
-  "version": "1.8.34",
+  "version": "1.8.35",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
