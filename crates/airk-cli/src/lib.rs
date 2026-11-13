@@ -15,9 +15,9 @@ pub(crate) use airk_catalog_control::catalog_host_context;
 pub(crate) use airk_catalog_control::catalog_index_setup_control;
 pub(crate) use airk_catalog_control::catalog_source_change_control;
 pub(crate) use airk_catalog_control::catalog_split_control;
+pub use airk_frontend::combined_frontend;
 #[cfg(test)]
 pub(crate) use airk_host::catalog_test_fixture;
-pub mod combined_frontend;
 pub use airk_host::embedding_pool_protocol;
 pub use airk_inference::embedding_client;
 pub use airk_inference::embedding_pool_bootstrap;
@@ -35,13 +35,12 @@ pub use ipc::endpoint as local_ipc;
 mod native_admin_connections;
 pub(crate) use airk_catalog_control::reference_refresh_control;
 pub(crate) use airk_catalog_control::registry_console;
-pub(crate) use airk_host::read_attempt;
 /// Private role admission (split plan §5.1, step 3.0).
 pub mod role_admission;
 pub use airk_host::runtime_pair;
 pub(crate) use airk_supervisor::runtime_metadata;
 pub mod service_configuration;
-pub mod service_frontend;
+pub use airk_frontend::service_frontend;
 /// Phase 7: the private `setup` and `service-login` roles (I4 writer).
 pub mod setup_role;
 /// U89: the install record's locations for an installed service.
@@ -54,14 +53,14 @@ pub use airk_host::service_registration;
 pub mod service_runtime;
 pub mod standalone_setup;
 /// The CLI tool call path shared with M3 (split step 3a.2b).
-pub mod tool_call;
+pub use airk_frontend::tool_call;
 /// M2 tool catalog documents (split step 3a.1).
-pub mod tool_catalog;
+pub use airk_frontend::tool_catalog;
 
+pub use airk_frontend::project_client;
 pub use airk_host::bundled_assets;
-pub use airk_supervisor::derived_worker;
-pub mod project_client;
 pub use airk_host::project_protocol;
+pub use airk_supervisor::derived_worker;
 pub(crate) use airk_supervisor::project_supervisor;
 pub use airk_supervisor::project_worker;
 
@@ -85,7 +84,6 @@ pub(crate) use airk_host::checkpoint_packet;
 
 pub(crate) use airk_host::native_process;
 /// Native read result classification shared by clients and tests (split step 2b).
-pub(crate) use airk_host::native_read_result;
 pub(crate) use airk_host::process_roles;
 
 pub use airk_host::source_protocol;
@@ -97,18 +95,18 @@ pub(crate) use airk_host::user_paths;
 pub use airk_inference::unix_guardian;
 pub(crate) use airk_supervisor::source_supervisor;
 
-pub use airk_host::cli_io;
-pub mod client_requests;
-pub mod console_client;
 pub use airk_endpoint::explorer_assistance;
+pub use airk_frontend::client_requests;
+pub use airk_frontend::console_client;
+pub use airk_frontend::session;
+pub use airk_frontend::unified_mcp;
+pub use airk_frontend::usage_client;
+pub use airk_host::cli_io;
 pub(crate) use airk_host::request_journal;
+pub use airk_host::session_protocol;
 /// Client side of the native service control transport (moved from `service_runtime`).
 pub(crate) use airk_installer::control_client;
-pub mod session;
-pub use airk_host::session_protocol;
-pub mod unified_mcp;
 pub use airk_installer::universal_launcher;
-pub mod usage_client;
 
 /// The private project-owner process role, wired with the service hooks
 /// (see `project_worker::Hooks`).

@@ -183,8 +183,13 @@ def main(argv=None):
         new.write_text(text, encoding="utf-8", newline="")
 
     # New lib.rs: the declarations, made `pub`, with their attributes.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import module_graph
+    named = set()
+    for text in rewritten.values():
+        named.update(module_graph.grouped(text))
     used_aliases = {name for name in list(ALIASES) + ["owner_acl"]
-                    if any(f"crate::{name}" in text for text in rewritten.values())}
+                    if name in named or any(f"crate::{name}" in text for text in rewritten.values())}
     header = ["// SPDX-License-Identifier: Apache-2.0",
               f"//! The {group} part of the former `airk-cli` crate (docs/simplify/airk-cli-split.md).",
               f"extern crate self as {ident(crate)};"]

@@ -113,7 +113,7 @@ struct Snapshot<A = ScopedReadAuthority, C = ScopedConnectRequest> {
 }
 
 type Pending<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
-type SelectionRequest = crate::catalog_authority::SelectionConnectRequest;
+type SelectionRequest = airk_catalog_control::catalog_authority::SelectionConnectRequest;
 
 /// A member's read authority: its fingerprint binds the child cache, the
 /// combined identity and the member's source projection.
@@ -229,7 +229,8 @@ impl Session for CombinedConnectRequest {
                 tokio::time::Instant::from_std(deadline),
                 instance.get_or_try_init(|| async {
                     let health =
-                        crate::control_client::request(control, ControlMethod::Health).await?;
+                        airk_installer::control_client::request(control, ControlMethod::Health)
+                            .await?;
                     let ControlResponse::Health { observation } = health else {
                         return Err(anyhow::Error::from(ScopeReadRefused));
                     };
@@ -240,7 +241,7 @@ impl Session for CombinedConnectRequest {
             .map_err(|_| ScopeReadRefused)??;
             let response = tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
-                crate::control_client::request_for_instance(
+                airk_installer::control_client::request_for_instance(
                     control,
                     ControlMethod::ValidateCombinedDelivery {
                         selection: self.clone(),
@@ -273,7 +274,7 @@ impl Session for CombinedConnectRequest {
 /// Admits one selection member's child connection in process: the service's
 /// `Management::connect_selection`, then `take_in_process` (§3.2 step 4).
 /// Called for the first connect and every reconnect of that child.
-pub(crate) type SelectionConnect =
+pub type SelectionConnect =
     Arc<dyn Fn(SelectionRequest) -> crate::project_client::SelectionGrantFuture + Send + Sync>;
 
 /// Issues a selection read's final delivery receipt in process for
@@ -281,7 +282,7 @@ pub(crate) type SelectionConnect =
 /// the selection's revision, an issue ticket and the nonce still live, under
 /// one gate lock. It is the selection analogue of `ValidateCombinedDelivery`,
 /// which no selection crosses a pipe for (F4).
-pub(crate) type SelectionIssue = Arc<
+pub type SelectionIssue = Arc<
     dyn Fn(&SelectionScopeRef, Sha256Digest, Sha256Digest) -> Result<CombinedDeliveryReceipt>
         + Send
         + Sync,
@@ -291,11 +292,11 @@ pub(crate) type SelectionIssue = Arc<
 /// owning plane resolved it. Its nonce reaches only the in-process admission
 /// and gate calls; every body echoes the window selection and its scope
 /// identity only (§3.2 step 5, N3).
-pub(crate) struct SelectionScope {
-    pub(crate) selection_ref: SelectionScopeRef,
-    pub(crate) window_selection: WindowScopeSelection,
-    pub(crate) connect: SelectionConnect,
-    pub(crate) issue: SelectionIssue,
+pub struct SelectionScope {
+    pub selection_ref: SelectionScopeRef,
+    pub window_selection: WindowScopeSelection,
+    pub connect: SelectionConnect,
+    pub issue: SelectionIssue,
 }
 
 impl Session for SelectionScope {
@@ -503,7 +504,7 @@ fn read_selection_snapshot(
     window: &WindowScopeSelection,
     selected: &QuerySelection,
 ) -> Result<Snapshot<SelectionReadAuthority, SelectionRequest>> {
-    use crate::catalog_authority::build_selection_read_authority;
+    use airk_catalog_control::catalog_authority::build_selection_read_authority;
     selected.validate()?;
     let revision = selection_ref.catalog_revision;
     ensure!(
@@ -657,7 +658,7 @@ fn read_snapshot(
             && state.revision >= session.expected_catalog_revision,
         ScopeReadRefused
     );
-    let context = crate::catalog_host_context::NativeHostContext::load(
+    let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
         &mut registry,
         session.context_key,
         Some(state.revision),
@@ -708,9 +709,14 @@ fn read_snapshot(
             index_id: member.index_id,
             project_ids: member.project_ids(),
         };
-        let native = crate::catalog_coordinator::native_scoped_selection(&mut registry, &child)?;
-        let authority =
-            crate::catalog_authority::build_catalog_read_authority(&mut registry, &native)?;
+        let native = airk_catalog_control::catalog_coordinator::native_scoped_selection(
+            &mut registry,
+            &child,
+        )?;
+        let authority = airk_catalog_control::catalog_authority::build_catalog_read_authority(
+            &mut registry,
+            &native,
+        )?;
         let (index, sources) = member_detail(
             &mut registry,
             state.revision,
@@ -766,7 +772,7 @@ async fn snapshot(
 
 /// Native final-delivery metadata proof. The authenticated service must hold
 /// its in-memory admission ticket separately while validating and issuing it.
-pub(crate) fn validate_delivery(
+pub fn validate_delivery(
     root: &Path,
     session: &CombinedConnectRequest,
     selected: &QuerySelection,
@@ -783,7 +789,7 @@ pub(crate) fn validate_delivery(
 
 /// Resolve metadata only. Frozen selectors confer no authority; every read
 /// validates the current reviewed snapshot before any selected worker is used.
-pub(crate) fn validate_http_selection(
+pub fn validate_http_selection(
     control: &Path,
     selection: &CombinedConnectRequest,
 ) -> Result<CombinedConnectRequest> {
@@ -801,14 +807,14 @@ pub async fn resolve(
     selection.validate()?;
     let (install, control) = if let Some(control) = control {
         let control = control.canonicalize()?;
-        crate::install_layout::validate_control_root(&control)?;
+        airk_host::install_layout::validate_control_root(&control)?;
         (None, control)
     } else {
         let install = install
             .map(Path::to_path_buf)
             .map(Ok)
-            .unwrap_or_else(crate::runtime_install::caller_install_root)?;
-        let control = crate::runtime_install::installed_control(&install).await?;
+            .unwrap_or_else(airk_installer::runtime_install::caller_install_root)?;
+        let control = airk_installer::runtime_install::installed_control(&install).await?;
         (Some(install), control)
     };
     snapshot(&control, selection, &selection.selection()).await?;
@@ -830,7 +836,7 @@ pub async fn resolve(
 /// handler. The selection's current snapshot is checked first, as `resolve`
 /// checks a catalog session's; every member connects through
 /// `scope.connect` and every result is delivered through `scope.issue`.
-pub(crate) async fn resolve_selection(
+pub async fn resolve_selection(
     control: PathBuf,
     scope: SelectionScope,
 ) -> Result<Arc<dyn RemoteTools>> {
@@ -2142,7 +2148,7 @@ impl<S: Session> RemoteTools for Backend<S> {
         airk_mcp::combined::catalog()
     }
     fn query_concurrency(&self) -> usize {
-        crate::service_resource_policy::query_concurrency(&self.control)
+        airk_host::service_resource_policy::query_concurrency(&self.control)
     }
     fn uses_response_mode(&self, tool: &str) -> bool {
         !matches!(tool, "airk_query_scope" | "query_scope")

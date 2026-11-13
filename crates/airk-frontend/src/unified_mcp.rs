@@ -70,7 +70,7 @@ struct RuntimeReadiness {
     state: tokio::sync::Mutex<ReadinessState>,
     shutdown_gate: tokio::sync::Mutex<()>,
     closing: std::sync::atomic::AtomicBool,
-    admission: Arc<crate::runtime_install::SetupAdmission>,
+    admission: Arc<airk_installer::runtime_install::SetupAdmission>,
 }
 #[derive(Default)]
 enum ReadinessState {
@@ -87,7 +87,7 @@ struct ReadinessAttempt {
     result: tokio::sync::watch::Receiver<Option<SharedReadiness>>,
     driver_result: tokio::sync::OnceCell<SharedReadiness>,
     failed_completion: tokio::sync::OnceCell<SharedReadiness>,
-    setup: Option<Arc<crate::runtime_install::SetupCancellation>>,
+    setup: Option<Arc<airk_installer::runtime_install::SetupCancellation>>,
     abort: std::sync::OnceLock<tokio::task::AbortHandle>,
     task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -190,7 +190,7 @@ impl RuntimeReadiness {
         let control = control.to_path_buf();
         self.run_inner_status(
             move |setup| async move {
-                let observed = crate::runtime_install::installed_control_cooperative(
+                let observed = airk_installer::runtime_install::installed_control_cooperative(
                     install,
                     setup.expect("owned setup control"),
                 )
@@ -216,7 +216,7 @@ impl RuntimeReadiness {
     #[cfg(test)]
     async fn run_inner<F, Fut>(&self, initialize: F, cooperative: bool) -> Result<()>
     where
-        F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
+        F: FnOnce(Option<Arc<airk_installer::runtime_install::SetupCancellation>>) -> Fut,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         self.run_inner_status(initialize, cooperative, false).await
@@ -228,7 +228,7 @@ impl RuntimeReadiness {
         status: bool,
     ) -> Result<()>
     where
-        F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
+        F: FnOnce(Option<Arc<airk_installer::runtime_install::SetupCancellation>>) -> Fut,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         let waiter_started = Instant::now();
@@ -245,9 +245,11 @@ impl RuntimeReadiness {
                 ReadinessState::Idle => {
                     let (sender, result) = tokio::sync::watch::channel(None);
                     let setup = cooperative.then(|| {
-                        Arc::new(crate::runtime_install::SetupCancellation::for_session(
-                            self.admission.clone(),
-                        ))
+                        Arc::new(
+                            airk_installer::runtime_install::SetupCancellation::for_session(
+                                self.admission.clone(),
+                            ),
+                        )
                     });
                     let future = initialize(setup.clone());
                     let (status_deadline, mut status_requested) =
@@ -266,7 +268,7 @@ impl RuntimeReadiness {
                     });
                     let keep_attempt = attempt.clone();
                     let task = tokio::spawn(
-                        crate::service_resource_policy::inherit_query_capacity(async move {
+                        airk_host::service_resource_policy::inherit_query_capacity(async move {
                             // Retain the owner and its real handle while cooperative
                             // work drains, even if the outer session is dropped.
                             let owner = keep_attempt;
@@ -541,7 +543,7 @@ struct RootNative {
 }
 impl RemoteTools for RootNative {
     fn query_concurrency(&self) -> usize {
-        crate::service_resource_policy::query_concurrency(&self.control)
+        airk_host::service_resource_policy::query_concurrency(&self.control)
     }
     fn close(&self) {
         self.lookup.close();
@@ -744,7 +746,7 @@ impl RemoteTools for Native {
         self.backend.uses_response_mode(tool)
     }
     fn query_concurrency(&self) -> usize {
-        crate::service_resource_policy::query_concurrency(&self.control)
+        airk_host::service_resource_policy::query_concurrency(&self.control)
     }
     fn close(&self) {
         if self.owns_readiness {
@@ -903,7 +905,7 @@ pub(crate) fn with_runtime_readiness(
 /// requests carry no arbitrary legacy binding or guessed source-folder origin.
 /// Compose the same canonical native/Explorer tool surface for HTTP without
 /// starting stdio or selecting an ambient VS Code window.
-pub(crate) fn http_attachment(
+pub fn http_attachment(
     backend: Arc<dyn RemoteTools>,
     control: PathBuf,
     registration: Option<ProjectRegistration>,
@@ -940,7 +942,7 @@ pub(crate) fn http_attachment(
 
 /// Preserve the original grouped server's independent project routing. This
 /// does not combine grants or default to the active editor/root.
-pub(crate) fn http_project_attachments(
+pub fn http_project_attachments(
     control: PathBuf,
     projects: Vec<(ProjectRegistration, Arc<dyn RemoteTools>)>,
     default: Option<String>,
@@ -1059,16 +1061,16 @@ pub fn call_explorer(
 ) -> Result<Value> {
     let (launch, window) =
         if descriptor.parent().and_then(std::path::Path::file_name) == Some("windows".as_ref()) {
-            let (launch, session) = crate::explorer_assistance::window_plan(&descriptor)?;
+            let (launch, session) = airk_endpoint::explorer_assistance::window_plan(&descriptor)?;
             (launch, Some(session))
         } else {
-            (crate::explorer_assistance::plan(&descriptor)?, None)
+            (airk_endpoint::explorer_assistance::plan(&descriptor)?, None)
         };
     let input = serde_json::to_vec(
         &json!({"tool":tool,"arguments":arguments,"client":format!("{client:?}")}),
     )?;
     ensure!(input.len() <= 65536, "Explorer request exceeds bound");
-    let mut command = crate::explorer_assistance::command(&launch);
+    let mut command = airk_endpoint::explorer_assistance::command(&launch);
     if let Some(session) = window {
         command.arg("--window-session").arg(session);
     }
@@ -1084,7 +1086,7 @@ pub fn call_explorer(
             .arg("--project-root")
             .arg(root);
     }
-    let mut child = crate::native_process::ContainedChild::spawn(&mut command)?;
+    let mut child = airk_host::native_process::ContainedChild::spawn(&mut command)?;
     let mut stdin = child.stdin.take().context("Explorer stdin unavailable")?;
     let stdout = child.stdout.take().context("Explorer stdout unavailable")?;
     let writer = std::thread::spawn(move || stdin.write_all(&input));
@@ -1750,7 +1752,7 @@ mod readiness_tests {
     async fn cancelled_failure_and_shutdown_drains_preserve_join_cause() -> Result<()> {
         for shutdown in [false, true] {
             let ready = RuntimeReadiness::default();
-            let setup = Arc::new(crate::runtime_install::SetupCancellation::default());
+            let setup = Arc::new(airk_installer::runtime_install::SetupCancellation::default());
             let (release, released) = std::sync::mpsc::channel();
             let (started, began) = tokio::sync::oneshot::channel();
             let worker_setup = setup.clone();

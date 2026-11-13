@@ -63,7 +63,7 @@ impl RootScope {
                 "invalid configured index collection"
             );
         }
-        let root = crate::user_paths::canonical_location(&std::path::absolute(root)?)?;
+        let root = airk_host::user_paths::canonical_location(&std::path::absolute(root)?)?;
         let key = airk_core::identity::framed_digest(
             b"airk-mcp-source-scope/1",
             &[
@@ -218,7 +218,7 @@ impl RootScope {
 
 /// Exact saved-scope metadata. Not a connection grant or execution proof.
 #[derive(serde::Serialize)]
-pub(crate) struct SourceScopeMetadata {
+pub struct SourceScopeMetadata {
     schema: u32,
     root: PathBuf,
     collection: Option<String>,
@@ -230,7 +230,7 @@ pub(crate) struct SourceScopeMetadata {
     fencing_generation: Option<u64>,
 }
 impl RootScope {
-    pub(crate) fn metadata_before(
+    pub fn metadata_before(
         &self,
         control: &Path,
         deadline: std::time::Instant,
@@ -267,8 +267,8 @@ pub fn root_mcp_control(install: Option<&Path>) -> Result<(PathBuf, PathBuf)> {
     let install = install
         .map(Path::to_path_buf)
         .map(Ok)
-        .unwrap_or_else(crate::runtime_install::caller_install_root)?;
-    let control = crate::runtime_install::installed_metadata_control(&install)?;
+        .unwrap_or_else(airk_installer::runtime_install::caller_install_root)?;
+    let control = airk_installer::runtime_install::installed_metadata_control(&install)?;
     Ok((install, control))
 }
 
@@ -297,17 +297,17 @@ pub async fn resolve_scoped(
     selection.validate()?;
     let (install, control) = if let Some(control) = control {
         let control = control.canonicalize()?;
-        crate::install_layout::validate_control_root(&control)?;
+        airk_host::install_layout::validate_control_root(&control)?;
         (None, control)
     } else {
         let install = install
             .map(Path::to_path_buf)
             .map(Ok)
-            .unwrap_or_else(crate::runtime_install::caller_install_root)?;
-        let control = crate::runtime_install::installed_control(&install).await?;
+            .unwrap_or_else(airk_installer::runtime_install::caller_install_root)?;
+        let control = airk_installer::runtime_install::installed_control(&install).await?;
         (Some(install), control)
     };
-    let response = crate::control_client::request(
+    let response = airk_installer::control_client::request(
         &control,
         ControlMethod::CatalogDetail {
             entity: CatalogEntity::Index {
@@ -359,7 +359,7 @@ pub fn resolve_mcp(
 ) -> Result<Project> {
     if let Some(control) = control {
         let control = control.canonicalize()?;
-        crate::install_layout::validate_control_root(&control)?;
+        airk_host::install_layout::validate_control_root(&control)?;
         let registration = saved(
             &control,
             Some(binding.context("project binding required")?),
@@ -376,9 +376,9 @@ pub fn resolve_mcp(
     let install = install
         .map(Path::to_path_buf)
         .map(Ok)
-        .unwrap_or_else(crate::runtime_install::caller_install_root)?;
-    let control = crate::runtime_install::installed_metadata_control(&install)?;
-    let default_data = crate::runtime_install::default_project_data(&install)?;
+        .unwrap_or_else(airk_installer::runtime_install::caller_install_root)?;
+    let control = airk_installer::runtime_install::installed_metadata_control(&install)?;
+    let default_data = airk_installer::runtime_install::default_project_data(&install)?;
     let registration = saved(
         &control,
         binding,
@@ -402,14 +402,14 @@ pub async fn resolve(
 ) -> Result<Project> {
     let install = match install {
         Some(path) => path.to_path_buf(),
-        None => crate::runtime_install::caller_install_root()?,
+        None => airk_installer::runtime_install::caller_install_root()?,
     };
-    let control = crate::runtime_install::installed_control(&install).await?;
+    let control = airk_installer::runtime_install::installed_control(&install).await?;
     let default_data;
     let data = match data {
         Some(data) => data,
         None => {
-            default_data = crate::runtime_install::default_project_data(&install)?;
+            default_data = airk_installer::runtime_install::default_project_data(&install)?;
             &default_data
         }
     };
@@ -424,7 +424,7 @@ pub async fn resolve(
 /// Explicit development transport; it never selects or starts another service.
 pub async fn resolve_control(control: &Path, binding: ProjectBinding) -> Result<Project> {
     let control = control.canonicalize()?;
-    crate::install_layout::validate_control_root(&control)?;
+    airk_host::install_layout::validate_control_root(&control)?;
     anyhow::ensure!(
         matches!(
             crate::console_client::request(&control, airk_core::service::ControlMethod::Health)
@@ -441,7 +441,7 @@ pub async fn resolve_control(control: &Path, binding: ProjectBinding) -> Result<
     })
 }
 
-pub(crate) fn saved(
+pub fn saved(
     control: &Path,
     binding: Option<ProjectBinding>,
     root: &Path,

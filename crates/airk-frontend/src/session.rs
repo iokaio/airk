@@ -2,7 +2,7 @@
 //! `airk service session`: the one temporary native helper of an editor window.
 //!
 //! The session is a client, never the service. It answers framed
-//! [`crate::session_protocol`] requests on its own stdin/stdout, relays
+//! [`airk_host::session_protocol`] requests on its own stdin/stdout, relays
 //! metadata-only control requests exactly like `service console`, and runs
 //! allowlisted one-shot CLI commands in-process so that a window starts one
 //! `airk` process instead of one per operation. It exits on stdin EOF (after a
@@ -142,7 +142,7 @@ pub fn serve(invoker: Arc<dyn Invoker>, options: Options) -> Result<()> {
     let executable = std::env::current_exe()?;
     let identity = Identity {
         version: env!("CARGO_PKG_VERSION").into(),
-        executable_sha256: crate::runtime_pair::digest_file(&executable)?,
+        executable_sha256: airk_host::runtime_pair::digest_file(&executable)?,
     };
     let (input, output) = airk_process::private_stdio::private_streams()?;
     let owner = if options.parent_watch {

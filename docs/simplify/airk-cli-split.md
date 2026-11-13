@@ -365,3 +365,24 @@ platform files (`runtime_macos_login.rs`, `service_manager_{linux,macos}.rs`) an
 - Clippy, default and `local-inference`: pass.
 - Library tests are identical by identity: default 1070, `local-inference` 1109.
 - `airk-supervisor`'s own 84 tests run in 54 s.
+
+## Step 3g: `airk-frontend` extracted (12 November 2026)
+
+10 modules (20 files) moved into `crates/airk-frontend`.
+
+- **Orphan rule.** `client_requests` implemented `airk_host::service_configuration::ConfigurationReads`
+  for `Path`/`PathBuf`, which another crate may not do. It now implements the trait for a local
+  newtype `ControlRoot<'_>`. `airk-cli`'s `service_configuration` became a facade: it re-exports
+  `airk_host::service_configuration` and keeps `prepare(control: &Path, …)`, so
+  `tests/unregister_native.rs` is unchanged. The groups file records it under `facades`.
+- **Imports.** `extract_crate.py` now also detects grouped imports (`use crate::{a, b}`) of
+  earlier-crate modules when it writes the new crate's aliases. The IPC alias
+  `pub use ipc::endpoint as local_ipc` was added by hand.
+- **Deleted.** Two `pub(crate) use` re-exports in `airk-cli` had no user left (a clean compile is the
+  evidence): `read_attempt`, `native_read_result`.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical by identity: default 1070, `local-inference` 1109
+  (`artifacts/split-frontend-lib{,-li}.log` against step 2b).

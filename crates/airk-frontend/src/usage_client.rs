@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, path::Path};
 
 // The native read result classifier moved to `native_read_result` (split
 // step 2b) so supervisor tests use it below the frontend; the public paths stay.
-pub use crate::native_read_result::{NativeReadFailure, require_native_success};
+pub use airk_host::native_read_result::{NativeReadFailure, require_native_success};
 
 /// Administrative metadata transport. Credentials remain inside Runtime and
 /// the complete canonical native value/error is preserved for native clients.

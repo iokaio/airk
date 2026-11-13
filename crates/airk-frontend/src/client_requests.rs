@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded durable CLI requests. Uncertain work is retried only with its saved key.
-//! The journal itself (file format, lock and limits) is `crate::request_journal`.
+//! The journal itself (file format, lock and limits) is `airk_host::request_journal`.
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse, JobKind, ProjectBinding, RequestKey},
@@ -8,14 +8,14 @@ use airk_core::{
 use anyhow::{Result, ensure};
 use std::path::Path;
 
-pub use crate::request_journal::{Pending, forget, list};
+pub use airk_host::request_journal::{Pending, forget, list};
 
 /// A control root, as configuration preparation's service calls. The trait
 /// lives in `airk-host`, so the CLI implements it for its own type (the
 /// orphan rule); the calls are unchanged (see `ConfigurationReads`).
-pub(crate) struct ControlRoot<'a>(pub(crate) &'a Path);
+pub struct ControlRoot<'a>(pub &'a Path);
 
-impl crate::service_configuration::ConfigurationReads for ControlRoot<'_> {
+impl airk_host::service_configuration::ConfigurationReads for ControlRoot<'_> {
     fn epoch(&self) -> impl std::future::Future<Output = Result<(Incarnation, u64)>> + Send {
         request_epoch(self.0)
     }
@@ -23,7 +23,7 @@ impl crate::service_configuration::ConfigurationReads for ControlRoot<'_> {
         &self,
         project: ProjectBinding,
     ) -> impl std::future::Future<Output = Result<ControlResponse>> + Send {
-        crate::control_client::request(self.0, ControlMethod::Inspection { project })
+        airk_installer::control_client::request(self.0, ControlMethod::Inspection { project })
     }
     fn administrative_read(
         &self,
@@ -101,7 +101,7 @@ pub async fn prepare(
 ) -> Result<Incarnation> {
     let control = control.canonicalize()?;
     let (namespace, epoch) = request_epoch(&control).await?;
-    crate::request_journal::persist(
+    airk_host::request_journal::persist(
         &control,
         ControlMethod::Enqueue {
             project,
@@ -118,13 +118,13 @@ pub async fn prepare(
 pub async fn prepare_configuration(
     control: &Path,
     project: ProjectBinding,
-    draft: crate::service_configuration::Draft,
+    draft: airk_host::service_configuration::Draft,
 ) -> Result<Incarnation> {
     let control = control.canonicalize()?;
     let request =
         airk_host::service_configuration::prepare(&ControlRoot(&control), project, draft).await?;
     let (namespace, epoch) = request_epoch(&control).await?;
-    crate::request_journal::persist(
+    airk_host::request_journal::persist(
         &control,
         ControlMethod::ConfigureProject {
             project,
@@ -147,9 +147,9 @@ pub fn refusal_guidance(code: &str) -> Option<&'static str> {
 /// M7: submit the saved request by nonce with its exact key and return the
 /// service's answer (`Job` or `Failure`); a crossed receipt is refused.
 pub(crate) async fn submit_response(control: &Path, nonce: Incarnation) -> Result<ControlResponse> {
-    let (control, request, project, kind) = crate::request_journal::saved(control, nonce)?;
+    let (control, request, project, kind) = airk_host::request_journal::saved(control, nonce)?;
     let response = crate::console_client::request(&control, request).await?;
-    crate::request_journal::check_receipt(&response, project, kind)?;
+    airk_host::request_journal::check_receipt(&response, project, kind)?;
     Ok(response)
 }
 

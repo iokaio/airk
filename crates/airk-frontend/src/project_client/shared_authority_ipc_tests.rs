@@ -698,7 +698,7 @@ async fn configured_parallel_channels_submit_all_requests_before_any_reply() -> 
     for concurrency in [4, 8, 16, 32, 64] {
         for pinned in [false, true] {
             let (_owner, root, scope, backend) = fixture(pinned)?;
-            crate::service_resource_policy::save(
+            airk_host::service_resource_policy::save(
                 &root,
                 &airk_core::service_resources::ResourceConfiguration {
                     query_concurrency: concurrency,

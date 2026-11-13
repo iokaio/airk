@@ -56,18 +56,18 @@ fn scoped_setup_rejection(
 /// `Management::connect_selection` then `ScopedConnectionDelivery::
 /// take_in_process` (selection authority §3.2 step 4). Called for the first
 /// connect and for every reconnect, so each re-runs admission.
-pub(crate) type SelectionConnector = Arc<dyn Fn() -> SelectionGrantFuture + Send + Sync>;
-pub(crate) type SelectionGrantFuture =
+pub type SelectionConnector = Arc<dyn Fn() -> SelectionGrantFuture + Send + Sync>;
+pub type SelectionGrantFuture =
     std::pin::Pin<Box<dyn Future<Output = Result<airk_core::service::ConnectionGrant>> + Send>>;
 
 /// A window's W4 grant as one index's read session sees it. It holds no
 /// nonce, lease or service instance: the connector owns the authority and
 /// the failure bodies echo only the selection and its identity (F4, N3).
-pub(crate) struct SelectionSession {
-    pub(crate) window_selection: airk_core::service::WindowScopeSelection,
-    pub(crate) scope_identity: airk_core::identity::Sha256Digest,
-    pub(crate) index_id: airk_core::index_catalog::IndexId,
-    pub(crate) connect: SelectionConnector,
+pub struct SelectionSession {
+    pub window_selection: airk_core::service::WindowScopeSelection,
+    pub scope_identity: airk_core::identity::Sha256Digest,
+    pub index_id: airk_core::index_catalog::IndexId,
+    pub connect: SelectionConnector,
 }
 
 /// The selection-path analogue of `scoped_setup_rejection` (§3.2 step 5):
@@ -406,7 +406,7 @@ impl Connection {
             &role,
             grant,
             client,
-            crate::read_attempt::supported(&observation.version),
+            airk_host::read_attempt::supported(&observation.version),
         )
         .await
     }
@@ -450,7 +450,7 @@ impl Connection {
             &role,
             grant,
             client,
-            crate::read_attempt::supported(env!("CARGO_PKG_VERSION")),
+            airk_host::read_attempt::supported(env!("CARGO_PKG_VERSION")),
         )
         .await
     }
@@ -495,7 +495,7 @@ impl Connection {
             && now < self.authorized_until
             && now.saturating_duration_since(self.last_finished) < Duration::from_secs(25)
     }
-    pub(crate) fn require_scope_fingerprint(
+    pub fn require_scope_fingerprint(
         &self,
         expected: airk_core::identity::Sha256Digest,
     ) -> Result<()> {
@@ -539,7 +539,7 @@ impl Connection {
         self.exchange(
             Query {
                 frontend: if tool == "airk_diagnostics" && !self.scoped {
-                    Some(crate::runtime_metadata::observe_process())
+                    Some(airk_supervisor::runtime_metadata::observe_process())
                 } else {
                     None
                 },
@@ -604,7 +604,7 @@ impl Connection {
         );
         let context = context.narrowed(self.authorized_until);
         if self.read_attempt_supported {
-            query.read_attempt = Some(crate::read_attempt::encode(
+            query.read_attempt = Some(airk_host::read_attempt::encode(
                 &context,
                 airk_kernel::service_broker::new_instance_id()?,
             )?);
@@ -739,7 +739,7 @@ impl ChannelPool {
     }
 }
 
-pub(crate) struct Backend {
+pub struct Backend {
     root: PathBuf,
     project: ProjectBinding,
     state: ChannelPool,
@@ -887,7 +887,7 @@ impl airk_mcp::remote::RemoteTools for Backend {
         self.catalog_session.as_ref()
     }
     fn query_concurrency(&self) -> usize {
-        crate::service_resource_policy::query_concurrency(&self.root)
+        airk_host::service_resource_policy::query_concurrency(&self.root)
     }
     fn close(&self) {
         self.state_waiters.close();
@@ -1071,7 +1071,7 @@ impl Backend {
             }
             if tool == "airk_diagnostics" {
                 self.status.invalidate();
-                crate::runtime_metadata::observe_process();
+                airk_supervisor::runtime_metadata::observe_process();
             }
             if observed.is_none() && !self.scoped() {
                 self.status
@@ -1099,7 +1099,7 @@ impl Backend {
                 biased;
                 _ = self.status.when_closed() => return Ok(query_admission_closed()),
                 state = tokio::time::timeout_at(
-                    tokio::time::Instant::from_std(queue_expires), self.state.acquire(crate::service_resource_policy::query_concurrency(&self.root)),
+                    tokio::time::Instant::from_std(queue_expires), self.state.acquire(airk_host::service_resource_policy::query_concurrency(&self.root)),
                 ) => state,
             };
             let mut state = match waited {
@@ -1192,9 +1192,11 @@ impl Backend {
                         return Ok(source_scope_superseded());
                     }
                     Err(_) if tool == "airk_diagnostics" && !self.scoped() => {
-                        return Ok(
-                            crate::runtime_metadata::unavailable(&self.root, self.project).await,
-                        );
+                        return Ok(airk_supervisor::runtime_metadata::unavailable(
+                            &self.root,
+                            self.project,
+                        )
+                        .await);
                     }
                     Err(error) => {
                         if let Some(selection) = &self.catalog_session {
@@ -1307,7 +1309,7 @@ pub async fn bridge_installed(
     project: airk_core::service::ProjectBinding,
 ) -> Result<()> {
     bridge(
-        crate::runtime_install::installed_control(root).await?,
+        airk_installer::runtime_install::installed_control(root).await?,
         project,
     )
     .await
@@ -1338,7 +1340,7 @@ pub(crate) fn source_tools_owned(
 /// One index of a window's W4 grant read through its backing project's
 /// worker. Every connect and reconnect calls `session.connect` (the
 /// in-process admission), never the control-pipe brokerage (§3.2 step 4).
-pub(crate) fn selection_tools(
+pub fn selection_tools(
     root: PathBuf,
     project: ProjectBinding,
     session: SelectionSession,
