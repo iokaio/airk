@@ -138,6 +138,64 @@ pub struct AdminPlane {
     selection_reader: Option<SelectionReader>,
 }
 
+/// An unpublished slot reserved before dispatch. Read cancellation proves the
+/// slot unused; cancellation after mutation dispatch does not prove no effects.
+/// No lock is held while the native request runs.
+struct ReviewReservation<'a> {
+    plane: &'a AdminPlane,
+    cookie: String,
+    token: Incarnation,
+    release_on_drop: bool,
+}
+
+impl ReviewReservation<'_> {
+    fn dispatched(&mut self, mutation: bool) {
+        self.release_on_drop = !mutation;
+    }
+
+    fn release(mut self) {
+        self.release_on_drop = true;
+    }
+
+    fn finish(
+        mut self,
+        caller: Option<Value>,
+        purpose: secrets::ReviewPurpose,
+    ) -> Result<String, AdminCode> {
+        let stored = {
+            self.plane.secrets().sessions.finish_review(
+                &self.cookie,
+                self.token,
+                caller,
+                purpose,
+                (self.plane.clock)(),
+            )
+        };
+        stored.ok_or(AdminCode::AdminSessionInvalid)?;
+        self.release_on_drop = false;
+        Ok(self.token.to_string())
+    }
+}
+
+impl Drop for ReviewReservation<'_> {
+    fn drop(&mut self) {
+        if self.release_on_drop {
+            self.plane.secrets().sessions.release_review(
+                &self.cookie,
+                self.token,
+                (self.plane.clock)(),
+            );
+        }
+    }
+}
+
+struct GeneratedReview<'a> {
+    key: mutations::Key,
+    caller_generated: bool,
+    reservation: ReviewReservation<'a>,
+    recovery_receipt: Option<&'static str>,
+}
+
 /// The plane's lock. On release it revokes the selection nonces its holder
 /// dropped (grant replacement, logout, expiry, eviction, service end), after
 /// the lock itself is released (§3.3, §3.7, N4), so no path that drops a
@@ -453,20 +511,25 @@ impl AdminPlane {
         if !operations::names(target, &body) {
             return Err(AdminCode::AdminMalformedRequest);
         }
-        match (review_rule, token) {
+        let restored = match (review_rule, token) {
             (Some(rule), Some(token)) => {
                 let token: Incarnation = serde_json::from_value(Value::String(token))
                     .map_err(|_| AdminCode::AdminReviewUnknown)?;
                 let now = (self.clock)();
                 let review = cookie
-                    .and_then(|cookie| self.secrets().sessions.review(cookie, &token, now))
+                    .and_then(|cookie| {
+                        self.secrets()
+                            .sessions
+                            .review(cookie, &token, operation, now)
+                    })
                     .ok_or(AdminCode::AdminReviewUnknown)?;
                 mutations::restore(rule, &mut body, &review)?;
+                Some(review)
             }
             (Some(_), None) => return Err(AdminCode::AdminReviewUnknown),
             (None, Some(_)) => return Err(AdminCode::AdminMalformedRequest),
-            (None, None) => {}
-        }
+            (None, None) => None,
+        };
         let generate = row
             .request_key
             .as_ref()
@@ -487,71 +550,155 @@ impl AdminPlane {
         } else if confirm_text.is_some() {
             return Err(AdminCode::AdminMalformedRequest);
         }
+        // All generated issuance shares the same budget. Reserving even an
+        // ordinary preview prevents it from evicting another request's live
+        // reservation or failing to retain a normal success after effects.
+        let mut generated = generate
+            .zip(key.as_ref())
+            .map(|(rule, key)| {
+                self.reserve_review(
+                    cookie,
+                    rule,
+                    key,
+                    if row.effect == Effect::Read {
+                        None
+                    } else {
+                        contract::recovery_receipt(operation)
+                    },
+                )
+            })
+            .transpose()?;
         if row.effect == Effect::Read {
-            let Some((rule, key)) = generate.zip(key) else {
-                return self.read(operation, cookie, method).await;
+            let Some(mut generated) = generated else {
+                return self
+                    .read(operation, cookie, method, restored.as_ref())
+                    .await;
             };
             // A draft or preview: the identity stays in the session.
+            generated.reservation.dispatched(false);
             let response = (self.dispatch)(method)
                 .await
                 .map_err(|_| AdminCode::AdminInternal)?;
-            return self.issue(operation, cookie, rule, key, response, None);
+            return self.issue(operation, generated, response, None);
         }
         if let ControlMethod::AdminScopeGrant { selection } = method {
             return self.grant(operation, cookie, selection).await;
         }
-        let issued = generate.zip(key.clone());
-        match mutations::execute(&self.dispatch, &self.random, method, key).await? {
-            mutations::Executed::Answered(response, request) => match issued {
-                Some((rule, key)) => self.issue(operation, cookie, rule, key, *response, request),
-                None => Ok(native_request(operation, *response, request)),
-            },
-            mutations::Executed::Unknown => Ok(outcome_unknown()),
+        if let Some(generated) = generated.as_mut() {
+            generated.reservation.dispatched(true);
         }
+        match mutations::execute(&self.dispatch, &self.random, method, key).await? {
+            mutations::Executed::Answered(response, request) => match generated {
+                Some(generated) => self.issue(operation, generated, *response, request),
+                None => Ok(native_request(
+                    operation,
+                    *response,
+                    request,
+                    restored.as_ref(),
+                )),
+            },
+            mutations::Executed::Unknown => {
+                let review = match generated {
+                    Some(generated) => {
+                        let GeneratedReview {
+                            key,
+                            caller_generated,
+                            reservation,
+                            recovery_receipt,
+                        } = generated;
+                        if let Some(receipt) = recovery_receipt {
+                            Some(reservation.finish(
+                                caller_generated.then(|| serde_json::json!(key.caller)),
+                                secrets::ReviewPurpose::ReceiptOnly(receipt),
+                            )?)
+                        } else {
+                            reservation.release();
+                            None
+                        }
+                    }
+                    None => None,
+                };
+                Ok(outcome_unknown(review))
+            }
+        }
+    }
+
+    fn reserve_review<'a>(
+        &'a self,
+        cookie: Option<&str>,
+        rule: &RequestKeyRule,
+        key: &mutations::Key,
+        recovery_receipt: Option<&'static str>,
+    ) -> Result<GeneratedReview<'a>, AdminCode> {
+        let cookie = cookie.ok_or(AdminCode::AdminSessionInvalid)?;
+        let token = mutations::identity(&self.random)?;
+        let caller_generated = rule.caller.is_some();
+        self.secrets().sessions.reserve_review(
+            cookie,
+            secrets::Review {
+                token,
+                caller: caller_generated.then(|| serde_json::json!(key.caller)),
+                key: serde_json::json!(key.key),
+                purpose: secrets::ReviewPurpose::Pending,
+            },
+            (self.clock)(),
+        )?;
+        Ok(GeneratedReview {
+            key: key.clone(),
+            caller_generated,
+            recovery_receipt,
+            reservation: ReviewReservation {
+                plane: self,
+                cookie: cookie.to_owned(),
+                token,
+                release_on_drop: true,
+            },
+        })
     }
 
     /// The answer of a generate-mode row: the identity leaves the native
     /// result and stays in the session under a new review token, which the
-    /// success envelope names (contracts §4.3b). A refusal issues no token.
+    /// success envelope names (contracts §4.3b). Unknown generated mutations
+    /// expose only their approved receipt-only handle; no-effect refusals release
+    /// their unused reservation. Every path redacts the original identity.
     fn issue(
         &self,
         operation: &str,
-        cookie: Option<&str>,
-        rule: &RequestKeyRule,
-        key: mutations::Key,
+        generated: GeneratedReview<'_>,
         response: ControlResponse,
         request: Option<RequestProgress>,
     ) -> Result<HttpResponse, AdminCode> {
+        let disposition = mutations::outcome(&response);
         let mut value = serde_json::to_value(&response).map_err(|_| AdminCode::AdminInternal)?;
-        if refused(&value) {
-            return Ok(native_value(operation, value, request, None));
-        }
+        let GeneratedReview {
+            key,
+            caller_generated,
+            reservation,
+            recovery_receipt,
+        } = generated;
         let key_value = serde_json::json!(key.key);
         let redacted = mutations::redact(&mut value, &key_value);
-        let caller = rule
-            .caller
-            .as_ref()
-            .map(|_| serde_json::json!(key.caller))
+        let caller = caller_generated
+            .then(|| serde_json::json!(key.caller))
             .or(redacted);
-        let token = mutations::identity(&self.random)?;
-        let cookie = cookie.ok_or(AdminCode::AdminSessionInvalid)?;
-        let now = (self.clock)();
-        let review = secrets::Review {
-            token,
-            caller,
-            key: key_value,
+        let review = match &disposition {
+            mutations::NativeOutcome::Success(_) => {
+                Some(reservation.finish(caller, secrets::ReviewPurpose::Ordinary)?)
+            }
+            mutations::NativeOutcome::Unknown(_) => {
+                if let Some(receipt) = recovery_receipt {
+                    Some(reservation.finish(caller, secrets::ReviewPurpose::ReceiptOnly(receipt))?)
+                } else {
+                    reservation.release();
+                    None
+                }
+            }
+            mutations::NativeOutcome::Refused(_) => {
+                reservation.release();
+                None
+            }
         };
-        // The session may have ended while the native call ran.
-        self.secrets()
-            .sessions
-            .add_review(cookie, review, now)
-            .ok_or(AdminCode::AdminSessionInvalid)?;
-        Ok(native_value(
-            operation,
-            value,
-            request,
-            Some(token.to_string()),
-        ))
+        Ok(native_value(operation, value, request, review, disposition))
     }
 
     /// A read row. Search runs only unselected (help) or under the
@@ -562,6 +709,7 @@ impl AdminPlane {
         operation: &str,
         cookie: Option<&str>,
         method: ControlMethod,
+        identity: Option<&secrets::Review>,
     ) -> Result<HttpResponse, AdminCode> {
         if let ControlMethod::ToolsCall { selection, .. } = &method {
             match selection {
@@ -573,7 +721,7 @@ impl AdminPlane {
         let response = (self.dispatch)(method)
             .await
             .map_err(|_| AdminCode::AdminInternal)?;
-        Ok(native(operation, response))
+        Ok(native_request(operation, response, None, identity))
     }
 
     /// M3 under the session's A2 grant. The grant is rechecked against the
@@ -927,7 +1075,7 @@ fn success_review(
 /// A mutation whose reply was lost twice: it may have been accepted, so it
 /// is neither refused nor retryable with a new key (§2.4). A journaled
 /// request stays listed by `requests.list`.
-fn outcome_unknown() -> HttpResponse {
+fn outcome_unknown(review: Option<String>) -> HttpResponse {
     let envelope = FailureEnvelope {
         schema: contract::ENVELOPE_SCHEMA.to_owned(),
         ok: false,
@@ -938,7 +1086,7 @@ fn outcome_unknown() -> HttpResponse {
             retry_after_ms: None,
             native: None,
         },
-        review: None,
+        review,
     };
     api(ErrorClass::Unavailable.status(), &envelope, None)
 }
@@ -967,61 +1115,49 @@ fn snake_code(code: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-/// The complete native response: success with the whole result, or a
-/// typed refusal (409, class `refused`) that keeps the native response.
+/// The complete native response with its typed success/refusal/unknown
+/// disposition. Session-owned identities are removed only when available.
 fn native(operation: &str, response: ControlResponse) -> HttpResponse {
-    native_request(operation, response, None)
+    native_request(operation, response, None, None)
 }
 
-/// `native`, with the request a successful mutation belongs to; a refusal
-/// carries no request (nothing was accepted under it).
+/// `native`, with a successful mutation's progress and any restored review
+/// identity. Refused/unknown outcomes never claim completed request progress.
 fn native_request(
     operation: &str,
     response: ControlResponse,
     request: Option<RequestProgress>,
+    identity: Option<&secrets::Review>,
 ) -> HttpResponse {
-    let Ok(value) = serde_json::to_value(&response) else {
+    let disposition = mutations::outcome(&response);
+    let Ok(mut value) = serde_json::to_value(&response) else {
         return refusal(AdminCode::AdminInternal);
     };
-    native_value(operation, value, request, None)
+    if let Some(identity) = identity {
+        mutations::redact(&mut value, &identity.key);
+    }
+    native_value(operation, value, request, None, disposition)
 }
 
-/// Whether an encoded native response is a refusal.
-fn refused(value: &Value) -> bool {
-    let status = value
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    status == "failure"
-        || status == "incompatible"
-        || status.ends_with("_refused")
-        || status.ends_with("_failed")
-}
-
-/// `native_request` over an encoded response; `review` only on success.
+/// `native_request` over an encoded response. A failure's optional `review`
+/// is a receipt-only handle, never successful completion or mutation authority.
 fn native_value(
     operation: &str,
     value: Value,
     request: Option<RequestProgress>,
     review: Option<String>,
+    disposition: mutations::NativeOutcome,
 ) -> HttpResponse {
-    if !refused(&value) {
+    if matches!(disposition, mutations::NativeOutcome::Success(_)) {
         return success_review(operation, value, None, request, review);
     }
-    let status = value
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let code = match status {
-        "failure" => value
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("failure"),
-        "incompatible" => "runtime_incompatible",
-        other => other,
+    let (code, class) = match disposition {
+        mutations::NativeOutcome::Refused(code) => (code, ErrorClass::Refused),
+        mutations::NativeOutcome::Unknown(code) => (code, ErrorClass::Unavailable),
+        mutations::NativeOutcome::Success(_) => unreachable!("success returned above"),
     };
-    let code = if snake_code(code) {
-        code.to_owned()
+    let code = if snake_code(&code) {
+        code
     } else {
         "native_refusal".to_owned()
     };
@@ -1031,18 +1167,19 @@ fn native_value(
         envelope.error.native = Some(value);
         return api(admin.status(), &envelope, None);
     }
-    let retryable = code == "registry_busy" || code == "runtime_upgrade_in_progress";
+    let retryable = class == ErrorClass::Refused
+        && (code == "registry_busy" || code == "runtime_upgrade_in_progress");
     let envelope = FailureEnvelope {
         schema: contract::ENVELOPE_SCHEMA.to_owned(),
         ok: false,
         error: ErrorBody {
             code,
-            class: ErrorClass::Refused,
+            class,
             retryable,
             retry_after_ms: None,
             native: Some(value),
         },
-        review: None,
+        review,
     };
-    api(ErrorClass::Refused.status(), &envelope, None)
+    api(class.status(), &envelope, None)
 }

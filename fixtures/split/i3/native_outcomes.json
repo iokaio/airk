@@ -1,220 +1,546 @@
 {
-  "schema": "airk.split.admin.native-outcomes/1",
-  "review": {
-    "operation": "catalog.preview",
-    "body": {
-      "catalog_preview": {
-        "request": {
-          "expected_catalog_revision": 3,
-          "operation": {
-            "operation": "create_project",
-            "id": "prj_02020202020202020202020202020202",
-            "name": "Docs"
-          }
-        }
-      }
-    },
-    "response": {
-      "status": "catalog_preview",
-      "preview": {
-        "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
-        "catalog_revision": 3,
-        "next_revision": 4,
-        "operation": {
-          "operation": "create_project",
-          "id": "prj_02020202020202020202020202020202",
-          "name": "Docs"
-        },
-        "before": [],
-        "after": [],
-        "authority_fence_required": false,
-        "file_data_changes": false
-      },
-      "preview_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d"
-    },
-    "apply": {
-      "method": {
-        "catalog_apply": {
-          "request": {
-            "expected_catalog_revision": 3,
-            "operation": {
-              "operation": "create_project",
-              "id": "prj_02020202020202020202020202020202",
-              "name": "Docs"
-            }
-          },
-          "preview_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d"
-        }
-      },
-      "review": "06060606060606060606060606060606"
-    }
-  },
   "cases": [
     {
+      "expect": {
+        "class": "unavailable",
+        "code": "catalog_apply_outcome_unknown",
+        "http": 503,
+        "native": {
+          "code": "catalog_apply_outcome_unknown",
+          "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+          "status": "catalog_outcome_unknown"
+        },
+        "ok": false,
+        "request_state": null,
+        "retryable": false
+      },
       "name": "catalog_unknown",
-      "route": "review",
       "operation": "catalog.apply",
       "response": {
-        "status": "catalog_outcome_unknown",
-        "code": "catalog_apply_outcome_unknown",
         "caller": "04040404040404040404040404040404",
+        "code": "catalog_apply_outcome_unknown",
         "key": {
-          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
           "epoch": 7,
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
           "nonce": "05050505050505050505050505050505"
         },
-        "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+        "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+        "status": "catalog_outcome_unknown"
       },
-      "expect": {
-        "http": 503,
-        "ok": false,
-        "code": "catalog_apply_outcome_unknown",
-        "class": "unavailable",
-        "retryable": false,
-        "request_state": null,
-        "native": {
-          "status": "catalog_outcome_unknown",
-          "code": "catalog_apply_outcome_unknown",
-          "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
-        }
-      }
+      "route": "review"
     },
     {
-      "name": "source_resolution_unknown",
-      "route": "direct",
-      "operation": "catalog.source_resolve",
       "body": {
         "catalog_source_change_resolve": {
           "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
         }
       },
-      "response": {
-        "status": "source_change_resolution_outcome_unknown",
-        "code": "source_change_resolution_outcome_unknown",
-        "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
-      },
       "expect": {
-        "http": 503,
-        "ok": false,
-        "code": "source_change_resolution_outcome_unknown",
         "class": "unavailable",
-        "retryable": false,
-        "request_state": null,
+        "code": "source_change_resolution_outcome_unknown",
+        "http": 503,
         "native": {
-          "status": "source_change_resolution_outcome_unknown",
+          "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
           "code": "source_change_resolution_outcome_unknown",
-          "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
-        }
-      }
+          "status": "source_change_resolution_outcome_unknown"
+        },
+        "ok": false,
+        "request_state": null,
+        "retryable": false
+      },
+      "name": "source_resolution_unknown",
+      "operation": "catalog.source_resolve",
+      "response": {
+        "begin_operation": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "code": "source_change_resolution_outcome_unknown",
+        "status": "source_change_resolution_outcome_unknown"
+      },
+      "route": "direct"
     },
     {
-      "name": "source_change_busy",
-      "route": "review",
-      "operation": "catalog.apply",
-      "response": {
-        "status": "source_change_busy",
-        "code": "source_change_jobs_pending",
-        "busy": {
-          "index_id": "idx_01010101010101010101010101010101",
-          "pending_jobs": 2,
-          "running_jobs": 1
-        }
-      },
       "expect": {
-        "http": 409,
-        "ok": false,
-        "code": "source_change_jobs_pending",
         "class": "refused",
-        "retryable": false,
-        "request_state": null,
+        "code": "source_change_jobs_pending",
+        "http": 409,
         "native": {
-          "status": "source_change_busy",
-          "code": "source_change_jobs_pending",
           "busy": {
             "index_id": "idx_01010101010101010101010101010101",
             "pending_jobs": 2,
             "running_jobs": 1
-          }
-        }
-      }
-    },
-    {
-      "name": "job_accepted",
-      "route": "direct",
-      "operation": "indexes.pause",
-      "body": {
-        "pause": {
-          "project": "abababababababababababababababababababababababababababababababab",
-          "paused": true
-        }
+          },
+          "code": "source_change_jobs_pending",
+          "status": "source_change_busy"
+        },
+        "ok": false,
+        "request_state": null,
+        "retryable": false
       },
-      "response": {
-        "status": "job",
-        "job": {
-          "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
-          "project": "abababababababababababababababababababababababababababababababab",
-          "kind": "inspect",
-          "state": "pending",
-          "fencing_generation": 0,
-          "attempts": 0,
-          "outcome": null
-        }
-      },
-      "expect": {
-        "http": 200,
-        "ok": true,
-        "request_state": "accepted",
-        "request_nonce": "04040404040404040404040404040404",
-        "native": {
-          "status": "job",
-          "job": {
-            "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
-            "project": "abababababababababababababababababababababababababababababababab",
-            "kind": "inspect",
-            "state": "pending",
-            "fencing_generation": 0,
-            "attempts": 0,
-            "outcome": null
-          }
-        }
-      }
-    },
-    {
-      "name": "catalog_completed",
-      "route": "review",
+      "name": "source_change_busy",
       "operation": "catalog.apply",
       "response": {
-        "status": "catalog_applied",
-        "receipt": {
-          "schema": 1,
-          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
-          "caller": "04040404040404040404040404040404",
-          "key": {
-            "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
-            "epoch": 7,
-            "nonce": "05050505050505050505050505050505"
-          },
-          "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
-          "catalog_revision": 4,
-          "authority_fence_required": false
+        "busy": {
+          "index_id": "idx_01010101010101010101010101010101",
+          "pending_jobs": 2,
+          "running_jobs": 1
+        },
+        "code": "source_change_jobs_pending",
+        "status": "source_change_busy"
+      },
+      "route": "review"
+    },
+    {
+      "body": {
+        "pause": {
+          "paused": true,
+          "project": "abababababababababababababababababababababababababababababababab"
         }
       },
       "expect": {
         "http": 200,
-        "ok": true,
-        "request_state": "completed",
-        "request_nonce": "07070707070707070707070707070707",
         "native": {
-          "status": "catalog_applied",
+          "job": {
+            "attempts": 0,
+            "fencing_generation": 0,
+            "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+            "kind": "inspect",
+            "outcome": null,
+            "project": "abababababababababababababababababababababababababababababababab",
+            "state": "pending"
+          },
+          "status": "job"
+        },
+        "ok": true,
+        "request_nonce": "04040404040404040404040404040404",
+        "request_state": "accepted"
+      },
+      "name": "job_accepted",
+      "operation": "indexes.pause",
+      "response": {
+        "job": {
+          "attempts": 0,
+          "fencing_generation": 0,
+          "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+          "kind": "inspect",
+          "outcome": null,
+          "project": "abababababababababababababababababababababababababababababababab",
+          "state": "pending"
+        },
+        "status": "job"
+      },
+      "route": "direct"
+    },
+    {
+      "expect": {
+        "http": 200,
+        "native": {
           "receipt": {
-            "schema": 1,
+            "authority_fence_required": false,
+            "catalog_revision": 4,
             "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
             "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
-            "catalog_revision": 4,
-            "authority_fence_required": false
+            "schema": 1
+          },
+          "status": "catalog_applied"
+        },
+        "ok": true,
+        "request_nonce": "07070707070707070707070707070707",
+        "request_state": "completed"
+      },
+      "name": "catalog_completed",
+      "operation": "catalog.apply",
+      "response": {
+        "receipt": {
+          "authority_fence_required": false,
+          "caller": "04040404040404040404040404040404",
+          "catalog_revision": 4,
+          "key": {
+            "epoch": 7,
+            "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "nonce": "05050505050505050505050505050505"
+          },
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+          "schema": 1
+        },
+        "status": "catalog_applied"
+      },
+      "route": "review"
+    }
+  ],
+  "recovery_receipt_fixture_scope": "Complete native schema and independently expected Admin redaction/resolution controls; not qualification of persisted split lineage or installed workflows. Resolved acceptance does not claim a pending policy job completed.",
+  "recovery_receipts": [
+    {
+      "expect": {
+        "native": {
+          "expired": false,
+          "index_id": "idx_01010101010101010101010101010101",
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "receipt": {
+            "configuration": {
+              "engine": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+              "request": {
+                "configuration": {
+                  "operation": "apply_source_policy",
+                  "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+                  "policy": {
+                    "collection": "docs",
+                    "denies": [],
+                    "epoch": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "namespace": "collections-1.4",
+                    "owner_binding": "abababababababababababababababababababababababababababababababab",
+                    "positive_includes": null,
+                    "roots": [
+                      {
+                        "aliases": [],
+                        "canonical_path": "/fiction/docs",
+                        "id": "src_01010101010101010101010101010101",
+                        "owner": true
+                      }
+                    ],
+                    "schema": "airk.source-policy/1"
+                  }
+                },
+                "incarnation": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c",
+                "settings": "3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e"
+              }
+            },
+            "job": {
+              "attempts": 0,
+              "fencing_generation": 0,
+              "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+              "kind": "configure",
+              "outcome": null,
+              "project": "abababababababababababababababababababababababababababababababab",
+              "state": "pending"
+            },
+            "result": null,
+            "source_job": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+          },
+          "status": "catalog_policy_resume_receipt"
+        },
+        "resolved": true
+      },
+      "name": "policy_known_accepted",
+      "operation": "catalog.policy_resume_receipt",
+      "request": {
+        "catalog_policy_resume": {
+          "index_id": "idx_01010101010101010101010101010101",
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+        }
+      },
+      "response": {
+        "caller": "04040404040404040404040404040404",
+        "expired": false,
+        "index_id": "idx_01010101010101010101010101010101",
+        "key": {
+          "epoch": 7,
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "nonce": "05050505050505050505050505050505"
+        },
+        "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "receipt": {
+          "configuration": {
+            "engine": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+            "request": {
+              "configuration": {
+                "operation": "apply_source_policy",
+                "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+                "policy": {
+                  "collection": "docs",
+                  "denies": [],
+                  "epoch": 1,
+                  "index_id": "idx_01010101010101010101010101010101",
+                  "namespace": "collections-1.4",
+                  "owner_binding": "abababababababababababababababababababababababababababababababab",
+                  "positive_includes": null,
+                  "roots": [
+                    {
+                      "aliases": [],
+                      "canonical_path": "/fiction/docs",
+                      "id": "src_01010101010101010101010101010101",
+                      "owner": true
+                    }
+                  ],
+                  "schema": "airk.source-policy/1"
+                }
+              },
+              "incarnation": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c",
+              "settings": "3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e"
+            }
+          },
+          "job": {
+            "attempts": 0,
+            "fencing_generation": 0,
+            "id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+            "kind": "configure",
+            "outcome": null,
+            "project": "abababababababababababababababababababababababababababababababab",
+            "state": "pending"
+          },
+          "result": null,
+          "source_job": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+        },
+        "status": "catalog_policy_resume_receipt"
+      }
+    },
+    {
+      "expect": {
+        "native": {
+          "expired": false,
+          "index_id": "idx_01010101010101010101010101010101",
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "receipt": null,
+          "status": "catalog_policy_resume_receipt"
+        },
+        "resolved": false
+      },
+      "name": "policy_receipt_missing",
+      "operation": "catalog.policy_resume_receipt",
+      "request": {
+        "catalog_policy_resume": {
+          "index_id": "idx_01010101010101010101010101010101",
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+        }
+      },
+      "response": {
+        "caller": "04040404040404040404040404040404",
+        "expired": false,
+        "index_id": "idx_01010101010101010101010101010101",
+        "key": {
+          "epoch": 7,
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "nonce": "05050505050505050505050505050505"
+        },
+        "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "receipt": null,
+        "status": "catalog_policy_resume_receipt"
+      }
+    },
+    {
+      "expect": {
+        "native": {
+          "expired": false,
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "receipt": {
+            "outcome": {
+              "outcome": "already_complete",
+              "receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d"
+            },
+            "request": {
+              "action": "resume",
+              "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+              "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+              "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+            },
+            "request_digest": "4f69fa123124ae6f5447f66afd334bf9b841c49496e3439c3a6a324197d460f1"
+          },
+          "snapshot": null,
+          "status": "catalog_split_recovery_receipt"
+        },
+        "resolved": true
+      },
+      "name": "split_already_complete",
+      "operation": "catalog.split_recovery_receipt",
+      "request": {
+        "catalog_split_recover": {
+          "request": {
+            "action": "resume",
+            "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+            "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+          }
+        }
+      },
+      "response": {
+        "caller": "04040404040404040404040404040404",
+        "expired": false,
+        "key": {
+          "epoch": 7,
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "nonce": "05050505050505050505050505050505"
+        },
+        "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "receipt": {
+          "outcome": {
+            "outcome": "already_complete",
+            "receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d"
+          },
+          "request": {
+            "action": "resume",
+            "caller": "04040404040404040404040404040404",
+            "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+            "key": {
+              "epoch": 7,
+              "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "nonce": "05050505050505050505050505050505"
+            },
+            "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+          },
+          "request_digest": "4f69fa123124ae6f5447f66afd334bf9b841c49496e3439c3a6a324197d460f1"
+        },
+        "snapshot": null,
+        "status": "catalog_split_recovery_receipt"
+      }
+    },
+    {
+      "expect": {
+        "native": {
+          "expired": false,
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "receipt": {
+            "outcome": {
+              "outcome": "unknown"
+            },
+            "request": {
+              "action": "resume",
+              "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+              "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+              "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+            },
+            "request_digest": "4f69fa123124ae6f5447f66afd334bf9b841c49496e3439c3a6a324197d460f1"
+          },
+          "snapshot": null,
+          "status": "catalog_split_recovery_receipt"
+        },
+        "resolved": false
+      },
+      "name": "split_still_unknown",
+      "operation": "catalog.split_recovery_receipt",
+      "request": {
+        "catalog_split_recover": {
+          "request": {
+            "action": "resume",
+            "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+            "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+          }
+        }
+      },
+      "response": {
+        "caller": "04040404040404040404040404040404",
+        "expired": false,
+        "key": {
+          "epoch": 7,
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "nonce": "05050505050505050505050505050505"
+        },
+        "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "receipt": {
+          "outcome": {
+            "caller": "04040404040404040404040404040404",
+            "key": {
+              "epoch": 7,
+              "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "nonce": "05050505050505050505050505050505"
+            },
+            "outcome": "unknown"
+          },
+          "request": {
+            "action": "resume",
+            "caller": "04040404040404040404040404040404",
+            "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+            "key": {
+              "epoch": 7,
+              "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "nonce": "05050505050505050505050505050505"
+            },
+            "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+          },
+          "request_digest": "4f69fa123124ae6f5447f66afd334bf9b841c49496e3439c3a6a324197d460f1"
+        },
+        "snapshot": null,
+        "status": "catalog_split_recovery_receipt"
+      }
+    },
+    {
+      "expect": {
+        "native": {
+          "expired": false,
+          "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "receipt": null,
+          "snapshot": null,
+          "status": "catalog_split_recovery_receipt"
+        },
+        "resolved": false
+      },
+      "name": "split_receipt_missing",
+      "operation": "catalog.split_recovery_receipt",
+      "request": {
+        "catalog_split_recover": {
+          "request": {
+            "action": "resume",
+            "expected_receipt_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+            "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+          }
+        }
+      },
+      "response": {
+        "caller": "04040404040404040404040404040404",
+        "expired": false,
+        "key": {
+          "epoch": 7,
+          "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "nonce": "05050505050505050505050505050505"
+        },
+        "operation_id": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "receipt": null,
+        "snapshot": null,
+        "status": "catalog_split_recovery_receipt"
+      }
+    }
+  ],
+  "review": {
+    "apply": {
+      "method": {
+        "catalog_apply": {
+          "preview_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+          "request": {
+            "expected_catalog_revision": 3,
+            "operation": {
+              "id": "prj_02020202020202020202020202020202",
+              "name": "Docs",
+              "operation": "create_project"
+            }
+          }
+        }
+      },
+      "review": "06060606060606060606060606060606"
+    },
+    "body": {
+      "catalog_preview": {
+        "request": {
+          "expected_catalog_revision": 3,
+          "operation": {
+            "id": "prj_02020202020202020202020202020202",
+            "name": "Docs",
+            "operation": "create_project"
           }
         }
       }
+    },
+    "operation": "catalog.preview",
+    "response": {
+      "preview": {
+        "after": [],
+        "authority_fence_required": false,
+        "before": [],
+        "catalog_revision": 3,
+        "file_data_changes": false,
+        "next_revision": 4,
+        "operation": {
+          "id": "prj_02020202020202020202020202020202",
+          "name": "Docs",
+          "operation": "create_project"
+        },
+        "request_digest": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+      },
+      "preview_digest": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+      "status": "catalog_preview"
     }
-  ]
+  },
+  "schema": "airk.split.admin.native-outcomes/1"
 }

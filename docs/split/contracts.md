@@ -1038,8 +1038,12 @@ The owning Rust I3 definition validates the optional field, unknown-outcome
 class/retry semantics and capacity code. The independent applicability and
 code cases are `fixtures/split/i3/recovery_reviews.json`; envelope/schema cases
 extend the existing I3 pilot. Unsupported mutations receive no recovery handle.
-Native classification, pre-dispatch reservation, receipt-only custody and UI
-consumers remain separate implementation work after this contract lands.
+Native classification, pre-dispatch reservation and receipt-only custody are
+implemented in the following handler step, with actual Admin handler regression
+coverage. Receipt-only handles remain pinned for the existing session lifetime,
+including after a known receipt; earlier reclamation is a follow-up. UI receipt
+consumers remain separate work. Existing installer/VSIX receipts retain their
+original source identities; this source checkpoint rebuilds neither artifact.
 
 ### 4.5 Launch-code exchange [P, for review]
 

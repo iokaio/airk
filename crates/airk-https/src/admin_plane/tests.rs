@@ -1306,6 +1306,1256 @@ fn redaction_removes_only_the_issued_identity() {
     );
 }
 
+const NATIVE_OUTCOMES: &str = include_str!("../../../../fixtures/split/i3/native_outcomes.json");
+
+fn r04_fixture() -> Value {
+    let fixture: Value = serde_json::from_str(NATIVE_OUTCOMES).unwrap();
+    assert_eq!(fixture["schema"], "airk.split.admin.native-outcomes/1");
+    fixture
+}
+
+fn r04_case(name: &str) -> Value {
+    r04_fixture()["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap_or_else(|| panic!("missing reviewed native outcome {name}"))
+        .clone()
+}
+
+fn r04_response(value: &Value) -> ControlResponse {
+    let response: ControlResponse = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&response).unwrap(), *value);
+    response
+}
+
+fn r04_assert_outcome(status: u16, reply: &Value, expected: &Value) {
+    assert_eq!(status, expected["http"].as_u64().unwrap() as u16, "{reply}");
+    assert_eq!(reply["ok"], expected["ok"], "{reply}");
+    assert!(
+        reply.get("review").is_none(),
+        "an outcome is not a new review: {reply}"
+    );
+    if expected["ok"] == true {
+        assert_eq!(reply["result"], expected["native"]);
+        assert_eq!(reply["request"]["state"], expected["request_state"]);
+        assert_eq!(reply["request"]["nonce"], expected["request_nonce"]);
+        let decoded: SuccessEnvelope = serde_json::from_value(reply.clone()).unwrap();
+        decoded.validate().unwrap();
+    } else {
+        assert!(
+            reply.get("request").is_none(),
+            "unknown/refused never completes: {reply}"
+        );
+        assert!(reply.get("result").is_none());
+        assert_eq!(reply["error"]["code"], expected["code"]);
+        assert_eq!(reply["error"]["class"], expected["class"]);
+        assert_eq!(reply["error"]["retryable"], expected["retryable"]);
+        assert_eq!(reply["error"]["native"], expected["native"]);
+        let decoded: FailureEnvelope = serde_json::from_value(reply.clone()).unwrap();
+        decoded.validate().unwrap();
+    }
+}
+
+async fn r04_through_handler(name: &str) {
+    let fixture = r04_fixture();
+    let case = r04_case(name);
+    let reviewed = case["route"] == "review";
+    let mut script = Vec::new();
+    if reviewed {
+        script.push(Some(epoch(7)));
+        script.push(Some(r04_response(&fixture["review"]["response"])));
+    }
+    script.push(Some(r04_response(&case["response"])));
+    let (plane, sent, _) = scripted_plane(script);
+    let (cookie, csrf) = sign_in(&plane).await;
+    if reviewed {
+        let (status, preview) = envelope(
+            &plane,
+            api_call(
+                &cookie,
+                &csrf,
+                "catalog.preview",
+                &fixture["review"]["body"].to_string(),
+            ),
+        )
+        .await;
+        assert_eq!(status, 200, "{preview}");
+        assert_eq!(preview["review"], "06".repeat(16));
+    }
+    let body = if reviewed {
+        &fixture["review"]["apply"]
+    } else {
+        &case["body"]
+    };
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            case["operation"].as_str().unwrap(),
+            &body.to_string(),
+        ),
+    )
+    .await;
+    if reviewed {
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 3, "no replay of a native terminal answer");
+        assert_eq!(
+            sent[2]["catalog_apply"]["request"]["caller"],
+            "04".repeat(16)
+        );
+        assert_eq!(
+            sent[2]["catalog_apply"]["request"]["key"],
+            json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)})
+        );
+    } else {
+        assert_eq!(*sent.lock().unwrap(), [case["body"].clone()]);
+    }
+    r04_assert_outcome(status, &reply, &case["expect"]);
+}
+
+#[test]
+fn r04_native_outcome_fixture_has_the_independent_case_roster() {
+    let mut fixture = r04_fixture();
+    // Opt-in fixture emission uses the owning Rust identity primitive and
+    // native request serialization. It does not derive resolution/redaction
+    // expectations from the adapter under test or qualify persisted lineage.
+    if std::env::var_os("AIRK_WRITE_ADMIN_NATIVE_OUTCOMES").is_some_and(|value| value == "1") {
+        for case in fixture["recovery_receipts"].as_array_mut().unwrap() {
+            let native: ControlResponse = serde_json::from_value(case["response"].clone()).unwrap();
+            if let ControlResponse::CatalogSplitRecoveryReceipt {
+                receipt: Some(receipt),
+                ..
+            } = native
+            {
+                let digest = airk_core::identity::framed_digest(
+                    b"airk/catalog-split-recovery/1",
+                    &[&serde_json::to_vec(&receipt.request).unwrap()],
+                )
+                .to_string();
+                case["response"]["receipt"]["request_digest"] = json!(digest);
+                case["expect"]["native"]["receipt"]["request_digest"] = json!(digest);
+            }
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/split/i3/native_outcomes.json");
+        std::fs::write(path, serde_json::to_string_pretty(&fixture).unwrap() + "\n").unwrap();
+    }
+    let names: Vec<&str> = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| case["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "catalog_unknown",
+            "source_resolution_unknown",
+            "source_change_busy",
+            "job_accepted",
+            "catalog_completed"
+        ]
+    );
+    let receipt_cases = fixture["recovery_receipts"].as_array().unwrap();
+    let names: Vec<&str> = receipt_cases
+        .iter()
+        .map(|case| case["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "policy_known_accepted",
+            "policy_receipt_missing",
+            "split_already_complete",
+            "split_still_unknown",
+            "split_receipt_missing"
+        ]
+    );
+    let identity = secrets::Review {
+        token: "5f".repeat(16).parse().unwrap(),
+        caller: Some(json!("04".repeat(16))),
+        key: json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)}),
+        purpose: secrets::ReviewPurpose::Ordinary,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    for case in receipt_cases {
+        let response = r04_response(&case["response"]);
+        match &response {
+            ControlResponse::CatalogPolicyResumeReceipt {
+                index_id,
+                operation_id,
+                receipt: Some(receipt),
+                ..
+            } => {
+                receipt.configuration.request.validate().unwrap();
+                assert_eq!(receipt.job.kind, airk_core::service::JobKind::Configure);
+                let airk_core::service_configuration::ProjectConfiguration::ApplySourcePolicy {
+                    policy,
+                    operation_id: accepted_operation,
+                } = &receipt.configuration.request.configuration
+                else {
+                    panic!("policy resume fixture must retain its actual native action");
+                };
+                assert_eq!(policy.index_id, *index_id);
+                assert_eq!(*accepted_operation, *operation_id);
+                assert_eq!(receipt.job.project, policy.owner_binding);
+            }
+            ControlResponse::CatalogSplitRecoveryReceipt {
+                operation_id,
+                caller,
+                key,
+                receipt: Some(receipt),
+                ..
+            } => {
+                assert_eq!(
+                    receipt.request_digest,
+                    airk_core::identity::framed_digest(
+                        b"airk/catalog-split-recovery/1",
+                        &[&serde_json::to_vec(&receipt.request).unwrap()]
+                    )
+                );
+                let held = &case["request"]["catalog_split_recover"]["request"];
+                assert_eq!(receipt.request.operation_id, *operation_id);
+                assert_eq!(receipt.request.caller, *caller);
+                assert_eq!(receipt.request.key, *key);
+                assert_eq!(
+                    serde_json::to_value(receipt.request.operation_id).unwrap(),
+                    held["operation_id"]
+                );
+                assert_eq!(
+                    serde_json::to_value(receipt.request.request_digest).unwrap(),
+                    held["request_digest"]
+                );
+                assert_eq!(
+                    serde_json::to_value(receipt.request.expected_receipt_digest).unwrap(),
+                    held["expected_receipt_digest"]
+                );
+                assert_eq!(
+                    serde_json::to_value(receipt.request.action).unwrap(),
+                    held["action"]
+                );
+                assert_eq!(receipt.request.expected_finalization_revision, None);
+                if let airk_core::catalog_split::SplitRecoveryOutcome::Unknown { caller, key } =
+                    &receipt.outcome
+                {
+                    assert_eq!(*caller, receipt.request.caller);
+                    assert_eq!(*key, receipt.request.key);
+                }
+                if let airk_core::catalog_split::SplitRecoveryOutcome::AlreadyComplete {
+                    receipt_digest,
+                } = &receipt.outcome
+                {
+                    assert_eq!(*receipt_digest, receipt.request.expected_receipt_digest);
+                }
+            }
+            ControlResponse::CatalogPolicyResumeReceipt { receipt: None, .. }
+            | ControlResponse::CatalogSplitRecoveryReceipt { receipt: None, .. } => {}
+            _ => panic!("unexpected recovery receipt fixture {}", case["name"]),
+        }
+        let result = native_request(
+            case["operation"].as_str().unwrap(),
+            response,
+            None,
+            Some(&identity),
+        );
+        assert_eq!(result.status().as_u16(), 200);
+        let body = runtime
+            .block_on(result.into_body().collect())
+            .unwrap()
+            .to_bytes();
+        let envelope: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            envelope["result"], case["expect"]["native"],
+            "{}",
+            case["name"]
+        );
+        assert!(envelope.get("request").is_none());
+        assert!(envelope.get("review").is_none());
+        assert!(case["expect"]["resolved"].is_boolean());
+    }
+}
+
+#[tokio::test]
+async fn r04_catalog_unknown_is_not_a_completed_admin_mutation() {
+    r04_through_handler("catalog_unknown").await;
+}
+
+#[tokio::test]
+async fn r04_source_resolution_unknown_is_not_a_completed_admin_mutation() {
+    r04_through_handler("source_resolution_unknown").await;
+}
+
+#[tokio::test]
+async fn r04_source_change_busy_is_not_a_completed_admin_mutation() {
+    r04_through_handler("source_change_busy").await;
+}
+
+#[tokio::test]
+async fn r04_pending_job_keeps_accepted_admin_progress() {
+    r04_through_handler("job_accepted").await;
+}
+
+#[tokio::test]
+async fn r04_completed_catalog_mutation_redacts_the_restored_review_identity() {
+    r04_through_handler("catalog_completed").await;
+}
+
+#[tokio::test]
+async fn r04_generated_unknown_redacts_identity_without_issuing_a_review() {
+    let fixture = r04_fixture();
+    let case = r04_case("catalog_unknown");
+    let (plane, sent, _) =
+        scripted_plane(vec![Some(epoch(7)), Some(r04_response(&case["response"]))]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.preview",
+            &fixture["review"]["body"].to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(sent.lock().unwrap().len(), 2);
+    r04_assert_outcome(status, &reply, &case["expect"]);
+}
+
+#[tokio::test]
+async fn r04_unknown_apply_keeps_the_existing_receipt_identity_without_replay() {
+    let fixture = r04_fixture();
+    let case = r04_case("catalog_unknown");
+    let (plane, sent, _) = scripted_plane(vec![
+        Some(epoch(7)),
+        Some(r04_response(&fixture["review"]["response"])),
+        Some(r04_response(&case["response"])),
+        Some(ControlResponse::CatalogReceipt {
+            receipt: None,
+            fence: None,
+        }),
+    ]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, preview) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.preview",
+            &fixture["review"]["body"].to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(preview["review"], "06".repeat(16));
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.apply",
+            &fixture["review"]["apply"].to_string(),
+        ),
+    )
+    .await;
+    r04_assert_outcome(status, &reply, &case["expect"]);
+    let receipt = json!({"method": {"catalog_receipt": {}}, "review": "06".repeat(16)});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.receipt", &receipt.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["result"],
+        json!({"status": "catalog_receipt", "receipt": null})
+    );
+    assert_eq!(
+        sent.lock().unwrap().len(),
+        4,
+        "receipt lookup does not replay apply"
+    );
+    assert_eq!(
+        sent.lock().unwrap()[3],
+        json!({"catalog_receipt": {
+            "caller": "04".repeat(16),
+            "key": {"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)}
+        }})
+    );
+}
+
+fn r04_recovery_body(split: bool) -> Value {
+    if split {
+        json!({"catalog_split_recover": {"request": {
+            "operation_id": "2b".repeat(16), "request_digest": "3c".repeat(32),
+            "expected_receipt_digest": "3d".repeat(32), "action": "resume"
+        }}})
+    } else {
+        json!({"catalog_policy_resume": {"index_id": GRANTED_INDEX, "operation_id": "2b".repeat(16)}})
+    }
+}
+
+fn r04_recovery_operation(split: bool) -> &'static str {
+    if split {
+        "catalog.split_recover"
+    } else {
+        "catalog.policy_resume"
+    }
+}
+
+fn r04_recovery_read(split: bool, token: &str) -> Value {
+    let method = if split {
+        json!({"catalog_split_recovery_receipt": {"operation_id": "2b".repeat(16)}})
+    } else {
+        json!({"catalog_policy_resume_receipt": {"index_id": GRANTED_INDEX, "operation_id": "2b".repeat(16)}})
+    };
+    json!({"method": method, "review": token})
+}
+
+fn r04_unknown_metadata() -> ControlResponse {
+    // finalize_catalog_response emits this actual native answer when an
+    // accepted catalog mutation cannot finish live reconciliation.
+    ControlResponse::Failure {
+        code: "catalog_metadata_saved_outcome_unknown".into(),
+    }
+}
+
+fn r04_recovery_reply(split: bool) -> ControlResponse {
+    let key = json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)});
+    let body = if split {
+        json!({"status": "catalog_split_recovery_receipt", "operation_id": "2b".repeat(16),
+            "caller": "04".repeat(16), "key": key, "expired": false, "receipt": null, "snapshot": null})
+    } else {
+        json!({"status": "catalog_policy_resume_receipt", "index_id": GRANTED_INDEX,
+            "operation_id": "2b".repeat(16), "caller": "04".repeat(16), "key": key,
+            "expired": false, "receipt": null})
+    };
+    r04_response(&body)
+}
+
+fn r04_policy_success() -> ControlResponse {
+    let value = json!({"status": "catalog_policy_resumed", "index_id": GRANTED_INDEX,
+        "accepted_job_id": "3b".repeat(32), "status_basis": "current_policy",
+        "snapshot": {"schema": 1, "operation_id": "2b".repeat(16),
+            "policy": {"schema": "airk.source-policy/1", "index_id": GRANTED_INDEX,
+                "owner_binding": "ab".repeat(32), "namespace": "collections-1.4", "collection": "docs", "epoch": 1,
+                "roots": [{"id": "src_01010101010101010101010101010101", "canonical_path": "/fiction/docs", "aliases": [], "owner": true}],
+                "positive_includes": null, "denies": []},
+            "job": "3b".repeat(32), "application": null, "application_job": null, "last_error": null},
+        "job": {"id": "3b".repeat(32), "project": "ab".repeat(32), "kind": "configure", "state": "pending",
+            "fencing_generation": 0, "attempts": 0, "outcome": null}});
+    let response = r04_response(&value);
+    let ControlResponse::CatalogPolicyResumed { snapshot, .. } = &response else {
+        unreachable!()
+    };
+    snapshot.validate().unwrap();
+    response
+}
+
+fn r04_recovery_plane(
+    script: Vec<Option<ControlResponse>>,
+) -> (AdminPlane, Arc<Mutex<Vec<Value>>>, Arc<AtomicU64>) {
+    let (mut plane, sent, _) = scripted_plane(script);
+    let clock = Arc::new(AtomicU64::new(0));
+    let observed = clock.clone();
+    plane.clock = Arc::new(move || observed.load(Ordering::SeqCst));
+    (plane, sent, clock)
+}
+
+fn r04_handle(status: u16, reply: &Value, native: bool) -> String {
+    assert_eq!(status, 503, "{reply}");
+    assert_eq!(reply["ok"], false);
+    assert_eq!(reply["error"]["class"], "unavailable");
+    assert_eq!(reply["error"]["retryable"], false);
+    assert!(reply.get("request").is_none());
+    assert!(reply.get("result").is_none());
+    if native {
+        assert_eq!(
+            reply["error"]["code"],
+            "catalog_metadata_saved_outcome_unknown"
+        );
+        assert_eq!(
+            reply["error"]["native"],
+            json!({"status": "failure", "code": "catalog_metadata_saved_outcome_unknown"})
+        );
+    } else {
+        assert_eq!(reply["error"]["code"], "service_request_outcome_unknown");
+        assert!(
+            reply["error"].get("native").is_none(),
+            "lost replies invent no native evidence"
+        );
+    }
+    let token = reply["review"]
+        .as_str()
+        .expect("unknown generated mutation retains its receipt identity");
+    assert_eq!(token.len(), 32);
+    let decoded: FailureEnvelope = serde_json::from_value(reply.clone()).unwrap();
+    decoded.validate().unwrap();
+    token.to_owned()
+}
+
+async fn r04_unknown_generated_pair(split: bool, lost: bool) {
+    let mut script = vec![Some(epoch(7))];
+    if lost {
+        script.extend([None, None]);
+    } else {
+        script.push(Some(r04_unknown_metadata()));
+    }
+    script.push(Some(r04_recovery_reply(split)));
+    let (plane, sent, _) = r04_recovery_plane(script);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            r04_recovery_operation(split),
+            &r04_recovery_body(split).to_string(),
+        ),
+    )
+    .await;
+    let token = r04_handle(status, &reply, !lost);
+    assert_eq!(plane.secrets().sessions.review_count(&cookie), 1);
+    let sent_before = sent.lock().unwrap().len();
+    if lost {
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        assert_eq!(
+            sent[1], sent[2],
+            "native resend retains the exact original identity"
+        );
+    }
+    let other_receipt = r04_recovery_read(!split, &token);
+    let other_operation = if split {
+        "catalog.policy_resume_receipt"
+    } else {
+        "catalog.split_recovery_receipt"
+    };
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, other_operation, &other_receipt.to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (400, "admin_review_unknown")
+    );
+    let mut mutation = r04_fixture()["review"]["apply"].clone();
+    mutation["review"] = json!(token);
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, "catalog.apply", &mutation.to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (400, "admin_review_unknown")
+    );
+    let (foreign_cookie, foreign_csrf) = sign_in(&plane).await;
+    let receipt = r04_recovery_read(split, &token);
+    let receipt_operation = if split {
+        "catalog.split_recovery_receipt"
+    } else {
+        "catalog.policy_resume_receipt"
+    };
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &foreign_cookie,
+            &foreign_csrf,
+            receipt_operation,
+            &receipt.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (400, "admin_review_unknown")
+    );
+    assert_eq!(
+        sent.lock().unwrap().len(),
+        sent_before,
+        "invalid custody restores nothing to native dispatch"
+    );
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, receipt_operation, &receipt.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["result"]["operation_id"], "2b".repeat(16));
+    assert_eq!(reply["result"]["expired"], false);
+    assert!(reply["result"].get("caller").is_none());
+    assert!(reply["result"].get("key").is_none());
+    assert!(
+        reply.get("review").is_none(),
+        "a receipt lookup issues no new mutation authority"
+    );
+    let sent = sent.lock().unwrap();
+    assert_eq!(
+        sent.len(),
+        sent_before + 1,
+        "only the receipt was sent after the unknown outcome"
+    );
+    let variant = if split {
+        "catalog_split_recovery_receipt"
+    } else {
+        "catalog_policy_resume_receipt"
+    };
+    assert_eq!(sent.last().unwrap()[variant]["caller"], "04".repeat(16));
+    assert_eq!(
+        sent.last().unwrap()[variant]["key"],
+        json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)})
+    );
+}
+
+#[tokio::test]
+async fn r04_policy_native_unknown_can_only_read_its_original_receipt() {
+    r04_unknown_generated_pair(false, false).await;
+}
+
+#[tokio::test]
+async fn r04_split_native_unknown_can_only_read_its_original_receipt() {
+    r04_unknown_generated_pair(true, false).await;
+}
+
+#[tokio::test]
+async fn r04_policy_double_lost_replies_keep_the_original_receipt_identity() {
+    r04_unknown_generated_pair(false, true).await;
+}
+
+#[tokio::test]
+async fn r04_split_double_lost_replies_keep_the_original_receipt_identity() {
+    r04_unknown_generated_pair(true, true).await;
+}
+
+#[tokio::test]
+async fn r04_recovery_capacity_refuses_before_another_generated_effect() {
+    let mut script = Vec::new();
+    for _ in 0..=contract::MAX_REVIEWS_PER_SESSION {
+        script.extend([Some(epoch(7)), Some(r04_unknown_metadata())]);
+    }
+    let (plane, sent, _) = r04_recovery_plane(script);
+    let (cookie, csrf) = sign_in(&plane).await;
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        let (status, reply) = envelope(
+            &plane,
+            api_call(
+                &cookie,
+                &csrf,
+                "catalog.policy_resume",
+                &r04_recovery_body(false).to_string(),
+            ),
+        )
+        .await;
+        r04_handle(status, &reply, true);
+    }
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.policy_resume",
+            &r04_recovery_body(false).to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (409, "admin_review_capacity")
+    );
+    assert!(reply.get("review").is_none());
+    assert_eq!(
+        plane.secrets().sessions.review_count(&cookie),
+        contract::MAX_REVIEWS_PER_SESSION
+    );
+    assert_eq!(
+        sent.lock()
+            .unwrap()
+            .iter()
+            .filter(|method| method.get("catalog_policy_resume").is_some())
+            .count(),
+        contract::MAX_REVIEWS_PER_SESSION
+    );
+}
+
+#[tokio::test]
+async fn r04_competing_pending_reservations_refuse_before_the_extra_effect() {
+    let effects = Arc::new(AtomicU64::new(0));
+    let observed = effects.clone();
+    let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, waiting) = tokio::sync::watch::channel(false);
+    let dispatch: Dispatch = Arc::new(move |method| {
+        if matches!(method, ControlMethod::RequestEpoch) {
+            return Box::pin(async { Ok(epoch(7)) });
+        }
+        assert!(matches!(method, ControlMethod::CatalogPolicyResume { .. }));
+        let n = observed.fetch_add(1, Ordering::SeqCst);
+        let mut waiting = waiting.clone();
+        let entered = entered.clone();
+        Box::pin(async move {
+            if n < contract::MAX_REVIEWS_PER_SESSION as u64 {
+                entered.send(()).unwrap();
+                waiting.wait_for(|released| *released).await.unwrap();
+            }
+            Ok(r04_unknown_metadata())
+        })
+    });
+    let sequence = Arc::new(AtomicU8::new(0));
+    let plane = Arc::new(AdminPlane::with_sources(
+        dispatch,
+        Incarnation::from_bytes([1; 16]),
+        Arc::new(|| 0),
+        Arc::new(move || Some([sequence.fetch_add(1, Ordering::SeqCst) + 1; 32])),
+    ));
+    let (cookie, csrf) = sign_in(&plane).await;
+    let mut tasks = Vec::new();
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        let plane = plane.clone();
+        let cookie = cookie.clone();
+        let csrf = csrf.clone();
+        tasks.push(tokio::spawn(async move {
+            envelope(
+                &plane,
+                api_call(
+                    &cookie,
+                    &csrf,
+                    "catalog.policy_resume",
+                    &r04_recovery_body(false).to_string(),
+                ),
+            )
+            .await
+        }));
+    }
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let held = plane.secrets().sessions.review_count(&cookie);
+    let extra = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.policy_resume",
+            &r04_recovery_body(false).to_string(),
+        ),
+    )
+    .await;
+    release.send(true).unwrap();
+    let mut replies = Vec::new();
+    for task in tasks {
+        replies.push(task.await.unwrap());
+    }
+    assert_eq!(
+        held,
+        contract::MAX_REVIEWS_PER_SESSION,
+        "each in-flight generated call already owns its custody slot"
+    );
+    assert_eq!(
+        effects.load(Ordering::SeqCst),
+        contract::MAX_REVIEWS_PER_SESSION as u64
+    );
+    assert_eq!(
+        (extra.0, error_code(&extra.1).as_str()),
+        (409, "admin_review_capacity")
+    );
+    for (status, reply) in replies {
+        r04_handle(status, &reply, true);
+    }
+}
+
+#[tokio::test]
+async fn r04_ordinary_preview_pressure_never_evicts_pinned_recovery() {
+    let fixture = r04_fixture();
+    let mut script = vec![Some(epoch(7)), Some(r04_unknown_metadata())];
+    for _ in 0..=contract::MAX_REVIEWS_PER_SESSION {
+        script.extend([
+            Some(epoch(7)),
+            Some(r04_response(&fixture["review"]["response"])),
+        ]);
+    }
+    script.push(Some(r04_recovery_reply(false)));
+    let (plane, sent, _) = r04_recovery_plane(script);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.policy_resume",
+            &r04_recovery_body(false).to_string(),
+        ),
+    )
+    .await;
+    let token = r04_handle(status, &reply, true);
+    for _ in 0..=contract::MAX_REVIEWS_PER_SESSION {
+        let (status, preview) = envelope(
+            &plane,
+            api_call(
+                &cookie,
+                &csrf,
+                "catalog.preview",
+                &fixture["review"]["body"].to_string(),
+            ),
+        )
+        .await;
+        assert_eq!(
+            status, 200,
+            "ordinary previews still evict ordinary previews: {preview}"
+        );
+    }
+    let receipt = r04_recovery_read(false, &token);
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.policy_resume_receipt",
+            &receipt.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "pinned original recovery survives ordinary review pressure: {reply}"
+    );
+    assert_eq!(
+        plane.secrets().sessions.review_count(&cookie),
+        contract::MAX_REVIEWS_PER_SESSION
+    );
+    assert!(
+        sent.lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("catalog_policy_resume_receipt")
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn r04_normal_success_releases_reservation_for_ordinary_eviction() {
+    let fixture = r04_fixture();
+    let mut script = Vec::new();
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        script.extend([Some(epoch(7)), Some(r04_policy_success())]);
+    }
+    script.extend([
+        Some(epoch(7)),
+        Some(r04_response(&fixture["review"]["response"])),
+    ]);
+    let (plane, sent, _) = r04_recovery_plane(script);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let mut first = None;
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        let (status, reply) = envelope(
+            &plane,
+            api_call(
+                &cookie,
+                &csrf,
+                "catalog.policy_resume",
+                &r04_recovery_body(false).to_string(),
+            ),
+        )
+        .await;
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(reply["request"]["state"], "completed");
+        let token = reply["review"].as_str().unwrap().to_owned();
+        first.get_or_insert(token);
+    }
+    let (status, preview) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.preview",
+            &fixture["review"]["body"].to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "normal success must not leave its custody pinned: {preview}"
+    );
+    let old_receipt = r04_recovery_read(false, first.as_deref().unwrap());
+    let before = sent.lock().unwrap().len();
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.policy_resume_receipt",
+            &old_receipt.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, error_code(&reply).as_str()),
+        (400, "admin_review_unknown")
+    );
+    assert_eq!(sent.lock().unwrap().len(), before);
+    assert_eq!(
+        plane.secrets().sessions.review_count(&cookie),
+        contract::MAX_REVIEWS_PER_SESSION
+    );
+}
+
+#[tokio::test]
+async fn r04_no_effect_refusal_releases_its_reserved_review_slot() {
+    let mut script = Vec::new();
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        script.extend([
+            Some(epoch(7)),
+            Some(ControlResponse::Failure {
+                code: "key_conflict".into(),
+            }),
+        ]);
+    }
+    script.extend([Some(epoch(7)), Some(r04_unknown_metadata())]);
+    let (plane, _, _) = r04_recovery_plane(script);
+    let (cookie, csrf) = sign_in(&plane).await;
+    for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
+        let (status, reply) = envelope(
+            &plane,
+            api_call(
+                &cookie,
+                &csrf,
+                "catalog.policy_resume",
+                &r04_recovery_body(false).to_string(),
+            ),
+        )
+        .await;
+        assert_eq!((status, error_code(&reply).as_str()), (409, "key_conflict"));
+        assert!(reply.get("review").is_none());
+        assert_eq!(plane.secrets().sessions.review_count(&cookie), 0);
+    }
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.policy_resume",
+            &r04_recovery_body(false).to_string(),
+        ),
+    )
+    .await;
+    r04_handle(status, &reply, true);
+    assert_eq!(plane.secrets().sessions.review_count(&cookie), 1);
+}
+
+#[tokio::test]
+async fn r04_recovery_handle_lifetime_follows_its_session_and_service() {
+    for end in ["expiry", "logout", "service_end", "restart"] {
+        let (plane, sent, now) =
+            r04_recovery_plane(vec![Some(epoch(7)), Some(r04_unknown_metadata())]);
+        let (cookie, csrf) = sign_in(&plane).await;
+        let (status, reply) = envelope(
+            &plane,
+            api_call(
+                &cookie,
+                &csrf,
+                "catalog.policy_resume",
+                &r04_recovery_body(false).to_string(),
+            ),
+        )
+        .await;
+        let token = r04_handle(status, &reply, true);
+        match end {
+            "expiry" => {
+                now.store(SESSION_IDLE_MS, Ordering::SeqCst);
+            }
+            "logout" => {
+                assert_eq!(envelope(&plane, logout(&cookie, &csrf)).await.0, 200);
+            }
+            "service_end" | "restart" => plane.end(),
+            _ => unreachable!(),
+        }
+        let receipt = r04_recovery_read(false, &token);
+        let (status, reply) = if end == "restart" {
+            let (restarted, _) = self::plane(2);
+            envelope(
+                &restarted,
+                api_call(
+                    &cookie,
+                    &csrf,
+                    "catalog.policy_resume_receipt",
+                    &receipt.to_string(),
+                ),
+            )
+            .await
+        } else {
+            envelope(
+                &plane,
+                api_call(
+                    &cookie,
+                    &csrf,
+                    "catalog.policy_resume_receipt",
+                    &receipt.to_string(),
+                ),
+            )
+            .await
+        };
+        assert_eq!(
+            (status, error_code(&reply).as_str()),
+            (401, "admin_session_invalid"),
+            "{end}"
+        );
+        assert_eq!(plane.secrets().sessions.review_count(&cookie), 0, "{end}");
+        assert_eq!(
+            sent.lock().unwrap().len(),
+            2,
+            "ended custody sends no receipt: {end}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn r04_actual_setup_apply_and_receipt_preserve_data_but_not_session_identity() {
+    use airk_core::catalog_setup::{
+        IndexSetupDraft, IndexSetupReceipt, IndexSetupRequest, SetupSource, SetupStage,
+        SetupStorageAction, setup_index_id, setup_source_ids,
+    };
+    use airk_core::service::{CatalogOutcomeObservation, ProjectRegistration, RequestKey};
+    let registration = ProjectRegistration::new(
+        "/fiction/docs".into(),
+        "/fiction/index".into(),
+        "docs".into(),
+    )
+    .unwrap();
+    let request = IndexSetupRequest {
+        // Setup's native caller is not the unused caller draw of a
+        // selection.key-only generate rule; it must come from the reply.
+        caller: "c1".repeat(16).parse().unwrap(),
+        key: RequestKey {
+            namespace: "0a".repeat(16).parse().unwrap(),
+            epoch: 7,
+            nonce: "05".repeat(16).parse().unwrap(),
+        },
+        expected_catalog_revision: CatalogRevision::try_from(3).unwrap(),
+        name: "Docs".into(),
+        registration: registration.clone(),
+        sources: vec![SetupSource {
+            canonical_path: "/fiction/docs".into(),
+            aliases: vec![],
+            owner: true,
+        }],
+        setup_watch: false,
+    };
+    let request_digest = request.identity().unwrap();
+    let draft = IndexSetupDraft::new(
+        request.clone(),
+        SetupStorageAction::CreateMissingLeaf,
+        Sha256Digest::from_bytes([0x3d; 32]),
+    )
+    .unwrap();
+    let receipt = IndexSetupReceipt {
+        schema: 1,
+        operation_id: airk_core::catalog_management::catalog_operation_id(
+            request.caller,
+            &request.key,
+        )
+        .unwrap(),
+        request: request.clone(),
+        request_digest,
+        index_id: setup_index_id(&request).unwrap(),
+        source_ids: setup_source_ids(&request).unwrap(),
+        stage: SetupStage::Reserved,
+        catalog_revision: CatalogRevision::try_from(4).unwrap(),
+        source_revision: CatalogRevision::INITIAL,
+        preparation: None,
+        completion: None,
+        legacy_adoption: None,
+    };
+    receipt.validate().unwrap();
+    // Independently state the complete public projection. Native fixture
+    // builders above establish valid digested identities, not redaction rules.
+    let public_request = json!({"expected_catalog_revision": 3, "name": "Docs",
+        "registration": {"binding": registration.binding, "root": "/fiction/docs", "data_root": "/fiction/index", "collection": "docs"},
+        "sources": [{"canonical_path": "/fiction/docs", "aliases": [], "owner": true}], "setup_watch": false});
+    let public_receipt = json!({"schema": 1, "operation_id": receipt.operation_id,
+        "request": public_request, "request_digest": request_digest, "index_id": receipt.index_id,
+        "source_ids": receipt.source_ids, "stage": "reserved", "catalog_revision": 4, "source_revision": 1,
+        "preparation": null, "completion": null});
+    let apply = json!({"method": {"catalog_index_setup_apply": {"draft": {
+        "schema": 1, "request": public_request, "storage_action": "create_missing_leaf", "review_digest": "3d".repeat(32)
+    }}}, "review": "06".repeat(16)});
+    let (plane, sent, _) = r04_recovery_plane(vec![
+        Some(epoch(7)),
+        Some(ControlResponse::CatalogIndexSetupDraft {
+            draft,
+            request_digest,
+        }),
+        Some(ControlResponse::CatalogOutcomeUnknown {
+            code: "catalog_index_setup_outcome_unknown".into(),
+            caller: request.caller,
+            key: request.key.clone(),
+            request_digest,
+            observation: Some(CatalogOutcomeObservation::IndexSetup {
+                receipt: Box::new(receipt.clone()),
+            }),
+        }),
+        Some(ControlResponse::CatalogIndexSetupReceipt {
+            receipt: Some(receipt),
+        }),
+    ]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let selection = json!({"catalog_index_setup_draft": {"selection": {
+        "expected_catalog_revision": 3, "name": "Docs", "primary_root": "/fiction/docs", "data_root": "/fiction/index",
+        "collection": "docs", "additional_roots": [], "setup_watch": false
+    }}});
+    let (status, reviewed) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.index_setup_draft",
+            &selection.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{reviewed}");
+    assert_eq!(reviewed["review"], "06".repeat(16));
+    assert_eq!(
+        reviewed["result"],
+        json!({"status": "catalog_index_setup_draft", "request_digest": request_digest,
+        "draft": {"schema": 1, "request": public_request, "storage_action": "create_missing_leaf", "review_digest": "3d".repeat(32)}})
+    );
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.index_setup_apply",
+            &apply.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, 503, "{reply}");
+    assert_eq!(reply["ok"], false);
+    assert_eq!(reply["error"]["class"], "unavailable");
+    assert_eq!(reply["error"]["retryable"], false);
+    assert!(reply.get("review").is_none());
+    assert!(reply.get("request").is_none());
+    assert_eq!(
+        reply["error"]["native"],
+        json!({"status": "catalog_outcome_unknown",
+        "code": "catalog_index_setup_outcome_unknown", "request_digest": request_digest,
+        "observation": {"kind": "index_setup", "receipt": public_receipt}})
+    );
+    let lookup = json!({"method": {"catalog_index_setup_receipt": {}}, "review": "06".repeat(16)});
+    let (status, saved) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "catalog.index_setup_receipt",
+            &lookup.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{saved}");
+    assert_eq!(
+        saved["result"],
+        json!({"status": "catalog_index_setup_receipt", "receipt": public_receipt})
+    );
+    let sent = sent.lock().unwrap();
+    assert_eq!(
+        sent.len(),
+        4,
+        "unknown setup reads its exact receipt; it never replays apply"
+    );
+    assert_eq!(
+        sent[2]["catalog_index_setup_apply"]["draft"]["request"]["caller"],
+        "c1".repeat(16)
+    );
+    assert_eq!(
+        sent[2]["catalog_index_setup_apply"]["draft"]["request"]["key"],
+        json!({"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)})
+    );
+    assert_eq!(
+        sent[3],
+        json!({"catalog_index_setup_receipt": {"caller": "c1".repeat(16),
+        "key": {"namespace": "0a".repeat(16), "epoch": 7, "nonce": "05".repeat(16)}}})
+    );
+}
+
+#[tokio::test]
+async fn r04_observed_cancellation_releases_read_custody_but_pins_uncertain_mutation() {
+    let fixture = r04_fixture();
+    let mut observations = Vec::new();
+    for read in [true, false] {
+        let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release, waiting) = tokio::sync::watch::channel(false);
+        let calls = Arc::new(AtomicU64::new(0));
+        let observed = calls.clone();
+        let dispatch: Dispatch = Arc::new(move |method| {
+            if matches!(method, ControlMethod::RequestEpoch) {
+                return Box::pin(async { Ok(epoch(7)) });
+            }
+            assert!(if read {
+                matches!(method, ControlMethod::CatalogPreview { .. })
+            } else {
+                matches!(method, ControlMethod::CatalogPolicyResume { .. })
+            });
+            observed.fetch_add(1, Ordering::SeqCst);
+            let entered = entered.clone();
+            let mut waiting = waiting.clone();
+            Box::pin(async move {
+                entered.send(()).unwrap();
+                waiting.wait_for(|released| *released).await.unwrap();
+                Ok(r04_unknown_metadata())
+            })
+        });
+        let sequence = Arc::new(AtomicU8::new(0));
+        let plane = Arc::new(AdminPlane::with_sources(
+            dispatch,
+            Incarnation::from_bytes([1; 16]),
+            Arc::new(|| 0),
+            Arc::new(move || Some([sequence.fetch_add(1, Ordering::SeqCst) + 1; 32])),
+        ));
+        let (cookie, csrf) = sign_in(&plane).await;
+        let body = if read {
+            fixture["review"]["body"].clone()
+        } else {
+            r04_recovery_body(false)
+        };
+        let request = api_call(
+            &cookie,
+            &csrf,
+            if read {
+                "catalog.preview"
+            } else {
+                "catalog.policy_resume"
+            },
+            &body.to_string(),
+        );
+        let running = plane.clone();
+        let task = tokio::spawn(async move { envelope(&running, request).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let before = plane.secrets().sessions.review_count(&cookie);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        release.send(true).unwrap();
+        let after = plane.secrets().sessions.review_count(&cookie);
+        observations.push((read, before, after, calls.load(Ordering::SeqCst)));
+    }
+    assert_eq!(
+        observations,
+        [(true, 1, 0, 1), (false, 1, 1, 1)],
+        "only a canceled read proves its reserved mutation identity was unused"
+    );
+}
+
 /// A fake gate side of the A2 read authority: records every registered ref
 /// and every revoked nonce; `accept` decides registration.
 #[allow(clippy::type_complexity)]

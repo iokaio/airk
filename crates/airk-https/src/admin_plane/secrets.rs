@@ -12,7 +12,7 @@ use airk_core::{
     service::WindowScopeSelection,
 };
 use airk_endpoint::admin_contract::{
-    LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_REVIEWS_PER_SESSION, MAX_SESSIONS,
+    AdminCode, LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_REVIEWS_PER_SESSION, MAX_SESSIONS,
     SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SessionFacts,
 };
 use sha2::{Digest, Sha256};
@@ -139,6 +139,16 @@ pub(super) struct Review {
     /// result carried); `None` when the row names no caller.
     pub(super) caller: Option<serde_json::Value>,
     pub(super) key: serde_json::Value,
+    pub(super) purpose: ReviewPurpose,
+}
+
+/// Pending custody and uncertain recovery cannot be evicted by ordinary
+/// preview pressure. Nothing here changes the lifetime or the shared budget.
+#[derive(Clone, Copy)]
+pub(super) enum ReviewPurpose {
+    Pending,
+    Ordinary,
+    ReceiptOnly(&'static str),
 }
 
 struct Session {
@@ -311,23 +321,80 @@ impl Sessions {
             .then(|| grant.clone())
     }
 
-    /// Keep `review` in the live session `cookie` (oldest dropped past
-    /// `MAX_REVIEWS_PER_SESSION`); `None` when the session ended meanwhile.
-    pub(super) fn add_review(&mut self, cookie: &str, review: Review, now_ms: u64) -> Option<()> {
+    /// Reserve custody before dispatch. Make room only by dropping the oldest
+    /// ordinary token; pending and receipt-only identities remain pinned.
+    pub(super) fn reserve_review(
+        &mut self,
+        cookie: &str,
+        review: Review,
+        now_ms: u64,
+    ) -> Result<(), AdminCode> {
         self.purge(now_ms);
         let digest = digest(cookie);
         let session = self
             .sessions
             .iter_mut()
-            .find(|session| bool::from(session.cookie[..].ct_eq(&digest[..])))?;
+            .find(|session| bool::from(session.cookie[..].ct_eq(&digest[..])))
+            .ok_or(AdminCode::AdminSessionInvalid)?;
         if session.instance != self.instance {
-            return None;
+            return Err(AdminCode::AdminSessionInvalid);
+        }
+        if session
+            .reviews
+            .iter()
+            .any(|stored| stored.token == review.token)
+        {
+            return Err(AdminCode::AdminInternal);
         }
         while session.reviews.len() >= MAX_REVIEWS_PER_SESSION {
-            session.reviews.pop_front();
+            let oldest = session
+                .reviews
+                .iter()
+                .position(|review| matches!(review.purpose, ReviewPurpose::Ordinary))
+                .ok_or(AdminCode::AdminReviewCapacity)?;
+            session.reviews.remove(oldest);
         }
         session.reviews.push_back(review);
+        Ok(())
+    }
+
+    /// Settle an exact pending reservation without changing its token/key.
+    /// A key-only draft obtains its native caller from the response here.
+    pub(super) fn finish_review(
+        &mut self,
+        cookie: &str,
+        token: Incarnation,
+        caller: Option<serde_json::Value>,
+        purpose: ReviewPurpose,
+        now_ms: u64,
+    ) -> Option<()> {
+        self.purge(now_ms);
+        let cookie = digest(cookie);
+        let instance = self.instance;
+        let session = self.sessions.iter_mut().find(|session| {
+            session.instance == instance && bool::from(session.cookie[..].ct_eq(&cookie[..]))
+        })?;
+        let review = session.reviews.iter_mut().find(|review| {
+            review.token == token && matches!(review.purpose, ReviewPurpose::Pending)
+        })?;
+        review.caller = caller;
+        review.purpose = purpose;
         Some(())
+    }
+
+    /// Release only an unused pending slot. A completed ordinary review or
+    /// a pinned unknown identity cannot be removed by a late cleanup guard.
+    pub(super) fn release_review(&mut self, cookie: &str, token: Incarnation, now_ms: u64) {
+        self.purge(now_ms);
+        let cookie = digest(cookie);
+        let instance = self.instance;
+        if let Some(session) = self.sessions.iter_mut().find(|session| {
+            session.instance == instance && bool::from(session.cookie[..].ct_eq(&cookie[..]))
+        }) {
+            session.reviews.retain(|review| {
+                review.token != token || !matches!(review.purpose, ReviewPurpose::Pending)
+            });
+        }
     }
 
     /// The identity `token` names in the live session `cookie`. Tokens are
@@ -336,6 +403,7 @@ impl Sessions {
         &mut self,
         cookie: &str,
         token: &Incarnation,
+        operation: &str,
         now_ms: u64,
     ) -> Option<Review> {
         self.purge(now_ms);
@@ -346,7 +414,14 @@ impl Sessions {
         session
             .reviews
             .iter()
-            .find(|review| review.token == *token)
+            .find(|review| {
+                review.token == *token
+                    && match review.purpose {
+                        ReviewPurpose::Ordinary => true,
+                        ReviewPurpose::ReceiptOnly(receipt) => operation == receipt,
+                        ReviewPurpose::Pending => false,
+                    }
+            })
             .cloned()
     }
 
@@ -380,5 +455,16 @@ impl Sessions {
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// Observe the shared review budget in handler regressions without
+    /// exposing any stored identity or token.
+    #[cfg(test)]
+    pub(super) fn review_count(&self, cookie: &str) -> usize {
+        let cookie = digest(cookie);
+        self.sessions
+            .iter()
+            .find(|session| bool::from(session.cookie[..].ct_eq(&cookie[..])))
+            .map_or(0, |session| session.reviews.len())
     }
 }

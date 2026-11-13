@@ -2,6 +2,16 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- R19 committed as `41639e63` with human DCO verified before the separately
+  owned native R04 behavior commit. Both use the combined frozen qualification
+  identities recorded below; the shared asset checks are not relabeled as a
+  clean-HEAD runtime build. Native R04 documentation now distinguishes served
+  source handling from the pending UI receipt consumer. Ordinary preview token
+  eviction is preserved. Receipt-only recovery stays pinned for the existing
+  session lifetime, including known receipts, and capacity remains32. Settled
+  slot reclamation and unsupported generated receipt mappings remain follow-ups.
+  No generic R20 repair, new state format or installed artifact is included.
+
 - Frozen R19 correction passes `p1-r19-after`: seven serial and twenty-four
   race/ownership cases, 31/31 selected passing after pinned Admin TypeScript
   compilation, receipt 0.62 s with unchanged frontend/harness seals. Original

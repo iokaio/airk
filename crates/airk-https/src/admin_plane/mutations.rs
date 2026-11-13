@@ -222,20 +222,176 @@ pub(super) fn redact(value: &mut Value, key: &Value) -> Option<Value> {
     caller
 }
 
-/// The request state a successful native answer shows (§2.4 UI states).
-pub(super) fn state(response: &ControlResponse) -> RequestState {
+/// Native disposition, classified before encoding. Keep the match exhaustive
+/// so a new control response needs an explicit admin outcome decision.
+pub(super) enum NativeOutcome {
+    Success(RequestState),
+    Refused(String),
+    Unknown(String),
+}
+
+pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
     match response {
-        ControlResponse::Job { job } if job.outcome.is_none() => RequestState::Accepted,
-        ControlResponse::LifecycleAccepted { .. } => RequestState::Accepted,
-        _ => RequestState::Completed,
+        ControlResponse::Job { job } if job.outcome.is_none() => {
+            NativeOutcome::Success(RequestState::Accepted)
+        }
+        ControlResponse::LifecycleAccepted { .. } => NativeOutcome::Success(RequestState::Accepted),
+        ControlResponse::CatalogOutcomeUnknown { code, .. }
+        | ControlResponse::SourceChangeResolutionOutcomeUnknown { code, .. } => {
+            NativeOutcome::Unknown(code.clone())
+        }
+        ControlResponse::Failure { code }
+            if airk_endpoint::admin_contract::is_unknown_outcome_code(code) =>
+        {
+            NativeOutcome::Unknown(code.clone())
+        }
+        ControlResponse::Failure { code } | ControlResponse::SourceChangeBusy { code, .. } => {
+            NativeOutcome::Refused(code.clone())
+        }
+        ControlResponse::Incompatible { .. } => {
+            NativeOutcome::Refused("runtime_incompatible".into())
+        }
+        ControlResponse::ToolCallFailed { .. } => NativeOutcome::Refused("tool_call_failed".into()),
+        ControlResponse::AgentRefused { .. } => NativeOutcome::Refused("agent_refused".into()),
+        ControlResponse::HttpIssuerRotationRefused { .. } => {
+            NativeOutcome::Refused("http_issuer_rotation_refused".into())
+        }
+        ControlResponse::ExplorerOfflineFailed { .. } => {
+            NativeOutcome::Refused("explorer_offline_failed".into())
+        }
+        ControlResponse::UsageReadFailed { .. } => {
+            NativeOutcome::Refused("usage_read_failed".into())
+        }
+        ControlResponse::ConfigurationRefused { .. } => {
+            NativeOutcome::Refused("configuration_refused".into())
+        }
+        ControlResponse::RegistrationRefused { .. } => {
+            NativeOutcome::Refused("registration_refused".into())
+        }
+        ControlResponse::UpgradeCheckpoint { .. }
+        | ControlResponse::UpgradeRecoveryReady { .. }
+        | ControlResponse::UpgradeAdmissionReleased { .. }
+        | ControlResponse::HttpEndpoint { .. }
+        | ControlResponse::HttpConnection { .. }
+        | ControlResponse::HttpRevoked { .. }
+        | ControlResponse::ReferenceRefreshReviewRequired { .. }
+        | ControlResponse::ReferenceRefreshReceipt { .. }
+        | ControlResponse::CombinedDeliveryValidated { .. }
+        | ControlResponse::NativeRead { .. }
+        | ControlResponse::CatalogPage { .. }
+        | ControlResponse::CatalogDetail { .. }
+        | ControlResponse::CatalogHostContext { .. }
+        | ControlResponse::CatalogLegacyBinding { .. }
+        | ControlResponse::CatalogGrantDraft { .. }
+        | ControlResponse::CatalogSourceMutationDraft { .. }
+        | ControlResponse::CatalogSourceChangeObservation { .. }
+        | ControlResponse::CatalogPendingSourceChange { .. }
+        | ControlResponse::CatalogPolicyStatus { .. }
+        | ControlResponse::CatalogSplitDraft { .. }
+        | ControlResponse::CatalogSplitSourceState { .. }
+        | ControlResponse::CatalogSplitAccepted { .. }
+        | ControlResponse::CatalogSplitStatus { .. }
+        | ControlResponse::CatalogSplitReceipt { .. }
+        | ControlResponse::CatalogSplitRecovered { .. }
+        | ControlResponse::CatalogSplitRecoveryReceipt { .. }
+        | ControlResponse::CatalogPolicyResumed { .. }
+        | ControlResponse::CatalogPolicyResumeReceipt { .. }
+        | ControlResponse::CatalogIndexRetirementEvidence { .. }
+        | ControlResponse::CatalogSourceChangeResolved { .. }
+        | ControlResponse::CatalogIndexSetupDraft { .. }
+        | ControlResponse::CatalogIndexSetupApplied { .. }
+        | ControlResponse::CatalogIndexSetupReceipt { .. }
+        | ControlResponse::CatalogPreview { .. }
+        | ControlResponse::CatalogApplied { .. }
+        | ControlResponse::CatalogReceipt { .. }
+        | ControlResponse::CatalogReceiptUnprepared { .. }
+        | ControlResponse::Configuration { .. }
+        | ControlResponse::Logs { .. }
+        | ControlResponse::Health { .. }
+        | ControlResponse::Resources { .. }
+        | ControlResponse::Maintenance { .. }
+        | ControlResponse::Watch { .. }
+        | ControlResponse::Progress { .. }
+        | ControlResponse::Inspection { .. }
+        | ControlResponse::SourceStatus { .. }
+        | ControlResponse::Stopping
+        | ControlResponse::Registered { .. }
+        | ControlResponse::Projects { .. }
+        | ControlResponse::RequestEpoch { .. }
+        | ControlResponse::RequestReceipt { .. }
+        | ControlResponse::Events { .. }
+        | ControlResponse::Plan { .. }
+        | ControlResponse::PlanItems { .. }
+        | ControlResponse::Job { .. }
+        | ControlResponse::Connection { .. }
+        | ControlResponse::Console { .. }
+        | ControlResponse::Workers { .. }
+        | ControlResponse::Worker { .. }
+        | ControlResponse::ProjectRestarting { .. }
+        | ControlResponse::EmbeddingStatus { .. }
+        | ControlResponse::EmbeddingStarting
+        | ControlResponse::EmbeddingStopped { .. }
+        | ControlResponse::ToolsCatalog { .. }
+        | ControlResponse::ToolResult { .. }
+        | ControlResponse::AgentEndpoint { .. }
+        | ControlResponse::AgentConnectionInfo { .. }
+        | ControlResponse::AgentConnectionOwnership { .. }
+        | ControlResponse::AgentConnectionVerified { .. }
+        | ControlResponse::AgentConnectionDefaults { .. }
+        | ControlResponse::HttpIssuerRotation { .. }
+        | ControlResponse::LifecycleAbandoned { .. }
+        | ControlResponse::StorageInventory { .. }
+        | ControlResponse::StoragePurgePlan { .. }
+        | ControlResponse::StoragePurged { .. }
+        | ControlResponse::LoginStartup { .. }
+        | ControlResponse::FolderListing { .. }
+        | ControlResponse::ClientRequestPrepared { .. }
+        | ControlResponse::ClientRequests { .. }
+        | ControlResponse::ClientRequestForgotten { .. }
+        | ControlResponse::Resolved { .. }
+        | ControlResponse::RegistrationPlan { .. }
+        | ControlResponse::StoragePrepared { .. }
+        | ControlResponse::WindowOpened { .. }
+        | ControlResponse::WindowRenewed { .. }
+        | ControlResponse::WindowClosed { .. }
+        | ControlResponse::WindowScopeGranted { .. }
+        | ControlResponse::WindowScopeReleased { .. }
+        | ControlResponse::AssistanceWindows { .. }
+        | ControlResponse::AssistanceQueued { .. }
+        | ControlResponse::AssistanceDrained { .. }
+        | ControlResponse::HandoffPublished { .. }
+        | ControlResponse::ExplorerHandoff { .. }
+        | ControlResponse::ExplorerOffline { .. }
+        | ControlResponse::ModelCatalog { .. }
+        | ControlResponse::UsageDocument { .. }
+        | ControlResponse::ConfigurationPrepared { .. }
+        | ControlResponse::ClientErrorRecorded { .. }
+        | ControlResponse::LifecycleStatus { .. }
+        | ControlResponse::AdminLaunchCode { .. }
+        | ControlResponse::AdminScopeGranted { .. } => {
+            NativeOutcome::Success(RequestState::Completed)
+        }
+    }
+}
+
+/// Preserve the existing success-state convention; failure states are never
+/// attached to a successful mutation progress envelope.
+pub(super) fn state(response: &ControlResponse) -> RequestState {
+    match outcome(response) {
+        NativeOutcome::Success(state) => state,
+        NativeOutcome::Refused(_) => RequestState::Refused,
+        NativeOutcome::Unknown(_) => RequestState::Unknown,
     }
 }
 
 fn progress(nonce: Incarnation, response: &ControlResponse) -> Option<RequestProgress> {
-    Some(RequestProgress {
-        nonce: nonce.to_string(),
-        state: state(response),
-    })
+    match state(response) {
+        state @ (RequestState::Accepted | RequestState::Completed) => Some(RequestProgress {
+            nonce: nonce.to_string(),
+            state,
+        }),
+        RequestState::Submitted | RequestState::Refused | RequestState::Unknown => None,
+    }
 }
 
 /// Send `method`, resending the identical method once if the reply is lost.

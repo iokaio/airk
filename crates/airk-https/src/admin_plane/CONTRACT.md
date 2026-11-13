@@ -86,16 +86,44 @@ observations and carries out the admitted route.
     a rule path is 400 `admin_malformed_request` before anything is sent.
   - **`generate`** rows: keyed mutations and the draft/preview reads. The
     handler reads `RequestEpoch` and draws the caller and nonce from the OS
-    random source. It removes the key, and the caller beside it, from the
-    native result and keeps both in the session (`secrets::Review`, at most
-    32, oldest dropped). The success envelope names the review token; a
-    refusal issues none.
+    random source. Before dispatch, it reserves one `secrets::Review` slot
+    (at most 32 including pending/recovery custody), evicting only the oldest
+    ordinary preview token when necessary. A live reservation or receipt-only
+    recovery identity is never evicted. If no slot can be made available,
+    `admin_review_capacity` (409/refused/nonretryable) occurs before any
+    mutation is sent. Normal success converts the slot to an ordinary token;
+    an ordinary no-effect refusal releases it. The handler removes the exact
+    key, and the caller beside it, before serializing any result or failure.
+    A selection-key-only draft retains the native reply's caller, rather than
+    its unused generated caller draw.
   - **`review`** rows: apply and receipt rows. The body is a `ReviewedCall`
     `{method, review, confirm_text?}`. The handler fills the identity the
     token holds. A missing, unknown or other-session token is 400
     `admin_review_unknown`.
   - Tokens are not consumed: a repeated apply carries the same key and the
-    native key idempotency answers it.
+    native key idempotency answers it. An R04 receipt-only token is different:
+    it restores its identity only into the approved matching receipt read,
+    never another receipt or a mutation. Pending tokens are not restorable.
+  - **R04 unknown custody** (contracts §4.4.1): the approved policy-resume and
+    split-recovery generated mutations retain their reserved original identity
+    on a native unknown result or double-lost native reply. The failure is
+    503/unavailable/nonretryable with an optional `review` receipt-only handle;
+    no successful progress is claimed. A lost reply invents no native body.
+    Existing reviewed setup/Make-readable applies retain their original token.
+    Other generated rows gain no recovery-handle applicability from this work.
+    Request/session/service lifetime and the existing budget remain unchanged.
+  - **Interruption:** an RAII reservation guard releases canceled generate/read
+    work. Once mutation dispatch starts, cancellation cannot establish no
+    effects, so uncertain custody stays pinned until a known response settles
+    it or the session ends. No lock is held across native work. Recovery of a
+    failure envelope itself lost by the browser is not established by this
+    session-only contract.
+  - Receipt-only handles stay receipt-only and pinned through the existing
+    session lifetime, including after a receipt establishes a known outcome.
+    That receipt may resolve the UI's uncertainty; it never grants mutation
+    authority. Thirty-two pinned identities refuse further generated issuance
+    before effects. Reclaiming settled recovery slots earlier is a follow-up;
+    this correction neither increases capacity nor silently discards custody.
   - **Keyed mutation methods** (`Enqueue`, `ConfigureProject`, `Retry`,
     `PlanCreate`, `CatalogPolicyResume`, `Lifecycle`, `CatalogSplitRecover`). `Enqueue` and
   `ConfigureProject` are journaled as `airkctl` journals them: M5
@@ -114,7 +142,14 @@ observations and carries out the admitted route.
   digest-idempotent mutations it is a server-generated nonce that names this
   admin request only (no journal entry, no key, not retryable by nonce).
   `state` is `accepted` for a job without an outcome or a
-  `LifecycleAccepted`, otherwise `completed`. Refusals carry no `request`.
+  `LifecycleAccepted`, otherwise `completed` for existing native successes.
+  Refused/unknown outcomes carry no `request`. `mutations::outcome` exhaustively
+  matches the typed `ControlResponse` before serialization; JSON status suffixes
+  do not classify outcomes. Native catalog/source-resolution unknown variants
+  and the reviewed unknown `Failure` codes are unavailable; source-change busy
+  and typed refusals retain refusal semantics. Full native evidence is kept
+  except the original session-owned caller/key fields, including restored
+  apply/receipt identities and nested setup observations.
 - **Lifecycle (U85):** `service.stop` and `service.restart` send the keyed
   `Lifecycle` method. The answer is the complete `LifecycleAccepted`
   record (state `accepted`); the service then drains and exits, which ends
