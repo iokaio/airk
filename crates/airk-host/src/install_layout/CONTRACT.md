@@ -1,6 +1,6 @@
-# `airk_cli::install_layout` contract
+# `airk_host::install_layout` contract
 
-**Owner:** `airk-cli`. **Introduced:** step S7.2 of the
+**Owner:** `airk-host`. **Introduced:** step S7.2 of the
 [S6/S7 untangling plan](../../../../docs/simplify/s6-s7-plan.md), 9 November
 2026.
 
@@ -29,7 +29,9 @@ The baseline gates (`require_baseline_*`) stay in `runtime_install`.
 
 ## Interface
 
-All items are `pub(crate)`; there are no callers outside `airk-cli`.
+The listed items are public across the extracted host boundary; installer,
+service and catalog owners call this module. `airk-cli` keeps an internal
+compatibility re-export.
 
 | Item | Contract |
 |---|---|
@@ -45,8 +47,8 @@ All items are `pub(crate)`; there are no callers outside `airk-cli`.
 | `registry_binding::{PIN, PART}` | Registry pin receipt names. |
 | `successor_receipt::{Transition, read, receipt_name, successor_state, operation_for, require_private_union, MAX_PRESERVED_PATHS}` | The recovery receipt and its validation, shared with the staying successor writer. |
 
-Several names are `pub(crate)` only because the staying tests in
-`runtime_install::layout::tests` name them. Prefer the functions above to the
+Several public names are also used by the staying tests in
+`runtime_install::layout::tests`. Prefer the functions above to the
 constants in new code.
 
 ## Owned state and invariants
@@ -69,10 +71,9 @@ constants in new code.
 ## Dependencies (allowed edges)
 
 - Allowed: `std`, `anyhow`, `serde`, `serde_json`, `airk_core`, `airk_store`,
-  `airk_kernel` (new namespace identity only), `libc` and `windows_sys`
-  (exclusive rename), and the `airk-cli` leaves `install_files`, `local_ipc`
-  and `user_paths`.
-- **Forbidden:** `runtime_install` and every other `airk-cli` module. In
+  `libc` and `windows_sys` (exclusive rename), `airk_ipc`, and the host
+  leaves `install_files`, `local_ipc` and `user_paths`.
+- **Forbidden:** `runtime_install` and other installer/service policy modules. In
   particular the successor writer, which needs the activation permit, must
   not move here. Re-measure with `python scripts/dev/simplify_metrics.py`.
 
@@ -87,7 +88,7 @@ format, request identity or read budget.
 T0, run from the repository root:
 
 ```console
-cargo test -p airk-cli --no-default-features --lib runtime_install::layout::
+cargo test -p airk-installer --no-default-features --lib runtime_install::layout:: --locked
 ```
 
 The run must select at least 29 tests on Windows and 31 on Unix (one
@@ -101,3 +102,7 @@ exact name (`runtime_install::layout::tests::state_owner_partial_child_fixture`)
   this contract.
 - The S7.2 call-site rewrite is reproducible with
   `python scripts/dev/s7_2_install_layout.py --check`.
+
+Each Cargo selection must report nonzero selected tests. Record selected test
+identities and outcomes; compatibility re-exports do not include dependency
+unit tests. Platform-only cases require their native host.

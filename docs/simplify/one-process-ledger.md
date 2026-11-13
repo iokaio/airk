@@ -1,5 +1,129 @@
 # One resident process: task ledger
 
+## Advanced split implementation (13 November 2026)
+
+- Resume after host reload: built-in AIRK discovery and `status` succeed for
+  collection `airk`, version 1.8.35, the same project binding, publication
+  `airk-r1:4b9af3a7b2d5a72432e93246a61e03e2:688:6616e52e9ac02e6ad02cd726c84d8b2e8c48fb1fb927b3a200cd0d39bed9cc2f`.
+  Semantic readiness is ready; freshness remains unavailable. This confirms
+  host access recovery, not a root-cause repair of the earlier transport fault.
+- P0 blocker source investigation: disassembly of the failed debug executable
+  (`artifacts/advanced-split/airkctl-disasm.txt`) shows nested Clap construction
+  frames of 98,632 bytes (`Cli`), 239,528 (`Command`) and 666,128
+  (`EvidenceCommand`), before parsing. Together with their callers these exceed
+  the Windows default main-thread stack. The pre-split CLI and current session
+  request workers already use 8 MiB; the split one-shot entry point omitted that
+  command thread. Correction restores the same command execution stack and
+  stream/exit ownership in the one-shot, without changing argument or wire
+  shapes, transport retries, timeouts or persisted state. Keep the original
+  failure and add offline parser/error siblings to the real-process regression.
+  Source review also corrects the checkpoint contract's unselected legacy test
+  claim and an install-layout sentence. No other P0 production boundary expands.
+- Resume validation sequence, inputs frozen after explicit combined review:
+  format; scoped `airkctl` Clippy with timings in `artifacts/v190/p10-target`,
+  incremental on; one batched `airkctl --test error_outcomes` run; scoped Python
+  CI-selector checks; repository/version/whitespace checks. Record each result
+  before commit. No T2/T3 or platform qualification in this package.
+- Resume results: format and whitespace pass. `p0-clippy-r2` passes (all targets,
+  no default features, incremental on, persistent P10 target); Cargo 2.52 s,
+  receipt 3.24 s, timing retained alongside
+  `artifacts/advanced-split/receipts/p0-clippy-r2.json`. `p0-process-r2`
+  compiled in 5.07 s; 2 selected, 1 passed, 1 failed: offline parser cases now
+  pass, so the stack correction is confirmed. The remaining failure is the
+  regression fixture: `status` without project/data context returns
+  `installation_not_found` before the intended endpoint observation. Source
+  trace confirms `tools list` uses only the explicit control directory and
+  never the automatic-start path. Correct the fixture's command to that path,
+  preserving its exact error/exit/backtrace/no-side-effect assertions. No
+  production input changed after the passing Clippy result.
+- Final P0 checks: `p0-process-r3` 2/2 pass (nine actual child invocations across
+  parser/help/usage and backtrace/output cases); `p0-startup-r1` 1/1 pass,
+  75 filtered out; `p0-ci-r2` 21/21 pass. Receipts and Cargo timings are under
+  `artifacts/advanced-split/receipts/`; incremental on, P10 target reused,
+  consumed input groups unchanged in each receipt. Repository checks pass for
+  2,764 public files, version agreement remains 1.8.35, whitespace passes.
+  Independent source review covered P0 owner selectors/contracts and command
+  thread semantics; the primary reviewed the integrated changes and corrected
+  the thread-spawn failure to I2 internal exit 8. README, documentation index
+  and release record distinguish source work from retained artifact identities;
+  Marketplace description/version remains applicable (no extension behavior
+  changed). Known older split-introduction/Help discrepancies remain P9 work.
+  No full workspace, installer, macOS/Linux or hosted checks were run.
+
+- Request: create `feat/advanced-split` from `feat/split`, implement
+  `docs/split/codex-plan.md`, commit/push at milestones, and use minimal tests;
+  extensive qualification follows completed implementation. User additionally
+  requests diagnosis and correction of unavailable AIRK MCP tools.
+- Baseline: `860dc4e620b65380d15f2373cb39e46a62c39df7`, candidate 1.8.35.
+  Branch created; the pre-existing plan edit is preserved. Retained U103–U109
+  artifacts remain evidence of their original sources, not fresh qualification.
+- Acceptance: dependency-ordered plan packages, separately landed contracts
+  before consumers, truthful milestone status and no invented release/model/
+  platform qualification. Pending user decisions in §3.2 remain gates.
+- Initial boundary: P0 test ownership/receipts and MCP availability diagnosis;
+  read-only P1 source investigations. Primary owns integration and all checks.
+  Parallel component reviewers own no overlapping production files. Initial
+  review checkpoint is at most 15 minutes per package.
+- MCP actual reproduction: deferred discovery exposes no AIRK tools; explicit
+  `resources/list` for server `airk` fails during initialize with HTTP 503 and
+  `airk.local-api-error/1` code `mcp_transport_unavailable`. Both workspace
+  configurations name `https://127.0.0.1:62133/mcp`. This establishes a reachable
+  service/transport failure, not merely missing configuration. Installed endpoint
+  listens under PID 25712; investigate backend creation/session bounds before a
+  supported restart. Never log credential helper output.
+- P0/R26 source hypothesis: moved private library tests are absent from the
+  Windows/macOS selectors, moved contracts still name old owners, and in-process
+  environment tests cannot establish actual process backtrace behavior. Scope:
+  CI selectors and their tests, affected component contracts, existing integration
+  error tests and an actual `airkctl` subprocess regression. Preserve storage
+  assertions, public behavior, state formats and integration selections.
+- Planned minimal validation: scoped Python CI-selector checks and repository/
+  whitespace/version consistency checks; Rust formatting and affected native
+  checks only when the toolchain is available, retaining Cargo timings. No T2/T3,
+  installer rebuild, model download, installed-editor campaign or publication.
+- Environment: command-local Git safe-directory override; branch mutation
+  requires sandbox escalation. Installed runtime reads also require escalation.
+  Cargo is absent from the current shell PATH; do not claim native checks passed.
+- Recovery observation: supported `airkctl service restart --output json` exited
+  successfully; new service instance `2758bf59aaaf6c03621036f132aa5272`, PID
+  66840. Fresh verified-TLS MCP initialize, tools/list and status succeeded via
+  `artifacts/advanced-split/mcp-probe.py` (credentials never printed, session
+  closed). Collection `airk`, project
+  `e2d64c74e7e0cfd74cc288a554db34f505c4d94ec72efbbc3b896eea928cb856`,
+  publication `airk-r1:4b9af3a7b2d5a72432e93246a61e03e2:671:0ce57203b828bba1a9f90365d974d48b06e6f90e4171d9f7bd520343ac4ab687`.
+  Freshness unavailable and semantic readiness partial. Built-in discovery still
+  immediately returned its earlier startup error after restart; host reload is
+  the next observation. Restart recovery is not a proven root-cause repair.
+- P0 checks collected: `cargo fmt --all` passed; scoped Python
+  `test_ci_plan.py` 21/21 passed; version agreement 1.8.35 passed. Scoped
+  `python scripts/dev-check.py -p airkctl --skip-fmt --target-dir
+  artifacts/v190/p10-target` passed in 35.21 s, incremental on, all targets,
+  no default features. Timing:
+  `artifacts/v190/p10-target/cargo-timings/cargo-timing-20261113T204944225Z-c40827fc20672f35.html`.
+  `git diff --check` passed. Repository check could not enumerate files because
+  its child Git lacked the command-local safe-directory override; rerun with
+  inherited process-local Git config after reload, without global changes.
+- User requests stop/reload to restore built-in MCP before further implementation.
+  P0 changes are saved and uncommitted; no push or product closure. A single
+  subprocess regression was already compiling (`cargo test -p airkctl --test
+  error_outcomes --locked --timings --target-dir artifacts/v190/p10-target`,
+  incremental on). Collected result: compilation completed in 39.63 s; 1 selected,
+  0 passed, 1 failed. The actual `airkctl` process overflowed its main-thread
+  stack on the first missing-runtime `status --output json` case (Windows exit
+  `0xC00000FD`), before returning I2 exit 3. Do not weaken the assertion or retry;
+  trace the actual process startup/parser stack before correction. Timing:
+  `artifacts/v190/p10-target/cargo-timings/cargo-timing-20261113T205033589Z-c40827fc20672f35.html`.
+  Primary and
+  independent P0 source reviews found no required blocker at this checkpoint.
+- Resume: verify built-in AIRK tool discovery/status first; finish P0 minimal
+  checks and documentation consistency, then commit/push with human DCO. P1
+  read-only investigations confirmed R01/R02/R03/R11 still need corrections.
+  R01 requires exact config-target I2/native contract before extension consumer;
+  R02 must suspend automatic admission and fence every async resolution boundary;
+  R03 must fence native scope mutation, and R11 must retain both lease obligations.
+  No P1 production edits have been made. Follow dependency order and the plan's
+  pending contract decisions; defer extensive qualification as requested.
+
 ## Service/extension split planning (10 November 2026)
 
 - Request: create `feat/split` from the current `feat/simplify` HEAD and write

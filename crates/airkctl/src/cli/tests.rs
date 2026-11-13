@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+#[test]
+fn startup_failure_uses_i2_without_constructing_the_parser() {
+    for output in ["json", "text"] {
+        let args = ["airkctl", "--output", output, "status"].map(OsString::from);
+        let mut stderr = Vec::new();
+        assert_eq!(startup_failure(&args, &mut stderr, "thread unavailable"), 8);
+        if output == "json" {
+            let line: Value = serde_json::from_slice(&stderr).unwrap();
+            assert_eq!(line["class"], "internal");
+            assert_eq!(line["code"], "internal");
+            assert_eq!(line["retryable"], false);
+            assert_eq!(line["message"], "thread unavailable");
+        } else {
+            assert_eq!(stderr, b"airkctl: thread unavailable\n");
+        }
+    }
+}
+
 /// Run a command line in process; returns (exit, stdout, stderr).
 fn run_line(arguments: &[&str]) -> (u8, String, String) {
     let mut stdout = Vec::new();

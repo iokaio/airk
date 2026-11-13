@@ -8,8 +8,7 @@ use std::fs;
 mod common;
 
 #[test]
-fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent_errors()
--> Result<()> {
+fn cli_service_refusal_preserves_locked_legacy_storage() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("fixture.txt"), "gate contention fixture\n")?;
@@ -25,12 +24,12 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
     let capacity = store.current_database_capacity(&scope)?;
     let current = store.current_write(&writer, &quota, &scope, capacity)?;
     let before = fs::read(store.directory().join("current-owner.json"))?;
-    for (arguments, backtrace) in [
-        (vec!["status"], "0"),
-        (vec!["status"], "1"),
-        (vec!["status"], "full"),
-        (vec!["index"], "full"),
-        (vec!["outline", "fixture.txt"], "1"),
+    // Backtrace environment/exit coverage lives in airkctl/tests/error_outcomes.rs,
+    // where the actual executable receives the environment in a child process.
+    for arguments in [
+        vec!["status"],
+        vec!["index"],
+        vec!["outline", "fixture.txt"],
     ] {
         let output = common::ctl::Ctl::new()
             .arg("--service-runtime-dir")
@@ -41,8 +40,6 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
             .arg(data.path())
             .args(&arguments)
             .env("AIRK_ERROR_FORMAT", "json")
-            .env("RUST_BACKTRACE", backtrace)
-            .env("RUST_LIB_BACKTRACE", backtrace)
             .output()?;
         // airkctl's I2 error line (contracts §3.4): a missing service is class
         // `service_missing`, exit 3, retryable; it starts and opens nothing.
@@ -88,7 +85,6 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
         .arg(data.path())
         .args(["status"])
         .env("AIRK_ERROR_FORMAT", "json")
-        .env("RUST_LIB_BACKTRACE", "1")
         .output()?;
     // airkctl never opens project storage, so an invalid owner file cannot
     // become a busy or storage result: the answer is the missing service.
@@ -105,8 +101,6 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
         .arg(data.path())
         .args(["status"])
         .env_remove("AIRK_ERROR_FORMAT")
-        .env("RUST_BACKTRACE", "0")
-        .env("RUST_LIB_BACKTRACE", "0")
         .output()?;
     assert_eq!(output.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&output.stderr).starts_with("airkctl: "));

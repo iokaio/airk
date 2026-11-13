@@ -1,5 +1,10 @@
 # AIRK documentation
 
+**Advanced split source checkpoint (13 November 2026).** P0 restores extracted
+component test ownership and the `airkctl` one-shot command stack. Candidate
+version remains 1.8.35; earlier installer/VSIX receipts retain their original
+source identities. Progress and checks: [execution ledger](simplify/one-process-ledger.md).
+
 **Split Phase 4 (unpublished, non-shippable interim).** `airk` is the service
 only; `airk` with no arguments starts it in the background or says it is already
 running. `airkctl` is the command-line client, with every surviving command

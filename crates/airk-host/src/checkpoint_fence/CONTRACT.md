@@ -1,6 +1,6 @@
-# `airk_cli::checkpoint_fence` contract
+# `airk_host::checkpoint_fence` contract
 
-**Owner:** `airk-cli`. **Introduced:** step S7.3 of the
+**Owner:** `airk-host`. **Introduced:** step S7.3 of the
 [S6/S7 untangling plan](../../../../docs/simplify/s6-s7-plan.md), 9 November
 2026.
 
@@ -27,11 +27,11 @@ its own callers and tests.
 
 | Item | Visibility | Contract |
 |---|---|---|
-| `admission_closed(control) -> Result<bool>` | `pub(crate)` | `true` when a valid fence exists. Never creates, repairs or removes it. |
-| `fence_operation(control) -> Result<Option<Incarnation>>` | `pub(crate)` | The operation that owns a valid fence, read without changing it. |
-| `fence(control) -> Result<Option<Fence>>` | `pub(crate)` | `None` when the file is absent. Otherwise reads at most 4,096 bytes and requires schema 1, `control` equal to the canonical control directory, and `service_instance` present exactly when `origin` is `running_service`. |
-| `bytes(path, maximum) -> Result<Vec<u8>>` | `pub(crate)` | `install_files::safe_file`, then a read bounded by `maximum`. Also used by the packet writer. |
-| `Fence`, its fields, `FenceOrigin`, `FENCE` | `pub(crate)` | The persisted fence. The writer builds it. |
+| `admission_closed(control) -> Result<bool>` | `pub` | `true` when a valid fence exists. Never creates, repairs or removes it. |
+| `fence_operation(control) -> Result<Option<Incarnation>>` | `pub` | The operation that owns a valid fence, read without changing it. |
+| `fence(control) -> Result<Option<Fence>>` | `pub` | `None` when the file is absent. Otherwise reads at most 4,096 bytes and requires schema 1, `control` equal to the canonical control directory, and `service_instance` present exactly when `origin` is `running_service`. |
+| `bytes(path, maximum) -> Result<Vec<u8>>` | `pub` | `install_files::safe_file`, then a read bounded by `maximum`. Also used by the packet writer. |
+| `Fence`, its fields, `FenceOrigin`, `FENCE` | `pub` | The persisted fence. The writer builds it. |
 
 ## Owned state and invariants
 
@@ -53,8 +53,8 @@ its own callers and tests.
 ## Dependencies (allowed edges)
 
 - Allowed: `std`, `anyhow`, `serde`, `serde_json`, `airk_core` (identity
-  types) and the `airk-cli` leaf `install_files`.
-- **Forbidden:** `service_runtime` and every other `airk-cli` module.
+  types) and the host leaf `install_files`.
+- **Forbidden:** `service_runtime` and other service/installer policy modules.
   Re-measure with `python scripts/dev/simplify_metrics.py`.
 
 ## Conformance applicability
@@ -68,11 +68,13 @@ format, request identity or read budget.
 T0, run from the repository root:
 
 ```console
-cargo test -p airk-cli --no-default-features --lib checkpoint
+cargo test -p airk-service --no-default-features --lib service_runtime::checkpoint:: --locked
+cargo test -p airk-installer --no-default-features --lib checkpoint --locked
+cargo test -p airk-installer --no-default-features --lib runtime_install::legacy_maintenance::tests:: --locked
 ```
 
-The run must select the three `service_runtime::checkpoint::tests`, which
-read the fence back through this module. Callers' suites also cover it:
+The service selection must select the existing `service_runtime::checkpoint::tests`, which
+read the fence back through this module. The installer selections cover:
 `runtime_install::legacy_maintenance::tests` and
 `runtime_install::activation::checkpoint::tests`. The tests stay where they
 are, because they drive the staying writer.
@@ -82,3 +84,7 @@ are, because they drive the staying writer.
 - Source: `mod.rs`, beside this contract.
 - The S7.3 call-site rewrite is reproducible with
   `python scripts/dev/s7_3_checkpoint_fence.py --check`.
+
+Each Cargo selection must report nonzero selected tests. Record selected test
+identities and outcomes; compatibility re-exports do not include dependency
+unit tests. Platform-only cases require their native host.

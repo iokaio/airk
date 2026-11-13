@@ -1,6 +1,6 @@
 # `setup_role` contract (I4 writer; split Phase 7)
 
-**Owner:** `airk-cli` (`crates/airk-cli/src/setup_role/`). **Introduced:**
+**Owner:** `airk-service` (`crates/airk-service/src/setup_role/`). **Introduced:**
 split plan Phase 7 ([split plan](../../../../docs/split/split-plan.md)
 §9.1–§9.6, §10.2; decisions U13–U16, U20, U30–U33, U36, U39, U40, U50, U78,
 U82; [contracts](../../../../docs/split/contracts.md) §5.5–§5.7).
@@ -242,8 +242,12 @@ removing it ends that instance, which is the serving service.
 ## T0
 
 ```console
-cargo test -p airk-cli --lib setup_role
-cargo test -p airk-cli --lib role_admission
-cargo test -p airk-cli --lib service_locations
+cargo test -p airk-service --lib setup_role --locked
+cargo test -p airk-cli --lib role_admission --locked
+cargo test -p airk-host --lib service_locations --locked
 cargo test -p airk-core --lib install_record
 ```
+
+Each Cargo selection must report nonzero selected tests. Record selected test
+identities and outcomes; compatibility re-exports do not include dependency
+unit tests. Platform-only cases require their native host.

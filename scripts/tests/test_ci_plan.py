@@ -17,6 +17,16 @@ class PlanTests(unittest.TestCase):
         regression = next(line for line in workflow.splitlines() if "--name platform-regressions --" in line)
         self.assertIn("-p airk-cli --no-default-features --features local-inference --lib",regression)
         self.assertIn("--profile ci --test-threads 2",regression)
+        components = next(line for line in workflow.splitlines() if "--name platform-component-regressions --" in line)
+        # Independent owner roster: public re-exports never run dependency-private tests.
+        expected = {"airk-host", "airk-endpoint", "airk-inference", "airk-catalog-control",
+                    "airk-installer", "airk-supervisor", "airk-frontend", "airk-https", "airk-service"}
+        words = components.split()
+        self.assertEqual({words[index + 1] for index, word in enumerate(words) if word == "-p"}, expected)
+        self.assertIn("--no-default-features --features local-inference --lib", components)
+        self.assertIn("--profile ci --test-threads 2", components)
+        self.assertIn("cargo nextest run --profile ci -p airk-process --locked", workflow)
+        self.assertIn("--test explorer_assistance", regression)
         self.assertIn("cargo check -p airk-cli --no-default-features --all-targets --locked --target ${{ matrix.target }}",workflow)
         extended = (Path(__file__).parents[2] / ".github/workflows/qualification.yml").read_text(encoding="utf-8")
         self.assertNotIn("provision-onnx-runtime.py",extended)

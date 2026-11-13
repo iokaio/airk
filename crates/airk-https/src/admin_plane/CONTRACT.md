@@ -1,5 +1,7 @@
 # Admin plane module (Phase 5)
 
+**Owner:** `airk-https`; the service injects its dispatch and authority hooks.
+
 The service's `/admin` handler (split plan §7.1–7.3; [contracts](../../../../docs/split/contracts.md)
 §2.7 (A1, A2) and §4 (I3) as amended by §4.3a, §4.11 and the adopted
 [security review](../../../../docs/split/security-review-i3.md)). Every
@@ -191,6 +193,10 @@ observations and carries out the admitted route.
 ## T0
 
 ```console
-cargo test -p airk-cli --lib admin_plane
-cargo test -p airk-cli --test admin_plane
+cargo test -p airk-https --lib admin_plane --locked
+cargo test -p airk-cli --test admin_plane --locked
 ```
+
+Each Cargo selection must report nonzero selected tests. Record selected test
+identities and outcomes; compatibility re-exports do not include dependency
+unit tests. Platform-only cases require their native host.

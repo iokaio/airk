@@ -1,5 +1,12 @@
 # 1.8.35 candidate: agents from the Explorer, open connections, per-index results (local, Windows)
 
+**Advanced split source checkpoint (13 November 2026).** Subsequent P0 source
+work restores extracted component test ownership and the one-shot `airkctl`
+command thread used by the pre-split CLI and session requests. Targeted Windows
+checks are recorded in the [execution ledger](../simplify/one-process-ledger.md).
+No installer or VSIX was rebuilt for this checkpoint; retained artifact receipts
+continue to identify their original sources. The candidate version stays 1.8.35.
+
 **13 November 2026. Preparation.** 1.8.35 is 1.8.34 ([record](release-1.8.34.md)) with the agent
 connection and search scope changes its manual install asked for. Native/extension manifests and
 lockfiles are synchronized at 1.8.35 (`python scripts/release-version.py check --expected 1.8.35`).

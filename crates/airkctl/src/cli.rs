@@ -3581,6 +3581,26 @@ pub fn help_catalog() -> std::collections::BTreeMap<String, String> {
     catalog
 }
 
+/// Report a process bootstrap failure without constructing the command parser.
+/// The binary uses this when the OS cannot create its command thread.
+pub fn startup_failure(arguments: &[OsString], stderr: &mut dyn Write, message: &str) -> u8 {
+    let mut io = Io {
+        stdin: &mut std::io::empty(),
+        stdout: &mut std::io::sink(),
+        stderr,
+        full_responses: false,
+        window: None,
+    };
+    let mut cx = Context {
+        output: requested_output(arguments.get(1..).unwrap_or_default()),
+        io: &mut io,
+    };
+    fail(
+        &mut cx,
+        &ErrorLine::new(ExitClass::Internal, "internal", false, message),
+    )
+}
+
 pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     let output = requested_output(arguments.get(1..).unwrap_or_default());
     let mut cx = Context { output, io };

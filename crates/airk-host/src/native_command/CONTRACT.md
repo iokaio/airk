@@ -1,6 +1,6 @@
-# `airk_cli::native_command` contract
+# `airk_host::native_command` contract
 
-**Owner:** `airk-cli`. **Introduced:** step S7.1 of the
+**Owner:** `airk-host` (forwarder); implementation owner: `airk-process`. **Introduced:** step S7.1 of the
 [S6/S7 untangling plan](../../../../docs/simplify/s6-s7-plan.md), 9 November
 2026.
 
@@ -23,14 +23,14 @@ CLI module cycle. Callers now depend on this leaf instead.
 
 | Item | Visibility | Contract |
 |---|---|---|
-| `MAX_CONFIG` | `pub(crate)` | 128 KiB. Bounds command input here, and service configuration files in `service_manager`. One value, so any accepted definition can be passed as input. |
-| `Invocation { program, args, env, input }` | `pub(crate)` | A command description. `Invocation::new(program, args)` sets an empty environment overlay and no input. `env` adds to the inherited environment; it never clears it. |
-| `Output { success, text }` | `pub(crate)` | Exit success and the lossy UTF-8 text of stdout and stderr, concatenated in the order the two streams closed. |
-| `execute(&Invocation) -> Result<Output>` | `pub(crate)` | `execute_with_timeout` with a 30-second deadline. |
-| `execute_with_timeout(&Invocation, Duration) -> Result<Output>` | `pub(crate)` | Fails, rather than truncating, when input exceeds `MAX_CONFIG`, an output stream exceeds 64 KiB, or the child, its input or its output outlives the deadline. Standard input is null unless `input` is set. Windows children get `CREATE_NO_WINDOW`. |
-| `execute_native_program(program, args) -> Result<bool>` | `pub(crate)`, macOS and tests | Exit success only. |
-| `execute_native_observation(program, args) -> Result<(bool, String)>` | `pub(crate)`, Windows, macOS and tests | Exit success and text. |
-| `windows_tool(name) -> Result<PathBuf>` | `pub(crate)` | Windows: `GetSystemDirectoryW` joined with `name`, which must be an existing file. Other hosts: always an error. |
+| `MAX_CONFIG` | `pub` | 128 KiB. Bounds command input here, and service configuration files in `service_manager`. One value, so any accepted definition can be passed as input. |
+| `Invocation { program, args, env, input }` | `pub` | A command description. `Invocation::new(program, args)` sets an empty environment overlay and no input. `env` adds to the inherited environment; it never clears it. |
+| `Output { success, text }` | `pub` | Exit success and the lossy UTF-8 text of stdout and stderr, concatenated in the order the two streams closed. |
+| `execute(&Invocation) -> Result<Output>` | `pub` | `execute_with_timeout` with a 30-second deadline. |
+| `execute_with_timeout(&Invocation, Duration) -> Result<Output>` | `pub`, tests or `test-support` | Fails, rather than truncating, when input exceeds `MAX_CONFIG`, an output stream exceeds 64 KiB, or the child, its input or its output outlives the deadline. Standard input is null unless `input` is set. Windows children get `CREATE_NO_WINDOW`. |
+| `execute_native_program(program, args) -> Result<bool>` | `pub`, macOS, tests or `test-support` | Exit success only. |
+| `execute_native_observation(program, args) -> Result<(bool, String)>` | `pub`, Windows, macOS and tests | Exit success and text. |
+| `windows_tool(name) -> Result<PathBuf>` | `pub` | Windows: `GetSystemDirectoryW` joined with `name`, which must be an existing file. Other hosts: always an error. |
 
 Windows argument quoting (`windows_argument`) is not part of this module. It
 lives in `native_process`, which uses it for detached service command lines.
@@ -53,12 +53,12 @@ lives in `native_process`, which uses it for detached service command lines.
 
 ## Dependencies (allowed edges)
 
-- Allowed: `std`, `anyhow`, `windows_sys` (system directory only), and
-  `native_process` (process containment).
-- **Forbidden:** any other `airk-cli` module and any `airk_*` crate. In
-  particular, never import `service_manager`: that recreates the cycle S7.1
-  removed. Re-measure with `python scripts/dev/simplify_metrics.py` (the
-  library module graph table).
+- This host module only re-exports `airk_process::bounded_command`.
+- The implementation uses `std`, `anyhow`, `windows_sys` and process
+  containment in its owning crate.
+- **Forbidden:** service or installer policy. In particular, never import
+  `service_manager`: that recreates the cycle S7.1 removed. Re-measure with
+  `python scripts/dev/simplify_metrics.py` (the library module graph table).
 
 ## Conformance applicability
 
@@ -71,7 +71,7 @@ format, request identity or read budget.
 T0, run from the repository root:
 
 ```console
-cargo test -p airk-cli --no-default-features --lib service_manager::tests::manager_command
+cargo test -p airk-installer --no-default-features --lib service_manager::tests::manager_command --locked
 ```
 
 The run must select at least two tests on every host
@@ -97,3 +97,7 @@ The items above now live in `airk_process::bounded_command` (with
 `scripts/dev/split_u90b_forwarders.py` so `airkctl` runs the same bounded
 commands. This module re-exports them with the visibility and cfg gates
 listed here; their behavior and bounds are unchanged.
+
+Each Cargo selection must report nonzero selected tests. Record selected test
+identities and outcomes; compatibility re-exports do not include dependency
+unit tests. Platform-only cases require their native host.

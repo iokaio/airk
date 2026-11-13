@@ -1,5 +1,10 @@
 # AIRK: Local Search for Coding Agents
 
+**Advanced split source checkpoint (13 November 2026).** P0 restores extracted
+component test ownership and the `airkctl` one-shot command stack. Candidate
+version remains 1.8.35; existing installer/VSIX receipts describe their original
+sources. See the [execution ledger](docs/simplify/one-process-ledger.md).
+
 **Split Phase 4: `airk` and `airkctl` (unpublished, non-shippable interim).**
 `airk` is now the service only. `airk` with no arguments starts the installed
 service in the background (through the `airkctl` installed beside it), or says

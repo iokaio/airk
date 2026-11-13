@@ -1,6 +1,6 @@
-# `airk_cli::install_files` contract
+# `airk_host::install_files` contract
 
-**Owner:** `airk-cli`. **Introduced:** Milestone S1.4 of the
+**Owner:** `airk-host`. **Introduced:** Milestone S1.4 of the
 [simplification plan](../../../../docs/simplify-plan.md), 9 November 2026.
 
 ## Purpose
@@ -22,16 +22,16 @@ without depending on installer state, locks or lifecycle code.
 
 | Item | Visibility | Contract |
 |---|---|---|
-| `safe_file(path) -> Result<()>` | `pub(crate)` | `Ok` only for an existing regular file that is not a symlink and has exactly one name. On Unix it also requires `nlink == 1`. On Windows it refuses the reparse-point attribute (`0x400`) and requires a link count of 1 from `GetFileInformationByHandle`. It never creates, opens for write, repairs or deletes anything. |
+| `safe_file(path) -> Result<()>` | `pub` | `Ok` only for an existing regular file that is not a symlink and has exactly one name. On Unix it also requires `nlink == 1`. On Windows it refuses the reparse-point attribute (`0x400`) and requires a link count of 1 from `GetFileInformationByHandle`. It never creates, opens for write, repairs or deletes anything. |
 | `main_name() -> &'static str` | `pub` | `airk.exe` (Windows), `AIRK.app/Contents/MacOS/airk` (macOS), `airk` (other). |
-| `MAC_LAUNCHER_IMAGE` | `pub(crate)` | `AIRK.app/Contents/MacOS/airk-launcher-image`, the separately signed Mac launcher image name. |
+| `MAC_LAUNCHER_IMAGE` | `pub` | `AIRK.app/Contents/MacOS/airk-launcher-image`, the separately signed Mac launcher image name. |
 | `launcher_path(root) -> PathBuf` | `pub` | `root/airk-launcher.exe` (Windows) or `root/airk-launcher` (other). Pure path join with no filesystem access. |
-| `read_bounded(path, limit) -> Result<Vec<u8>>` | `pub(crate)` | `safe_file`, then refuses a file whose metadata length exceeds `limit` ("runtime metadata exceeds byte limit") or whose read grows past it ("runtime metadata grew beyond byte limit"). Reads at most `limit + 1` bytes. Never writes. |
-| `sync_directory(path) -> Result<()>` | `pub(crate)` | Unix: opens the directory and calls `sync_all`, making entry changes durable. Other hosts: a no-op that returns `Ok`. |
+| `read_bounded(path, limit) -> Result<Vec<u8>>` | `pub` | `safe_file`, then refuses a file whose metadata length exceeds `limit` ("runtime metadata exceeds byte limit") or whose read grows past it ("runtime metadata grew beyond byte limit"). Reads at most `limit + 1` bytes. Never writes. |
+| `sync_directory(path) -> Result<()>` | `pub` | Unix: opens the directory and calls `sync_all`, making entry changes durable. Other hosts: a no-op that returns `Ok`. |
 
-`pub` items have real external callers: the `airk` binary and the
-integration tests in `crates/airk-cli/tests/`. Everything else stays
-`pub(crate)`.
+These items are public across the extracted native crate boundary. Callers
+include the service, installer, the `airk` binary and integration tests;
+`airk-cli` retains a compatibility re-export.
 
 ## Owned state and invariants
 
@@ -50,12 +50,12 @@ integration tests in `crates/airk-cli/tests/`. Everything else stays
 
 ## Dependencies (allowed edges)
 
-- Allowed: `std`, `anyhow`, `windows_sys` (Windows file information only).
+- Allowed: `std`, `anyhow`, and `airk_ipc::private_record` (regular-file identity).
 - `read_bounded` has one owner here. `explorer_assistance` and
   `universal_launcher` keep their own bounded readers, whose signatures and
   error text differ; merging them would be a behavior change.
-- **Forbidden:** any other `airk-cli` module and any `airk_*` crate. Adding one
-  would put this leaf back into the CLI module cycle. Re-measure with
+- **Forbidden:** installer/service policy modules. File identity delegates to
+  `airk_ipc::private_record::require_regular_unlinked`. Re-measure dependencies with
   `python scripts/dev/simplify_metrics.py` (the library module graph table).
 
 ## Related boundary: user path discovery
@@ -82,7 +82,7 @@ no wire format, request identity or budget.
 T0, run from the repository root:
 
 ```console
-cargo test -p airk-cli --no-default-features --lib install_files
+cargo test -p airk-host --no-default-features --lib install_files --locked
 ```
 
 The run must select at least three tests. The Unix-only symlink case adds one
@@ -103,3 +103,7 @@ exercise them.
   `runtime_install` in step S7.2; `runtime_install` imports them, so its
   submodules reach them unchanged. See
   `python scripts/dev/s7_2_install_layout.py --check`.
+
+Each Cargo selection must report nonzero selected tests. Record selected test
+identities and outcomes; compatibility re-exports do not include dependency
+unit tests. Platform-only cases require their native host.
