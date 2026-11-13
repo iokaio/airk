@@ -627,6 +627,18 @@ test('search results, drafts and page survive closing Explorer without workspace
     } finally { explorer.dispose(); }
 });
 
+test('Max results per index is refused unless the search scope spans several indexes (U107)', async () => {
+    const { explorer, host } = controller() as any;
+    try {
+        explorer.open('#search/query'); panels.at(-1).send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        const run = { v: 1, type: 'search.run', requestId: 'per-index', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false, limitPerIndex: 2 };
+        await assert.rejects((explorer as any).dispatch(run), (error: any) => error.error?.code === 'CAPABILITY_DISABLED' && /spans several indexes/.test(error.message));
+        host.windowScope = windowScope(true, { searchScopeSummary: () => ({ available: true, active: true, outOfDate: false, remembered: false, indexIds: ['idx_' + '01'.repeat(16)] }) });
+        await assert.rejects((explorer as any).dispatch({ ...run, requestId: 'one-index' }), /spans several indexes/, 'a one-index search scope takes no per-index count');
+        assert.deepEqual(await (explorer as any).dispatch({ ...run, requestId: 'default', limitPerIndex: undefined }), { completed: true }, 'the default search is unchanged');
+    } finally { explorer.dispose(); }
+});
+
 test('a search finishing after panel recreation restores results without replaying its old request ID', async () => {
     const { explorer } = controller();
     let finish!: (result: unknown) => void;

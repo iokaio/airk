@@ -7,7 +7,39 @@ export const WORKBENCH_MAX_STEP_REPORTS=72;
 export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
 export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string;
     /** Full original native error reply, never a fabricated successful result. */
-    nativeFailure?:Value;trimmed?: boolean }
+    nativeFailure?:Value;trimmed?: boolean;
+    /** (U105) The explicitly named indexes and index sets this read was sent with (`--index`/`--set`), as the user named them. */
+    selection?: OpenSelection }
+/** (U105) An explicit open read selection: indexes and index sets named by id, exact name or unique
+ * case-insensitive name, read whole as a union (`airkctl tools call --index … --set …`). */
+export interface OpenSelection { indexes: string[]; sets: string[] }
+/** Native ToolSelection::Open bounds (airk-core service.rs; index_catalog MAX_SELECTION, MAX_LABEL_BYTES). */
+export const OPEN_SELECTION_MAX=32,OPEN_SELECTION_NAME_BYTES=256;
+/** Check an explicit selection before it is sent; names are resolved, and refused, by the service.
+ * A name starting with `-` cannot be passed as a separate `--index`/`--set` value; use its id. */
+export function validateOpenSelection(raw:unknown):OpenSelection{
+    const value=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw as Record<string,unknown>:{};
+    if(Object.keys(value).some(key=>key!=='indexes'&&key!=='sets'))throw new Error('Name only indexes and index sets.');
+    const list=(key:'indexes'|'sets',noun:string)=>{
+        const items=value[key]??[];
+        if(!Array.isArray(items))throw new Error(`Name the ${noun}es as a list.`);
+        const out=items.map(item=>typeof item==='string'?item.trim():'');
+        for(const item of out){
+            if(!item)throw new Error(`An ${noun} name is empty.`);
+            if(new TextEncoder().encode(item).length>OPEN_SELECTION_NAME_BYTES)throw new Error(`An ${noun} name exceeds ${OPEN_SELECTION_NAME_BYTES} bytes.`);
+            if(/[\u0000-\u001f\u007f-\u009f]/.test(item))throw new Error(`An ${noun} name contains a control character.`);
+            if(item.startsWith('-'))throw new Error(`"${item}" starts with "-"; name that ${noun} by its id instead.`);
+        }
+        if(new Set(out).size!==out.length)throw new Error(`An ${noun} is named twice.`);
+        if(out.length>OPEN_SELECTION_MAX)throw new Error(`Name at most ${OPEN_SELECTION_MAX} ${noun}${noun==='index'?'es':'s'}.`);
+        return out;
+    };
+    const selection={indexes:list('indexes','index'),sets:list('sets','index set')};
+    if(!selection.indexes.length&&!selection.sets.length)throw new Error('Name at least one index or index set.');
+    return selection;
+}
+/** One name per line; blank lines are ignored. */
+export const openSelectionLines=(text:string):string[]=>text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
 export interface WorkbenchFormDraft { activeTool:string; values:Record<string,Record<string,string>>; revision:number; scope:string; recipe:string }
 export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[]; formDraft?:WorkbenchFormDraft }
 const FORM_TOOLS=['search','symbols','references','read_file','outline','list_files','file_info','imports','code_facts','document_facts','changes','context','relationships','status','diagnostics','capabilities','query_scope','help'];
@@ -56,6 +88,12 @@ export interface WorkbenchState {
     metadataViews?:Record<string,Value>;metadataIssues?:Record<string,string>;
     capabilityDetails?:Record<string,Record<string,CapabilityFieldDisplay>>;
     status?: Value; publicationRelations?:Record<string,PublicationRelation>; persistence: boolean; operations?: Value;
+    /** The catalog's `combined_controls` (U107): `limit_per_index` is offered only when it is declared. */
+    combinedControls?: Value;
+    /** The explicit selection of the chosen entry, when it is one (U105). */
+    openSelection?: OpenSelection;
+    /** The window's loaded search-scope choices, for naming indexes and index sets (ids and names only). */
+    scopeChoices?: { indexes: {id:string;name?:string}[]; sets: {id:string;name?:string}[]; loaded: boolean };
     sessionEpoch?:number;
 }
 /** Host-to-webview display updates. Full result ownership stays in the host. */
@@ -90,7 +128,7 @@ export interface WorkbenchToolField {
     name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
     values?:string[];description?:string;defaultValue?:string|number|boolean;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
 }
-const fieldLabels:Record<string,string>={project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_profile_families:'Include effective profile families',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
+const fieldLabels:Record<string,string>={limit_per_index:'Max results per index',project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_profile_families:'Include effective profile families',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
 /** Resolve only bundled local schema alternatives; no remote schema loading. */
 function fieldSchema(raw:unknown,root:Value,depth=0):Value {
     const schema=object(raw);if(depth>4)return {};
@@ -114,8 +152,24 @@ export function toolFormFields(raw:unknown):WorkbenchToolField[]{
             ...(typeof spec.minimum==='number'?{minimum:spec.minimum}:{}),...(typeof spec.maximum==='number'?{maximum:spec.maximum}:{})};
     });
 }
-export function toolFormArguments(schema:unknown,values:Record<string,string>):Value {
-    const fields=toolFormFields(schema),known=new Set(fields.map(field=>field.name)),entries:Array<[string,unknown]>=[];
+/** (U107) "Max results per index" for an operation with `limit`, when the catalog declares
+ * `combined_controls.limit_per_index` (a read that spans several indexes). Bounds stay within 1–100. */
+export function limitPerIndexField(schema:unknown,combinedControls:unknown):WorkbenchToolField|undefined{
+    const properties=object(object(schema).properties),declared=object(combinedControls).limit_per_index;
+    if(!Object.hasOwn(properties,'limit')||Object.hasOwn(properties,'limit_per_index')||!declared||typeof declared!=='object'||Array.isArray(declared))return;
+    const spec=object(declared),minimum=typeof spec.minimum==='number'?Math.max(1,spec.minimum):1,maximum=typeof spec.maximum==='number'?Math.min(100,spec.maximum):100;
+    return {name:'limit_per_index',label:fieldLabels.limit_per_index,type:'integer',required:false,minimum,maximum,
+        description:'Each index returns at most this many results; Limit stays the overall cap.'};
+}
+/** The form's fields: the operation schema's, with "Max results per index" after `limit` when declared. */
+export function workbenchToolFields(schema:unknown,combinedControls?:unknown):WorkbenchToolField[]{
+    const fields=toolFormFields(schema),extra=limitPerIndexField(schema,combinedControls);
+    if(!extra)return fields;
+    const at=fields.findIndex(field=>field.name==='limit');
+    return [...fields.slice(0,at+1),extra,...fields.slice(at+1)];
+}
+export function toolFormArguments(schema:unknown,values:Record<string,string>,combinedControls?:unknown):Value {
+    const fields=workbenchToolFields(schema,combinedControls),known=new Set(fields.map(field=>field.name)),entries:Array<[string,unknown]>=[];
     for(const [name,value]of Object.entries(values))if(value!==''&&!known.has(name))throw new Error('Choose a field from the current tool form.');
     for(const field of fields){
         const value=values[field.name]??'';
@@ -153,7 +207,11 @@ export type WorkbenchMessage =
     | { type:'formDraft';sessionId:string;project:string;epoch:number;revision:number;tool:string;values?:Record<string,string>;scope?:string;recipe?:string }
     | { type:'resetForm';sessionId:string;project:string;epoch:number;revision:number;tool:string }
     | {type:'exportSourceOpen';id:string;format:'copy'|'json'}
-    | { type: 'copy' | 'export'; turn?: string; format: 'json' | 'markdown'; cards?: string[] };
+    | { type: 'copy' | 'export'; turn?: string; format: 'json' | 'markdown'; cards?: string[] }
+    /** (U105) Read explicitly named indexes and index sets instead of the window's search scope. */
+    | { type:'openSelection'; indexes:string[]; sets:string[] }
+    /** Load the window's search-scope choices (names for the explicit selection). */
+    | { type:'scopeChoices' };
 export const object = (v: unknown): Value => v && typeof v === 'object' && !Array.isArray(v) ? v as Value : {};
 export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefined {
     const v = object(raw), type = v.type;
@@ -171,7 +229,12 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
         &&(v.recipe===undefined||typeof v.recipe==='string'&&FORM_RECIPES.includes(v.recipe))){return v as WorkbenchMessage;}
     if(type==='resetForm'&&exact(['type','sessionId','project','epoch','revision','tool'])&&formFence()){return v as WorkbenchMessage;}
     if(type==='exportSourceOpen'&&exact(['type','id','format'])&&str('id',32)&&/^[0-9a-f]{32}$/.test(String(v.id))&&['copy','json'].includes(String(v.format)))return v as WorkbenchMessage;
-    if (['ready','stop','new','clear','manage','help','refresh','retrySave','fork','forms'].includes(type) && exact(['type'])) { return v as WorkbenchMessage; }
+    if (['ready','stop','new','clear','manage','help','refresh','retrySave','fork','forms','scopeChoices'].includes(type) && exact(['type'])) { return v as WorkbenchMessage; }
+    if(type==='openSelection'&&exact(['type','indexes','sets'])&&Array.isArray(v.indexes)&&Array.isArray(v.sets)){
+        // Already trimmed and valid: the host never normalizes what the webview sent.
+        try{const selection=validateOpenSelection({indexes:v.indexes,sets:v.sets});
+            if(JSON.stringify(selection)===JSON.stringify({indexes:v.indexes,sets:v.sets}))return v as WorkbenchMessage;}catch{return;}
+    }
     if (['project','recent','delete'].includes(type) && exact(['type','id']) && str('id')) { return v as WorkbenchMessage; }
     if (type === 'rename' && exact(['type','title']) && str('title',80)) { return v as WorkbenchMessage; }
     if (type === 'run' && exact(['type','input','prepare','recipe','plan','pathPrefix']) && str('input',4096) && typeof v.prepare === 'boolean' && (v.pathPrefix===undefined || str('pathPrefix',1024))

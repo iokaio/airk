@@ -236,6 +236,11 @@ export interface ExplorerViewState {
     readonly searchScope?: SearchScopeSummary;
 }
 
+/** (U107) Whether the window's granted search scope spans several indexes, so `limit_per_index` applies. */
+export function scopeSpansIndexes(summary: { readonly active: boolean; readonly indexIds?: readonly string[] } | undefined): boolean {
+    return !!summary?.active && (summary.indexIds?.length ?? 0) > 1;
+}
+
 /** The window search scope as the headers show it. While `active`, Explorer reads run under it. */
 export interface SearchScopeSummary {
     /** The service advertises `window-scope/1`. */
@@ -316,7 +321,9 @@ export interface SearchResultView {
     readonly warnings: readonly string[];
 }
 /** Window-session state only; never written to workspace storage. */
-export interface SearchForm { query: string; mode: SearchMode; pathPrefix: string; limit: number; maxBytes: number; fullChunks: boolean }
+export interface SearchForm { query: string; mode: SearchMode; pathPrefix: string; limit: number; maxBytes: number; fullChunks: boolean;
+    /** (U107) Max results per index (`limit_per_index`, 1–100); only while the search scope spans several indexes. */
+    limitPerIndex?: number }
 export interface SearchSessionView {
     readonly nativeFailure?: Record<string, unknown>;
     readonly project: string;
@@ -766,6 +773,7 @@ export const WEBVIEW_MESSAGES = {
         mode: { kind: 'enum', values: ['policy', 'lexical', 'vector', 'hybrid'] },
         pathPrefix: { kind: 'string', max: 1024 },
         limit: { kind: 'int', min: 1, max: 100 }, maxBytes: { kind: 'int', min: 1024, max: 65536 }, fullChunks: { kind: 'bool' },
+        limitPerIndex: { kind: 'int', min: 1, max: 100, optional: true },
     },
     'search.run': {
         query: { kind: 'string', min: 1, max: 4096 },
@@ -774,6 +782,7 @@ export const WEBVIEW_MESSAGES = {
         limit: { kind: 'int', min: 1, max: 100 },
         maxBytes: { kind: 'int', min: 1024, max: 65536 },
         fullChunks: { kind: 'bool' },
+        limitPerIndex: { kind: 'int', min: 1, max: 100, optional: true },
     },
     'evidence.expand': { ref: REF, before: { kind: 'int', min: 0, max: 100 }, after: { kind: 'int', min: 0, max: 100 } },
     'source.open': { ref: REF },

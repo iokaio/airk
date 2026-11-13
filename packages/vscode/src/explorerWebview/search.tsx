@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { OpenSourceResult, PassageView, SearchMode, SearchForm } from '../explorerContracts';
+import { OpenSourceResult, PassageView, scopeSpansIndexes, SearchMode, SearchForm } from '../explorerContracts';
 import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
 import { HostFailure, request } from './api';
 import { ago, countLine, shortToken } from './format';
@@ -27,13 +27,16 @@ export function SearchScreen(props: ScreenProps) {
         : status?.semantic === 'partial' ? 'Semantic coverage is partial. Search uses the vectors published so far.'
         : status?.semantic === 'failed' ? 'Semantic indexing failed. Check Management › Activity or the index in AIRK Admin › Index library for the failure; semantic results may be unavailable or incomplete.' : '';
     const canSearch = props.state.connection === 'ready' || props.state.connection === 'degraded';
+    // (U107) A search scope of several indexes takes a per-index result count; Limit stays the overall cap.
+    const spansIndexes = scopeSpansIndexes(props.state.searchScope);
 
     const run = async (next: Form) => {
         if (!next.query.trim()) { return; }
         const owner = beginSearch(next); setPassages({}); setOpened({});
         try {
             await request('search.run', { query: next.query, mode: next.mode, limit: next.limit, maxBytes: next.maxBytes,
-                fullChunks: next.fullChunks, ...(next.pathPrefix.trim() ? { pathPrefix: next.pathPrefix.trim() } : {}) });
+                fullChunks: next.fullChunks, ...(next.pathPrefix.trim() ? { pathPrefix: next.pathPrefix.trim() } : {}),
+                ...(spansIndexes && next.limitPerIndex !== undefined ? { limitPerIndex: next.limitPerIndex } : {}) });
         } catch (failure) {
             if (failure instanceof HostFailure && failure.error.code === 'REQUEST_SUPERSEDED') { return; }
             failSearch(owner, failure instanceof Error ? failure.message : String(failure));
@@ -85,6 +88,10 @@ export function SearchScreen(props: ScreenProps) {
                 <label>Limit
                     <input type="number" min={1} max={100} value={form.limit} onInput={event => field('limit', Math.min(100, Math.max(1, Number((event.target as HTMLInputElement).value) || 1)))} />
                 </label>
+                {spansIndexes && <label title="Each index of the search scope returns at most this many results; Limit stays the overall cap.">Max results per index
+                    <input type="number" min={1} max={100} placeholder="Default" value={form.limitPerIndex ?? ''} onInput={event => { const raw = (event.target as HTMLInputElement).value;
+                        const { limitPerIndex: _omitted, ...rest } = form; editSearch(raw.trim() === '' ? rest : { ...rest, limitPerIndex: Math.min(100, Math.max(1, Math.floor(Number(raw)) || 1)) }); }} />
+                </label>}
                 <label>Bytes
                     <select value={String(form.maxBytes)} onChange={event => field('maxBytes', Number((event.target as HTMLSelectElement).value))}>
                         <option value="8192">8 KB</option><option value="16384">16 KB</option><option value="32768">32 KB</option><option value="65536">64 KB</option>

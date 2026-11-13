@@ -10,7 +10,7 @@ import * as path from 'node:path';
 // `x.json` (extensionUpdateLoader.ts), and the packager applies the same rule.
 import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState } from './airkctl/index';
 import { systemVerifyHost } from './airkctl/verify';
-import { AirkctlToolSession } from './airkctl/tools';
+import { AirkctlToolSession, evidenceSelection } from './airkctl/tools';
 import { AirkctlExplorerHost, describe, projectRows } from './airkctl/features/explorerHost';
 import { ADMIN_OPEN_IN_SETTING, AdminOpener, type AdminOpenIn, type AdminTarget } from './airkctl/features/adminOpener';
 import { ADMIN_PAGES, type AdminPage } from './explorerContracts';
@@ -79,14 +79,9 @@ class SplitExtension implements vscode.Disposable {
         this.status.show();
         this.subscriptions.push(this.output, this.status, this.definitions, this.host,
             this.airkctl.onDidChangeState(state => this.stateChanged(state)));
-        // The Workbench's window-scope entry always reads under the window scope; the Explorer
-        // reads under it while one is granted, and otherwise names its selected project (U77, §3.7).
+        // The selection is chosen per call (evidenceSelection): the window scope can change while the transport lives.
         setEvidenceTransport((spec, client) => new AirkctlToolSession(this.airkctl.session,
-            () => (spec.windowScope || (client === 'airk-explorer' && this.host.windowScope.active)) ? { window: true } : {
-                ...(spec.service?.project ? { project: spec.service.project } : {}),
-                ...(spec.catalogSession ? { catalogSession: spec.catalogSession } : {}),
-                ...(spec.combinedSession ? { combinedSession: spec.combinedSession } : {}),
-            },
+            () => evidenceSelection(spec, client, this.host.windowScope.active),
             { windowReadFailed: code => this.host.windowScope.refused(code) }));
     }
 

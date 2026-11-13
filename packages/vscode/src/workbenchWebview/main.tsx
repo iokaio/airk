@@ -2,9 +2,9 @@
 import { publicationRelationLabel } from '../publications';
 import { render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, toolFormArguments, toolFormFields, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
+import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
-import { canonical, combinedReadDetails, discoveryDetails, markdown, materializeCapabilityMember, searchExecutionLabel, workbenchStepReportOmissions } from '../workbenchRender';
+import { canonical, combinedReadDetails, discoveryDetails, markdown, materializeCapabilityMember, openSelectionArgv, searchExecutionLabel, workbenchStepReportOmissions } from '../workbenchRender';
 import './style.css';
 declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
@@ -16,8 +16,8 @@ interface ToolFormProps {
 }
 function ToolForm({state,issue,currentDraft,onSelect,onField,onReset,onIssue}:ToolFormProps){
     const draft=normalizeWorkbenchFormDraft(state.session?.formDraft)??defaultWorkbenchFormDraft(),tool=draft.activeTool,values=draft.values[tool]??{};
-    const schema=object(state.operations?.[tool]),fields=toolFormFields(schema);
-    const submit=(execute:boolean)=>{try{const latest=currentDraft();if(!latest||latest.activeTool!==tool)throw new Error('Choose the tool form in the current session.');const args=toolFormArguments(schema,latest.values[tool]??{}),scope=latest.scope,queryScope:Value={};for(const key of ['project_ids','index_ids','member_availability']){if(args[key]!==undefined){queryScope[key]=args[key];delete args[key];}}send({type:'run',input:`${tool} form`,prepare:!execute,pathPrefix:scope,plan:{steps:[{id:'form',tool,args}],path_prefix:scope,...(Object.keys(queryScope).length?{query_scope:queryScope}:{})}});onIssue('');}catch(error){onIssue(error instanceof Error?error.message:'Review the form values.');}};
+    const schema=object(state.operations?.[tool]),fields=workbenchToolFields(schema,state.combinedControls);
+    const submit=(execute:boolean)=>{try{const latest=currentDraft();if(!latest||latest.activeTool!==tool)throw new Error('Choose the tool form in the current session.');const args=toolFormArguments(schema,latest.values[tool]??{},state.combinedControls),scope=latest.scope,queryScope:Value={};for(const key of ['project_ids','index_ids','member_availability']){if(args[key]!==undefined){queryScope[key]=args[key];delete args[key];}}send({type:'run',input:`${tool} form`,prepare:!execute,pathPrefix:scope,plan:{steps:[{id:'form',tool,args}],path_prefix:scope,...(Object.keys(queryScope).length?{query_scope:queryScope}:{})}});onIssue('');}catch(error){onIssue(error instanceof Error?error.message:'Review the form values.');}};
     return <details class="tool-form" open><summary>Tool form</summary><div class="tool-form-toolbar"><label>Operation<select aria-label="Operation" value={tool} onChange={e=>onSelect(e.currentTarget.value)}>{Object.keys(state.operations??{}).map(name=><option value={name}>{name}</option>)}</select></label><button class="icon-button" type="button" title="Reset this tool form" aria-label="Reset this tool form" disabled={!state.session} onClick={()=>onReset(tool)}><Icon name="reset"/></button></div><form onSubmit={e=>{e.preventDefault();submit(false);}}>
         {fields.map(field=><label key={field.name}>{field.label}{field.required?' *':''}
             {field.type==='boolean'||field.values?<select aria-label={field.label} required={field.required} value={values[field.name]??''} onChange={e=>onField(tool,field.name,e.currentTarget.value)}><option value="">{field.defaultValue!==undefined?`Default (${String(field.defaultValue)})`:'Default'}</option>{field.type==='boolean'?<><option value="true">Yes</option><option value="false">No</option></>:field.values?.map(value=><option value={value}>{value}</option>)}</select>
@@ -39,8 +39,8 @@ function CombinedMemberDetails({member,display}:{member:Value;display?:import('.
     let materialized:Value|undefined,issue:string|undefined;
     if(opened){try{materialized=materializeCapabilityMember(member.result,display);}catch(error){issue=error instanceof Error?error.message:'Capability display unavailable.';}}
     const outcome=member.outcome??object(native.source_verification).status??(object(member.result).isError===true?'failed':'observed');
-    return <details onToggle={event=>setOpened(event.currentTarget.open)}><summary>{String(member.index_id)}: {String(outcome)}</summary>
-        <pre>{canonical({allocation:member.allocation,cutoff:member.cutoff,reference_bindings:member.reference_bindings})}</pre>
+    return <details onToggle={event=>setOpened(event.currentTarget.open)}><summary>{typeof member.index_name==='string'?`${member.index_name} (${String(member.index_id)})`:String(member.index_id)}: {String(outcome)}{typeof member.elapsed_ms==='number'?` · ${member.elapsed_ms} ms`:''}</summary>
+        <pre>{canonical({index_id:member.index_id,index_name:member.index_name,elapsed_ms:member.elapsed_ms,allocation:member.allocation,cutoff:member.cutoff,reference_bindings:member.reference_bindings})}</pre>
         {native.source_verification&&<p>{verificationLabel(native.source_verification)}</p>}{native.execution&&<p>{searchExecutionLabel(native.execution)}</p>}
         {issue&&<p class="warning">{issue} The complete original response remains available below.</p>}
         {opened&&<pre>{canonical(materialized??member.result)}</pre>}
@@ -106,6 +106,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const runPlan=(prepare:boolean)=>{try{const parsed=JSON.parse(draft);if(prepare){parsed.digest='';}send({type:'run',input:turn.input,prepare,plan:parsed});setIssue('');}catch{setIssue('Enter a valid JSON plan.');}};
     return <article class="turn">
         <div class="input">{turn.input}</div><time>{new Date(turn.at).toLocaleTimeString()}</time>
+        {turn.selection&&<p class="note">Read named indexes and index sets: <code>{openSelectionArgv(turn.selection).join(' ')}</code></p>}
         {publicationNotice&&<p class="warning">{publicationNotice}</p>}
         {turn.error&&<p class="error" role="alert">{turn.error}</p>}
         {turn.trimmed&&<p class="warning">Saved result trimmed. Re-run to collect current evidence.</p>}
@@ -147,9 +148,34 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
         {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">Collecting evidence…</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
     </article>;
 }
-type Menu = 'history' | 'settings' | 'add';
-function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'|'reset'}){
-    const paths={"plus":"M12 4v16M4 12h16","history":"M5 7 9 3h7l5 5v8l-5 5H8l-5-5M3 6v6h6M12 7v5l4 2","settings":"M3 6h18M3 12h18M3 18h18M7 3l3 3-3 3-3-3zM17 9l3 3-3 3-3-3zM9 15l3 3-3 3-3-3z","new":"M4 21V7l4-4h8l4 4v14zM9 12h6M12 9v6","send":"m6 5 7 7-7 7m7-14 7 7-7 7","stop":"M7 4h10l3 3v10l-3 3H7l-3-3V7z","reset":"M4 11a8 8 0 1 1 2 7M4 5v6h6"};
+type Menu = 'history' | 'settings' | 'add' | 'selection';
+/** (U105) Choose explicitly named indexes and index sets (read whole, as a union) instead of the window's search scope. */
+function SelectionPicker({state,onDone}:{state:WorkbenchState;onDone:()=>void}){
+    const choices=state.scopeChoices,current=state.openSelection;
+    const known=(kind:'indexes'|'sets',id:string)=>!!(kind==='indexes'?choices?.indexes:choices?.sets)?.some(row=>row.id===id);
+    const [picked,setPicked]=useState(()=>({indexes:(current?.indexes??[]).filter(id=>known('indexes',id)),sets:(current?.sets??[]).filter(id=>known('sets',id))}));
+    const [typedIndexes,setTypedIndexes]=useState(()=>(current?.indexes??[]).filter(id=>!known('indexes',id)).join('\n'));
+    const [typedSets,setTypedSets]=useState(()=>(current?.sets??[]).filter(id=>!known('sets',id)).join('\n'));
+    const [issue,setIssue]=useState('');
+    const toggle=(kind:'indexes'|'sets',id:string,checked:boolean)=>setPicked(prior=>({...prior,[kind]:checked?[...new Set([...prior[kind],id])]:prior[kind].filter(value=>value!==id)}));
+    const submit=()=>{
+        try{const selection=validateOpenSelection({indexes:[...picked.indexes,...openSelectionLines(typedIndexes)],sets:[...picked.sets,...openSelectionLines(typedSets)]});
+            send({type:'openSelection',indexes:selection.indexes,sets:selection.sets});setIssue('');onDone();}
+        catch(error){setIssue(error instanceof Error?error.message:'Review the named indexes and index sets.');}
+    };
+    const list=(kind:'indexes'|'sets',legend:string)=>{const rows=kind==='indexes'?choices?.indexes:choices?.sets;return rows?.length?<fieldset class="choices"><legend>{legend}</legend>{rows.map(row=><label class="check" key={row.id} title={row.id}><input type="checkbox" checked={picked[kind].includes(row.id)} onChange={e=>toggle(kind,row.id,e.currentTarget.checked)}/>{row.name??row.id}</label>)}</fieldset>:null;};
+    return <section class="popover" id="search-selection" aria-label="What reads search"><h2>Search in</h2>
+        <p class="note">Reads use the entry chosen in the list beside this button: a project, this window's search scope (the default), or named indexes and index sets. Name indexes and index sets here to read them whole, as a union, instead of the search scope.</p>
+        {!choices?.loaded&&<button type="button" disabled={state.busy} onClick={()=>send({type:'scopeChoices'})}>Load index and index set names</button>}
+        {list('sets','Index sets')}{list('indexes','Indexes')}
+        <label>Other indexes (id or name, one per line)<textarea rows={2} spellcheck={false} value={typedIndexes} onInput={e=>setTypedIndexes(e.currentTarget.value)}/></label>
+        <label>Other index sets (id or name, one per line)<textarea rows={2} spellcheck={false} value={typedSets} onInput={e=>setTypedSets(e.currentTarget.value)}/></label>
+        {issue&&<p role="alert">{issue}</p>}
+        <button type="button" disabled={state.busy} onClick={submit}>Read these indexes and index sets</button>
+    </section>;
+}
+function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'|'reset'|'scope'}){
+    const paths={"plus":"M12 4v16M4 12h16","history":"M5 7 9 3h7l5 5v8l-5 5H8l-5-5M3 6v6h6M12 7v5l4 2","settings":"M3 6h18M3 12h18M3 18h18M7 3l3 3-3 3-3-3zM17 9l3 3-3 3-3-3zM9 15l3 3-3 3-3-3z","new":"M4 21V7l4-4h8l4 4v14zM9 12h6M12 9v6","send":"m6 5 7 7-7 7m7-14 7 7-7 7","stop":"M7 4h10l3 3v10l-3 3H7l-3-3V7z","reset":"M4 11a8 8 0 1 1 2 7M4 5v6h6","scope":"M3 5h18M6 12h12M9 19h6"};
     return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d={paths[name]}/><path class="icon-accent" d={name==='send'?'m17 9 3 3-3 3':'m19 3 2 2-2 2'}/></svg>;
 }
 function App(){
@@ -199,6 +225,9 @@ function App(){
     return <main>
         <header class="toolbar">
             <select class="project" aria-label="Project" title="Select project" value={state.project??''} onChange={e=>action({type:'project',id:e.currentTarget.value})}><option value="" disabled>Choose project</option>{state.projects.map(p=><option value={p.id}>{p.name}</option>)}</select>
+            <div class="menu-anchor"><button class="icon-button" title="Search in: the search scope, or named indexes and index sets" aria-label="Choose what reads search" aria-expanded={menu==='selection'} aria-controls="search-selection" onClick={e=>toggle('selection',e)}><Icon name="scope"/></button>
+                {menu==='selection'&&<SelectionPicker state={state} onDone={()=>setMenu(undefined)}/>}
+            </div>
             <div class="menu-anchor"><button class="icon-button" title="Session history" aria-label="Session history" aria-expanded={menu==='history'} aria-controls="session-history" onClick={e=>toggle('history',e)}><Icon name="history"/></button>
                 {menu==='history'&&<section class="popover" id="session-history" aria-label="Session history"><h2>History</h2>{!state.recent.length&&<p>No saved sessions yet.</p>}{state.recent.map(s=><div class="history-row"><button class="history-item" onClick={()=>action({type:'recent',id:s.id})}>{s.title}<small>{s.turns} turns · {new Date(s.updatedAt).toLocaleDateString()}</small></button><button class="icon-button" aria-label={`Delete ${s.title}`} title="Delete session" onClick={()=>action({type:'delete',id:s.id})}>×</button></div>)}</section>}
             </div>
@@ -208,6 +237,7 @@ function App(){
             <button class="icon-button" title="New session" aria-label="New session" onClick={()=>{action({type:'new'});setInput('');composer.current?.focus();}}><Icon name="new"/></button>
         </header>
         {state.notice&&<p class="notice" role="status">{state.notice}</p>}
+        {state.openSelection&&<p class="note">Reads name these indexes and index sets explicitly, not the search scope: <code>{openSelectionArgv(state.openSelection).join(' ')}</code></p>}
         {state.sourceOpen&&<details><summary>Complete source-open observation</summary><p>This dated native receipt is separate from the original query and does not promise continued freshness.</p><pre>{canonical(state.sourceOpen.observation)}</pre><button onClick={()=>action({type:'exportSourceOpen',id:state.sourceOpen!.id,format:'copy'})}>Copy complete JSON</button><button onClick={()=>action({type:'exportSourceOpen',id:state.sourceOpen!.id,format:'json'})}>Export JSON...</button></details>}
         {(state.referenceRefresh??[]).map(value=><section class="reference-refresh" key={String(value.id)}><h4>Reviewed native refresh</h4><button disabled={state.busy} onClick={()=>send({type:'checkReferenceRefresh',id:String(value.id)})}>Check exact receipt</button><button disabled={state.busy||value.canRequery!==true} onClick={()=>send({type:'requeryReferenceRefresh',id:String(value.id)})}>Review same query again...</button><button onClick={()=>send({type:'exportReferenceRefresh',id:String(value.id),format:'json',action:'copy'})}>Copy complete JSON</button><button onClick={()=>send({type:'exportReferenceRefresh',id:String(value.id),format:'markdown',action:'copy'})}>Copy complete Markdown</button><button onClick={()=>send({type:'exportReferenceRefresh',id:String(value.id),format:'json',action:'save'})}>Save complete export...</button><p>Original evidence stays historical. Missing receipts never replay the mutation.</p><pre>{canonical(value)}</pre></section>)}
         <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>No reviewed AIRK Index or Project scope is active in this window. Trust the workspace and finish setup if needed, then review and use a scope in Management. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>

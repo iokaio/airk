@@ -2,7 +2,7 @@
 import * as nodePath from 'node:path';
 import {randomUUID} from 'node:crypto';
 import * as vscode from 'vscode';
-import { ABOUT_LINKS, EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, SearchSessionView, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
+import { ABOUT_LINKS, EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, scopeSpansIndexes, SearchSessionView, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
 import { ControlSource, ExplorerControl } from './explorerControl';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
@@ -51,6 +51,8 @@ export interface ExplorerHost {
     readonly windowScope?: WindowScopeHost;
     /** Workbench entry for the granted window scope; reads under it name no selection. */
     windowScopeSpec?(): LaunchSpec | undefined;
+    /** (U105) Workbench entry reading explicitly named indexes and index sets (`--index`/`--set`). */
+    openSelectionSpec?(selection: { readonly indexes: readonly string[]; readonly sets: readonly string[] }, label: string): LaunchSpec | undefined;
     /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
     windowContext?(): WindowContextDescriptor | undefined;
     windowContextObservation?(): CatalogObject | undefined;
@@ -900,9 +902,9 @@ export class ExplorerController implements vscode.Disposable {
                 throw new EvidenceFailure(explorerError('INVALID_MESSAGE'));
             }
             case 'search.form': {
-                const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks } = message;
+                const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks, limitPerIndex } = message;
                 if (project !== this.requireProject() || selectionEpoch !== this.selectionEpoch) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
-                this.searchState = { ...this.searchState, project, selectionEpoch, form: { query, mode, pathPrefix, limit, maxBytes, fullChunks }, busy: this.searchState?.busy ?? false, page: this.searchState?.page ?? 0 };
+                this.searchState = { ...this.searchState, project, selectionEpoch, form: { query, mode, pathPrefix, limit, maxBytes, fullChunks, ...(limitPerIndex !== undefined ? { limitPerIndex } : {}) }, busy: this.searchState?.busy ?? false, page: this.searchState?.page ?? 0 };
                 return;
             }
             case 'search.page': {
@@ -914,11 +916,15 @@ export class ExplorerController implements vscode.Disposable {
             case 'search.run': {
                 const typed = message as WebviewMessageOf<'search.run'>;
                 const project = this.requireProject();
+                // (U107) Max results per index applies only to a read that spans several indexes: the window's search scope.
+                if (typed.limitPerIndex !== undefined && !(this.host.trusted() && scopeSpansIndexes(this.host.windowScope?.searchScopeSummary()))) {
+                    throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Max results per index applies only while the search scope spans several indexes.'));
+                }
                 const args = searchArgs(typed);
                 const selectionEpoch = this.selectionEpoch, sequence = ++this.searchSequence;
                 const binding = JSON.stringify(this.host.specs().find(entry => entry.service?.project === project));
-                const { query, mode, limit, maxBytes, fullChunks } = typed;
-                this.searchState = { project, selectionEpoch, form: { query, mode, limit, maxBytes, fullChunks, pathPrefix: typed.pathPrefix ?? '' }, busy: true, page: 0 };
+                const { query, mode, limit, maxBytes, fullChunks, limitPerIndex } = typed;
+                this.searchState = { project, selectionEpoch, form: { query, mode, limit, maxBytes, fullChunks, pathPrefix: typed.pathPrefix ?? '', ...(limitPerIndex !== undefined ? { limitPerIndex } : {}) }, busy: true, page: 0 };
                 const publish = () => { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState! }); };
                 const current = () => !this.disposed && this.host.trusted() && project === this.selected
                     && selectionEpoch === this.selectionEpoch && sequence === this.searchSequence

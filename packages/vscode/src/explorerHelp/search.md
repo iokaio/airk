@@ -17,7 +17,7 @@ Search runs `search` against the selected project's published index. Every resul
 3. Optionally set a path scope relative to the project, such as `src/auth/`.
 4. Choose **Search**. Use **Expand** for more indexed lines, **Inspect** for the file record, or **Open source** to open the file.
 
-Results display twenty at a time with **Previous** and **Next**. The limit controls how many results AIRK retrieves (up to 100); the byte budget can return fewer. Paging the retrieved results does not rerun the query. Your query/options, latest results and current page survive tab switches and closing/reopening Explorer in the same selected project and extension-host session. Changing the project or launcher binding, or restarting the extension host, clears them. These session results are not saved searches and are not written to workspace storage. A newer publication is labeled; run Search again when you want current results.
+Results display twenty at a time with **Previous** and **Next**. The limit controls how many results AIRK retrieves (up to 100); the byte budget can return fewer. While this window's search scope spans several indexes, **Max results per index** (1–100) caps each index's results (`limit_per_index`); the limit stays the overall cap. Paging the retrieved results does not rerun the query. Your query/options, latest results and current page survive tab switches and closing/reopening Explorer in the same selected project and extension-host session. Changing the project or launcher binding, or restarting the extension host, clears them. These session results are not saved searches and are not written to workspace storage. A newer publication is labeled; run Search again when you want current results.
 
 ## Limits
 

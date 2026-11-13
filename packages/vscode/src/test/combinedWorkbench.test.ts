@@ -139,6 +139,13 @@ test('selected combined copies preserve canonical scope observation and exact gr
     const markdown=renderExport(sessionValue,'markdown','turn',['record-0']);assert.ok(markdown.includes(grantId));assert.ok(markdown.includes('23'.repeat(32)));
 });
 
+test('selected source coverage keeps each member index name and elapsed time (U108)',()=>{
+    const envelope=combined();(envelope.members as Value[]).forEach((member,n)=>{member.index_name=`Native ${n+1}`;member.elapsed_ms=7*(n+1);});
+    const sessionValue={schema:1 as const,id:'session',project:hash,title:'Combined',createdAt:1,updatedAt:1,revision:1,omitted:0,turns:[{id:'turn',at:1,input:'search',format:'structured' as const,envelope}]};
+    const coverage=renderExport(sessionValue,'markdown','turn',['record-0']).split('### Original source request coverage for selected evidence')[1]?.split('\n### ')[0]??'';
+    for(const fragment of ['"index_name": "Native 1"','"index_name": "Native 2"','"elapsed_ms": 7','"elapsed_ms": 14'])assert.ok(coverage.includes(fragment),fragment);
+});
+
 test('combined file rows preserve the native virtual path separately from the source-relative origin',()=>{
     const result=combined(),member=(result.members as Value[])[0];
     readResultBody(member.result).paths=['@external/same.rs'];

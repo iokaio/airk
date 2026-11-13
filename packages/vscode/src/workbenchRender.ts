@@ -287,7 +287,8 @@ function selectedSourceCoverage(turn:WorkbenchTurn,selected:Set<string>):Value[]
     const combined=combinedReadDetails(turn.envelope??{}).filter(detail=>steps.has(detail.step)).map(({step,result})=>({step,scope:'original_combined_request',
         ...(result.shared_values!==undefined?{shared_values:result.shared_values}:{}),selection:result.selection,publication_vector:result.publication_vector,rank_policy:result.rank_policy,partial:result.partial,truncated:result.truncated,
         ...(result.error!==undefined?{error:result.error}:{}),members:(Array.isArray(result.members)?result.members:[]).map(raw=>{
-            const member=object(raw);return {index_id:member.index_id,allocation:member.allocation,outcome:member.outcome,...(member.cutoff!==undefined?{cutoff:member.cutoff}:{}),
+            const member=object(raw);return {index_id:member.index_id,...(member.index_name!==undefined?{index_name:member.index_name}:{}),allocation:member.allocation,outcome:member.outcome,...(member.cutoff!==undefined?{cutoff:member.cutoff}:{}),
+                ...(member.elapsed_ms!==undefined?{elapsed_ms:member.elapsed_ms}:{}),
                 result_metadata:resultMetadata(member.result),result_payload_omitted:true};})}));
     return [...combined,...(Array.isArray(turn.envelope?.steps)?turn.envelope.steps:[]).flatMap(raw=>{
         const report=object(raw);if(typeof report.id!=='string'||!steps.has(report.id))return [];
@@ -327,6 +328,10 @@ function selectedEnvelope(turn:WorkbenchTurn,selected:Set<string>,projection=tur
         ...(original.selection!==null&&typeof original.selection==='object'&&!Array.isArray(original.selection)?{selected_subset:true}:{selection:true}),
         ...(checks.requested?{source_verification_observations:checks.observations,selected_verification_accounting:checks.accounting}:{}),...(sourceCoverage.length?{source_coverage:sourceCoverage}:{})};
 }
+/** (U105) The `--index`/`--set` words an explicit selection was sent with. */
+export function openSelectionArgv(selection:{indexes:readonly string[];sets:readonly string[]}):string[]{
+    return [...selection.indexes.flatMap(name=>['--index',name]),...selection.sets.flatMap(name=>['--set',name])];
+}
 export function markdown(turn: WorkbenchTurn, selected?: Set<string>,projection=turn.envelope): string {
     const escape=(text:string)=>text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replace(/[\\`*_[\]]/g,'\\$&');
     const fenced=(text:string)=>{const fence='`'.repeat(Math.max(3,...[...text.matchAll(/`+/g)].map(m=>m[0].length+1)));return `${fence}\n${text}\n${fence}`;};
@@ -343,7 +348,7 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>,projection=
         return Object.keys(details).length?[...(label?[escape(label)]:[]),`### ${escape(String(report.tool??report.id??'Step'))} discovery details\n\n${fenced(canonical(details))}`]:[];
     });
     return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? 'not available'))}`,
-        `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
+        `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.selection ? [`Explicit selection: ${escape(openSelectionArgv(turn.selection).join(' '))}`] : []), ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
         ...(e.scope_observation!==undefined?[`### Recorded scope observation\n\n${fenced(canonical(e.scope_observation))}`]:[]),
         ...(selected?[`### ${selectedChecks?.requested?'Selected evidence and dated source observations':'Selected evidence'}\n\n${fenced(canonical({evidence:selectedRows,...(selectedChecks?.requested?{source_verification_observations:selectedChecks.observations,selected_verification_accounting:selectedChecks.accounting}:{})}))}`]:[]),
         ...metadata,...(turn.envelope ? [`### ${selected?'Complete selected response':'Complete response'}\n\n${fenced(canonical(selected?selectedEnvelope(turn,selected,e):turn.envelope))}`] : []),

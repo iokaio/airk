@@ -136,7 +136,8 @@ export function relativePrefix(value: string | undefined): string | undefined {
 
 export function searchArgs(message: WebviewMessageOf<'search.run'>): Value {
     const prefix = relativePrefix(message.pathPrefix);
-    return { query: message.query, limit: message.limit, max_bytes: message.maxBytes, full_chunks: message.fullChunks,
+    return { query: message.query, limit: message.limit, ...(message.limitPerIndex !== undefined ? { limit_per_index: message.limitPerIndex } : {}),
+        max_bytes: message.maxBytes, full_chunks: message.fullChunks,
         ...(message.mode === 'policy' ? {} : { mode: message.mode }), ...(prefix ? { path_prefix: prefix } : {}) };
 }
 

@@ -19,10 +19,11 @@ import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
 import { assertOriginalPublicationForSymbolInputs, assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from './workbenchStrategies';
 import { newSession, SessionStore } from './workbenchSessions';
 import { CurrentTurnProjections, combinedReadDetails, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, evidenceRows, renderExport } from './workbenchRender';
-import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, OpenSelection, parseWorkbenchMessage, validateOpenSelection, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
 
 /** Separate saved histories for explicit scopes; native backing remains service.project. */
 export function workbenchProjectKey(spec:LaunchSpec):string|undefined {
+    if(spec.openSelection)return /^[0-9a-f]{64}$/.test(spec.openSelection.key)?spec.openSelection.key:undefined;
     if(spec.windowScope)return /^[0-9a-f]{64}$/.test(spec.windowScope.key)?spec.windowScope.key:undefined;
     return spec.combinedSession?combinedScopeSelectionIdentity(spec.combinedSession):spec.catalogSession?scopeSelectionIdentity(spec.catalogSession):spec.service?.project;
 }
@@ -119,6 +120,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private observeStatus(value:Value,authority:string):void{this.status=value;this.statusAuthority=authority;}
 
     private operations?:Value;
+    private combinedControls?:Value;
+    /** (U105) Entries reading explicitly named indexes and index sets, newest first (this window only). */
+    private openSpecs:LaunchSpec[]=[];
     private saveQueue=Promise.resolve();
     private readonly queuedFormSaves=new WeakSet<WorkbenchSession>();
     private disposed=false;
@@ -139,13 +143,26 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private authorized():void{if(!this.host.trusted()||this.disposed){throw new Error('A trusted workspace is required.');}}
     private releaseClient():void{this.client?.dispose();this.client=undefined;this.clientIdentity=undefined;}
     /** Registered projects plus the window search scope while one is granted (U77); the scope entry reads with no selection. */
-    private specs():LaunchSpec[]{const window=this.permitted()?this.host.windowScopeSpec?.():undefined;return window?[...this.host.specs(),window]:[...this.host.specs()];}
+    private specs():LaunchSpec[]{const window=this.permitted()?this.host.windowScopeSpec?.():undefined;return [...this.host.specs(),...(window?[window]:[]),...(this.permitted()?this.openSpecs:[])];}
+    /** Ids and names of the window's loaded search-scope choices (never a grant). */
+    private scopeChoices():WorkbenchState['scopeChoices']{
+        const choices=this.permitted()?this.host.windowScope?.searchScopeChoices():undefined;
+        const rows=(items:unknown,pattern:RegExp)=>(Array.isArray(items)?items:[]).map(object).filter(row=>typeof row.id==='string'&&pattern.test(row.id)).slice(0,256)
+            .map(row=>({id:String(row.id),...(typeof row.name==='string'&&row.name?{name:row.name.slice(0,256)}:{})}));
+        return {indexes:rows(choices?.indexes,/^idx_[0-9a-f]{32}$/),sets:rows(choices?.projects,/^prj_[0-9a-f]{32}$/),loaded:!!choices};
+    }
+    private openSelectionLabel(selection:OpenSelection):string{
+        const choices=this.scopeChoices(),name=(rows:{id:string;name?:string}[],value:string)=>rows.find(row=>row.id===value)?.name??value;
+        const parts=[...(selection.sets.length?[`sets ${selection.sets.map(value=>name(choices!.sets,value)).join(', ')}`]:[]),
+            ...(selection.indexes.length?[`indexes ${selection.indexes.map(value=>name(choices!.indexes,value)).join(', ')}`]:[])];
+        const label=parts.join(' · ');return label.length>120?`${label.slice(0,119)}…`:label;
+    }
     private selectedSpec():LaunchSpec|undefined{return this.specs().find(spec=>workbenchProjectKey(spec)===this.session?.project);}
     /** Invalidate synchronously before refresh/list awaits, including hidden views. */
     private invalidateChangedClient():void{
         const spec=this.selectedSpec();
         if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==JSON.stringify(spec))){
-            this.sessionEpoch++;this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
+            this.sessionEpoch++;this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;this.combinedControls=undefined;
         }
     }
     resolveWebviewView(view:vscode.WebviewView):void{
@@ -164,7 +181,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private state():WorkbenchState{
         return {projects:this.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
-            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations,referenceRefresh:this.refreshState()};
+            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),
+            ...(this.combinedControls?{combinedControls:this.combinedControls}:{}),scopeChoices:this.scopeChoices(),
+            ...(this.selectedSpec()?.openSelection?{openSelection:{indexes:[...this.selectedSpec()!.openSelection!.indexes],sets:[...this.selectedSpec()!.openSelection!.sets]}}:{}),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations,referenceRefresh:this.refreshState()};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status,publicationRelations:this.publicationRelations()});}}
@@ -215,7 +234,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.authorized();if(!this.nativeAllowed()){throw new Error('Native execution is disabled.');}const spec=this.selectedSpec();
         if(!spec){throw new Error('Choose a registered project.');}
         const identity=JSON.stringify(spec);
-        if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;}
+        if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;this.combinedControls=undefined;}
         if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});this.clientIdentity=identity;}
         return this.client;
     }
@@ -291,7 +310,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         // Form values stay saved, but literal IDs must retain their own fence.
         if(plan)assertOriginalPublicationForSymbolInputs(plan);
         this.stop();const session=this.session,client=this.evidence(),generation=this.generation;this.busy=true;this.notice=undefined;
-        const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined,nativeFailure:undefined as Value|undefined};
+        const named=this.selectedSpec()?.openSelection;
+        const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined,nativeFailure:undefined as Value|undefined,
+            ...(named?{selection:{indexes:[...named.indexes],sets:[...named.sets]}}:{})};
         session.turns.push(turn);if(session.turns.length===1){session.title=turn.input.replaceAll('\n',' ').slice(0,80);}this.send();
         try{
             let remembered=false;
@@ -413,7 +434,22 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;
             case 'manage':await vscode.commands.executeCommand('airk.explorer.open','manage/overview');break;
-            case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
+            case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){const catalog=object(reply.payload.workbench);this.operations=object(catalog.operations);this.combinedControls=catalog.combined_controls!==undefined?object(catalog.combined_controls):undefined;this.send();}break;}
+            case 'openSelection':{
+                if(!this.nativeAllowed())throw new Error('Native execution is disabled.');
+                const selection=validateOpenSelection({indexes:message.indexes,sets:message.sets});
+                const spec=this.host.openSelectionSpec?.(selection,this.openSelectionLabel(selection)),key=spec?workbenchProjectKey(spec):undefined;
+                if(!spec||!key)throw new Error('Reading named indexes needs the AIRK Service to be ready in this window.');
+                this.openSpecs=[spec,...this.openSpecs.filter(value=>workbenchProjectKey(value)!==key)].slice(0,8);
+                this.invalidateChangedClient();
+                if(this.session?.project===key){await this.refresh();}else{await this.select(key);}
+                break;
+            }
+            case 'scopeChoices':{
+                const scope=this.host.windowScope;
+                if(!this.nativeAllowed()||!scope?.available())throw new Error('Search scope choices are not available from this AIRK Service (window-scope/1).');
+                await scope.readSearchScope();this.send();break;
+            }
             case 'retrySave':if(this.session){this.save(this.session);}break;
             case 'fork':if(this.session){this.sessionEpoch++;this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`,formDraft:defaultWorkbenchFormDraft()};this.session=fork;this.save(fork);this.send();}break;
             case 'formDraft':case 'resetForm':{
@@ -535,7 +571,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     async prefillWindowSearch(search:SearchDraft):Promise<void>{
         this.authorized();const spec=this.host.windowScopeSpec?.(),key=spec?workbenchProjectKey(spec):undefined;
         if(!spec||!key)throw new Error('The window search scope is not granted; choose it in Indexing › Search scope.');
-        if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;}
+        if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;this.combinedControls=undefined;}
         const session=this.session,prior=normalizeWorkbenchFormDraft(session.formDraft)??defaultWorkbenchFormDraft();
         const values:Record<string,string>={...(search.query?{query:search.query}:{}),limit:String(search.limit),max_bytes:String(search.maxBytes),full_chunks:String(search.fullChunks),
             ...(search.mode!=='policy'?{mode:search.mode}:{}),...(search.pathPrefix?{path_prefix:search.pathPrefix}:{})};
@@ -555,7 +591,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 ||spec.combinedSession.index_ids&&search.index_ids.some(id=>!spec.combinedSession!.index_ids!.includes(id)))throw new Error('The recommended scope is outside the frozen connection.');
         }else if(!search.project_ids||JSON.stringify([...search.project_ids].sort())!==JSON.stringify(spec.combinedSession.project_ids)
             ||JSON.stringify(search.index_ids?[...search.index_ids].sort():null)!==JSON.stringify(spec.combinedSession.index_ids??null))throw new Error('The search draft does not match the frozen combined scope.');
-        if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;}
+        if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;this.combinedControls=undefined;}
         const session=this.session,prior=normalizeWorkbenchFormDraft(session.formDraft)??defaultWorkbenchFormDraft();
         const scope=search as SearchDraft&{project_ids?:string[];index_ids?:string[];member_availability?:string};
         const selectors={...(scope.project_ids?{project_ids:JSON.stringify(scope.project_ids)}:{}),...(scope.index_ids?{index_ids:JSON.stringify(scope.index_ids)}:{})};

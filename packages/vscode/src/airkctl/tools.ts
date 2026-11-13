@@ -9,6 +9,7 @@
 //! re-selects once on revision drift (contracts §3.7, Q4).
 import type { AirkctlSession, InvokeResult } from './session';
 import { MAX_INVOKE_ARG_BYTES, SessionError } from './session';
+import type { LaunchSpec } from '../model';
 
 /** The subset of the former MCP session the evidence client uses. */
 export interface ToolTransport {
@@ -22,19 +23,38 @@ export class ToolCallError extends Error {
     }
 }
 /** The reviewed selection a read names. Exactly one form is sent; `window`
- * names none, so the read runs under the window's search scope. */
+ * names none, so the read runs under the window's search scope. `open`
+ * (U105) names indexes and index sets explicitly (`--index`/`--set`): the
+ * service's open read path under local-user rules, which names no project
+ * or session, so it takes precedence over every other form. */
 export interface ToolSelection {
+    readonly open?: { readonly indexes: readonly string[]; readonly sets: readonly string[] };
     readonly window?: boolean;
     readonly project?: string;
     readonly catalogSession?: unknown;
     readonly combinedSession?: unknown;
 }
 export function selectionArguments(selection: ToolSelection): string[] {
+    if (selection.open) { return [...selection.open.indexes.flatMap(name => ['--index', name]), ...selection.open.sets.flatMap(name => ['--set', name])]; }
     if (selection.window) { return []; }
     if (selection.combinedSession) { return ['--combined-session', JSON.stringify(selection.combinedSession)]; }
     if (selection.catalogSession) { return ['--catalog-session', JSON.stringify(selection.catalogSession)]; }
     if (selection.project) { return ['--service-project', selection.project]; }
     return [];
+}
+
+/** The selection one evidence read names for its launch spec. A Workbench entry naming indexes and
+ * index sets reads them explicitly (U105, `--index`/`--set`); the Workbench's window-scope entry always
+ * reads under the window scope; the Explorer reads under it while one is granted, and otherwise names
+ * its selected project or reviewed session (U77, §3.7). */
+export function evidenceSelection(spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', windowActive: boolean): ToolSelection {
+    if (spec.openSelection) { return { open: { indexes: [...spec.openSelection.indexes], sets: [...spec.openSelection.sets] } }; }
+    if (spec.windowScope || (client === 'airk-explorer' && windowActive)) { return { window: true }; }
+    return {
+        ...(spec.service?.project ? { project: spec.service.project } : {}),
+        ...(spec.catalogSession ? { catalogSession: spec.catalogSession } : {}),
+        ...(spec.combinedSession ? { combinedSession: spec.combinedSession } : {}),
+    };
 }
 
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;

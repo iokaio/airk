@@ -27,7 +27,7 @@ import type { ConsolePage, RecordValue } from '../../serviceClient';
 import type { ConsoleObservation, ServiceConsoleState } from '../../serviceConsoleView';
 import { AirkctlUnavailable, type Airkctl, type AirkctlState } from '../index';
 import type { AdminOpener, AdminTarget } from './adminOpener';
-import { libraryCommands, WindowScope } from './windowScope';
+import { libraryCommands, openSelectionSpec, WindowScope } from './windowScope';
 import { WindowAgents } from './windowAgents';
 import { HANDOFF_CAPABILITY, WindowAssistance, WindowHandoffs } from './windowAssistance';
 import { commandOutcome, LiveStatus, liveRow, LOGS_ARGV, usageArgv, workActionArgv, type CommandOutcome, type LiveObservation } from './liveStatus';
@@ -191,6 +191,13 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     bindWorkbench(workbench: WindowScopeWorkbench | undefined): void { this.workbench = workbench; }
     /** Workbench entry for the granted window scope (read with no selection). */
     windowScopeSpec(): LaunchSpec | undefined { return this.windowScope.spec(); }
+    /** (U105) Workbench entry reading explicitly named indexes and index sets through the session
+     * (`tools call --index … --set …`); undefined until the AIRK Service is ready in this window. */
+    openSelectionSpec(selection: { readonly indexes: readonly string[]; readonly sets: readonly string[] }, label: string): LaunchSpec | undefined {
+        const installation = this.airkctl.installation, root = this.specs()[0]?.root ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (this.airkctl.state.kind !== 'ready' || !installation || !root) { return undefined; }
+        return openSelectionSpec({ command: installation.airkctl, installDir: installation.record.locations.program, root }, selection, label);
+    }
     /** Recommendations "Use this query scope": select it as the window scope, then prefill Workbench. */
     prefillRecommendedSearch(search: SearchDraft): Promise<void> { return this.prefillUnderScope(search); }
     /** Suggestions "Apply" of an agent search draft naming index sets: the same path. */

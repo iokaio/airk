@@ -159,6 +159,18 @@ export function windowScopeKey(selection: Pick<WindowSelection, 'namespace' | 'i
     return createHash('sha256').update(`airk/window-scope/1\u0000${JSON.stringify([selection.namespace, [...selection.project_ids].sort(), [...selection.index_ids].sort()])}`).digest('hex');
 }
 
+/** (U105) A stable 64-hex key of one explicit open selection (Workbench history); names are kept as given. */
+export function openSelectionKey(selection: { readonly indexes: readonly string[]; readonly sets: readonly string[] }): string {
+    return createHash('sha256').update(`airk/workbench-open-selection/1\u0000${JSON.stringify([[...selection.indexes].sort(), [...selection.sets].sort()])}`).digest('hex');
+}
+/** (U105) The Workbench entry reading explicitly named indexes and index sets (`--index`/`--set`):
+ * no project, session or window grant is named; `service.project` only carries the history key. */
+export function openSelectionSpec(base: ScopeBase, selection: { readonly indexes: readonly string[]; readonly sets: readonly string[] }, label: string): LaunchSpec {
+    const key = openSelectionKey(selection);
+    return { command: base.command, root: base.root, dataDir: '', collection: 'open-selection', name: `Named: ${label}`,
+        service: { installDir: base.installDir, project: key }, openSelection: { key, label, indexes: [...selection.indexes], sets: [...selection.sets] } };
+}
+
 export class WindowScope {
     private choices?: SearchScopeChoices;
     private current?: Active;

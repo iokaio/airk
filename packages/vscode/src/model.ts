@@ -15,6 +15,10 @@ export interface LaunchSpec { command: string; root: string; dataDir: string; co
      * under the window scope (contracts §3.7). `key` is a stable 64-hex key of
      * the selection (Workbench history); `service.project` carries the same key. */
     windowScope?: { readonly key: string; readonly label: string };
+    /** (U105) Explicitly named indexes and index sets (ids or names), read through the
+     * service's open read path (`tools call --index … --set …`). `key` is a stable 64-hex key
+     * of the selection (Workbench history); `service.project` carries the same key and is never sent. */
+    openSelection?: { readonly key: string; readonly label: string; readonly indexes: readonly string[]; readonly sets: readonly string[] };
     /** `universal`: `command` is the version-free universal launcher, which finds the install root itself. */
     service?: { installDir: string; project: string; universal?: boolean; direct?: boolean } }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }
