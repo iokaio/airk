@@ -15,6 +15,7 @@ use tokio::{
     sync::{Notify, Semaphore},
     task::JoinSet,
 };
+mod agent_plane;
 mod agents;
 pub(crate) mod checkpoint;
 mod configuration;

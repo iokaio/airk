@@ -285,6 +285,12 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 .selection_session_with_client(authority, grant.client)
                 .await
         }
+        Some(scopes::WorkerAuthority::Open(authority)) => {
+            state
+                .tools
+                .open_session_with_client(authority, grant.client)
+                .await
+        }
         None => state.tools.session_with_client(grant.client).await,
     };
     let mut tools = match session_tools {
@@ -1874,9 +1880,16 @@ pub(crate) async fn serve(
                         };
                         replies.send(reply)?;
                     },
-                    // U105 contract step: open reads are not served yet.
-                    Some(Command::InstallOpenScope { .. }) => {
-                        replies.send(Reply::Failed)?;
+                    // U105: an open agent read installs in the selection
+                    // ledger and replies, like a selection, with its lease only.
+                    Some(Command::InstallOpenScope { identity: expected, authority, previous, lease_generation, expires_unix_ms }) => {
+                        let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+                            .install_open(expected, *authority, previous, lease_generation, expires_unix_ms);
+                        let reply = match installed.ok().as_ref().and_then(protocol::SelectionLease::of) {
+                            Some(lease) => Reply::SelectionScopeInstalled { identity, lease },
+                            None => Reply::Failed,
+                        };
+                        replies.send(reply)?;
                     },
                     Some(Command::RevokeScope { identity: expected, scope }) => {
                         let revoked = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.revoke(expected, scope);

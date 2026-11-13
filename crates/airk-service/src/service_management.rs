@@ -47,6 +47,11 @@ enum Envelope {
         Box<airk_catalog_control::catalog_authority::SelectionConnectRequest>,
         oneshot::Sender<Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery>>,
     ),
+    /// U105: in-process admission of one whole index of an open agent read.
+    Open(
+        Box<airk_catalog_control::catalog_authority::OpenConnectRequest>,
+        oneshot::Sender<Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery>>,
+    ),
 }
 
 /// Receive under a freeze already observed by the metadata actor. The native
@@ -77,7 +82,7 @@ fn receive_checkpoint_frozen(
                     active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress")));
                 }
-                Envelope::Selection(_, reply) => {
+                Envelope::Selection(_, reply) | Envelope::Open(_, reply) => {
                     active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress")));
                 }
@@ -377,6 +382,24 @@ impl CatalogRuntime {
         );
         self.control
             .issue_selection(request, Duration::from_secs(300))
+    }
+    /// U105: admit one whole index of an open agent read, at exactly the
+    /// agent selection's revision; a newer clock refuses and is never
+    /// rolled forward.
+    fn connect_open(
+        &self,
+        registry: &mut ServiceRegistry,
+        request: airk_catalog_control::catalog_authority::OpenConnectRequest,
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
+        self.reconcile(registry)?;
+        anyhow::ensure!(
+            self.gate
+                .catalog_clock()
+                .is_some_and(|clock| clock.namespace == request.namespace
+                    && clock.revision == request.selection_ref.catalog_revision),
+            airk_catalog_control::catalog_coordinator::CatalogRevisionChanged
+        );
+        self.control.issue_open(request, Duration::from_secs(300))
     }
     fn connect_legacy(
         &self,
@@ -1419,6 +1442,18 @@ impl Management {
                             }
                             continue;
                         }
+                        Envelope::Open(request,sender) => {
+                            let result = match (registry.as_mut(),catalog.as_ref()) {
+                                (Ok(registry),Some(native)) => native.connect_open(registry,*request),
+                                _ => Err(anyhow::anyhow!("catalog_authority_unavailable")),
+                            };
+                            active.fetch_sub(1,Ordering::AcqRel);
+                            match result {
+                                Ok(delivery) => delivery.handoff_native(sender),
+                                Err(error) => { let _ = sender.send(Err(error)); }
+                            }
+                            continue;
+                        }
                         Envelope::Request(method,reply) => (*method,reply),
                         Envelope::Missing(event) => {
                             if missing_work.iter().any(|work| work.event.binding() == event.binding()
@@ -1604,12 +1639,31 @@ impl Management {
         &self,
         request: airk_catalog_control::catalog_authority::SelectionConnectRequest,
     ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
+        self.connect_in_process(|sender| Envelope::Selection(Box::new(request), sender))
+            .await
+    }
+    /// U105: the service's own open-read handler admits one whole index in
+    /// process; the result is consumed only by `take_in_process`.
+    #[allow(dead_code)] // U105 step 5 wires `ToolSelection::Open` to it.
+    pub(crate) async fn connect_open(
+        &self,
+        request: airk_catalog_control::catalog_authority::OpenConnectRequest,
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
+        self.connect_in_process(|sender| Envelope::Open(Box::new(request), sender))
+            .await
+    }
+    async fn connect_in_process(
+        &self,
+        envelope: impl FnOnce(
+            oneshot::Sender<Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery>>,
+        ) -> Envelope,
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
         let sent = self
             .sender
             .as_ref()
-            .map(|queue| queue.try_send(Envelope::Selection(Box::new(request), sender)));
+            .map(|queue| queue.try_send(envelope(sender)));
         match sent {
             Some(Ok(())) => {}
             Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {

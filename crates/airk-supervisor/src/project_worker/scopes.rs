@@ -8,7 +8,7 @@ use airk_core::{
 };
 use airk_kernel::{
     Kernel,
-    scoped_reads::{ScopedReadAuthority, SelectionReadAuthority},
+    scoped_reads::{OpenReadAuthority, ScopedReadAuthority, SelectionReadAuthority},
 };
 use anyhow::{Result, ensure};
 use std::{
@@ -21,6 +21,9 @@ const MAX_SCOPES: usize = 128;
 /// entries whose `RevokeScope` is still on its way (selection authority spec
 /// §3.4, N6). The gate enforces the finer live/revoked split.
 const MAX_SELECTION_SCOPES: usize = 160;
+/// U105: open agent entries, counted apart: the gate's agent budget of live
+/// plus revoked-awaiting-acknowledgement entries per worker.
+const MAX_AGENT_SCOPES: usize = 2 * airk_catalog_control::catalog_admission::MAX_AGENT_SELECTIONS;
 const MAX_PENDING: usize = 128;
 const MAX_SESSIONS: usize = 128;
 const MAX_LIFETIME_MS: u64 = 300_000;
@@ -30,6 +33,40 @@ const MAX_LIFETIME_MS: u64 = 300_000;
 pub(super) enum WorkerAuthority {
     Catalog(ScopedReadAuthority),
     Selection(SelectionReadAuthority),
+    /// U105: one whole index of an open agent read, ledgered as a selection.
+    Open(OpenReadAuthority),
+}
+/// The selection ref, index, backing and fingerprint of a selection-ledger
+/// authority.
+type SelectionParts = (
+    airk_core::scoped_reads::SelectionScopeRef,
+    IndexId,
+    airk_core::service::ProjectBinding,
+    Sha256Digest,
+);
+impl WorkerAuthority {
+    /// `None` for a catalog grant, which is ledgered by grant instead.
+    fn selection_parts(&self) -> Option<Result<SelectionParts>> {
+        match self {
+            Self::Catalog(_) => None,
+            Self::Selection(authority) => Some(authority.fingerprint().map(|fingerprint| {
+                (
+                    authority.selection,
+                    authority.index_id,
+                    authority.backing,
+                    fingerprint,
+                )
+            })),
+            Self::Open(authority) => Some(authority.fingerprint().map(|fingerprint| {
+                (
+                    authority.selection,
+                    authority.index_id,
+                    authority.backing,
+                    fingerprint,
+                )
+            })),
+        }
+    }
 }
 
 struct Installed {
@@ -155,6 +192,29 @@ impl Scopes {
             previous,
         )
     }
+    /// U105: install an open agent read's whole-index authority in the
+    /// selection ledger, under the same lease, renewal and revocation rules.
+    pub fn install_open(
+        &mut self,
+        identity: WorkerIdentity,
+        authority: OpenReadAuthority,
+        previous: Option<ScopedReadRef>,
+        lease_generation: u64,
+        expires_unix_ms: u64,
+    ) -> Result<ScopedReadRef> {
+        ensure!(
+            identity == self.identity
+                && authority.backing == identity.project
+                && authority.selection.owner == airk_core::scoped_reads::SelectionOwnerKind::Agent,
+            ScopeReadRefused
+        );
+        self.install_ledgered_lease(
+            WorkerAuthority::Open(authority),
+            lease_generation,
+            Self::native_expiry(expires_unix_ms)?,
+            previous,
+        )
+    }
     fn install_selection_lease(
         &mut self,
         authority: SelectionReadAuthority,
@@ -162,9 +222,26 @@ impl Scopes {
         expires: Instant,
         previous: Option<ScopedReadRef>,
     ) -> Result<ScopedReadRef> {
-        let selection = authority.selection;
+        self.install_ledgered_lease(
+            WorkerAuthority::Selection(authority),
+            lease_generation,
+            expires,
+            previous,
+        )
+    }
+    /// The selection ledger's install, renewal and capacity rules, shared by
+    /// W4/A2 selections and U105 open agent reads (counted apart).
+    fn install_ledgered_lease(
+        &mut self,
+        authority: WorkerAuthority,
+        lease_generation: u64,
+        expires: Instant,
+        previous: Option<ScopedReadRef>,
+    ) -> Result<ScopedReadRef> {
+        let (selection, index_id, backing, fingerprint) =
+            authority.selection_parts().ok_or(ScopeReadRefused)??;
         ensure!(
-            authority.backing == self.identity.project
+            backing == self.identity.project
                 && selection.service_instance == self.identity.service
                 && expires > Instant::now(),
             ScopeReadRefused
@@ -172,11 +249,11 @@ impl Scopes {
         let reference = ScopedReadRef {
             schema: 1,
             lease_generation,
-            index_id: authority.index_id,
+            index_id,
             grant_id: None,
             grant_revision: None,
             selection: Some(selection),
-            fingerprint: authority.fingerprint()?,
+            fingerprint,
         };
         reference.validate()?;
         let key = (
@@ -220,7 +297,7 @@ impl Scopes {
             return Ok(reference);
         }
         ensure!(
-            previous.is_none() && self.selections.len() < MAX_SELECTION_SCOPES,
+            previous.is_none() && self.has_selection_capacity(selection.owner),
             ScopeReadRefused
         );
         self.last_lease_generation = lease_generation;
@@ -229,13 +306,32 @@ impl Scopes {
             Installed {
                 reference,
                 previous_lease: None,
-                authority: WorkerAuthority::Selection(authority),
+                authority,
                 expires,
                 revoked: false,
                 sessions: BTreeMap::new(),
             },
         );
         Ok(reference)
+    }
+    fn has_selection_capacity(&self, owner: airk_core::scoped_reads::SelectionOwnerKind) -> bool {
+        use airk_core::scoped_reads::SelectionOwnerKind::Agent;
+        let agent = owner == Agent;
+        let same = self
+            .selections
+            .values()
+            .filter(|entry| {
+                entry
+                    .reference
+                    .selection
+                    .is_some_and(|selection| (selection.owner == Agent) == agent)
+            })
+            .count();
+        same < if agent {
+            MAX_AGENT_SCOPES
+        } else {
+            MAX_SELECTION_SCOPES
+        }
     }
     pub fn legacy_allowed(&self) -> bool {
         !self.required
@@ -457,7 +553,9 @@ impl Scopes {
         match self.redeem_authority(grant)? {
             None => Ok(None),
             Some(WorkerAuthority::Catalog(authority)) => Ok(Some(authority)),
-            Some(WorkerAuthority::Selection(_)) => Err(ScopeReadRefused.into()),
+            Some(WorkerAuthority::Selection(_) | WorkerAuthority::Open(_)) => {
+                Err(ScopeReadRefused.into())
+            }
         }
     }
     pub fn redeem_authority(&mut self, grant: &ConnectionGrant) -> Result<Option<WorkerAuthority>> {
@@ -1070,6 +1168,77 @@ mod tests {
                 .install_selection_lease(foreign, 2, lifetime(), None)
                 .is_err()
         );
+        Ok(())
+    }
+
+    fn open_fixture(root: &str, nonce: u8) -> (WorkerIdentity, OpenReadAuthority) {
+        let (identity, selection) = selection_fixture(root, nonce);
+        let mut scope = selection.selection;
+        scope.owner = airk_core::scoped_reads::SelectionOwnerKind::Agent;
+        let authority = OpenReadAuthority {
+            schema: 1,
+            backing: identity.project,
+            index_id: selection.index_id,
+            selection: scope,
+            sources: selection.sources,
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        };
+        (identity, authority)
+    }
+
+    /// U105: an open agent read is ledgered as a selection, redeems only
+    /// through the authority path, is pruned by its revocation, and is
+    /// counted apart from W4/A2 selections.
+    #[test]
+    fn open_scope_is_a_selection_entry_with_its_own_capacity() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().to_str().unwrap();
+        let (identity, authority) = open_fixture(path, 0x6a);
+        let mut scopes = Scopes::new(identity, true);
+        let expires =
+            u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? + 60_000;
+        let mut window = authority.clone();
+        window.selection.owner = airk_core::scoped_reads::SelectionOwnerKind::Window;
+        assert!(
+            scopes
+                .install_open(identity, window, None, 1, expires)
+                .is_err()
+        );
+        let scope = scopes.install_open(identity, authority.clone(), None, 1, expires)?;
+        assert_eq!(scope.selection, Some(authority.selection));
+        assert_eq!((scopes.installed.len(), scopes.selections.len()), (0, 1));
+        let mut issued = grant(identity);
+        scopes.bind(&mut issued, scope)?;
+        let mut catalog_only = grant(identity);
+        catalog_only.token = Sha256Digest::from_bytes([22; 32]);
+        scopes.bind(&mut catalog_only, scope)?;
+        assert!(matches!(
+            scopes.redeem_authority(&issued)?,
+            Some(WorkerAuthority::Open(_))
+        ));
+        assert!(scopes.redeem(&catalog_only).is_err());
+        scopes.revoke(identity, scope)?;
+        assert_eq!(scopes.selections.len(), 0);
+        // Agent entries fill only their own class.
+        for n in 0..MAX_AGENT_SCOPES as u8 {
+            let (_, open) = open_fixture(path, n);
+            scopes.install_ledgered_lease(
+                WorkerAuthority::Open(open),
+                u64::from(n) + 2,
+                lifetime(),
+                None,
+            )?;
+        }
+        let (_, overflow) = open_fixture(path, 0xf0);
+        assert!(
+            scopes
+                .install_ledgered_lease(WorkerAuthority::Open(overflow), 300, lifetime(), None)
+                .is_err()
+        );
+        let (_, selection) = selection_fixture(path, 0xf1);
+        scopes.install_selection_lease(selection, 301, lifetime(), None)?;
         Ok(())
     }
 

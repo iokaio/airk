@@ -17,7 +17,7 @@ use airk_core::{
     scoped_reads::{ScopeReadRefused, SelectionOwnerKind, SelectionScopeRef},
     service::{ProjectBinding, RequestKey, ScopedReadRef, WorkerIdentity},
 };
-use airk_kernel::scoped_reads::{ScopedReadAuthority, SelectionReadAuthority};
+use airk_kernel::scoped_reads::{OpenReadAuthority, ScopedReadAuthority, SelectionReadAuthority};
 pub(crate) use airk_store::service::registry::catalog::operations::FenceTarget;
 use airk_store::service::registry::catalog::operations::{
     FenceConfirmation, FenceConfirmationMethod, FenceIntent, FencePlan as StoreFencePlan,
@@ -48,6 +48,12 @@ const MAX_SELECTION_SCOPES: usize = MAX_SELECTION_OWNERS * MAX_SELECTION;
 /// the worker's acknowledgement (N6).
 const MAX_WORKER_SELECTION_LIVE: usize = MAX_SELECTION_OWNERS;
 const MAX_WORKER_SELECTION_REVOKED: usize = MAX_SELECTION_OWNERS;
+/// U105: live open agent selections (one per connection, resolved scope and
+/// catalog revision), a budget of their own so agents can never exhaust the
+/// window and admin owners' nonces or installations, nor the reverse.
+pub const MAX_AGENT_SELECTIONS: usize = 32;
+/// Gate installations of agent selections (each names up to 32 indexes).
+const MAX_AGENT_SELECTION_SCOPES: usize = MAX_AGENT_SELECTIONS * MAX_SELECTION;
 
 /// In-memory admission key: a persisted catalog grant or an in-memory
 /// selection grant's nonce. Never persisted (§3.4).
@@ -74,6 +80,12 @@ impl AuthorityKey {
     fn is_selection(self) -> bool {
         matches!(self, Self::Selection(_))
     }
+}
+/// The capacity class of a selection: an open agent read or a W4/A2 owner.
+fn is_agent(scope: &ScopedReadRef) -> bool {
+    scope
+        .selection
+        .is_some_and(|selection| selection.owner == SelectionOwnerKind::Agent)
 }
 /// One validated, measured authority payload ready for the ledger.
 struct Candidate {
@@ -118,6 +130,30 @@ impl Candidate {
             revision: selection.catalog_revision,
             backing: authority.backing,
             projects: authority.project_ids.clone(),
+        })
+    }
+    /// U105: an open agent read is keyed by its agent nonce like any
+    /// selection; it attributes no project.
+    fn open(authority: &OpenReadAuthority) -> Result<Self> {
+        let selection = authority.selection;
+        ensure!(
+            selection.owner == SelectionOwnerKind::Agent,
+            ScopeReadRefused
+        );
+        Ok(Self {
+            scope: ScopedReadRef {
+                schema: 1,
+                lease_generation: 0,
+                index_id: authority.index_id,
+                grant_id: None,
+                grant_revision: None,
+                selection: Some(selection),
+                fingerprint: authority.fingerprint()?,
+            },
+            key: AuthorityKey::Selection(selection.grant_nonce),
+            revision: selection.catalog_revision,
+            backing: authority.backing,
+            projects: Vec::new(),
         })
     }
 }
@@ -473,7 +509,7 @@ impl State {
     /// Catalog and selection installations are bounded separately, so
     /// neither can exhaust the other (§3.4, N6). The catalog bound is the
     /// unchanged `MAX_SCOPES` over catalog entries.
-    fn has_capacity(&self, worker: WorkerIdentity, key: AuthorityKey) -> bool {
+    fn has_capacity(&self, worker: WorkerIdentity, key: AuthorityKey, agent: bool) -> bool {
         if !key.is_selection() {
             return self
                 .installed
@@ -482,11 +518,25 @@ impl State {
                 .count()
                 < MAX_SCOPES;
         }
+        // U105: agent and W4/A2 selections are counted apart.
         let selections = || {
-            self.installed
-                .iter()
-                .filter(|((_, key, _, _), _)| key.is_selection())
+            self.installed.iter().filter(|((_, key, _, _), entry)| {
+                key.is_selection() && is_agent(&entry.scope) == agent
+            })
         };
+        if agent {
+            let (mut live, mut revoked) = (0, 0);
+            for (_, entry) in selections().filter(|(_, entry)| entry.worker == worker) {
+                if entry.phase == Phase::Revoked {
+                    revoked += 1;
+                } else {
+                    live += 1;
+                }
+            }
+            return selections().count() < MAX_AGENT_SELECTION_SCOPES
+                && live < MAX_AGENT_SELECTIONS
+                && revoked < MAX_AGENT_SELECTIONS;
+        }
         let (mut live, mut revoked) = (0, 0);
         for (_, entry) in selections().filter(|(_, entry)| entry.worker == worker) {
             if entry.phase == Phase::Revoked {
@@ -808,7 +858,27 @@ impl NativeCatalogAdmission {
         authority: &SelectionReadAuthority,
         expires: Instant,
     ) -> Result<InstallTicket> {
-        let candidate = Candidate::selection(authority)?;
+        self.reserve_live_selection(issue, worker, Candidate::selection(authority)?, expires)
+    }
+    /// U105: the same decision for an open agent read's freshly built
+    /// authority at its selection's exact catalog revision. Its agent nonce
+    /// must be live; installations count against the agent budget.
+    pub fn reserve_open_scope(
+        &self,
+        issue: IssueTicket,
+        worker: WorkerIdentity,
+        authority: &OpenReadAuthority,
+        expires: Instant,
+    ) -> Result<InstallTicket> {
+        self.reserve_live_selection(issue, worker, Candidate::open(authority)?, expires)
+    }
+    fn reserve_live_selection(
+        &self,
+        issue: IssueTicket,
+        worker: WorkerIdentity,
+        candidate: Candidate,
+        expires: Instant,
+    ) -> Result<InstallTicket> {
         let previous = {
             let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
             state.check_issue(issue)?;
@@ -938,7 +1008,7 @@ impl NativeCatalogAdmission {
             });
         }
         ensure!(
-            previous.is_none() && state.has_capacity(worker, authority_key),
+            previous.is_none() && state.has_capacity(worker, authority_key, is_agent(&scope)),
             ScopeReadRefused
         );
         if state
@@ -1957,10 +2027,22 @@ impl NativeCatalogAdmission {
     /// gate never calls back into a plane (§3.7).
     pub fn register_selection(&self, selection: &SelectionScopeRef) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        // U105: agent nonces have their own budget, apart from W4/A2 owners.
+        let agent = selection.owner == SelectionOwnerKind::Agent;
+        let same_class = state
+            .live_selections
+            .values()
+            .filter(|owner| (**owner == SelectionOwnerKind::Agent) == agent)
+            .count();
         ensure!(
             selection.service_instance == state.service
                 && !state.live_selections.contains_key(&selection.grant_nonce)
-                && state.live_selections.len() < MAX_LIVE_SELECTIONS,
+                && same_class
+                    < if agent {
+                        MAX_AGENT_SELECTIONS
+                    } else {
+                        MAX_LIVE_SELECTIONS
+                    },
             ScopeReadRefused
         );
         state

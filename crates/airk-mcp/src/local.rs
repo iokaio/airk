@@ -129,6 +129,16 @@ impl LocalTools {
         let kernel = self.kernel.with_selection_reads(authority)?;
         Self::with_admission(kernel, client, self.admission.clone(), false).await
     }
+    /// U105: the same restricted session under an open agent read's
+    /// whole-index authority; the observation names the agent selection.
+    pub async fn open_session_with_client(
+        &self,
+        authority: airk_kernel::scoped_reads::OpenReadAuthority,
+        client: ClientFamily,
+    ) -> anyhow::Result<Self> {
+        let kernel = self.kernel.with_open_reads(authority)?;
+        Self::with_admission(kernel, client, self.admission.clone(), false).await
+    }
     pub fn revoke_scoped_reads(&self) {
         self.kernel.revoke_scoped_reads();
     }

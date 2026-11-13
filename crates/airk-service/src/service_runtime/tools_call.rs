@@ -232,9 +232,14 @@ async fn single_selection_backend(
     index_id: airk_core::index_catalog::IndexId,
     client: airk_core::usage::ClientFamily,
 ) -> std::result::Result<Arc<dyn RemoteTools>, SelectionRead> {
-    let registration = selection_backing(&state.control_root, grant, index_id)
-        .await
-        .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    let registration = selection_backing(
+        &state.control_root,
+        grant.selection.namespace,
+        grant.selection_ref.catalog_revision,
+        index_id,
+    )
+    .await
+    .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
     let request = airk_catalog_control::catalog_authority::SelectionConnectRequest {
         selection_ref: grant.selection_ref,
         window_selection: grant.selection.clone(),
@@ -250,6 +255,71 @@ async fn single_selection_backend(
         airk_frontend::project_client::SelectionSession {
             window_selection: grant.selection.clone(),
             scope_identity: grant.scope_identity,
+            index_id,
+            connect,
+        },
+    )
+    .map_err(SelectionRead::Failed)?;
+    inner.client(client);
+    project_backend(
+        inner,
+        registration.binding.to_string(),
+        &registration.collection,
+    )
+    .map_err(SelectionRead::Failed)
+}
+
+/// U105/U106(d): one whole index of an open agent read through the same
+/// selection backend. `selection_ref` is the agent plane's live lease; every
+/// connect and reconnect re-runs the in-process open admission (exact
+/// revision, live agent nonce, whole-index authority build). The session's
+/// selection names the one index and no project.
+#[allow(dead_code)] // U105 step 5 calls it for `ToolSelection::Open`.
+pub(super) async fn open_single_backend(
+    state: &Arc<super::State>,
+    selection_ref: airk_core::scoped_reads::SelectionScopeRef,
+    namespace: airk_core::identity::Incarnation,
+    index_id: airk_core::index_catalog::IndexId,
+    client: airk_core::usage::ClientFamily,
+) -> std::result::Result<Arc<dyn RemoteTools>, SelectionRead> {
+    let registration = selection_backing(
+        &state.control_root,
+        namespace,
+        selection_ref.catalog_revision,
+        index_id,
+    )
+    .await
+    .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    let request = airk_catalog_control::catalog_authority::OpenConnectRequest {
+        selection_ref,
+        namespace,
+        index_id,
+    };
+    let owner = Arc::clone(state);
+    let connect: airk_frontend::project_client::SelectionConnector = Arc::new(
+        move || -> airk_frontend::project_client::SelectionGrantFuture {
+            let owner = Arc::clone(&owner);
+            let request = request.clone();
+            Box::pin(async move {
+                owner
+                    .management
+                    .connect_open(request)
+                    .await?
+                    .take_in_process()
+            })
+        },
+    );
+    let inner = airk_frontend::project_client::selection_tools(
+        state.control_root.clone(),
+        registration.binding,
+        airk_frontend::project_client::SelectionSession {
+            window_selection: airk_core::service::WindowScopeSelection {
+                namespace,
+                expected_catalog_revision: selection_ref.catalog_revision,
+                index_ids: vec![index_id],
+                project_ids: Vec::new(),
+            },
+            scope_identity: selection_ref.scope_identity,
             index_id,
             connect,
         },
@@ -336,7 +406,8 @@ fn selection_issue(
 /// complete.
 async fn selection_backing(
     control: &Path,
-    grant: &SelectionGrant,
+    namespace: airk_core::identity::Incarnation,
+    catalog_revision: airk_core::index_catalog::CatalogRevision,
     index_id: airk_core::index_catalog::IndexId,
 ) -> Result<airk_core::service::ProjectRegistration> {
     use airk_core::{
@@ -349,7 +420,7 @@ async fn selection_backing(
         control,
         ControlMethod::CatalogDetail {
             entity: CatalogEntity::Index { id: index_id },
-            expected_catalog_revision: Some(grant.selection_ref.catalog_revision),
+            expected_catalog_revision: Some(catalog_revision),
         },
     )
     .await?;
@@ -357,8 +428,7 @@ async fn selection_backing(
         return Err(ScopeReadRefused.into());
     };
     ensure!(
-        detail.namespace == grant.selection.namespace
-            && detail.revision == grant.selection_ref.catalog_revision,
+        detail.namespace == namespace && detail.revision == catalog_revision,
         ScopeReadRefused
     );
     let Some(CatalogItem::Index(index)) = detail.item else {

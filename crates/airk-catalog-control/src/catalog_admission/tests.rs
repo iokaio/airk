@@ -1392,3 +1392,151 @@ fn restored_pending_fence_holds_only_catalog_targets_and_no_local_revocation() -
     );
     Ok(())
 }
+
+fn agent_ref(service: Incarnation, nonce: u8) -> SelectionScopeRef {
+    SelectionScopeRef {
+        owner: SelectionOwnerKind::Agent,
+        ..selection_ref(service, nonce)
+    }
+}
+/// U105: the open authority of the catalog fixture's whole index.
+fn open_authority(
+    authority: &ScopedReadAuthority,
+    selection: SelectionScopeRef,
+) -> OpenReadAuthority {
+    OpenReadAuthority {
+        schema: 1,
+        backing: authority.backing,
+        index_id: authority.index_id,
+        selection,
+        sources: authority.sources.clone(),
+        source_revision: CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
+    }
+}
+
+/// U105: agent nonces have their own budget; a full agent budget leaves
+/// window/admin registration open and the reverse.
+#[test]
+fn agent_nonces_have_their_own_budget() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, _, _) = fixture(root.path().to_str().unwrap());
+    for nonce in 0..MAX_AGENT_SELECTIONS as u8 {
+        gate.register_selection(&agent_ref(worker.service, nonce))?;
+    }
+    assert!(
+        gate.register_selection(&agent_ref(worker.service, 0xe5))
+            .is_err(),
+        "the agent budget is full"
+    );
+    for nonce in 0x40..0x40 + 160u8 {
+        gate.register_selection(&selection_ref(worker.service, nonce))?;
+    }
+    assert!(
+        gate.register_selection(&selection_ref(worker.service, 0xf0))
+            .is_err()
+    );
+    // Revoking (pruning) one agent nonce frees exactly one agent slot.
+    assert!(
+        gate.revoke_selection(&[Incarnation::from_bytes([3; 16])])?
+            .is_empty()
+    );
+    gate.register_selection(&agent_ref(worker.service, 0xe5))?;
+    assert!(
+        gate.register_selection(&agent_ref(worker.service, 0xe6))
+            .is_err()
+    );
+    Ok(())
+}
+
+/// U105: an open read installs only under a live agent nonce, never under a
+/// window or admin owner, and revokes like any selection.
+#[test]
+fn open_scope_requires_a_live_agent_nonce_and_revokes_like_a_selection() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    gate.register_worker(worker)?;
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    let selection = agent_ref(worker.service, 0x71);
+    let authority = open_authority(&catalog, selection);
+    assert!(
+        gate.reserve_open_scope(issue, worker, &authority, expiry())
+            .is_err(),
+        "unregistered nonce"
+    );
+    // A window nonce of the same bytes never admits an agent authority.
+    gate.register_selection(&selection_ref(worker.service, 0x71))?;
+    assert!(
+        gate.reserve_open_scope(issue, worker, &authority, expiry())
+            .is_err()
+    );
+    assert!(gate.revoke_selection(&[selection.grant_nonce])?.is_empty());
+    gate.register_selection(&selection)?;
+    let reservation = gate.reserve_open_scope(issue, worker, &authority, expiry())?;
+    assert!(reservation.requires_install);
+    assert_eq!(reservation.scope.selection, Some(selection));
+    gate.acknowledge_install(reservation, worker, reservation.scope)?;
+    gate.check_scope_issue(issue, worker, reservation.scope)?;
+    let mut window = authority.clone();
+    window.selection.owner = SelectionOwnerKind::Window;
+    assert!(
+        gate.reserve_open_scope(issue, worker, &window, expiry())
+            .is_err()
+    );
+    assert_eq!(
+        gate.revoke_selection(&[selection.grant_nonce])?,
+        vec![(worker, reservation.scope)]
+    );
+    assert!(
+        gate.check_scope_issue(issue, worker, reservation.scope)
+            .is_err()
+    );
+    gate.record_selection_revoked(worker, reservation.scope)?;
+    assert_eq!(gate.0.lock().unwrap().installed.len(), 0);
+    Ok(())
+}
+
+/// U105: agent installations are counted apart from W4/A2 selections.
+#[test]
+fn agent_installations_do_not_consume_window_selection_capacity() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    gate.register_worker(worker)?;
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    for nonce in 0..MAX_AGENT_SELECTIONS as u8 {
+        let selection = agent_ref(worker.service, nonce);
+        gate.register_selection(&selection)?;
+        let reservation = gate.reserve_open_scope(
+            issue,
+            worker,
+            &open_authority(&catalog, selection),
+            expiry(),
+        )?;
+        gate.acknowledge_install(reservation, worker, reservation.scope)?;
+    }
+    for nonce in 0x40..0x40 + 80u8 {
+        let selection = selection_ref(worker.service, nonce);
+        gate.register_selection(&selection)?;
+        let reservation = gate.reserve_selection_scope(
+            issue,
+            worker,
+            &selection_authority(&catalog, selection),
+            expiry(),
+        )?;
+        gate.acknowledge_install(reservation, worker, reservation.scope)?;
+    }
+    let overflow = selection_ref(worker.service, 0xf0);
+    gate.register_selection(&overflow)?;
+    assert!(
+        gate.reserve_selection_scope(
+            issue,
+            worker,
+            &selection_authority(&catalog, overflow),
+            expiry()
+        )
+        .is_err(),
+        "the window bound is unchanged by agent entries"
+    );
+    Ok(())
+}

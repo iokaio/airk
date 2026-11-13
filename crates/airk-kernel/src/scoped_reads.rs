@@ -656,8 +656,8 @@ impl Authority {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-            // An open read has no project attribution; source attribution
-            // therefore refuses it until the open read path lands (fail closed).
+            // U106(d): an open read reads its index whole and attributes no
+            // project; `scoped_source_attribution` admits it by source alone.
             Self::Open(_) => Vec::new(),
         };
         projects.sort();
@@ -1004,7 +1004,12 @@ impl Kernel {
         let projects = scope
             .authority
             .attributed_projects(source.source_root_id, path);
-        ensure!(!projects.is_empty(), ScopeReadRefused);
+        // Every source of an open read is one whole Subtree "" atom, so a
+        // resolved source of it is in scope with no project attribution.
+        ensure!(
+            !projects.is_empty() || matches!(scope.authority, Authority::Open(_)),
+            ScopeReadRefused
+        );
         scope.live()?;
         Ok(Some((
             scope.authority.index_id(),
@@ -2222,10 +2227,19 @@ mod tests {
             observation["members"][0]["memberships"],
             serde_json::json!([])
         );
-        // No project attribution yet: source attribution fails closed.
+        // A whole-index read attributes the source to the index, no project.
+        assert_eq!(
+            session.scoped_source_attribution(&admin.root_id(), "lib.rs")?,
+            Some((
+                authority.index_id,
+                authority.sources[0].source_root_id,
+                Vec::new()
+            ))
+        );
+        // A root outside the authority's sources is still refused.
         assert!(
             session
-                .scoped_source_attribution(&admin.root_id(), "lib.rs")
+                .scoped_source_attribution("/not/a/source", "lib.rs")
                 .is_err()
         );
         Ok(())

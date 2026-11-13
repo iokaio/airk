@@ -391,8 +391,8 @@ absent. Every consumer refuses the new values until its step lands.
 | `HttpSelection::Open` | `airk_core::service_http` | `{"kind":"open","selection":{"namespace":…}}` (`OpenHttpSelection`); `same_authority` compares namespaces; `authority_digest` covers the namespace only (golden `open-namespace` in `httpAuthorityDigest.json`, mirrored by `serviceHttp.ts`) | HTTPS validation, lazy backend and gateway capture refuse `open connections are not served yet` |
 | Ledger `Record.open` | `airk_core::service_http_credentials` | `OpenConnectionState {defaults_revision ≥ 1, default_index_ids ≤ 32, default_index_set_ids ≤ 32, agent_choice: off\|on}`, `default` + `skip_serializing_if`, last field; present exactly when the selection is `Open`; a predecessor refuses it (`deny_unknown_fields`) | No enrollment produces it. Format proof: `fixtures/split/agents/credentials_ledger_v1.json` |
 | `ToolSelection::Open` | `airk_core::service` | `{"open":{"index_ids":[…],"index_set_ids":[…],"connection_id"?}}`; ids or exact names, ≤ 32 each, non-empty, ≤ 256 bytes, no control characters, ≤ 24 KiB (`ToolSelection::validate`) | M3 answers `not_yet_served` |
-| `SelectionOwnerKind::Agent` | `airk_core::scoped_reads` | `"agent"`; `ScopeObservation::validate` admits empty memberships only for it | Never minted |
-| `OpenReadAuthority` | `airk_kernel::scoped_reads` | `{schema, backing, index_id, selection (owner agent), sources (≥ 1), source_revision, policy_epoch, policy_digest}`, domain `airk/scoped-read-authority/open/1`, one Subtree `""` atom per source; `Kernel::with_open_reads` | Host carrier `Command::InstallOpenScope`; the worker answers `Failed`. Source attribution refuses (no project) |
+| `SelectionOwnerKind::Agent` | `airk_core::scoped_reads` | `"agent"`; `ScopeObservation::validate` admits empty memberships only for it | Step 3: minted only by the service agent plane (`service_runtime::agent_plane`), not yet called (step 5) |
+| `OpenReadAuthority` | `airk_kernel::scoped_reads` | `{schema, backing, index_id, selection (owner agent), sources (≥ 1), source_revision, policy_epoch, policy_digest}`, domain `airk/scoped-read-authority/open/1`, one Subtree `""` atom per source; `Kernel::with_open_reads` | Step 3: built by `catalog_authority::build_open_read_authority`, admitted by `NativeCatalogAdmission::reserve_open_scope`, installed by the worker (`Scopes::install_open`, selection ledger) and opened by `LocalTools::open_session_with_client`. Source attribution names the index and source with no project |
 | Descriptions | `airk_core::index_catalog` | `IndexDefinition.description`, `QueryProject.description`: `default` + `skip_serializing_if`, ≤ 1 KiB, not blank, no control characters except `
 ` | Served (step 2): loaded from `catalog_descriptions` only when that table exists |
 | `CatalogOperation::SetIndexDescription` / `SetProjectDescription` | `airk_core::catalog_management` | `{operation, id, expected_definition_revision, description: string\|null}`; no typed confirmation, no worker drain, no authority fence | Served (step 2): fenced by `expected_definition_revision` (bumps it; tombstoned index refused); the first `Some` installs the layer, `null` clears and never installs it |
@@ -411,6 +411,20 @@ an unsupported physical shape (fail closed). Reviewed fixture:
 `fixtures/split/agents/registry-policy3-descriptions.{objects,meta}.json`
 (retained policy3 objects plus the layer DDL, rendered by Python `sqlite3`
 with the `s3_capture_schema.py` renderer).
+
+Open admission (step 3, single index): `OpenConnectRequest {selection_ref
+(owner agent), namespace, index_id}` reaches the supervisor only in process
+(`CatalogControlHandle::issue_open`, `Management::connect_open`). The builder
+requires the exact current revision, an activated authority-1 catalog, a live
+complete index and a ready policy; disabled sources are not read, a foreign
+source refuses. Agent nonces have their own gate budget,
+`MAX_AGENT_SELECTIONS` = 32 (W4/A2 keep 160), and agent installations are
+counted apart in the gate (32 live / 32 revoked per worker) and the worker
+ledger (64). The agent plane leases one nonce per (connection, resolved scope
+identity `airk/open-agent-scope/1`, catalog revision), at most 4 per
+connection (least recently used dropped), and drops leases on 300 s idle,
+connection revoke or defaults change, and revision move; its callers and
+`tools_call::open_single_backend` land in step 5.
 
 Fixtures: `fixtures/split/agents/open_access.json` (selections, agent
 observations, the open fingerprint, description cases),

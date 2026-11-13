@@ -4,7 +4,9 @@
 use super::*;
 use crate::{
     catalog_admission::{FenceTicket, InstallTicket, IssueTicket, NativeCatalogAdmission},
-    catalog_authority::{NativeCatalogAuthoritySelection, SelectionConnectRequest},
+    catalog_authority::{
+        NativeCatalogAuthoritySelection, OpenConnectRequest, SelectionConnectRequest,
+    },
     catalog_coordinator::CatalogControl,
 };
 use airk_core::catalog_management::CatalogOperation;
@@ -79,17 +81,21 @@ pub(super) enum ConnectionSelection {
     Legacy(NativeLegacyAuthoritySelection),
     /// An in-memory W4/A2 selection grant (§3.2 step 4): in process only.
     Selection(Box<SelectionConnectRequest>),
+    /// U105: one whole index of an open agent read: in process only.
+    Open(Box<OpenConnectRequest>),
 }
 /// The authority one connection installs.
 enum BuiltAuthority {
     Catalog(airk_kernel::scoped_reads::ScopedReadAuthority),
     Selection(airk_kernel::scoped_reads::SelectionReadAuthority),
+    Open(airk_kernel::scoped_reads::OpenReadAuthority),
 }
 impl BuiltAuthority {
     fn backing(&self) -> ProjectBinding {
         match self {
             Self::Catalog(authority) => authority.backing,
             Self::Selection(authority) => authority.backing,
+            Self::Open(authority) => authority.backing,
         }
     }
 }
@@ -579,6 +585,26 @@ impl CatalogControlHandle {
         })? {
             Response::Connection(delivery) => Ok(*delivery),
             _ => anyhow::bail!("unexpected native selection connection response"),
+        }
+    }
+    /// U105: in-process admission of one whole index of an open agent read,
+    /// under the agent nonce the service's agent plane registered. Consumed
+    /// only through `ScopedConnectionDelivery::take_in_process`.
+    pub fn issue_open(
+        &self,
+        request: OpenConnectRequest,
+        lifetime: Duration,
+    ) -> Result<super::ScopedConnectionDelivery> {
+        ensure!(
+            !lifetime.is_zero() && lifetime <= Duration::from_secs(300),
+            "invalid native open connection budget"
+        );
+        match self.call(Operation::Connect {
+            selection: ConnectionSelection::Open(Box::new(request)),
+            lifetime,
+        })? {
+            Response::Connection(delivery) => Ok(*delivery),
+            _ => anyhow::bail!("unexpected native open connection response"),
         }
     }
     /// Send `RevokeScope` for each pair `NativeCatalogAdmission::
@@ -1421,6 +1447,9 @@ pub(super) fn execute(
                     request.window_selection.namespace,
                     request.selection_ref.catalog_revision,
                 ),
+                ConnectionSelection::Open(request) => {
+                    (request.namespace, request.selection_ref.catalog_revision)
+                }
             };
             let issue = gate.begin_issue(namespace, catalog_revision)?;
             let registry = registry.as_mut().context("catalog registry unavailable")?;
@@ -1441,6 +1470,11 @@ pub(super) fn execute(
                 ),
                 ConnectionSelection::Selection(request) => BuiltAuthority::Selection(
                     airk_catalog_control::catalog_authority::build_selection_read_authority(
+                        registry, &request,
+                    )?,
+                ),
+                ConnectionSelection::Open(request) => BuiltAuthority::Open(
+                    airk_catalog_control::catalog_authority::build_open_read_authority(
                         registry, &request,
                     )?,
                 ),
@@ -1481,6 +1515,9 @@ pub(super) fn execute(
                 BuiltAuthority::Selection(authority) => {
                     gate.reserve_selection_scope(issue, identity, authority, expires)?
                 }
+                BuiltAuthority::Open(authority) => {
+                    gate.reserve_open_scope(issue, identity, authority, expires)?
+                }
             };
             if ticket.requires_install() {
                 let command = match (authority, ticket.previous()) {
@@ -1501,6 +1538,15 @@ pub(super) fn execute(
                     },
                     (BuiltAuthority::Selection(authority), previous) => {
                         WorkerCommand::InstallSelectionScope {
+                            identity,
+                            authority: Box::new(authority),
+                            previous,
+                            lease_generation: ticket.scope().lease_generation,
+                            expires_unix_ms: expires_unix_ms(ticket.expires())?,
+                        }
+                    }
+                    (BuiltAuthority::Open(authority), previous) => {
+                        WorkerCommand::InstallOpenScope {
                             identity,
                             authority: Box::new(authority),
                             previous,
