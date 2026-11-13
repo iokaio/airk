@@ -10,36 +10,20 @@ use std::path::Path;
 
 pub use crate::request_journal::{Pending, forget, list};
 
-/// A control root held as a `PathBuf` prepares as its `Path`.
-impl crate::service_configuration::ConfigurationReads for std::path::PathBuf {
+/// A control root, as configuration preparation's service calls. The trait
+/// lives in `airk-host`, so the CLI implements it for its own type (the
+/// orphan rule); the calls are unchanged (see `ConfigurationReads`).
+pub(crate) struct ControlRoot<'a>(pub(crate) &'a Path);
+
+impl crate::service_configuration::ConfigurationReads for ControlRoot<'_> {
     fn epoch(&self) -> impl std::future::Future<Output = Result<(Incarnation, u64)>> + Send {
-        self.as_path().epoch()
+        request_epoch(self.0)
     }
     fn inspection(
         &self,
         project: ProjectBinding,
     ) -> impl std::future::Future<Output = Result<ControlResponse>> + Send {
-        self.as_path().inspection(project)
-    }
-    fn administrative_read(
-        &self,
-        project: ProjectBinding,
-        read: airk_core::native_reads::NativeRead,
-    ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send {
-        self.as_path().administrative_read(project, read)
-    }
-}
-/// Configuration preparation's service calls for a control root, through the
-/// CLI's requests (unchanged; see `ConfigurationReads`).
-impl crate::service_configuration::ConfigurationReads for Path {
-    fn epoch(&self) -> impl std::future::Future<Output = Result<(Incarnation, u64)>> + Send {
-        request_epoch(self)
-    }
-    fn inspection(
-        &self,
-        project: ProjectBinding,
-    ) -> impl std::future::Future<Output = Result<ControlResponse>> + Send {
-        crate::control_client::request(self, ControlMethod::Inspection { project })
+        crate::control_client::request(self.0, ControlMethod::Inspection { project })
     }
     fn administrative_read(
         &self,
@@ -47,7 +31,7 @@ impl crate::service_configuration::ConfigurationReads for Path {
         read: airk_core::native_reads::NativeRead,
     ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send {
         crate::usage_client::administrative_read(
-            self,
+            self.0,
             project,
             read,
             airk_core::usage::ClientFamily::Unknown,

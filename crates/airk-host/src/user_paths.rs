@@ -2,7 +2,7 @@
 //! Native user identity selects defaults; XDG locations remain explicit user environment policy.
 use anyhow::{Context, Result};
 use serde::Serialize;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "test-support"))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -19,7 +19,7 @@ impl Channel {
             Self::Preview => "service-1.4-preview",
         }
     }
-    pub(crate) fn leaf(self, role: &str) -> String {
+    pub fn leaf(self, role: &str) -> String {
         if self == Self::Preview {
             format!("{role}-preview")
         } else {
@@ -39,16 +39,16 @@ impl Channel {
 /// installer supplies them (`runtime_install::INSTALLATION_PROBE`), so this
 /// module depends on no installer or launcher module.
 #[derive(Clone, Copy)]
-pub(crate) struct InstallationProbe {
+pub struct InstallationProbe {
     /// Control root recorded by the claimed state layout of an installation root.
-    pub(crate) saved_control: fn(&Path) -> Result<PathBuf>,
+    pub saved_control: fn(&Path) -> Result<PathBuf>,
     /// The installation selected by the universal launcher in a launcher
     /// directory, or `None` when that directory has no launcher configuration.
-    pub(crate) universal_selection: fn(&Path) -> Result<Option<PathBuf>>,
+    pub universal_selection: fn(&Path) -> Result<Option<PathBuf>>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct UserPaths {
+pub struct UserPaths {
     pub channel: Channel,
     /// Existing ownership records contain absolute paths. Reuse those locations
     /// until an explicit owned handover; never silently create a second service.
@@ -69,17 +69,17 @@ fn checked(path: PathBuf) -> Result<PathBuf> {
 }
 
 /// The native user home (U84: `airk-process`).
-pub(crate) fn home() -> Result<PathBuf> {
+pub fn home() -> Result<PathBuf> {
     airk_process::user_folders::home()
 }
 
 /// Moved to `airk-process` (U86); forwarded for existing callers.
-pub(crate) fn canonical_location(path: &Path) -> Result<PathBuf> {
+pub fn canonical_location(path: &Path) -> Result<PathBuf> {
     airk_process::user_folders::canonical_location(path)
 }
 
-#[cfg(any(target_os = "linux", test))]
-pub(crate) fn xdg(value: Option<OsString>, home: &Path, fallback: &str) -> Result<PathBuf> {
+#[cfg(any(target_os = "linux", test, feature = "test-support"))]
+pub fn xdg(value: Option<OsString>, home: &Path, fallback: &str) -> Result<PathBuf> {
     // The specification requires relative and empty overrides to be ignored.
     match value.map(PathBuf::from).filter(|path| path.is_absolute()) {
         Some(path) => checked(path),
@@ -87,7 +87,7 @@ pub(crate) fn xdg(value: Option<OsString>, home: &Path, fallback: &str) -> Resul
     }
 }
 
-pub(crate) fn configuration_base() -> Result<PathBuf> {
+pub fn configuration_base() -> Result<PathBuf> {
     #[cfg(windows)]
     {
         airk_process::user_folders::known_folder(
@@ -127,7 +127,7 @@ fn mac_directories(
 
 /// Only the default layout selected by this exact installation. Other channels
 /// and another installation in the same channel retain independent ownership.
-pub(crate) fn owned_install_locations(install: &Path) -> Result<Vec<PathBuf>> {
+pub fn owned_install_locations(install: &Path) -> Result<Vec<PathBuf>> {
     if !is_default_install(install)? {
         return Ok(Vec::new());
     }
@@ -191,13 +191,13 @@ pub(crate) fn is_default_install(install: &Path) -> Result<bool> {
 }
 
 impl UserPaths {
-    pub(crate) fn discover(channel: Channel, probe: InstallationProbe) -> Result<Self> {
+    pub fn discover(channel: Channel, probe: InstallationProbe) -> Result<Self> {
         let mut paths = Self::historical(channel)?;
         paths.select_layout(probe)?;
         Ok(paths)
     }
 
-    pub(crate) fn historical(channel: Channel) -> Result<Self> {
+    pub fn historical(channel: Channel) -> Result<Self> {
         #[cfg(unix)]
         let home = home()?;
         let leaf = channel.legacy_leaf();
@@ -260,7 +260,7 @@ impl UserPaths {
         }
     }
 
-    pub(crate) fn select_layout(&mut self, probe: InstallationProbe) -> Result<()> {
+    pub fn select_layout(&mut self, probe: InstallationProbe) -> Result<()> {
         let install = self.install.with_file_name(self.channel.leaf("runtime"));
         // Preserve existing ownership locations. If both layouts exist, a
         // verified universal launcher already selecting the new installation
@@ -293,7 +293,7 @@ impl UserPaths {
         Ok(())
     }
 
-    pub(crate) fn select_migrated_data(
+    pub fn select_migrated_data(
         &mut self,
         saved_control: fn(&Path) -> Result<PathBuf>,
     ) -> Result<()> {
@@ -318,10 +318,10 @@ impl UserPaths {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+#[cfg(any(test, feature = "test-support"))]
+pub mod tests {
     use super::*;
-    pub(crate) fn fixture_paths(base: &Path, channel: Channel) -> UserPaths {
+    pub fn fixture_paths(base: &Path, channel: Channel) -> UserPaths {
         let leaf = channel.legacy_leaf();
         UserPaths {
             channel,
@@ -370,6 +370,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    #[cfg(test)]
     fn fs_fixture_sentinel(path: &Path) -> Result<()> {
         std::fs::create_dir_all(path)?;
         std::fs::write(path.join("source.txt"), b"other installation source")?;

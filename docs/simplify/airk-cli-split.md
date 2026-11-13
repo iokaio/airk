@@ -218,3 +218,42 @@ boundary, so extraction needs those helpers behind a test-support feature.
 No wire shape, digest input, persisted format, CLI help text or behavior
 changes. The binaries `airk` and `airkctl` and their names stay the same.
 CI keeps `[profile.release]`.
+
+## Step 3a: `airk-host` extracted (12 November 2026)
+
+`python scripts/dev/extract_crate.py --group os` moved 26 modules (37 files) into `crates/airk-host`.
+`airk-cli/src/lib.rs` re-exports each with its original visibility, so every path is unchanged.
+
+**Build script split.** The embedded-model table moved to `airk-host/build.rs` (it feeds `bundled_assets`).
+The macOS login helper and the admin-asset sealing stay in `airk-cli/build.rs`.
+
+**Visibility.** `scripts/dev/widen_visibility.py` widened only the definitions the compiler reported
+(E0603/E0616/E0624/E0451/E0364/E0365). Five more were done by hand:
+
+- `native_command`'s grouped `pub(crate) use` from `airk-process`;
+- `WorkerStderr::start`;
+- two signature types, `Installed` and `Guard` (`private_interfaces`);
+- `fs_fixture_sentinel`, now `#[cfg(test)]` (it is used only by a `#[test]` in its own module).
+
+**Test helpers.** Items that `airk-cli`'s tests use became `cfg(any(test, feature = "test-support"))`, and
+`airk-cli` enables `airk-host/test-support` as a dev-dependency only. The items:
+
+- `user_paths::tests` and `xdg`;
+- `service_configuration::input`;
+- `native_command::{execute_native_program, execute_with_timeout}`;
+- `native_process::{without_error_dialogs, attach_owned}` (the `local-inference` test path);
+- `process_diagnostics`'s stderr capture.
+
+**Orphan rule.** `ConfigurationReads` (in `airk-host`) can no longer be implemented for `Path` in `airk-cli`.
+The implementation moved to a local `client_requests::ControlRoot(&Path)`.
+`airk_cli::service_configuration` is now a facade: a glob re-export plus a local `prepare(control: &Path, …)`.
+Every caller, including `tests/unregister_native.rs`, compiles unchanged.
+
+**Evidence.**
+
+- Clippy `-p airk-host -p airk-cli`: default and `local-inference` both pass.
+- Library tests, compared by identity with `scripts/dev/compare_test_sets.py` against step 2b:
+  - default: 1070 tests = 1010 `airk-cli` + 60 `airk-host`, missing 0, added 0, changed 0;
+  - `local-inference`: 1109 tests, all identical.
+- `airk-host`'s own tests run in 1.9 s.
+- Integration targets compile (Clippy `--all-targets`); running them is deferred to the end of the split.

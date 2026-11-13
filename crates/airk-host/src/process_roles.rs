@@ -8,13 +8,13 @@ use std::{
 };
 
 #[derive(Clone, Copy)]
-pub(crate) enum Role {
+pub enum Role {
     Service,
     Index,
     Source,
 }
 impl Role {
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match (self, cfg!(windows)) {
             (Self::Service, true) => "airk-service.exe",
             (Self::Index, true) => "airk-index.exe",
@@ -28,7 +28,7 @@ impl Role {
 const ROLES: [Role; 3] = [Role::Service, Role::Index, Role::Source];
 
 /// Only these fixed aliases, with exactly the approved main image's digest, are owned.
-pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
+pub fn inventory(files: &mut BTreeMap<String, String>) {
     if !files.contains_key(if cfg!(windows) {
         "airk-embed.exe"
     } else if cfg!(target_os = "macos") {
@@ -48,7 +48,7 @@ pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
     }
 }
 
-pub(crate) fn install(main: &Path) -> Result<()> {
+pub fn install(main: &Path) -> Result<()> {
     let root = crate::runtime_pair::payload_root(main)?;
     if crate::runtime_pair::single_executable(main)? {
         return require_no_bundle_aliases(root);
@@ -120,7 +120,7 @@ fn require_no_bundle_aliases(root: &Path) -> Result<()> {
 }
 
 /// Resolve helper/build metadata through the original image, including macOS's sealed app.
-pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
+pub fn main_image(executable: &Path) -> Result<PathBuf> {
     if !ROLES
         .iter()
         .any(|role| executable.file_name() == Some(role.name().as_ref()))
@@ -146,7 +146,7 @@ pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
     Ok(main)
 }
 
-pub(crate) fn executable(main: &Path, role: Role) -> Result<PathBuf> {
+pub fn executable(main: &Path, role: Role) -> Result<PathBuf> {
     let main = main_image(main)?;
     if crate::runtime_pair::single_executable(&main)? {
         require_no_bundle_aliases(crate::runtime_pair::payload_root(&main)?)?;

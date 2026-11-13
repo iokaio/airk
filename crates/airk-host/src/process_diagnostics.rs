@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Opt-in CI worker stderr tails. Never archive service databases or source trees.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use anyhow::{Context, Result};
 use std::{
     fs::File,
@@ -10,14 +10,14 @@ use std::{
     sync::{Arc, Mutex},
     thread::JoinHandle,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::{fs::OpenOptions, io::Read, path::Path};
 
 // Only a child owner has a stderr pipe; in-process owners have none.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 const TAIL_BYTES: usize = 4096;
 
-pub(crate) fn directory() -> Option<PathBuf> {
+pub fn directory() -> Option<PathBuf> {
     (std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref() == Some(std::ffi::OsStr::new("1")))
         .then(|| std::env::var_os("AIRK_NATIVE_DIAGNOSTIC_DIR").map(PathBuf::from))
         .flatten()
@@ -46,7 +46,7 @@ impl Tail {
         self.file.flush()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn append(&mut self, bytes: &[u8]) {
         self.bytes.extend_from_slice(bytes);
         if self.bytes.len() > TAIL_BYTES {
@@ -57,14 +57,14 @@ impl Tail {
     }
 }
 
-pub(crate) struct WorkerStderr {
+pub struct WorkerStderr {
     tail: Arc<Mutex<Tail>>,
     reader: JoinHandle<()>,
 }
 
 impl WorkerStderr {
-    #[cfg(test)]
-    pub(crate) fn start(child: &mut Child, role: &str, parent: &Path) -> Result<Self> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start(child: &mut Child, role: &str, parent: &Path) -> Result<Self> {
         std::fs::create_dir_all(parent)?;
         // Exclusive files under the explicitly supplied CI destination. The
         // opaque worker role prevents PID reuse from overwriting prior evidence.
@@ -118,7 +118,7 @@ impl WorkerStderr {
     }
 
     /// Called after the existing native owner has drained the worker/children.
-    pub(crate) fn finish(self, child: &mut Child) {
+    pub fn finish(self, child: &mut Child) {
         // An inherited stderr descriptor must not extend native shutdown. The
         // bounded collector can finish independently; EOF remains explicit.
         if self.reader.is_finished() {

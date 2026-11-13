@@ -11,28 +11,28 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) const FENCE: &str = "native-upgrade-checkpoint.json";
+pub const FENCE: &str = "native-upgrade-checkpoint.json";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Fence {
-    pub(crate) schema: u32,
-    pub(crate) control: PathBuf,
-    pub(crate) operation_id: Incarnation,
-    pub(crate) service_instance: Option<Incarnation>,
-    pub(crate) origin: FenceOrigin,
-    pub(crate) execution_sha256: Sha256Digest,
-    pub(crate) candidate_execution_sha256: Sha256Digest,
+pub struct Fence {
+    pub schema: u32,
+    pub control: PathBuf,
+    pub operation_id: Incarnation,
+    pub service_instance: Option<Incarnation>,
+    pub origin: FenceOrigin,
+    pub execution_sha256: Sha256Digest,
+    pub candidate_execution_sha256: Sha256Digest,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FenceOrigin {
+pub enum FenceOrigin {
     RunningService,
     InstallerAfterVerifiedExit,
 }
 
-pub(crate) fn bytes(path: &Path, maximum: u64) -> Result<Vec<u8>> {
+pub fn bytes(path: &Path, maximum: u64) -> Result<Vec<u8>> {
     crate::install_files::safe_file(path)?;
     ensure!(
         std::fs::metadata(path)?.len() <= maximum,
@@ -49,7 +49,7 @@ pub(crate) fn bytes(path: &Path, maximum: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) fn fence(control: &Path) -> Result<Option<Fence>> {
+pub fn fence(control: &Path) -> Result<Option<Fence>> {
     let path = control.join(FENCE);
     match std::fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -68,12 +68,12 @@ pub(crate) fn fence(control: &Path) -> Result<Option<Fence>> {
     Ok(Some(value))
 }
 
-pub(crate) fn admission_closed(control: &Path) -> Result<bool> {
+pub fn admission_closed(control: &Path) -> Result<bool> {
     Ok(fence(control)?.is_some())
 }
 
 /// The operation that owns a closed admission fence, read without changing it.
 /// Settlement still goes through `settle`, which refuses any other operation.
-pub(crate) fn fence_operation(control: &Path) -> Result<Option<Incarnation>> {
+pub fn fence_operation(control: &Path) -> Result<Option<Incarnation>> {
     Ok(fence(control)?.map(|saved| saved.operation_id))
 }

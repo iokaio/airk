@@ -30,11 +30,11 @@ const READ_BYTES: usize = airk_core::service_logs::RECENT_READ_BYTES;
 
 mod closed;
 mod raw;
-pub(crate) const OWNER_RECORDS: [&str; 2] = [OWNER, raw::OWNER];
+pub const OWNER_RECORDS: [&str; 2] = [OWNER, raw::OWNER];
 pub use raw::export as export_raw;
 pub use raw::export_to as export_raw_to;
 pub use raw::record_client_error;
-pub(crate) use raw::{FailureDetail, JobFailure};
+pub use raw::{FailureDetail, JobFailure};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -53,7 +53,7 @@ fn expected_owner(root: &Path) -> Result<Owner> {
 
 /// Metadata-only ownership proof for installer retirement. Unlike opening a
 /// log reader/writer, this never creates directories or changes permissions.
-pub(crate) fn has_saved_owner(parent: &Path, control: &Path) -> Result<bool> {
+pub fn has_saved_owner(parent: &Path, control: &Path) -> Result<bool> {
     if crate::service_locations::log_parent(control)? != parent {
         return Ok(false);
     }
@@ -329,7 +329,7 @@ enum Message {
     Stop,
 }
 #[derive(Clone)]
-pub(crate) struct Log {
+pub struct Log {
     sender: Option<SyncSender<Message>>,
     counters: Arc<Counters>,
     instance: Incarnation,
@@ -337,7 +337,7 @@ pub(crate) struct Log {
     /// `service_locations::log_parent(root)`).
     root: PathBuf,
 }
-pub(crate) struct Guard {
+pub struct Guard {
     sender: Option<SyncSender<Message>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -455,12 +455,12 @@ impl Log {
     }
     /// U100: the folder holding this writer's rings (the `logs` location
     /// of an adopted installation).
-    pub(crate) fn log_folder(&self) -> Result<PathBuf> {
+    pub fn log_folder(&self) -> Result<PathBuf> {
         crate::service_locations::log_parent(&self.root)
     }
     /// U100: the closed (`previous-*`) files of both rings, sorted, listed on
     /// the writer thread under each ring's `writer.lock`. Blocking.
-    pub(crate) fn closed_log_files(&self) -> Result<Vec<airk_core::storage_admin::PurgeFile>> {
+    pub fn closed_log_files(&self) -> Result<Vec<airk_core::storage_admin::PurgeFile>> {
         match self.closed(closed::Request::List)? {
             closed::Reply::Listed(files) => Ok(files),
             closed::Reply::Deleted(_) => anyhow::bail!("diagnostic_log_writer_unavailable"),
@@ -470,7 +470,7 @@ impl Log {
     /// under each ring's `writer.lock`, if it still equals the closed files
     /// (`storage_purge_plan_changed` otherwise). `current.jsonl`, the lock and
     /// the owner records are never deleted. Blocking.
-    pub(crate) fn delete_closed_logs(
+    pub fn delete_closed_logs(
         &self,
         plan: &[airk_core::storage_admin::PurgeFile],
     ) -> Result<Vec<airk_core::storage_admin::PurgedFile>> {

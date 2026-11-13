@@ -8,19 +8,16 @@ use std::{
     path::Path,
     sync::Arc,
 };
-pub(crate) type QueryCapacityReader = Arc<dyn Fn() -> usize + Send + Sync>;
+pub type QueryCapacityReader = Arc<dyn Fn() -> usize + Send + Sync>;
 tokio::task_local! {
     static HTTP_QUERY_CAPACITY: QueryCapacityReader;
 }
 /// Keep nested canonical reads on the actual service controller's live capacity.
-pub(crate) async fn with_query_capacity<F: Future>(
-    reader: QueryCapacityReader,
-    future: F,
-) -> F::Output {
+pub async fn with_query_capacity<F: Future>(reader: QueryCapacityReader, future: F) -> F::Output {
     HTTP_QUERY_CAPACITY.scope(reader, future).await
 }
 /// Capture before spawning: Tokio task locals do not propagate to child tasks.
-pub(crate) fn inherit_query_capacity<F: Future>(future: F) -> impl Future<Output = F::Output> {
+pub fn inherit_query_capacity<F: Future>(future: F) -> impl Future<Output = F::Output> {
     let reader = HTTP_QUERY_CAPACITY.try_with(Clone::clone).ok();
     async move {
         match reader {
@@ -51,7 +48,7 @@ fn check(path: &Path) -> Result<()> {
     Ok(())
 }
 /// Reads only bounded service-owned scalar metadata; never opens a collection.
-pub(crate) fn query_concurrency(root: &Path) -> usize {
+pub fn query_concurrency(root: &Path) -> usize {
     if let Ok(capacity) = HTTP_QUERY_CAPACITY.try_with(|reader| reader()) {
         return capacity;
     }

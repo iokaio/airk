@@ -47,7 +47,7 @@ impl AuthorityV1ReadinessProducer for FreshInstallation {
 /// Settles an empty activated authority-1 catalog through the real owned
 /// Genesis adapter. The registry namespace is `instance`; the caller supplies
 /// no projects, so Genesis refuses any populated registry.
-pub(crate) fn authority_one(root: &Path, instance: Incarnation) -> Result<ServiceRegistry> {
+pub fn authority_one(root: &Path, instance: Incarnation) -> Result<ServiceRegistry> {
     crate::local_ipc::prepare_root(root)?;
     drop(ServiceRegistry::open(root, instance)?);
     let mut genesis = CatalogGenesis::begin(
@@ -67,7 +67,7 @@ pub(crate) fn authority_one(root: &Path, instance: Incarnation) -> Result<Servic
 /// One existing collection admitted through canonical index setup, plus a
 /// Project whose whole-root membership and default is that index. Only the
 /// physical native preparation proof is substituted; storage is not created.
-pub(crate) fn reviewed_index(
+pub fn reviewed_index(
     registry: &mut ServiceRegistry,
     registration: &ProjectRegistration,
     sources: Vec<SetupSource>,

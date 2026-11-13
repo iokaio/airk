@@ -19,10 +19,7 @@ fn clock() -> ReadClock {
     }
 }
 
-pub(crate) fn encode(
-    context: &ReadAttemptContext,
-    request_id: Incarnation,
-) -> Result<ReadAttemptBudget> {
+pub fn encode(context: &ReadAttemptContext, request_id: Incarnation) -> Result<ReadAttemptBudget> {
     // Tick first, Instant second: sampling overhead consumes rather than adds time.
     let ticks = airk_process::monotonic::now_ns()?;
     let now = Instant::now();
@@ -57,7 +54,7 @@ pub(crate) fn encode(
     })
 }
 
-pub(crate) fn decode(budget: ReadAttemptBudget) -> Result<ReadAttemptContext> {
+pub fn decode(budget: ReadAttemptBudget) -> Result<ReadAttemptContext> {
     // Instant first, tick second: IPC/decoding and sampling overhead are charged.
     let now = Instant::now();
     let ticks = airk_process::monotonic::now_ns()?;
@@ -73,7 +70,7 @@ pub(crate) fn decode(budget: ReadAttemptBudget) -> Result<ReadAttemptContext> {
     Ok(context)
 }
 
-pub(crate) fn supported(version: &str) -> bool {
+pub fn supported(version: &str) -> bool {
     let parts = version
         .split('.')
         .map(str::parse::<u64>)

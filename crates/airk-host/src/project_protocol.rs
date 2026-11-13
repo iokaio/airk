@@ -429,7 +429,7 @@ pub struct WorkObservation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_for: Option<airk_core::service_resources::WaitReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) failure: Option<crate::service_logs::JobFailure>,
+    pub failure: Option<crate::service_logs::JobFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) integrity_observation_failure: Option<String>,
+    pub integrity_observation_failure: Option<String>,
 }

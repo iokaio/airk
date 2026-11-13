@@ -4,13 +4,17 @@ use std::process::Command;
 
 /// Moved to `airk-process` (`bounded_command`, U90); re-exported for callers
 /// (the Windows embedding pool without local inference, and tests).
-#[cfg(any(all(windows, not(feature = "local-inference")), test))]
-pub(crate) use airk_process::bounded_command::attach_owned;
-pub(crate) use airk_process::bounded_command::{ContainedChild, spawn};
+#[cfg(any(
+    all(windows, not(feature = "local-inference")),
+    test,
+    feature = "test-support"
+))]
+pub use airk_process::bounded_command::attach_owned;
+pub use airk_process::bounded_command::{ContainedChild, spawn};
 
 /// Replace this process with `command` (Unix) or run it with inherited stdio inside a
 /// kill-on-close job and exit with its code (Windows). Callers must not write to stdout first.
-pub(crate) fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
+pub fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -26,11 +30,11 @@ pub(crate) fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
 }
 
 #[cfg(windows)]
-pub(crate) use airk_process::detached::spawn_detached;
+pub use airk_process::detached::spawn_detached;
 /// Moved to `airk-process` (U84); re-exported for existing callers.
-pub(crate) use airk_process::detached::windows_argument;
-#[cfg(test)]
-pub(crate) use airk_process::detached::without_error_dialogs;
+pub use airk_process::detached::windows_argument;
+#[cfg(any(test, feature = "test-support"))]
+pub use airk_process::detached::without_error_dialogs;
 
 #[cfg(all(test, windows))]
 mod tests {

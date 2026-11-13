@@ -10,30 +10,30 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 const MAX_TRANSITION: u64 = MAX_LAYOUT * 8;
 // Match the canonical Store private-path admission. Recovery does not widen it.
-pub(crate) const MAX_PRESERVED_PATHS: usize = 16;
+pub const MAX_PRESERVED_PATHS: usize = 16;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Transition {
-    pub(crate) schema: u32,
-    pub(crate) operation: Incarnation,
-    pub(crate) install: PathBuf,
+pub struct Transition {
+    pub schema: u32,
+    pub operation: Incarnation,
+    pub install: PathBuf,
     /// Preserve the original encoding as recovery evidence as well as its value.
-    pub(crate) previous_layout: String,
-    pub(crate) successor: Layout,
-    pub(crate) preserved_private_paths: Vec<PathBuf>,
-    pub(crate) digest: Sha256Digest,
+    pub previous_layout: String,
+    pub successor: Layout,
+    pub preserved_private_paths: Vec<PathBuf>,
+    pub digest: Sha256Digest,
 }
 
-pub(crate) fn receipt_name(operation: Incarnation) -> String {
+pub fn receipt_name(operation: Incarnation) -> String {
     format!("rebuild-layout-{operation}.json")
 }
 
-pub(crate) fn successor_state(root: &Path, operation: Incarnation) -> PathBuf {
+pub fn successor_state(root: &Path, operation: Incarnation) -> PathBuf {
     root.join(format!("rebuild-state-{operation}"))
 }
 
-pub(crate) fn operation_for(layout: &Layout) -> Result<Option<Incarnation>> {
+pub fn operation_for(layout: &Layout) -> Result<Option<Incarnation>> {
     if layout.state.parent() != Some(layout.install.as_path()) {
         return Ok(None);
     }
@@ -51,7 +51,7 @@ pub(crate) fn operation_for(layout: &Layout) -> Result<Option<Incarnation>> {
 }
 
 impl Transition {
-    pub(crate) fn checksum(&self) -> Result<Sha256Digest> {
+    pub fn checksum(&self) -> Result<Sha256Digest> {
         Ok(framed_digest(
             b"airk/rebuild-layout/1",
             &[&serde_json::to_vec(&(
@@ -65,11 +65,11 @@ impl Transition {
         ))
     }
 
-    pub(crate) fn previous(&self) -> Result<Layout> {
+    pub fn previous(&self) -> Result<Layout> {
         Ok(serde_json::from_str(&self.previous_layout)?)
     }
 
-    pub(crate) fn validate(&self, root: &Path) -> Result<()> {
+    pub fn validate(&self, root: &Path) -> Result<()> {
         let previous = self.previous()?;
         ensure!(
             self.schema == 1
@@ -117,7 +117,7 @@ impl Transition {
     }
 }
 
-pub(crate) fn read(root: &Path, operation: Incarnation) -> Result<Transition> {
+pub fn read(root: &Path, operation: Incarnation) -> Result<Transition> {
     let transition: Transition = serde_json::from_slice(&read_bounded(
         &root.join(receipt_name(operation)),
         MAX_TRANSITION,
@@ -151,7 +151,7 @@ pub(super) fn preserved_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(read(root, operation)?.preserved_private_paths)
 }
 
-pub(crate) fn require_private_union(preserved: &[PathBuf], state: &Path) -> Result<()> {
+pub fn require_private_union(preserved: &[PathBuf], state: &Path) -> Result<()> {
     let mut complete = preserved.to_vec();
     complete.push(state.into());
     complete.push(state.join("logs"));

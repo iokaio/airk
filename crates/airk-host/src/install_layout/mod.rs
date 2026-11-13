@@ -14,28 +14,28 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub(crate) const LAYOUT: &str = "runtime-layout.json";
-pub(crate) const OWNER: &str = "airk-state-1.4.owner.json";
-pub(crate) const CLAIM: &str = "airk-state-1.4.lock";
-pub(crate) const OWNER_PART: &str = "airk-state-1.4.owner.part";
-pub(crate) const MAX_LAYOUT: u64 = 32 * 1024;
-pub(crate) const CONTROL_OWNER: &str = "airk-control-1.4.owner.json";
-pub(crate) const CONTROL_PART: &str = "airk-control-1.4.owner.part";
-pub(crate) mod registry_binding;
-pub(crate) mod successor_receipt;
+pub const LAYOUT: &str = "runtime-layout.json";
+pub const OWNER: &str = "airk-state-1.4.owner.json";
+pub const CLAIM: &str = "airk-state-1.4.lock";
+pub const OWNER_PART: &str = "airk-state-1.4.owner.part";
+pub const MAX_LAYOUT: u64 = 32 * 1024;
+pub const CONTROL_OWNER: &str = "airk-control-1.4.owner.json";
+pub const CONTROL_PART: &str = "airk-control-1.4.owner.part";
+pub mod registry_binding;
+pub mod successor_receipt;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Layout {
-    pub(crate) schema: u32,
-    pub(crate) install: PathBuf,
-    pub(crate) state: PathBuf,
+pub struct Layout {
+    pub schema: u32,
+    pub install: PathBuf,
+    pub state: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) logs: Option<PathBuf>,
-    pub(crate) channel: RuntimeChannel,
-    pub(crate) ready: bool,
+    pub logs: Option<PathBuf>,
+    pub channel: RuntimeChannel,
+    pub ready: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) managed_catalog_origin:
+    pub managed_catalog_origin:
         Option<airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin>,
 }
 fn exists(path: &Path) -> Result<bool> {
@@ -46,7 +46,7 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 
-pub(crate) fn publish_new(from: &Path, to: &Path) -> Result<()> {
+pub fn publish_new(from: &Path, to: &Path) -> Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -100,7 +100,7 @@ pub(crate) fn publish_new(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 impl Layout {
-    pub(crate) fn read(root: &Path) -> Result<Option<Self>> {
+    pub fn read(root: &Path) -> Result<Option<Self>> {
         if !exists(&root.join(LAYOUT))? {
             return Ok(None);
         }
@@ -140,12 +140,12 @@ impl Layout {
         successor_receipt::validate_binding(root, &layout)?;
         Ok(Some(layout))
     }
-    pub(crate) fn owner(&self) -> Self {
+    pub fn owner(&self) -> Self {
         let mut owner = self.clone();
         owner.ready = true;
         owner
     }
-    pub(crate) fn claimed(&self) -> Result<bool> {
+    pub fn claimed(&self) -> Result<bool> {
         if !exists(&self.state.join(OWNER))? {
             return Ok(false);
         }
@@ -169,7 +169,7 @@ impl Layout {
         );
         Ok(true)
     }
-    pub(crate) fn claim(&self) -> Result<()> {
+    pub fn claim(&self) -> Result<()> {
         if self.state != self.install && exists(&self.state)? && !self.claimed()? {
             for (index, entry) in fs::read_dir(&self.state)?.enumerate() {
                 let entry = entry?;
@@ -244,7 +244,7 @@ impl Layout {
     }
 }
 
-pub(crate) fn preflight_layout(layout: &Layout) -> Result<()> {
+pub fn preflight_layout(layout: &Layout) -> Result<()> {
     ensure!(
         serde_json::to_vec(layout)?.len() as u64 <= MAX_LAYOUT
             && serde_json::to_vec(&layout.owner())?.len() as u64 <= MAX_LAYOUT,
@@ -253,13 +253,13 @@ pub(crate) fn preflight_layout(layout: &Layout) -> Result<()> {
     registry_binding::preflight(&layout.owner())
 }
 
-pub(crate) fn managed_origin(
+pub fn managed_origin(
     root: &Path,
 ) -> Result<Option<airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin>> {
     Ok(Layout::read(root)?.and_then(|layout| layout.managed_catalog_origin))
 }
 
-pub(crate) fn require_managed_ready(root: &Path) -> Result<()> {
+pub fn require_managed_ready(root: &Path) -> Result<()> {
     if let Some(origin) = managed_origin(root)? {
         airk_store::service::registry::catalog::genesis::require_managed_settled(
             &origin.control,
@@ -291,7 +291,7 @@ fn control_location(control: &Path) -> Result<PathBuf> {
             .context("control directory name missing")?,
     ))
 }
-pub(crate) fn require_control(control: &Path) -> Result<()> {
+pub fn require_control(control: &Path) -> Result<()> {
     ensure!(
         exists(control)?,
         "initialized service control directory is missing; restore the owned state instead of creating another registry"
@@ -305,7 +305,7 @@ pub(crate) fn require_control(control: &Path) -> Result<()> {
     );
     Ok(())
 }
-pub(crate) fn control_binding(control: &Path) -> Result<Option<Layout>> {
+pub fn control_binding(control: &Path) -> Result<Option<Layout>> {
     control_binding_for_catalog(control, None)
 }
 
@@ -368,20 +368,20 @@ fn control_binding_for_catalog(
     Ok(Some(owner))
 }
 /// Must run before directory creation, including explicit foreground startup.
-pub(crate) fn validate_control(control: &Path) -> Result<()> {
+pub fn validate_control(control: &Path) -> Result<()> {
     control_binding(&control_location(control)?)?;
     Ok(())
 }
 
 /// Resolve only an already authenticated installed control binding. Raw native
 /// development namespaces have no installation; this never creates state.
-pub(crate) fn installation_for_control(control: &Path) -> Result<Option<PathBuf>> {
+pub fn installation_for_control(control: &Path) -> Result<Option<PathBuf>> {
     Ok(control_binding(&control_location(control)?)?.map(|owner| owner.install))
 }
 
 /// Installer-only validation with a namespace already checked against the saved
 /// catalog intent/owner. No pin repair, directory creation or SQLite open occurs.
-pub(crate) fn validate_catalog_control(
+pub fn validate_catalog_control(
     control: &Path,
     namespace: airk_core::identity::Incarnation,
 ) -> Result<()> {
@@ -391,7 +391,7 @@ pub(crate) fn validate_catalog_control(
 
 /// Read-only routing for installer transaction exclusion, including incomplete
 /// initial staging. A known issuer journal never falls back to another control.
-pub(crate) fn issuer_rotation_control(root: &Path) -> Result<Option<PathBuf>> {
+pub fn issuer_rotation_control(root: &Path) -> Result<Option<PathBuf>> {
     let Some(layout) = Layout::read(root)? else {
         return Ok(None);
     };
@@ -408,7 +408,7 @@ pub(crate) fn issuer_rotation_control(root: &Path) -> Result<Option<PathBuf>> {
 }
 
 /// Log lookup may use verified layout ownership even when registry authority is unavailable.
-pub(crate) fn saved_control(root: &Path) -> Result<PathBuf> {
+pub fn saved_control(root: &Path) -> Result<PathBuf> {
     let layout = Layout::read(root)?.context("runtime state layout missing")?;
     ensure!(
         layout.ready && layout.claimed()?,
@@ -419,12 +419,12 @@ pub(crate) fn saved_control(root: &Path) -> Result<PathBuf> {
 
 /// Owning installer initialization only. Preserve the ordinary no-redirect and
 /// existing-directory guards without requiring a completed registry pin yet.
-pub(crate) fn initialization_control(root: &Path) -> Result<PathBuf> {
+pub fn initialization_control(root: &Path) -> Result<PathBuf> {
     let control = saved_control(root)?;
     require_control(&control)?;
     Ok(control)
 }
-pub(crate) fn retained_parameters(root: &Path) -> Result<(PathBuf, RuntimeChannel)> {
+pub fn retained_parameters(root: &Path) -> Result<(PathBuf, RuntimeChannel)> {
     let layout = Layout::read(root)?.context("runtime state layout missing")?;
     ensure!(
         layout.ready && layout.claimed()?,
@@ -433,7 +433,7 @@ pub(crate) fn retained_parameters(root: &Path) -> Result<(PathBuf, RuntimeChanne
     Ok((layout.state, layout.channel))
 }
 /// Actual receipt-bound paths which may never contain registered index data.
-pub(crate) fn retained_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
+pub fn retained_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
     let layout = Layout::read(root)?.context("runtime state layout missing")?;
     ensure!(
         layout.ready && layout.claimed()?,
@@ -448,7 +448,7 @@ pub(crate) fn retained_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 /// Record initialization before any registry creation, under singleton ownership.
-pub(crate) fn record_control(lease: &airk_store::service::ServiceLease) -> Result<()> {
+pub fn record_control(lease: &airk_store::service::ServiceLease) -> Result<()> {
     let control = control_location(lease.root())?;
     ensure!(
         control == lease.root(),
@@ -489,7 +489,7 @@ pub(crate) fn record_control(lease: &airk_store::service::ServiceLease) -> Resul
     sync_directory(&owner.state)
 }
 
-pub(crate) fn record_registry(
+pub fn record_registry(
     lease: &airk_store::service::ServiceLease,
     namespace: airk_core::identity::Incarnation,
 ) -> Result<()> {
@@ -499,7 +499,7 @@ pub(crate) fn record_registry(
     registry_binding::finish(lease, &owner, namespace)
 }
 
-pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
+pub fn log_parent(control: &Path) -> Result<PathBuf> {
     let control = control_location(control)?;
     if exists(&control)? {
         require_control(&control)?;
@@ -532,7 +532,7 @@ pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
     Ok(logs)
 }
 
-pub(crate) fn inspect(root: &Path) -> Result<serde_json::Value> {
+pub fn inspect(root: &Path) -> Result<serde_json::Value> {
     Ok(match Layout::read(root)? {
         None => {
             serde_json::json!({"layout":"unconfigured","control":null})
@@ -551,7 +551,7 @@ pub(crate) fn inspect(root: &Path) -> Result<serde_json::Value> {
     })
 }
 
-pub(crate) fn abort(root: &Path) -> Result<()> {
+pub fn abort(root: &Path) -> Result<()> {
     if let Some(layout) = Layout::read(root)? {
         ensure!(
             !layout.ready,
@@ -565,15 +565,15 @@ pub(crate) fn abort(root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
+pub fn validate_control_root(control: &Path) -> Result<()> {
     validate_control(control)?;
     require_managed_control_ready(control)?;
     airk_store::service::registry::data_relocation::require_settled(control)
 }
-pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
+pub fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
     record_control(lease)
 }
-pub(crate) fn record_registry_root(
+pub fn record_registry_root(
     lease: &airk_store::service::ServiceLease,
     namespace: airk_core::identity::Incarnation,
 ) -> Result<()> {

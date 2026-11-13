@@ -12,7 +12,7 @@ const RECORD_BYTES: usize = (DETAIL_BYTES * 6) + 4096;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FailureDetail {
+pub struct FailureDetail {
     pub chain: String,
     pub truncated: bool,
 }
@@ -59,7 +59,7 @@ impl std::fmt::Write for BoundedDetail {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct JobFailure {
+pub struct JobFailure {
     pub job: Sha256Digest,
     pub grant: Incarnation,
     pub worker: Incarnation,

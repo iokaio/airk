@@ -17,13 +17,13 @@ mod catalog_index_setup_control;
 mod catalog_source_change_control;
 mod catalog_split_control;
 #[cfg(test)]
-mod catalog_test_fixture;
+pub(crate) use airk_host::catalog_test_fixture;
 pub mod combined_frontend;
 pub mod embedding_client;
 pub mod embedding_pool_bootstrap;
 pub mod embedding_pool_client;
 mod embedding_pool_process;
-pub mod embedding_pool_protocol;
+pub use airk_host::embedding_pool_protocol;
 mod http_backend;
 pub mod http_endpoint;
 mod http_gateway;
@@ -36,7 +36,7 @@ pub use airk_ipc as ipc;
 /// Compatibility path (split G1): the transport moved to `ipc::endpoint`.
 pub use ipc::endpoint as local_ipc;
 mod native_admin_connections;
-pub(crate) mod read_attempt;
+pub(crate) use airk_host::read_attempt;
 mod reference_refresh_control;
 mod registry_console;
 pub(crate) mod service_inference;
@@ -49,18 +49,18 @@ pub(crate) mod owner_acl {
 /// Private role admission (split plan §5.1, step 3.0).
 pub mod role_admission;
 mod runtime_metadata;
-pub mod runtime_pair;
+pub use airk_host::runtime_pair;
 pub mod service_configuration;
 pub mod service_frontend;
 /// Phase 7: the private `setup` and `service-login` roles (I4 writer).
 pub mod setup_role;
+/// U89: the install record's locations for an installed service.
+pub(crate) use airk_host::service_locations;
+pub use airk_host::service_logs;
 /// Compatibility path (split G1): the frame codec moved to `ipc::frame`.
 pub use ipc::frame as service_ipc;
-/// U89: the install record's locations for an installed service.
-mod service_locations;
-pub mod service_logs;
 mod service_management;
-pub mod service_registration;
+pub use airk_host::service_registration;
 pub mod service_runtime;
 pub mod standalone_setup;
 /// The CLI tool call path shared with M3 (split step 3a.2b).
@@ -71,18 +71,18 @@ mod worker_host;
 mod worker_scope;
 mod worker_transport;
 
-pub mod bundled_assets;
+pub use airk_host::bundled_assets;
 pub mod derived_worker;
 pub mod project_client;
-pub mod project_protocol;
+pub use airk_host::project_protocol;
 mod project_supervisor;
 pub mod project_worker;
 mod project_worker_split;
 
-mod service_resource_policy;
+pub(crate) use airk_host::service_resource_policy;
 
-pub mod install_files;
-mod install_layout;
+pub use airk_host::install_files;
+pub(crate) use airk_host::install_layout;
 mod legacy_processes;
 pub mod legacy_startup;
 pub mod manual_start;
@@ -94,36 +94,36 @@ pub mod runtime_install;
 mod runtime_legacy_origin;
 pub mod service_manager;
 
-mod checkpoint_fence;
+pub(crate) use airk_host::checkpoint_fence;
 /// The native upgrade checkpoint packet and fence writers (split step 2b).
-mod checkpoint_packet;
-mod child_job;
+pub(crate) use airk_host::checkpoint_packet;
+pub(crate) use airk_host::child_job;
 
-mod native_command;
-mod native_process;
+pub(crate) use airk_host::native_command;
+pub(crate) use airk_host::native_process;
 /// Native read result classification shared by clients and tests (split step 2b).
-mod native_read_result;
-mod process_diagnostics;
-mod process_roles;
+pub(crate) use airk_host::native_read_result;
+pub(crate) use airk_host::process_diagnostics;
+pub(crate) use airk_host::process_roles;
 
-pub mod source_protocol;
+pub use airk_host::source_protocol;
 
 pub mod source_worker;
 
 mod source_supervisor;
 #[cfg(unix)]
 pub mod unix_guardian;
-mod user_paths;
+pub(crate) use airk_host::user_paths;
 
-pub mod cli_io;
+pub use airk_host::cli_io;
 pub mod client_requests;
 pub mod console_client;
 /// Client side of the native service control transport (moved from `service_runtime`).
 pub(crate) mod control_client;
 pub mod explorer_assistance;
-mod request_journal;
+pub(crate) use airk_host::request_journal;
 pub mod session;
-pub mod session_protocol;
+pub use airk_host::session_protocol;
 pub mod unified_mcp;
 pub mod universal_launcher;
 pub mod usage_client;

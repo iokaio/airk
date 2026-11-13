@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Refuse anything other than a regular, unlinked file with exactly one name:
 /// symlinks, reparse points (Windows) and hard-link aliases are rejected.
-pub(crate) fn safe_file(path: &Path) -> Result<()> {
+pub fn safe_file(path: &Path) -> Result<()> {
     // One implementation (U90): moved to `airk-ipc` for `airkctl`'s records.
     airk_ipc::private_record::require_regular_unlinked(path)
 }
@@ -28,7 +28,7 @@ pub fn main_name() -> &'static str {
 }
 
 /// Payload-relative name of the separately signed Mac launcher image.
-pub(crate) const MAC_LAUNCHER_IMAGE: &str = "AIRK.app/Contents/MacOS/airk-launcher-image";
+pub const MAC_LAUNCHER_IMAGE: &str = "AIRK.app/Contents/MacOS/airk-launcher-image";
 
 /// The stable launcher beside an installation root.
 pub fn launcher_path(root: &Path) -> PathBuf {
@@ -40,7 +40,7 @@ pub fn launcher_path(root: &Path) -> PathBuf {
 }
 
 /// Read a bounded regular file after `safe_file`; growth past `limit` is refused.
-pub(crate) fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
+pub fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     safe_file(path)?;
     ensure!(
         fs::metadata(path)?.len() <= limit,
@@ -56,7 +56,7 @@ pub(crate) fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
 }
 
 /// Make a directory entry change durable on Unix; a no-op elsewhere.
-pub(crate) fn sync_directory(path: &Path) -> Result<()> {
+pub fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     File::open(path)?.sync_all()?;
     #[cfg(not(unix))]

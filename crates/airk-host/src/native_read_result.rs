@@ -14,7 +14,7 @@ impl std::fmt::Display for NativeReadFailure {
 }
 impl std::error::Error for NativeReadFailure {}
 impl NativeReadFailure {
-    pub(crate) fn from_response(value: Value) -> Self {
+    pub fn from_response(value: Value) -> Self {
         Self(value)
     }
     pub fn body(&self) -> &Value {

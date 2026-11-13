@@ -157,7 +157,7 @@ fn read(control: &Path, nonce: Incarnation) -> Result<Saved> {
     );
     Ok(saved)
 }
-pub(crate) fn persist(control: &Path, request: ControlMethod) -> Result<Incarnation> {
+pub fn persist(control: &Path, request: ControlMethod) -> Result<Incarnation> {
     let _lock = lock(control)?;
     let saved = Saved {
         schema: 1,
@@ -212,7 +212,7 @@ fn persist_locked(control: &Path, saved: &Saved) -> Result<Incarnation> {
 /// request under the nonce is a duplicate and other bytes conflict; then a
 /// namespace or epoch that is not current is expired; then a full journal.
 /// The journal file, lock and limits are unchanged.
-pub(crate) fn prepare_keyed(
+pub fn prepare_keyed(
     control: &Path,
     caller: Incarnation,
     key: &RequestKey,
@@ -270,7 +270,7 @@ pub(crate) fn prepare_keyed(
     })
 }
 /// The journal's capacity (M6).
-pub(crate) const CAPACITY: usize = LIMIT;
+pub const CAPACITY: usize = LIMIT;
 
 pub fn list(control: &Path) -> Result<Vec<Pending>> {
     let control = control.canonicalize()?;
@@ -295,7 +295,7 @@ pub fn list(control: &Path) -> Result<Vec<Pending>> {
 }
 /// The saved request for M7 under the held lock: the canonical control
 /// folder, the exact request with its saved key, and its project and kind.
-pub(crate) fn saved(
+pub fn saved(
     control: &Path,
     nonce: Incarnation,
 ) -> Result<(PathBuf, ControlMethod, ProjectBinding, JobKind)> {
@@ -309,7 +309,7 @@ pub(crate) fn saved(
     Ok((control, saved.request, project, kind))
 }
 /// A job receipt must name the saved request's project and kind.
-pub(crate) fn check_receipt(
+pub fn check_receipt(
     response: &ControlResponse,
     project: ProjectBinding,
     kind: JobKind,
@@ -327,7 +327,7 @@ pub fn forget(control: &Path, nonce: Incarnation) -> Result<()> {
     forget_existed(control, nonce).map(|_| ())
 }
 /// M8: forget the saved request, reporting whether it existed.
-pub(crate) fn forget_existed(control: &Path, nonce: Incarnation) -> Result<bool> {
+pub fn forget_existed(control: &Path, nonce: Incarnation) -> Result<bool> {
     let control = control.canonicalize()?;
     let control = control.as_path();
     let _lock = lock(control)?;

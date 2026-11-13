@@ -16,11 +16,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, io::Write, path::Path};
 
-pub(crate) const MAX_PACKET: u64 = 512 * 1024;
+pub const MAX_PACKET: u64 = 512 * 1024;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Packet {
+pub struct Packet {
     pub schema: u32,
     pub captured_unix_ms: u64,
     pub operation_id: Incarnation,
@@ -33,16 +33,16 @@ pub(crate) struct Packet {
     pub provider: airk_core::inference_provider::CompletionObservation,
 }
 
-pub(crate) fn packet_name(operation: Incarnation) -> String {
+pub fn packet_name(operation: Incarnation) -> String {
     format!("native-checkpoint-{operation}.json")
 }
-pub(crate) fn packet_digest(control: &Path, operation: Incarnation) -> Result<Sha256Digest> {
+pub fn packet_digest(control: &Path, operation: Incarnation) -> Result<Sha256Digest> {
     Ok(Sha256Digest::from_bytes(
         Sha256::digest(bytes(&control.join(packet_name(operation)), MAX_PACKET)?).into(),
     ))
 }
 
-pub(crate) fn immutable(control: &Path, name: &str, data: &[u8]) -> Result<()> {
+pub fn immutable(control: &Path, name: &str, data: &[u8]) -> Result<()> {
     ensure!(
         data.len() as u64 <= MAX_PACKET,
         "complete checkpoint packet exceeds capacity"
@@ -65,7 +65,7 @@ pub(crate) fn immutable(control: &Path, name: &str, data: &[u8]) -> Result<()> {
 }
 
 /// The installer clears only the exact operation after verified commit/rollback.
-pub(crate) fn settle(control: &Path, operation: Incarnation) -> Result<()> {
+pub fn settle(control: &Path, operation: Incarnation) -> Result<()> {
     let Some(saved) = fence(control)? else {
         return Ok(());
     };
@@ -82,11 +82,7 @@ pub(crate) fn settle(control: &Path, operation: Incarnation) -> Result<()> {
 
 /// Called only under installer-owned native exclusion, after committed-state
 /// capture. An installer fence invents no historical service incarnation.
-pub(crate) fn arm_recovery(
-    control: &Path,
-    operation: Incarnation,
-    candidate: Sha256Digest,
-) -> Result<()> {
+pub fn arm_recovery(control: &Path, operation: Incarnation, candidate: Sha256Digest) -> Result<()> {
     if let Some(saved) = fence(control)? {
         ensure!(
             saved.operation_id == operation && saved.candidate_execution_sha256 == candidate,
@@ -106,11 +102,7 @@ pub(crate) fn arm_recovery(
     immutable(control, FENCE, &serde_json::to_vec(&saved)?)
 }
 
-pub(crate) fn read_packet(
-    control: &Path,
-    operation: Incarnation,
-    sha256: Sha256Digest,
-) -> Result<Packet> {
+pub fn read_packet(control: &Path, operation: Incarnation, sha256: Sha256Digest) -> Result<Packet> {
     let path = control.join(packet_name(operation));
     let data = bytes(&path, MAX_PACKET)?;
     ensure!(
@@ -153,21 +145,21 @@ pub(crate) fn read_packet(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ReconcileReference {
+pub struct ReconcileReference {
     pub project: ProjectBinding,
     pub configuration_epoch: u64,
     pub requested_revision: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ExitBoundary {
+pub enum ExitBoundary {
     GracefulChildExit,
     NoActiveWatcherAfterNativeExclusion,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SourceCheckpointObservation {
+pub struct SourceCheckpointObservation {
     pub schema: u32,
     pub operation_id: Incarnation,
     pub service: Incarnation,
@@ -179,7 +171,7 @@ pub(crate) struct SourceCheckpointObservation {
     pub retained_reconciliations: Vec<ReconcileReference>,
 }
 impl SourceCheckpointObservation {
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == 1
                 && self.source_lease_excluded

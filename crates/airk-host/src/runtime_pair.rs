@@ -22,7 +22,7 @@ mod predecessor_tests;
 /// observation; this function never loads a model or starts a helper.
 /// Hash this running image once. Health and brokerage use the same startup
 /// identity, so a cold broker does not rehash a large executable on its thread.
-pub(crate) fn current_executable_sha256() -> Result<String> {
+pub fn current_executable_sha256() -> Result<String> {
     static DIGEST: std::sync::OnceLock<std::result::Result<String, String>> =
         std::sync::OnceLock::new();
     DIGEST
@@ -62,7 +62,7 @@ pub fn engine_identity_at(main: &Path) -> Result<airk_core::identity::Sha256Dige
 
 /// Observe an installer-verified image, including a predecessor or rollback
 /// target. The version must come from its verified Approval, not its own receipt.
-pub(crate) fn engine_identity_at_version(
+pub fn engine_identity_at_version(
     main: &Path,
     approved_version: &str,
 ) -> Result<airk_core::identity::Sha256Digest> {
@@ -205,7 +205,7 @@ impl RuntimePair {
     }
 }
 
-pub(crate) fn single_executable(main: &Path) -> Result<bool> {
+pub fn single_executable(main: &Path) -> Result<bool> {
     let manifest = payload_root(main)?.join("airk-runtime.json");
     if !manifest.try_exists()? {
         return Ok(true);
@@ -257,7 +257,7 @@ pub fn digest_file(path: &Path) -> Result<String> {
     digest_file_checked(path, &|| Ok(()))
 }
 
-pub(crate) fn digest_file_checked(path: &Path, check: &dyn Fn() -> Result<()>) -> Result<String> {
+pub fn digest_file_checked(path: &Path, check: &dyn Fn() -> Result<()>) -> Result<String> {
     check()?;
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
@@ -363,7 +363,7 @@ pub fn verify_helper(main: &Path) -> Result<PathBuf> {
     verify_installed_pair(main, env!("CARGO_PKG_VERSION"))
 }
 
-pub(crate) fn payload_root(main: &Path) -> Result<&Path> {
+pub fn payload_root(main: &Path) -> Result<&Path> {
     payload_root_for_layout(main, cfg!(target_os = "macos"))
 }
 
@@ -396,7 +396,7 @@ pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<Path
 /// Structural metadata read only: this does NOT verify executable bytes or
 /// authorize execution. The installer compares these fields only after its full
 /// approved inventory hash pass; standalone callers retain verify_installed_pair.
-pub(crate) fn read_installed_pair(
+pub fn read_installed_pair(
     main: &Path,
     expected_version: &str,
 ) -> Result<(PathBuf, PathBuf, RuntimePair)> {

@@ -24,6 +24,44 @@ ITEM = re.compile(r"^(\s*)((?:(?:async|const|unsafe|extern \"C\")\s+)*)(fn|struc
 FIELD = re.compile(r"^(\s*)([a-z_][a-z0-9_]*\s*:)")
 
 
+REEXPORT = {"E0364", "E0365"}
+DEFINITION = r"^\s*pub\((?:crate|super|self|in [^)]*)\)\s+(?:(?:async|const|unsafe)\s+)*(?:fn|struct|enum|type|trait|const|static|mod|union)\s+{}\b"
+
+
+def definitions(file_name, name):
+    """(file, line) of each restricted-visibility definition of `name` in the crate of `file_name`."""
+    path = Path(file_name) if Path(file_name).is_absolute() else ROOT / file_name
+    source = next(parent for parent in path.parents if parent.name == "src")
+    pattern = re.compile(DEFINITION.format(re.escape(name)))
+    found = []
+    for candidate in sorted(source.rglob("*.rs")):
+        for number, line in enumerate(candidate.read_text(encoding="utf-8").split("\n"), start=1):
+            if pattern.match(line):
+                found.append((str(candidate), number))
+    return found
+
+
+def field_definitions(struct, field):
+    """(file, line) of field `field` inside `struct <struct>` definitions in the workspace crates."""
+    header = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+" + re.escape(struct) + r"\b")
+    member = re.compile(r"^\s*(?:pub\((?:crate|super|self|in [^)]*)\)\s+)?" + re.escape(field) + r"\s*:")
+    found = []
+    for source in sorted((ROOT / "crates").glob("*/src")):
+        for candidate in sorted(source.rglob("*.rs")):
+            lines = candidate.read_text(encoding="utf-8").split("\n")
+            for start, line in enumerate(lines):
+                if not header.match(line):
+                    continue
+                depth = 0
+                for number in range(start, len(lines)):
+                    depth += lines[number].count("{") - lines[number].count("}")
+                    if number > start and member.match(lines[number]) and not lines[number].lstrip().startswith("pub "):
+                        found.append((str(candidate), number + 1))
+                    if number > start and depth <= 0:
+                        break
+    return found
+
+
 def check(packages, features, target_dir):
     command = ["cargo", "check", "--locked", "--all-targets", "--message-format=json"]
     for package in packages:
@@ -33,8 +71,11 @@ def check(packages, features, target_dir):
     if target_dir:
         command += ["--target-dir", target_dir]
     result = subprocess.run(command, cwd=ROOT, text=True, encoding="utf-8", stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL)
+                            stderr=subprocess.PIPE)
     privacy, other = [], []
+    if result.returncode != 0 and '"reason":"compiler-message"' not in result.stdout:
+        # Cargo stopped before compiling (for example a stale lockfile): never report "clean".
+        other.append(result.stderr.strip()[-4000:] or f"cargo exited {result.returncode}")
     for line in result.stdout.splitlines():
         try:
             event = json.loads(line)
@@ -44,13 +85,41 @@ def check(packages, features, target_dir):
         if not message or message.get("level") != "error":
             continue
         code = (message.get("code") or {}).get("code")
+        if code in REEXPORT:
+            # `X` is only public within the crate: widen X's definition in the re-exporting crate.
+            name = re.search(r"`([A-Za-z0-9_]+)`", message["message"])
+            span = next(iter(message.get("spans", [])), None)
+            if name and span:
+                for found in definitions(span["file_name"], name.group(1)):
+                    privacy.append(found + (message["message"],))
+                continue
+        if code == "E0451":
+            # fields `a`, `b` and `c` of struct `S` are private (a struct literal in another crate).
+            names = re.findall(r"`([A-Za-z0-9_:<>, ]+)`", message["message"])
+            if len(names) >= 2:
+                struct = re.sub(r"<.*", "", names[-1]).split("::")[-1]
+                for field in names[:-1]:
+                    for found in field_definitions(struct, field):
+                        privacy.append(found + (message["message"],))
+            continue
+        if code == "E0616":
+            # field `x` of struct `S` is private: widen the field inside `struct S`'s definition.
+            names = re.findall(r"`([A-Za-z0-9_:<>, ]+)`", message["message"])
+            if len(names) >= 2:
+                struct = re.sub(r"<.*", "", names[1]).split("::")[-1]
+                for found in field_definitions(struct, names[0]):
+                    privacy.append(found + (message["message"],))
+            continue
         if code in PRIVACY:
+            # Only the note that points at the definition; never the use site.
             for child in message.get("children", []):
+                if "defined here" not in child.get("message", ""):
+                    continue
                 for span in child.get("spans", []):
-                    if "defined here" in child.get("message", "") or span.get("label"):
-                        privacy.append((span["file_name"], span["line_start"], message["message"]))
+                    privacy.append((span["file_name"], span["line_start"], message["message"]))
+            # rustc also labels the definition on a secondary span ("private method defined here").
             for span in message.get("spans", []):
-                if span.get("label") and "private" in span["label"] and not message.get("children"):
+                if not span.get("is_primary") and "defined here" in (span.get("label") or ""):
                     privacy.append((span["file_name"], span["line_start"], message["message"]))
         else:
             other.append(message.get("rendered") or message["message"])

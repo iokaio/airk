@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::{fs::OpenOptions, io::Write};
 
-pub(crate) const PIN: &str = "airk-registry-1.4.owner.json";
-pub(crate) const PART: &str = "airk-registry-1.4.owner.part";
+pub const PIN: &str = "airk-registry-1.4.owner.json";
+pub const PART: &str = "airk-registry-1.4.owner.part";
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Binding {

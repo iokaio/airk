@@ -26,7 +26,7 @@ mod tests;
 
 /// An adopted installation's locations, normalized.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Installed {
+pub struct Installed {
     pub(crate) state: PathBuf,
     pub(crate) logs: PathBuf,
 }
@@ -40,7 +40,7 @@ fn normal(path: &Path) -> Result<PathBuf> {
 }
 
 /// The record's locations, normalized.
-pub(crate) fn installed(locations: &Locations) -> Result<Installed> {
+pub fn installed(locations: &Locations) -> Result<Installed> {
     Ok(Installed {
         state: normal(Path::new(&locations.state)).context("install record state location")?,
         logs: normal(Path::new(&locations.logs)).context("install record logs location")?,
@@ -61,7 +61,7 @@ pub(crate) fn logs_for(control: &Path, adopted: Option<&Installed>) -> Option<Pa
 }
 
 /// Adopt `installed` for this process. A second adoption must be the same.
-pub(crate) fn adopt(installed: Installed) -> Result<()> {
+pub fn adopt(installed: Installed) -> Result<()> {
     let current = ADOPTED.get_or_init(|| installed.clone());
     ensure!(
         *current == installed,
@@ -74,7 +74,7 @@ pub(crate) fn adopt(installed: Installed) -> Result<()> {
 /// the caller) when its state folder is `control` (`service-detached`,
 /// `record-error`). No installation, or another one, leaves the pre-split
 /// selection; an unreadable installation is the caller's error.
-pub(crate) fn adopt_for_control(control: &Path, installation: Option<Locations>) -> Result<bool> {
+pub fn adopt_for_control(control: &Path, installation: Option<Locations>) -> Result<bool> {
     let Some(locations) = installation else {
         return Ok(false);
     };
