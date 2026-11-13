@@ -1,0 +1,2089 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "mode": "live local UI; read-only navigation",
+  "captures": [
+    {
+      "id": "00-session-entry",
+      "file": "current-00-session-entry.png",
+      "url": "https://127.0.0.1:62133/admin/#overview",
+      "time": "2026-11-13T18:59:40.783Z",
+      "label": "00 session entry",
+      "proposed_file": "proposed-00-session-entry.png",
+      "current_dimensions": [
+        1440,
+        67
+      ],
+      "current_sha256": "a70fc6a297aeb4b24c7663e0cd6fcdf8a4c16eace0d586d794837fd7f7232fd6",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "ff65454a5cfe12a4df62a79d8fa598fa0d48c3f234bfca2ad7552359bb7974e6"
+    },
+    {
+      "id": "01-overview",
+      "label": "Overview",
+      "kind": "main",
+      "file": "current-01-overview.png",
+      "url": "https://127.0.0.1:62133/admin/",
+      "time": "2026-11-13T19:01:38.540Z",
+      "proposed_file": "proposed-01-overview.png",
+      "current_dimensions": [
+        1440,
+        2088
+      ],
+      "current_sha256": "72deba50772d8cf4b5a724096adf949e3adc5a2a7266f8f6c65905fb28530a53",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "a120baa7cb58742fafdcba2347d326829cf5e5e69d2cb2dae797bbd41cec8325"
+    },
+    {
+      "id": "02-index-library",
+      "label": "Index library",
+      "kind": "main",
+      "file": "current-02-index-library.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:01:38.858Z",
+      "proposed_file": "proposed-02-index-library.png",
+      "current_dimensions": [
+        1440,
+        1711
+      ],
+      "current_sha256": "89fbd1452051714f04d5ca1a1edf77cdd6d1c91336b8b9d022cb1a73404e082a",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9824523e55ff63e165235a122cb83e5abf31f80009a893a73668113196d11f2d"
+    },
+    {
+      "id": "03-activity",
+      "label": "Activity",
+      "kind": "main",
+      "file": "current-03-activity.png",
+      "url": "https://127.0.0.1:62133/admin/#activity",
+      "time": "2026-11-13T19:01:40.694Z",
+      "proposed_file": "proposed-03-activity.png",
+      "current_dimensions": [
+        1440,
+        1956
+      ],
+      "current_sha256": "21efff1b75f6dfcdd95cb2db833337fa4e42b87ae45b1be90c878f2a4bc9ffc7",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9d4d0343619f166fa7b02a4988f2e8e18e18bf52061d7bc7132ebb27a2078d58"
+    },
+    {
+      "id": "04-agents",
+      "label": "Agents",
+      "kind": "main",
+      "file": "current-04-agents.png",
+      "url": "https://127.0.0.1:62133/admin/#agents",
+      "time": "2026-11-13T19:01:41.363Z",
+      "proposed_file": "proposed-04-agents.png",
+      "current_dimensions": [
+        1440,
+        2415
+      ],
+      "current_sha256": "4bd203bd1d38572aff9b62d1eb95a9d691547dfa910e6e523ec5f1637a7aa177",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "c795ad0a8d468d2d1c466e67a5cc6605d023ab3a2b9da22116f3eb8195787334"
+    },
+    {
+      "id": "05-storage",
+      "label": "Storage initial",
+      "kind": "main",
+      "file": "current-05-storage.png",
+      "url": "https://127.0.0.1:62133/admin/#storage",
+      "time": "2026-11-13T19:01:42.833Z",
+      "proposed_file": "proposed-05-storage.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "71fe82774543e667f0e0c3698e76ba1aa398c51b5cce55689c3b0cfc52a97f33",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9196225e40041e8f2c3655648152215cb54d9eeba9f3143ba9bda14964b88dd8"
+    },
+    {
+      "id": "06-recovery",
+      "label": "Recovery",
+      "kind": "main",
+      "file": "current-06-recovery.png",
+      "url": "https://127.0.0.1:62133/admin/#recovery",
+      "time": "2026-11-13T19:01:44.550Z",
+      "proposed_file": "proposed-06-recovery.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "71731f4ae80bc76d0c0277475b6a87f8395992cf25a26ecb857a05b62c3ec9db",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "e0d0c65797a358cfa18bed3219173d19e849d12a816444ab3faf64e919bc435d"
+    },
+    {
+      "id": "07-service",
+      "label": "Service initial",
+      "kind": "main",
+      "file": "current-07-service.png",
+      "url": "https://127.0.0.1:62133/admin/#service",
+      "time": "2026-11-13T19:01:44.742Z",
+      "proposed_file": "proposed-07-service.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "cda40cf7ebee15cd710a24b3d7b16fe2400f0c29aacfa425d5634d75f5ee166c",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "6e68d7169326f3ba9d80c6c28aa6b1b85d9429e3964513192cc53b73ff6931ea"
+    },
+    {
+      "id": "08-logs",
+      "label": "Logs initial",
+      "kind": "main",
+      "file": "current-08-logs.png",
+      "url": "https://127.0.0.1:62133/admin/#logs",
+      "time": "2026-11-13T19:01:45.985Z",
+      "proposed_file": "proposed-08-logs.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "888f757fb99e6fab54e7a10156b289246473252cbbbbc45168adb09645ff5c6c",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "7c29a9029c51d434d8ca4d2cfb1bccab7ff595b93aeca862412f2d33db1cc591"
+    },
+    {
+      "id": "09-usage",
+      "label": "Usage initial",
+      "kind": "main",
+      "file": "current-09-usage.png",
+      "url": "https://127.0.0.1:62133/admin/#usage",
+      "time": "2026-11-13T19:01:46.520Z",
+      "proposed_file": "proposed-09-usage.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "762c409d9e2a293b872d768fab1335017fc5b5cb7d484b98421c19471d3fbf7e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "4af833af3516cb8d65642fd930a60092ad0f53b755aac90a7e490628ce6fafcc"
+    },
+    {
+      "id": "10-search",
+      "label": "Search",
+      "kind": "main",
+      "file": "current-10-search.png",
+      "url": "https://127.0.0.1:62133/admin/#search",
+      "time": "2026-11-13T19:01:48.678Z",
+      "proposed_file": "proposed-10-search.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "f2be98518bd833bbc5f1518423d98cb6f3d3d29345a753b3f69c857429225267",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "ab79ea886feab7f5cc63dd22afd7ab0125082ec20be7f8e7fd105dfe19473d91"
+    },
+    {
+      "id": "11-help",
+      "label": "Help home",
+      "kind": "main",
+      "file": "current-11-help.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:48.969Z",
+      "proposed_file": "proposed-11-help.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "89568fae2fa402bbb68e4b8c95f8dc05c0df31a7d9acf89cbaa7a454ec48ddcd",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "fa1d6b19b83ca5a58e55e90e6422bbac73f2256a69777f76bb26ade75093790a"
+    },
+    {
+      "id": "12-index-detail",
+      "label": "Index detail",
+      "kind": "secondary",
+      "file": "current-12-index-detail.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:01:39.296Z",
+      "proposed_file": "proposed-12-index-detail.png",
+      "current_dimensions": [
+        1440,
+        5042
+      ],
+      "current_sha256": "9c6cd65df6ee4450c70954a65dd45b508106b9422b3777f5ccdde5b8e4e3c488",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "2fcc171fbeb8179746bb36b382bdc609019102c18c5ff9175d88741c4df75864"
+    },
+    {
+      "id": "13-set-detail",
+      "label": "Index set detail",
+      "kind": "secondary",
+      "file": "current-13-set-detail.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:01:39.861Z",
+      "proposed_file": "proposed-13-set-detail.png",
+      "current_dimensions": [
+        1440,
+        3094
+      ],
+      "current_sha256": "891e0cd44aa27361ec6b74fab6c44c6f2c3e6c213d7c8b0dc3b5cb1329988227",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "73d2f669e83a325a7de57a414c7b4410338c9666929dead474af46a4eb82749b"
+    },
+    {
+      "id": "14-folder-picker",
+      "label": "Choose a source folder",
+      "kind": "dialog",
+      "file": "current-14-folder-picker.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:01:40.301Z",
+      "proposed_file": "proposed-14-folder-picker.png",
+      "current_dimensions": [
+        1440,
+        1711
+      ],
+      "current_sha256": "c47a62eb53a74c45e5b50f20daa6454fbd9e320ffc061bba8a1ead578be22d51",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "0f56ac32cc20cb051bce118e4c82a9845831f082bdd69d99ef9021f18fff57d5"
+    },
+    {
+      "id": "15-job-detail",
+      "label": "Job detail",
+      "kind": "secondary",
+      "file": "current-15-job-detail.png",
+      "url": "https://127.0.0.1:62133/admin/#activity",
+      "time": "2026-11-13T19:01:41.022Z",
+      "proposed_file": "proposed-15-job-detail.png",
+      "current_dimensions": [
+        1440,
+        2392
+      ],
+      "current_sha256": "860a744da99e346c92967b13aeae4dafb5c7829a5607ac2e4d40195e8e7b4c7d",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "8fe139587e4fd2e7da7400d07e91615f8c6822452a9abd01a249a5dea1778a9d"
+    },
+    {
+      "id": "agents-claude-code",
+      "label": "Manual setup: Claude Code",
+      "kind": "agent-tab",
+      "file": "current-agents-claude-code.png",
+      "url": "https://127.0.0.1:62133/admin/#agents",
+      "time": "2026-11-13T19:01:41.742Z",
+      "proposed_file": "proposed-agents-claude-code.png",
+      "current_dimensions": [
+        1440,
+        2524
+      ],
+      "current_sha256": "101b04c3b4b8deb5290b608cfa488ca47eda472c229ee2ac8ab03d14842c1072",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9970cec75315e6393afc0389dd3ebdbf7993028421c3753a42754a2774697042"
+    },
+    {
+      "id": "agents-codex",
+      "label": "Manual setup: Codex",
+      "kind": "agent-tab",
+      "file": "current-agents-codex.png",
+      "url": "https://127.0.0.1:62133/admin/#agents",
+      "time": "2026-11-13T19:01:42.081Z",
+      "proposed_file": "proposed-agents-codex.png",
+      "current_dimensions": [
+        1440,
+        2408
+      ],
+      "current_sha256": "81a4ab69ca73d16425b64037b1469ed22e9f28b6a40267f80e46b536e7aa2325",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "db964a239463ac59966cda5d12d717b3bd24bb8ce69927295ef3bb0b4a64f5f6"
+    },
+    {
+      "id": "agents-vs-code-copilot",
+      "label": "Manual setup: VS Code / Copilot",
+      "kind": "agent-tab",
+      "file": "current-agents-vs-code-copilot.png",
+      "url": "https://127.0.0.1:62133/admin/#agents",
+      "time": "2026-11-13T19:01:42.369Z",
+      "proposed_file": "proposed-agents-vs-code-copilot.png",
+      "current_dimensions": [
+        1440,
+        2651
+      ],
+      "current_sha256": "9d932cd8cb707328be0bacda06b2703d328d1a8b45ee38eaca5e04ec6bfc638d",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "4bba3e9e8b911b72c8cf325ea186c2189ea5a57094e341581a99700d2ebdb004"
+    },
+    {
+      "id": "agents-other-mcp-clients",
+      "label": "Manual setup: Other MCP clients",
+      "kind": "agent-tab",
+      "file": "current-agents-other-mcp-clients.png",
+      "url": "https://127.0.0.1:62133/admin/#agents",
+      "time": "2026-11-13T19:01:42.638Z",
+      "proposed_file": "proposed-agents-other-mcp-clients.png",
+      "current_dimensions": [
+        1440,
+        2307
+      ],
+      "current_sha256": "679ab414260580949e85c6cbf7700c7fc508b52c13b5af0f5d3facf1b7d880f7",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "90c1dc4106a16698d9d5012e4607e31b7aaa4dd973750d028f705ba57fec571c"
+    },
+    {
+      "id": "16-storage-loaded",
+      "label": "Storage inventory",
+      "kind": "secondary",
+      "file": "current-16-storage-loaded.png",
+      "url": "https://127.0.0.1:62133/admin/#storage",
+      "time": "2026-11-13T19:01:43.755Z",
+      "proposed_file": "proposed-16-storage-loaded.png",
+      "current_dimensions": [
+        1440,
+        1093
+      ],
+      "current_sha256": "32a3befeaea3d81d4e1954922121f64a6cc8cb9554d2c9a979d0c995a2bf6201",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9196225e40041e8f2c3655648152215cb54d9eeba9f3143ba9bda14964b88dd8"
+    },
+    {
+      "id": "17-cache-review",
+      "label": "Cache cleanup review",
+      "kind": "secondary",
+      "file": "current-17-cache-review.png",
+      "url": "https://127.0.0.1:62133/admin/#storage",
+      "time": "2026-11-13T19:01:44.043Z",
+      "proposed_file": "proposed-17-cache-review.png",
+      "current_dimensions": [
+        1440,
+        1422
+      ],
+      "current_sha256": "5fbc2f85d5b4f9e80af55915f345dd9dcc6664f64621ee974c90b2523ad463ba",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "68db443a19151dbb0f7aa39bf75d519ca2174a120b300106f55c1387d7167b55"
+    },
+    {
+      "id": "18-logs-cleanup-review",
+      "label": "Closed-log cleanup review",
+      "kind": "secondary",
+      "file": "current-18-logs-cleanup-review.png",
+      "url": "https://127.0.0.1:62133/admin/#storage",
+      "time": "2026-11-13T19:01:44.365Z",
+      "proposed_file": "proposed-18-logs-cleanup-review.png",
+      "current_dimensions": [
+        1440,
+        1750
+      ],
+      "current_sha256": "011e95ec7ba95a78bae40622e45c9dde85ce25be9365f5bb0a3781125fcd2ddd",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "f066b977f5d41c153ec94678ae38431dada2d63c00039c58dbf9159ba7bd2339"
+    },
+    {
+      "id": "19-service-loaded",
+      "label": "Service status",
+      "kind": "secondary",
+      "file": "current-19-service-loaded.png",
+      "url": "https://127.0.0.1:62133/admin/#service",
+      "time": "2026-11-13T19:01:45.818Z",
+      "proposed_file": "proposed-19-service-loaded.png",
+      "current_dimensions": [
+        1440,
+        2504
+      ],
+      "current_sha256": "2108c6f8250273fc0e72c31efd0592a8065d9747713b748f776bf64af47b396b",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "6e68d7169326f3ba9d80c6c28aa6b1b85d9429e3964513192cc53b73ff6931ea"
+    },
+    {
+      "id": "20-logs-loaded",
+      "label": "Recent service logs",
+      "kind": "secondary",
+      "file": "current-20-logs-loaded.png",
+      "url": "https://127.0.0.1:62133/admin/#logs",
+      "time": "2026-11-13T19:01:46.329Z",
+      "proposed_file": "proposed-20-logs-loaded.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "4c5e8e4a08a3870ad578956ba99f65d09e4ae31385f0c9aa907a03fb8decdc34",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "a621214a39bca956aec508475d2d72104315587391208060205ef518f90ae518"
+    },
+    {
+      "id": "21-usage-report",
+      "label": "Usage report",
+      "kind": "secondary",
+      "file": "current-21-usage-report.png",
+      "url": "https://127.0.0.1:62133/admin/#usage",
+      "time": "2026-11-13T19:01:46.855Z",
+      "proposed_file": "proposed-21-usage-report.png",
+      "current_dimensions": [
+        1440,
+        2296
+      ],
+      "current_sha256": "a0ec1911f066a6fce2cdb3114ab0aa4610eab2e27fcf3ff000b78cbf858801d2",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "4af833af3516cb8d65642fd930a60092ad0f53b755aac90a7e490628ce6fafcc"
+    },
+    {
+      "id": "22-usage-export",
+      "label": "Usage report export",
+      "kind": "secondary",
+      "file": "current-22-usage-export.png",
+      "url": "https://127.0.0.1:62133/admin/#usage",
+      "time": "2026-11-13T19:01:47.232Z",
+      "proposed_file": "proposed-22-usage-export.png",
+      "current_dimensions": [
+        1440,
+        3105
+      ],
+      "current_sha256": "183249af4e21892a1afc9c33b80d6c1e273056e96a750c8bdf5a9a755a34d2ed",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "51333a337b550c0da1e6ef2078d7fece68f5d3022247b436be7aef43a6f98b54"
+    },
+    {
+      "id": "23-index-settings",
+      "label": "Index settings document",
+      "kind": "secondary",
+      "file": "current-23-index-settings.png",
+      "url": "https://127.0.0.1:62133/admin/#usage",
+      "time": "2026-11-13T19:01:48.517Z",
+      "proposed_file": "proposed-23-index-settings.png",
+      "current_dimensions": [
+        1440,
+        3387
+      ],
+      "current_sha256": "154d76271e3cd83aceb1b52971a662249e60f0847dd0f8bc719a7efeb91d9999",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "5443480e4ef447e3cf556deaeb37c41c9e8bc64ccbfad8b64cf406b32c1dd163"
+    },
+    {
+      "id": "help-topic-overview",
+      "label": "Overview",
+      "kind": "help-topic",
+      "file": "current-help-topic-overview.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:49.282Z",
+      "proposed_file": "proposed-help-topic-overview.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d5d5bb6b04cf2a269bf86f23474132549bf596f133335d9c9d65f850f79549ad",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "7b699ec44e1ca5e97f2f80fc663edb2dab0c45ebdac85e228b49f9b4b87f385e"
+    },
+    {
+      "id": "help-topic-workbench",
+      "label": "Workbench and bounded evidence plans",
+      "kind": "help-topic",
+      "file": "current-help-topic-workbench.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:49.562Z",
+      "proposed_file": "proposed-help-topic-workbench.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "9ecd6cbdad9fcf1527d274df3dca57fd3fe9128b5381bdc168c76e7582ddf8d7",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "7ed6479ecf1cd692dfc7ea2b58e3550b7bbfedb389d9188125de730b3c86777e"
+    },
+    {
+      "id": "help-topic-about",
+      "label": "About AIRK, Ioka and the community",
+      "kind": "help-topic",
+      "file": "current-help-topic-about.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:49.844Z",
+      "proposed_file": "proposed-help-topic-about.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "6e9e300b5913d4a7a73a71cedb11b2b9e98511e6aa5fc8c6846b15625ed9f8f9",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "420e1585495e3fbaa53a9eae8456b11207e1697d897ac03c5a47e53aa3fb91dc"
+    },
+    {
+      "id": "help-topic-explorer",
+      "label": "Explorer UI and agent assistance",
+      "kind": "help-topic",
+      "file": "current-help-topic-explorer.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:50.124Z",
+      "proposed_file": "proposed-help-topic-explorer.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "865a0d1d5a39ca0eed1d97f1108851325ae707c4f4d07da53af774db3c736760",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "84f9141f24ffd7a7c5d33701e755c8140cc7be0e2e01556427c365fe9d6865fa"
+    },
+    {
+      "id": "help-topic-roles",
+      "label": "Developer, Tester, Architect and Writer",
+      "kind": "help-topic",
+      "file": "current-help-topic-roles.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:50.404Z",
+      "proposed_file": "proposed-help-topic-roles.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "27e8a46d5f7f9513f3a131aba5ce68f859c9028d3db4754eea4e2d1d64799241",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "7098bc9b4c2f1784e0ad3eaf9f855f18473d84eed0da2965779dbbaac81a0dda"
+    },
+    {
+      "id": "help-topic-indexing-choices",
+      "label": "Indexing choices by purpose and source",
+      "kind": "help-topic",
+      "file": "current-help-topic-indexing-choices.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:50.689Z",
+      "proposed_file": "proposed-help-topic-indexing-choices.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "99be4c4f61d59f431795291dfc85b71487db6c46ede10aff1b6c072caa78f711",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "25f0e590f90b413b2ad2d262272bce6708e4abec0475c10060da76e41b770a6a"
+    },
+    {
+      "id": "help-topic-job-management",
+      "label": "CLI options for managing project work",
+      "kind": "help-topic",
+      "file": "current-help-topic-job-management.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:50.963Z",
+      "proposed_file": "proposed-help-topic-job-management.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "88af6b098519d1924a04d4e8b322f0ab7c0f73cd2dcb72ae5e812019d48dd533",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "a8eecf5dce286511c605c1d9a8078efb820e5cb3477fb782c7dd378fc5467650"
+    },
+    {
+      "id": "help-topic-index-health",
+      "label": "Explaining workspace index health",
+      "kind": "help-topic",
+      "file": "current-help-topic-index-health.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:51.244Z",
+      "proposed_file": "proposed-help-topic-index-health.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "b4f89846ac1972c83a82ed55b13f060adef9ebef324e572accbcfd72bc62f3dd",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "1da8b7a9475b892b41493e89ff1f3e786b60be094f293ef126ae3c428236d4ed"
+    },
+    {
+      "id": "help-topic-topics",
+      "label": "Help topic catalog",
+      "kind": "help-topic",
+      "file": "current-help-topic-topics.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:51.518Z",
+      "proposed_file": "proposed-help-topic-topics.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d29ec1a2d16f0f94495d2634a27c02e74eab0e8ee53f8aaa0c7596507251ec29",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "a04701ba496b4c49852bd47982cf75362369c8176052c59fb37deeed86fd7fb9"
+    },
+    {
+      "id": "help-topic-quickstart",
+      "label": "Getting started",
+      "kind": "help-topic",
+      "file": "current-help-topic-quickstart.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:51.815Z",
+      "proposed_file": "proposed-help-topic-quickstart.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "96d614ff03301582480b50b5519a8e50df506770de89af18750eae88a6b98f03",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "669a0e0042b3234fed62c66d7f0b8786ab4fa3b8e84fe0f3ec42977a13cfe070"
+    },
+    {
+      "id": "help-topic-cli",
+      "label": "CLI scope and invocation",
+      "kind": "help-topic",
+      "file": "current-help-topic-cli.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:52.095Z",
+      "proposed_file": "proposed-help-topic-cli.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "803cfee7adf0491116c6530f2bb3b3fe7eacfea0fa2180d4ea447bb453ffa21c",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "054c4d6abee49c8323f6eb84ec459bfe8fde38ad403032be63a71a49f5284a4f"
+    },
+    {
+      "id": "help-topic-commands",
+      "label": "Public CLI command catalog",
+      "kind": "help-topic",
+      "file": "current-help-topic-commands.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:52.435Z",
+      "proposed_file": "proposed-help-topic-commands.png",
+      "current_dimensions": [
+        1440,
+        3625
+      ],
+      "current_sha256": "bb61f49aefc7a3a2094f65f0ebaf765c216c63873927ad735ac915d59d2bd8ed",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "6bb8da7aa8e4ca1827e5e1debe65fcfb39cef420fb1d3255b6e474fc86c067a1"
+    },
+    {
+      "id": "help-topic-mcp",
+      "label": "MCP connections and response modes",
+      "kind": "help-topic",
+      "file": "current-help-topic-mcp.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:52.715Z",
+      "proposed_file": "proposed-help-topic-mcp.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "3b4a6397f0d4facb589c1934e595afd3d0ea101730525f2080baf91d5d294a9d",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "5823b31c2b5974c1ba8c642694a2665d2c39d8b11c96678651436d03cee914bd"
+    },
+    {
+      "id": "help-topic-tools",
+      "label": "MCP tool discovery and arguments",
+      "kind": "help-topic",
+      "file": "current-help-topic-tools.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:52.994Z",
+      "proposed_file": "proposed-help-topic-tools.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "7e622ccc7d864b1c3aace8278c2473909a3f472f1b87394f6f709de4a072b4e2",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "948bb5c507e7412d1567888ca9906fbb04c5930bc7151274acda36ad495238c0"
+    },
+    {
+      "id": "help-topic-tool-selection",
+      "label": "Choosing an evidence tool",
+      "kind": "help-topic",
+      "file": "current-help-topic-tool-selection.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:53.276Z",
+      "proposed_file": "proposed-help-topic-tool-selection.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d4ed14af606386acc3b1c4ef86825070f54b43c2668c3d9f717b71adf4e58c72",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "c7114d8ed7a037f1540f2935d3c5b35e3437ebe7e8fddf5e8910bb06d0d474b2"
+    },
+    {
+      "id": "help-topic-search",
+      "label": "Lexical, vector and hybrid search",
+      "kind": "help-topic",
+      "file": "current-help-topic-search.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:53.556Z",
+      "proposed_file": "proposed-help-topic-search.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "fe33ebad0e27beb8e73120954c7084dc92ea92591450f9f654ecf8ad503ac270",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "e4cc43ebba202acef73c95ff891559d5b389601d702f2310c5ebceaa2ab74ff5"
+    },
+    {
+      "id": "help-topic-indexing",
+      "label": "Indexing jobs and phases",
+      "kind": "help-topic",
+      "file": "current-help-topic-indexing.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:53.848Z",
+      "proposed_file": "proposed-help-topic-indexing.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "7634c25c069b9fb71b91d49cd647ea8ea660ff7d46d087290763f2a656341595",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9f8a96803ef421e4e6d0c2f125c23494091c6f3c0280690185a33121b39d6b91"
+    },
+    {
+      "id": "help-topic-jobs",
+      "label": "Ongoing jobs, queues and waits",
+      "kind": "help-topic",
+      "file": "current-help-topic-jobs.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:54.130Z",
+      "proposed_file": "proposed-help-topic-jobs.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "91c36de68527dc1be398c590817037c3bebd519e886ecafefd9f75c3605e35f2",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "0001d23e2fd9c28cdd2e66e79d6ff52610e1daed480166d155f2d073a6a72a63"
+    },
+    {
+      "id": "help-topic-freshness",
+      "label": "Published state and source freshness",
+      "kind": "help-topic",
+      "file": "current-help-topic-freshness.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:54.409Z",
+      "proposed_file": "proposed-help-topic-freshness.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d8f178149bd1924b4459ea7b547afa805b0cdce1be0c4177e99c02cf26a0797e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "6b428846b9b5fe4f672cb3f40f415af2c2981b086f5cb9be5eec082b19dfdb4c"
+    },
+    {
+      "id": "help-topic-code",
+      "label": "Code facts, references and relationships",
+      "kind": "help-topic",
+      "file": "current-help-topic-code.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:54.690Z",
+      "proposed_file": "proposed-help-topic-code.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "aced971ecac2d0a5805db3d8be60babe919732658e14ddabb54a90f4630a10c6",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "21ce5d198b823cda8762dd4b6f41d083a00a26a4dee87511b7f16459f957edb2"
+    },
+    {
+      "id": "help-topic-documents",
+      "label": "Document facts and original locations",
+      "kind": "help-topic",
+      "file": "current-help-topic-documents.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:54.969Z",
+      "proposed_file": "proposed-help-topic-documents.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "60d92e063933aa1fea0698300193c4011b3d211bfac59fbb677a1076cc0d3660",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "e75aaf4a1a62bdb02b4b1549aa71bd39c4b851b37af3a43538ed32e216228e87"
+    },
+    {
+      "id": "help-topic-formats",
+      "label": "Supported formats and adapters",
+      "kind": "help-topic",
+      "file": "current-help-topic-formats.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:55.248Z",
+      "proposed_file": "proposed-help-topic-formats.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "dbbff01dd529ada77b8260454e9a92c6e63751e4fc681a72109c08b9d6f0700f",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "852d0756c761277d867ea50cd3cf23e6106d21181ea6ddc8177b1289dcefac28"
+    },
+    {
+      "id": "help-topic-models",
+      "label": "Offline models and inference",
+      "kind": "help-topic",
+      "file": "current-help-topic-models.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:55.528Z",
+      "proposed_file": "proposed-help-topic-models.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "58638e35a1e8b635c5e71f4e03761e2fb2b70023cd1d1348c21081e314f0222e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "852b645e206682f28442fa3e28cccf1515a8a66346f41f86e96b0c25c531be80"
+    },
+    {
+      "id": "help-topic-service",
+      "label": "Native service and process ownership",
+      "kind": "help-topic",
+      "file": "current-help-topic-service.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:55.806Z",
+      "proposed_file": "proposed-help-topic-service.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "7dc02dcd858cc592e4854ba85870d3ad2ff95628e91d88586eed7a48e3b5f90e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "cf22baa2520231699641d55c3309f5f81708569e1f04686961301bdbfa7aa18a"
+    },
+    {
+      "id": "help-topic-resources",
+      "label": "Memory, workers and resource policy",
+      "kind": "help-topic",
+      "file": "current-help-topic-resources.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:56.097Z",
+      "proposed_file": "proposed-help-topic-resources.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "0b19c73cec4b179e5a76da99702d186c1baf6a692ac1cbba06c05203b83235bd",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "60f9870e5093ae92be5fb8b384e98b826c03b07142155d812f09baae8a4e9e95"
+    },
+    {
+      "id": "help-topic-installation",
+      "label": "Installation and terminal command",
+      "kind": "help-topic",
+      "file": "current-help-topic-installation.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:56.378Z",
+      "proposed_file": "proposed-help-topic-installation.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "b5c76c0cd1a944bc7b82544ef65ed848eca2fb66e333347a4419dd17f9e59789",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "470cadf5db97d035ff4198db4901cce081ddeb1b2e307d6dd7954c77a1bda7be"
+    },
+    {
+      "id": "help-topic-upgrades",
+      "label": "Replacement, rollback and legacy transition",
+      "kind": "help-topic",
+      "file": "current-help-topic-upgrades.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:56.658Z",
+      "proposed_file": "proposed-help-topic-upgrades.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "b282ec9604a7f3337e4e522479824dcf9a33148ae2d75a276b3be7fb599a1045",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "fe30af22fa23cc798992ed155f6c1b89a39a3bada3a7070ce8c015f5509ba036"
+    },
+    {
+      "id": "help-topic-configuration",
+      "label": "Project configuration and guard checks",
+      "kind": "help-topic",
+      "file": "current-help-topic-configuration.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:56.937Z",
+      "proposed_file": "proposed-help-topic-configuration.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "42791810f758c8572c06f60bfe4a1750764b3c36195b5163fc694c2db6b6d0a2",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "468befea9172c8999b09da03d4da17e6c9018afeeb44dbd9b857676f93dbc61f"
+    },
+    {
+      "id": "help-topic-storage",
+      "label": "Index storage, isolation and quotas",
+      "kind": "help-topic",
+      "file": "current-help-topic-storage.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:57.218Z",
+      "proposed_file": "proposed-help-topic-storage.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "6dea80d784b72394e76b3fe7cb0392536f591e4f8581d8b743e81090662e82de",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "e8c47c76212a75ba039b656ef7b1388a188c862bf7059b3657f38054e4e0c8f7"
+    },
+    {
+      "id": "help-topic-maintenance",
+      "label": "Repair, rebuild and deletion",
+      "kind": "help-topic",
+      "file": "current-help-topic-maintenance.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:57.494Z",
+      "proposed_file": "proposed-help-topic-maintenance.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "1e987fd7281282005cc949cb80469259216e58ccddfc252b7948eb31958c944b",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "bd5bf0c9b8507033940754fdb7e2a9b37cbb01fd56f31c3895dec5d342cb32b0"
+    },
+    {
+      "id": "help-topic-agent-setup",
+      "label": "Connecting a coding agent",
+      "kind": "help-topic",
+      "file": "current-help-topic-agent-setup.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:57.774Z",
+      "proposed_file": "proposed-help-topic-agent-setup.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "772d332997bd5c8e9e9b7e08ca9ab867e14b7302bacae4442edfeab23b90a657",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "b3b11ae09b13cd9771db81f293a1021dd1703eb2ebd7891e4a9813c52b1d167e"
+    },
+    {
+      "id": "help-topic-request-recovery",
+      "label": "Unknown outcomes and exact retries",
+      "kind": "help-topic",
+      "file": "current-help-topic-request-recovery.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:58.097Z",
+      "proposed_file": "proposed-help-topic-request-recovery.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "5e06ee9886fb6d95a5a0c824cd50e4dea6186ccfdfed5678219ea5c2cac06d10",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "a1ac2f4f4321d0947181fcef3eb5cd185b37dbf9ab1d32d38f7ca17cedf7baf8"
+    },
+    {
+      "id": "help-topic-troubleshooting",
+      "label": "Diagnosing common symptoms",
+      "kind": "help-topic",
+      "file": "current-help-topic-troubleshooting.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:58.380Z",
+      "proposed_file": "proposed-help-topic-troubleshooting.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "e634c0663c8041fff2584903a38e73b24494926e52d77412f8859a6288e2d139",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "d04100f6a78656052ed66508fc3be1a0ca9bb549cc169fb48033173f8f5c1f09"
+    },
+    {
+      "id": "help-topic-privacy",
+      "label": "Privacy and read-only boundaries",
+      "kind": "help-topic",
+      "file": "current-help-topic-privacy.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:58.647Z",
+      "proposed_file": "proposed-help-topic-privacy.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "253e7a6b47a54ad705e965c7638b5df70294d912796605a82d4f866762150441",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "92a3f331899c1f15b21ed8b5cd43f40f1c83c78fe2719227dd0eb839066b65e2"
+    },
+    {
+      "id": "help-topic-limits",
+      "label": "Budgets and interpretation limits",
+      "kind": "help-topic",
+      "file": "current-help-topic-limits.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:58.942Z",
+      "proposed_file": "proposed-help-topic-limits.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "e22830f092a920ac73f989aad42819c9075b059539a445339108a5b68a9d1a55",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "40d1299cfec134ce82fbde4cc8d66ea1b1eb459cdabca309e5772a2c59a0e397"
+    },
+    {
+      "id": "help-topic-usage",
+      "label": "Usage reports and savings estimates",
+      "kind": "help-topic",
+      "file": "current-help-topic-usage.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:59.232Z",
+      "proposed_file": "proposed-help-topic-usage.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "67ce2e5dc17686650770ca5fb27261ef88c461a63a714d0672bf09efae7875e7",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "dfb90b2af0b21016da06ededc987f311c17acf068e405427eb87c09fc8392337"
+    },
+    {
+      "id": "help-topic-versions",
+      "label": "Versions, builds and runtime diagnostics",
+      "kind": "help-topic",
+      "file": "current-help-topic-versions.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:59.542Z",
+      "proposed_file": "proposed-help-topic-versions.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "68384475a83fdccf0492bd7a90140ed12e34792365f5dd0efaf737cfb89aafc5",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "39df9f22c033ee19b7ac59eef5efe62de3d5ff12707a459eaeb459f633a35b97"
+    },
+    {
+      "id": "help-topic-architecture",
+      "label": "Components and data flow",
+      "kind": "help-topic",
+      "file": "current-help-topic-architecture.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:01:59.846Z",
+      "proposed_file": "proposed-help-topic-architecture.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "38fffb622f6e3d26373be02ccc55f917d83d44d5798cf5c518dd634695ce84b7",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "6a2f740fcf794ba4f9151d263feb3ce0d3941c3f529624609ded18dfdff85ae6"
+    },
+    {
+      "id": "help-topic-workflows",
+      "label": "Common user workflows",
+      "kind": "help-topic",
+      "file": "current-help-topic-workflows.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:00.124Z",
+      "proposed_file": "proposed-help-topic-workflows.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "2905ecc44d4c7642cf50e14e7703823bdbcb3ee9a6171cb7334895e80c43c9d0",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "40d8308a0b73ce256769b75cb2e9ba0b436acf03e445bbdca64152988d44f6c2"
+    },
+    {
+      "id": "help-topic-glossary",
+      "label": "Terminology",
+      "kind": "help-topic",
+      "file": "current-help-topic-glossary.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:00.403Z",
+      "proposed_file": "proposed-help-topic-glossary.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "fe4a1ec15f38d90f3eae244f8fdae8655ae6e37787c522216248b9e2b671b084",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "131bba13b3b834da07ef6b643828b5a9242517b5618707d7d590c80e3bf84411"
+    },
+    {
+      "id": "help-tool-changes",
+      "label": "Tool reference: changes",
+      "kind": "help-tool",
+      "file": "current-help-tool-changes.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:00.706Z",
+      "proposed_file": "proposed-help-tool-changes.png",
+      "current_dimensions": [
+        1440,
+        1597
+      ],
+      "current_sha256": "a090ca32db662e46dc441c78e8852a77ba8515fd8b83e5aaf8afec4c2d7b4580",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "b28b9b3c0690433e235a46ad47b688bb58e44957adbbf8bea8de9c15530cc99c"
+    },
+    {
+      "id": "help-tool-context",
+      "label": "Tool reference: context",
+      "kind": "help-tool",
+      "file": "current-help-tool-context.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:01.018Z",
+      "proposed_file": "proposed-help-tool-context.png",
+      "current_dimensions": [
+        1440,
+        1549
+      ],
+      "current_sha256": "0665f4d5869708f191d7a90f2b9758de79b88f88a9b8aa08a8bb16f3d773601e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "12132fcd35b5ac358f573d7e4cf6db4fabbe0df94adba96fbb99019b408abe37"
+    },
+    {
+      "id": "help-tool-file_info",
+      "label": "Tool reference: file_info",
+      "kind": "help-tool",
+      "file": "current-help-tool-file_info.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:01.327Z",
+      "proposed_file": "proposed-help-tool-file_info.png",
+      "current_dimensions": [
+        1440,
+        1365
+      ],
+      "current_sha256": "b44e5205ba8105a0b7d79669e3cbf6e18e1f04c34387ac5d223940abaf4fa6da",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "96d47aaa1ea2237275fa52f4d8f5a25cd275ee6d6bc96b0e33ac55fdc7efaa92"
+    },
+    {
+      "id": "help-tool-parse",
+      "label": "Tool reference: parse",
+      "kind": "help-tool",
+      "file": "current-help-tool-parse.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:01.636Z",
+      "proposed_file": "proposed-help-tool-parse.png",
+      "current_dimensions": [
+        1440,
+        1409
+      ],
+      "current_sha256": "09c4111f21b03fb471156707f09ba02f18dece182d9831f1836cf49310540d4f",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "2185aa414a2618f56968a1cbbfb22e7f8fb964029ad53d338b7443a21953e38a"
+    },
+    {
+      "id": "help-tool-query_scope",
+      "label": "Tool reference: query_scope",
+      "kind": "help-tool",
+      "file": "current-help-tool-query_scope.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:01.934Z",
+      "proposed_file": "proposed-help-tool-query_scope.png",
+      "current_dimensions": [
+        1440,
+        1100
+      ],
+      "current_sha256": "6bcb5b16b91cc2c63d4dcbc6fd6fbeda6c4cca7be779c2b6cfbd5e0170a60386",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "1eebfc9cb55c65e875dcfd5175745d6f9206fc524ee52a06dab348a9d29bffbf"
+    },
+    {
+      "id": "help-tool-read_file",
+      "label": "Tool reference: read_file",
+      "kind": "help-tool",
+      "file": "current-help-tool-read_file.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:02.245Z",
+      "proposed_file": "proposed-help-tool-read_file.png",
+      "current_dimensions": [
+        1440,
+        1465
+      ],
+      "current_sha256": "eaf6bdf67326b1be18e3ada1d623bbc2cb10abc71b50c06d7229a0069f5124f1",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "8ed27c7ec50ecda56345911c23b4914d793f0a26d7a443de36f31f19a8a55d5b"
+    },
+    {
+      "id": "help-tool-search",
+      "label": "Tool reference: search",
+      "kind": "help-tool",
+      "file": "current-help-tool-search.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:02.562Z",
+      "proposed_file": "proposed-help-tool-search.png",
+      "current_dimensions": [
+        1440,
+        1648
+      ],
+      "current_sha256": "67f8df7e923a5bfef02ae09f7f6153bd22a8545820e81af450be7534af74f129",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "470951390a1633052e31fee26c5e6d7b5e4a4af275837f534a291cfecbd0b389"
+    },
+    {
+      "id": "help-tool-code_facts",
+      "label": "Tool reference: code_facts",
+      "kind": "help-tool",
+      "file": "current-help-tool-code_facts.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:02.886Z",
+      "proposed_file": "proposed-help-tool-code_facts.png",
+      "current_dimensions": [
+        1440,
+        2124
+      ],
+      "current_sha256": "618d391b3ead3401f057ec9465987fd4e7721f6660232626954ba3a5715a0dd3",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "f10636bfb81fcf7915413904505eab56ba7d1ea6dc7dbf80e027df5cbc3a8ace"
+    },
+    {
+      "id": "help-tool-imports",
+      "label": "Tool reference: imports",
+      "kind": "help-tool",
+      "file": "current-help-tool-imports.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:03.220Z",
+      "proposed_file": "proposed-help-tool-imports.png",
+      "current_dimensions": [
+        1440,
+        1629
+      ],
+      "current_sha256": "16db0642e5faf26052b3a8181d4dfcfd7a15416e510d12a95912868fe93cfb53",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9fa9060c12b42d1b9275f3d0a1fb8085c6fa52ec1029c4528eadfbd8d0ff11ac"
+    },
+    {
+      "id": "help-tool-outline",
+      "label": "Tool reference: outline",
+      "kind": "help-tool",
+      "file": "current-help-tool-outline.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:03.521Z",
+      "proposed_file": "proposed-help-tool-outline.png",
+      "current_dimensions": [
+        1440,
+        1554
+      ],
+      "current_sha256": "c2d06e82d7be4ba97725cb0c7ba0c38bb83dd0bf1883d59a72dd6621602a75e1",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "dbc01d2e99cbb5af5fc1de14b28afdeae8453c7bbb0fc46aed5591f7d21dca42"
+    },
+    {
+      "id": "help-tool-references",
+      "label": "Tool reference: references",
+      "kind": "help-tool",
+      "file": "current-help-tool-references.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:03.839Z",
+      "proposed_file": "proposed-help-tool-references.png",
+      "current_dimensions": [
+        1440,
+        1604
+      ],
+      "current_sha256": "a4e0e63abb93a610d3f0f879a0aaf2588f549bb6b178e10d15b9ccec07e9fd5c",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "35be3d5ca442f0187fb36e3b5353c220c061ac32ebbba5b71904cc9ca1a86bfe"
+    },
+    {
+      "id": "help-tool-relationships",
+      "label": "Tool reference: relationships",
+      "kind": "help-tool",
+      "file": "current-help-tool-relationships.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:04.157Z",
+      "proposed_file": "proposed-help-tool-relationships.png",
+      "current_dimensions": [
+        1440,
+        1504
+      ],
+      "current_sha256": "dd74bdeea80f0afab0c20ca36cb015a4adb0cae3020c25866fbc823b2c799e1c",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "db32fd31d7af02fde6f8d900806e20b523df7752e24bfaab5108bb2a592eadfc"
+    },
+    {
+      "id": "help-tool-symbols",
+      "label": "Tool reference: symbols",
+      "kind": "help-tool",
+      "file": "current-help-tool-symbols.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:04.459Z",
+      "proposed_file": "proposed-help-tool-symbols.png",
+      "current_dimensions": [
+        1440,
+        1649
+      ],
+      "current_sha256": "4ec8cfe8ca99c75d79f87dfb7eedc59704d99e60f7057930d30e35e2dec5ba93",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "8e0f8d163950b384193e89071a9bc89fe9dc2220e39d70c032e44669f05df919"
+    },
+    {
+      "id": "help-tool-document_facts",
+      "label": "Tool reference: document_facts",
+      "kind": "help-tool",
+      "file": "current-help-tool-document_facts.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:04.792Z",
+      "proposed_file": "proposed-help-tool-document_facts.png",
+      "current_dimensions": [
+        1440,
+        1909
+      ],
+      "current_sha256": "0ce3ce02fa62d391e0e41ad6eb0b224b70b2b3cc92358cb04406837b0174258e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "119d7a9fd9e3359f8953d88ca5b1e60ab6ef1f0dda3197d53061d9f6695ee3a0"
+    },
+    {
+      "id": "help-tool-capabilities",
+      "label": "Tool reference: capabilities",
+      "kind": "help-tool",
+      "file": "current-help-tool-capabilities.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:05.093Z",
+      "proposed_file": "proposed-help-tool-capabilities.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d996e283e2a8431acaeb283337bdf6d5c0b1676aa3098db1e65eec1b2a43f747",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "ce8282f67d01468c9edf51b73792114b50cddaa37f5b0cb448c4075a0a01b75f"
+    },
+    {
+      "id": "help-tool-diagnostics",
+      "label": "Tool reference: diagnostics",
+      "kind": "help-tool",
+      "file": "current-help-tool-diagnostics.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:05.373Z",
+      "proposed_file": "proposed-help-tool-diagnostics.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "22b48e6522230575da4820c508e54df3e75b5af531c45eb34089c5c143201b56",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "1888c833adf1cda3ec9ddc13663586f7f2cba45a7cee7bd501086d835cf059eb"
+    },
+    {
+      "id": "help-tool-help",
+      "label": "Tool reference: help",
+      "kind": "help-tool",
+      "file": "current-help-tool-help.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:05.676Z",
+      "proposed_file": "proposed-help-tool-help.png",
+      "current_dimensions": [
+        1440,
+        1303
+      ],
+      "current_sha256": "edc6fb9d7e4c768cc8dfd253a70f2f437ca0beb84c9f619c02ab6db9a1868283",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "0cffe6ca400df83aa676e1673280da60d813be703e8ab98bed861bec300bfd5d"
+    },
+    {
+      "id": "help-tool-status",
+      "label": "Tool reference: status",
+      "kind": "help-tool",
+      "file": "current-help-tool-status.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:05.977Z",
+      "proposed_file": "proposed-help-tool-status.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d814032be0e268f345a0384e58f263d66132ea8bf3b4150ac1e9acfa723135b5",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "31a4fdf2b3b3ede5ad38f55210ed3dd140fdb438161c486dc0ddecc5a4daed33"
+    },
+    {
+      "id": "help-tool-projects",
+      "label": "Tool reference: projects",
+      "kind": "help-tool",
+      "file": "current-help-tool-projects.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:06.280Z",
+      "proposed_file": "proposed-help-tool-projects.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d85f94452ff96bb13e0f88aef3dc0ac67f426051558de284aec4b714fae32b5b",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "1e94528697174ca5fc36f00e3536e222a443a0f21e2a831d1372884add5829c5"
+    },
+    {
+      "id": "help-tool-draft_search",
+      "label": "Tool reference: draft_search",
+      "kind": "help-tool",
+      "file": "current-help-tool-draft_search.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:06.568Z",
+      "proposed_file": "proposed-help-tool-draft_search.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "ee4868481f21d8322bd30279939b59f1ff48e921e1b41f59c4c56cd6b458f03d",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "b09c10d12aaad19f1e83e44b3b394a92cbd3123b063a7fc83d498ebec5cead5d"
+    },
+    {
+      "id": "help-tool-draft_strategy",
+      "label": "Tool reference: draft_strategy",
+      "kind": "help-tool",
+      "file": "current-help-tool-draft_strategy.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:06.850Z",
+      "proposed_file": "proposed-help-tool-draft_strategy.png",
+      "current_dimensions": [
+        1440,
+        1114
+      ],
+      "current_sha256": "37d93c916e9ba9bbc2a560d3dfc8f1e584ee8186b57738ad49f18b1d5f1c7671",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "9ab2e1fcd180108e37a678e0463090d6a6131a35a281f23d55edfda10b9f3a74"
+    },
+    {
+      "id": "help-tool-draft_plan",
+      "label": "Tool reference: draft_plan",
+      "kind": "help-tool",
+      "file": "current-help-tool-draft_plan.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:07.159Z",
+      "proposed_file": "proposed-help-tool-draft_plan.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "bf8e04b4fb989d4185e3901fefb4e47a7780f45c7ec773b7ba00def51963b8db",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "72e52d7a1d89ab6731a0bd6c68a265ba862b16b11fe560cb320ab91099106bc6"
+    },
+    {
+      "id": "help-tool-list_templates",
+      "label": "Tool reference: list_templates",
+      "kind": "help-tool",
+      "file": "current-help-tool-list_templates.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:07.434Z",
+      "proposed_file": "proposed-help-tool-list_templates.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "abb97e4b111afcc7a02de243214240c2901014251bca9a21b69275239eeb9124",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "8c87b4691aa5420608736862835c4c3e1008a2236dc0a79e98ae284762372663"
+    },
+    {
+      "id": "help-tool-get_template",
+      "label": "Tool reference: get_template",
+      "kind": "help-tool",
+      "file": "current-help-tool-get_template.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:07.714Z",
+      "proposed_file": "proposed-help-tool-get_template.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "6f7ab4117de9c86f70b72bde06f87b6c04dfa13f34becbc5929342a37eccc600",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "17ba76a740dea7733ed5e2677b128029a09ab19f9efca1ac90ab59747d1b756b"
+    },
+    {
+      "id": "help-tool-validate_draft",
+      "label": "Tool reference: validate_draft",
+      "kind": "help-tool",
+      "file": "current-help-tool-validate_draft.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:07.998Z",
+      "proposed_file": "proposed-help-tool-validate_draft.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d3bf8dd89bc7d0912ba023f32ebb30f1cc1f9d48000a93e1c23efe5775a05147",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "06a94c7e7f00bf94012b7b1f9368dad5704fced9f3786fa78162b161ef98b3c4"
+    },
+    {
+      "id": "help-tool-proposal_status",
+      "label": "Tool reference: proposal_status",
+      "kind": "help-tool",
+      "file": "current-help-tool-proposal_status.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:08.275Z",
+      "proposed_file": "proposed-help-tool-proposal_status.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "d39a4c06ea7d42db6f7a43632bc3b2387133f05f8c574d6401e2bfde05701850",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "76d291c4a6e90a177ef460cb83b4a6ab26fc6938ad475848e51568498b5c3b47"
+    },
+    {
+      "id": "help-tool-get_handoff",
+      "label": "Tool reference: get_handoff",
+      "kind": "help-tool",
+      "file": "current-help-tool-get_handoff.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:08.552Z",
+      "proposed_file": "proposed-help-tool-get_handoff.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "0bc9d219672e84996cef0f9da8665675b50d3b9f0b219abd4b746ba31c95f926",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "81dab01686448dd0889a50fd931417b262729843e3085c5dbe4a94406f5c8bbc"
+    },
+    {
+      "id": "help-tool-suggest_view",
+      "label": "Tool reference: suggest_view",
+      "kind": "help-tool",
+      "file": "current-help-tool-suggest_view.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:08.847Z",
+      "proposed_file": "proposed-help-tool-suggest_view.png",
+      "current_dimensions": [
+        1440,
+        1025
+      ],
+      "current_sha256": "3cd1ad8b4e58305d13cb2dece8d8b7b4ac3df328b794568817b7a355776228a7",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "fd7c99b24c7874347a6d718d28e38d97fabc792467204ada382c81c9afb5898f"
+    },
+    {
+      "id": "help-tool-list_files",
+      "label": "Tool reference: list_files",
+      "kind": "help-tool",
+      "file": "current-help-tool-list_files.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:09.145Z",
+      "proposed_file": "proposed-help-tool-list_files.png",
+      "current_dimensions": [
+        1440,
+        1291
+      ],
+      "current_sha256": "c8b27413661653790ed5a51f36686485b8dc597b7afffcf1419694c63956a4a1",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "7436a70ba46734c37cadd4b1ecb2339f1f75fe963697391152dda3ad36af5c9a"
+    },
+    {
+      "id": "24-help-empty-filter",
+      "label": "Help filter: no matches",
+      "kind": "secondary",
+      "file": "current-24-help-empty-filter.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:02:09.327Z",
+      "proposed_file": "proposed-24-help-empty-filter.png",
+      "current_dimensions": [
+        1440,
+        1291
+      ],
+      "current_sha256": "e918ab9821179ce67147aa53f53de65f09dacb6a4f7cfe2b997184cdbb09f905",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "38327097585f87bc067ef01430f12b254f9218a64ad65e6eb353cf92c5ca640d"
+    },
+    {
+      "id": "25-service-unreachable",
+      "label": "Service unavailable in browser",
+      "kind": "state",
+      "file": "current-25-service-unreachable.png",
+      "url": "https://127.0.0.1:62133/admin/#overview",
+      "time": "2026-11-13T19:02:09.525Z",
+      "proposed_file": "proposed-25-service-unreachable.png",
+      "current_dimensions": [
+        1440,
+        1000
+      ],
+      "current_sha256": "ddce69a046fd0abd07ea757d08198ec14f7ab8beac2ddd67f02d2f2287e22326",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "223e8a2bf5c9c0c7d92aa7b0cfa48610ebef489a42fe4539aa2d7a8f3da83f08"
+    },
+    {
+      "id": "26-search-catalog",
+      "label": "Search: catalog lookup",
+      "kind": "secondary",
+      "file": "current-26-search-catalog.png",
+      "url": "https://127.0.0.1:62133/admin/#search",
+      "time": "2026-11-13T19:03:39.445Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-26-search-catalog.png",
+      "current_dimensions": [
+        1440,
+        1255
+      ],
+      "current_sha256": "2fb54105d6633a2adf01612df18c28ff4450cdfbfd71a60dc2755fef3a879550",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "ab79ea886feab7f5cc63dd22afd7ab0125082ec20be7f8e7fd105dfe19473d91"
+    },
+    {
+      "id": "27-search-results",
+      "label": "Search: bounded lexical query",
+      "kind": "secondary",
+      "file": "current-27-search-results.png",
+      "url": "https://127.0.0.1:62133/admin/#search",
+      "time": "2026-11-13T19:03:40.355Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-27-search-results.png",
+      "current_dimensions": [
+        1440,
+        1964
+      ],
+      "current_sha256": "4246df6b2080b7be53a496bf59cfdea6e87e863ff41cd5edea9758fa42af94be",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "4895724721d4360f544523d9567276e5333a31d149d27094f5a221b509744aa8"
+    },
+    {
+      "id": "28-create-index",
+      "label": "Create an index form",
+      "kind": "secondary",
+      "file": "current-28-create-index.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:03:40.543Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-28-create-index.png",
+      "current_dimensions": [
+        1224,
+        506
+      ],
+      "current_sha256": "a30403d39a4f3323ebf9c12fd790ce6b5f18d06e6693594d49752a326ab74fa9",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "ed00f1371954755d3ab82c8f859bc9e02ebd30167e8f9883eae29eaf09966c95"
+    },
+    {
+      "id": "sources-remove_root",
+      "label": "Source change: remove root",
+      "kind": "secondary",
+      "file": "current-sources-remove_root.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:04:32.642Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-sources-remove_root.png",
+      "current_dimensions": [
+        1440,
+        4985
+      ],
+      "current_sha256": "30d08e08db84a6325cb0b53b541abdd45e1c5d78aacbd5ddad4a908a0afaca8d",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "30a721846cdeeec33c0d79340f00df0bfdd17e7d60f406b91bc2c8ff2731a791"
+    },
+    {
+      "id": "sources-trim_path",
+      "label": "Source change: trim path",
+      "kind": "secondary",
+      "file": "current-sources-trim_path.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:04:32.942Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-sources-trim_path.png",
+      "current_dimensions": [
+        1440,
+        4985
+      ],
+      "current_sha256": "93141a580cf583a2af99f6dda4e8155373f9308bdfccf1088a5f22ff74593731",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "e10b0218fd04e5e4aa05ec985df420fd33a06e0d7856d3e0d9d22b74c93e7793"
+    },
+    {
+      "id": "sources-unblock_path",
+      "label": "Source change: unblock path",
+      "kind": "secondary",
+      "file": "current-sources-unblock_path.png",
+      "url": "https://127.0.0.1:62133/admin/#index-library",
+      "time": "2026-11-13T19:04:33.278Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-sources-unblock_path.png",
+      "current_dimensions": [
+        1440,
+        4985
+      ],
+      "current_sha256": "d21f0b806aa366bc857ca923245e9754efba3db52cbe9bd916c188dd63b0208e",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "85739a7188d06f19925093a909c6fdff36f4d2fdf33fa140f3d21d590a776a56"
+    },
+    {
+      "id": "29-help-mobile",
+      "label": "Help at 390 px",
+      "kind": "responsive",
+      "file": "current-29-help-mobile.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:04:33.562Z",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "proposed_file": "proposed-29-help-mobile.png",
+      "current_dimensions": [
+        390,
+        3333
+      ],
+      "current_sha256": "6ad079b61beb6a66467f3430ba698b4932043b2439457ae11dc53c6a678f7293",
+      "proposed_dimensions": [
+        390,
+        844
+      ],
+      "proposed_sha256": "7696f0b9f75b7ed79ac84274ea8f83227709d85a4f3e0b59d31995d464d1ff14"
+    },
+    {
+      "id": "30-signed-out",
+      "label": "Signed out",
+      "kind": "state",
+      "file": "current-30-signed-out.png",
+      "url": "https://127.0.0.1:62133/admin/#help",
+      "time": "2026-11-13T19:04:33.743Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "proposed_file": "proposed-30-signed-out.png",
+      "current_dimensions": [
+        1440,
+        102
+      ],
+      "current_sha256": "245e5d20bc30114ee16a6d00e71a0f42e1f7b3c9543555901c5e09730e725748",
+      "proposed_dimensions": [
+        1440,
+        1000
+      ],
+      "proposed_sha256": "98269a9e31f8373a9144d8ea151138891cb5f5eaa4fda670b7446f5212e62bb6"
+    }
+  ],
+  "notes": {
+    "errors": [],
+    "blockedMutations": [],
+    "capture_harness": "One source-form selector timed out; completed captures retained, remaining forms captured after selector correction.",
+    "design_harness": "One PNG overwrite reported a transient filesystem open failure; file writability was checked, and only the nine revised design images were rendered successfully."
+  },
+  "review_date": "2026-11-13",
+  "installed_version": "1.8.34",
+  "design_notice": "Illustrative proposals, not implemented. Default views close advanced disclosures; complete native data must remain available.",
+  "capture_limits": [
+    "No destructive or persistent configuration actions applied.",
+    "Browser-only scope selection and read query exercised.",
+    "Offline failure confined to browser context.",
+    "No known repair plan or agent connection detail inspected.",
+    "Current full-page captures preserve expanded native UI; internal Help navigation rail is scrollable."
+  ]
+}
