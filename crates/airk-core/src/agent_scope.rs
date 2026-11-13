@@ -12,6 +12,7 @@
 //! (U106(a)); the union is deduplicated and bounded to
 //! [`MAX_SELECTION`] indexes.
 use crate::{
+    agent_connection::{AgentChoice, OpenConnectionState},
     catalog_management::CatalogSource,
     identity::Incarnation,
     index_catalog::{
@@ -19,7 +20,6 @@ use crate::{
         Membership, QueryProject, QueryProjectId, SourceImportState,
     },
     service_http::open_refusal,
-    service_http_credentials::{AgentChoice, OpenConnectionState},
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

@@ -304,7 +304,7 @@ pub struct HttpConnectionInfo {
     /// present exactly when `selection` is `Open`. Absent, the encoding is
     /// the pre-U105 one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub open: Option<crate::service_http_credentials::OpenConnectionState>,
+    pub open: Option<crate::agent_connection::OpenConnectionState>,
 }
 
 impl HttpConnectionInfo {

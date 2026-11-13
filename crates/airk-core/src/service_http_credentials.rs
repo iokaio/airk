@@ -5,9 +5,9 @@
 //! (`airk-cli` for the service, `airkctl` for the offline header helper) and
 //! pass their bytes here. The on-disk format is unchanged (U26). Nothing here
 //! performs I/O, creates a ledger or logs a token.
+pub use crate::agent_connection::{AgentChoice, OpenConnectionState};
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    index_catalog::{IndexId, MAX_SELECTION, QueryProjectId, unique_bounded},
     service_http::HttpSelection,
     usage::ClientFamily,
 };
@@ -83,50 +83,6 @@ pub struct Record {
     /// ledger holding it (`deny_unknown_fields`, fail closed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open: Option<OpenConnectionState>,
-}
-
-/// U105: whether an open connection's agent may choose indexes and sets per
-/// call (`on`) or reads exactly the stored default scope (`off`, the
-/// default for every new and migrated open connection).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentChoice {
-    #[default]
-    Off,
-    On,
-}
-
-/// U105/U106(b): an open connection's service-stored default scope. A
-/// change bumps `defaults_revision`, never the credential `generation`, so
-/// it takes effect on the next call.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OpenConnectionState {
-    pub defaults_revision: u64,
-    pub default_index_ids: Vec<IndexId>,
-    pub default_index_set_ids: Vec<QueryProjectId>,
-    pub agent_choice: AgentChoice,
-}
-
-impl OpenConnectionState {
-    /// A new open connection: choice off, empty default scope.
-    pub fn initial() -> Self {
-        Self {
-            defaults_revision: 1,
-            default_index_ids: Vec::new(),
-            default_index_set_ids: Vec::new(),
-            agent_choice: AgentChoice::Off,
-        }
-    }
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            (1..=i64::MAX as u64).contains(&self.defaults_revision),
-            "invalid open connection defaults revision"
-        );
-        unique_bounded(&self.default_index_ids, MAX_SELECTION)?;
-        unique_bounded(&self.default_index_set_ids, MAX_SELECTION)?;
-        Ok(())
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

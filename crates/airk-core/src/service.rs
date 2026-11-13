@@ -517,7 +517,7 @@ pub enum ControlMethod {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "combined_present"
         )]
-        agent_choice: Option<crate::service_http_credentials::AgentChoice>,
+        agent_choice: Option<crate::agent_connection::AgentChoice>,
     },
     /// M18 (split step 3e.5, `service issuer-rotation status`): the saved
     /// issuer rotation and current endpoint, as `airk runtime
@@ -1616,7 +1616,7 @@ pub enum ControlResponse {
     /// U105: the open connection's stored defaults after the change.
     AgentConnectionDefaults {
         connection_id: Incarnation,
-        open: crate::service_http_credentials::OpenConnectionState,
+        open: crate::agent_connection::OpenConnectionState,
     },
     /// M15a/M15 refused. `message` is the full error chain bounded to 4,096
     /// characters, as the pre-split CLI's `operation_failed` line carried it.

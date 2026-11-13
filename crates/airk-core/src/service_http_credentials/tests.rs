@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::index_catalog::{IndexId, QueryProjectId};
 
 const LEDGER_V1: &str =
     include_str!("../../../../fixtures/split/agents/credentials_ledger_v1.json");

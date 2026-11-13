@@ -449,7 +449,7 @@ fn canonical_read_name(name: &str) -> bool {
         .any(|tool| tool.name == name || tool.name.strip_prefix("airk_") == Some(name))
         // U105: the open connection's list tool (`open::LIST_INDEXES`); the
         // backend's catalog still decides whether a session offers it.
-        || name == crate::open::LIST_INDEXES
+        || name == airk_core::agent_scope::LIST_INDEXES
         || matches!(
             name,
             "projects"
