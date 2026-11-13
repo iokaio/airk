@@ -324,3 +324,27 @@ Every caller, including `tests/unregister_native.rs`, compiles unchanged.
 - Clippy, default and `local-inference`: pass.
 - Library tests are identical by identity: default 1070, `local-inference` 1109.
 - `airk-catalog-control`'s own 96 tests run in 18 s.
+
+## Step 3e: `airk-installer` extracted (12 November 2026)
+
+8 modules (79 files) moved into `crates/airk-installer`. The move also took the `#[path]`-mounted
+platform files (`runtime_macos_login.rs`, `service_manager_{linux,macos}.rs`) and the
+`include_str!` script `service_manager_windows.ps1`; `extract_crate.py` now moves such siblings.
+`service_manager_macos.m` and the macOS part of `build.rs` (with `cc`) moved with it.
+
+- **Glob imports.** `runtime_commands` (in `airk-cli`) uses `use crate::runtime_install::*`; across crates
+  a glob brings only `pub` items. `scripts/dev/widen_glob_imports.py` widened the 40 names it needs at
+  their `runtime_install.rs` definitions.
+- **Test helpers.** The bulk test-support conversion was reverted for this crate: it opened
+  platform-only test code, such as the macOS stop observer, on Windows. Only the items `airk-cli`
+  tests use are now `test-support`: `Managed::verify`,
+  `SetupCancellation::{worker_is_owned, admission_is_closed}` and the `runtime_install::tests`
+  fixture module, which allows `dead_code` only outside `cfg(test)`.
+- **Deleted.** Three `pub(crate) use` re-exports in `airk-cli` had no user left (`catalog_index_setup`,
+  `runtime_legacy_origin`, `native_command`).
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical by identity: default 1070, `local-inference` 1109.
+- `airk-installer`'s own 414 tests run in 42 s.

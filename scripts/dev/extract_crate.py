@@ -151,7 +151,10 @@ def main(argv=None):
     for module in modules:
         root_file = CLI / "src" / f"{module}.rs"
         if root_file.exists():
-            for name in re.findall(r'#\[path = "([^"/\\]+\.rs)"\]', root_file.read_text(encoding="utf-8")):
+            text = root_file.read_text(encoding="utf-8")
+            names = re.findall(r'#\[path = "([^"/\\]+\.rs)"\]', text)
+            names += re.findall(r'include_(?:str|bytes)!\("([^"/\\]+)"\)', text)
+            for name in names:
                 if (CLI / "src" / name).exists():
                     siblings.setdefault(module, []).append(name)
     for module in modules:

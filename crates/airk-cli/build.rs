@@ -4,17 +4,6 @@ use sha2::{Digest, Sha256};
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-changed=src/service_manager_macos.m");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        cc::Build::new()
-            .file("src/service_manager_macos.m")
-            .flag("-fobjc-arc")
-            .flag("-Werror")
-            .compile("airk_macos_login");
-        println!("cargo:rustc-link-lib=framework=Foundation");
-        println!("cargo:rustc-link-lib=framework=ServiceManagement");
-        println!("cargo:rustc-link-lib=objc");
-    }
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     admin_assets(&output);
 }

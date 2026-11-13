@@ -12,7 +12,6 @@ pub(crate) use airk_catalog_control::catalog_authority;
 pub(crate) use airk_catalog_control::catalog_coordinator;
 pub(crate) use airk_catalog_control::catalog_grant_draft;
 pub(crate) use airk_catalog_control::catalog_host_context;
-pub(crate) use airk_catalog_control::catalog_index_setup;
 pub(crate) use airk_catalog_control::catalog_index_setup_control;
 pub(crate) use airk_catalog_control::catalog_source_change_control;
 pub(crate) use airk_catalog_control::catalog_split_control;
@@ -77,23 +76,21 @@ pub(crate) use airk_host::service_resource_policy;
 
 pub use airk_host::install_files;
 pub(crate) use airk_host::install_layout;
-mod legacy_processes;
-pub mod legacy_startup;
-pub mod manual_start;
+pub(crate) use airk_installer::legacy_processes;
+pub use airk_installer::legacy_startup;
+pub use airk_installer::manual_start;
 /// The `airk runtime` dispatcher (split step 2b): above the service it serves.
 pub mod runtime_commands;
 /// Setup-only HTTP discovery and enrollment handlers (split step 2b).
 mod runtime_http_commands;
-pub mod runtime_install;
-mod runtime_legacy_origin;
-pub mod service_manager;
+pub use airk_installer::runtime_install;
+pub use airk_installer::service_manager;
 
 pub(crate) use airk_host::checkpoint_fence;
 /// The native upgrade checkpoint packet and fence writers (split step 2b).
 pub(crate) use airk_host::checkpoint_packet;
 pub(crate) use airk_host::child_job;
 
-pub(crate) use airk_host::native_command;
 pub(crate) use airk_host::native_process;
 /// Native read result classification shared by clients and tests (split step 2b).
 pub(crate) use airk_host::native_read_result;
@@ -112,14 +109,14 @@ pub use airk_inference::unix_guardian;
 pub use airk_host::cli_io;
 pub mod client_requests;
 pub mod console_client;
-/// Client side of the native service control transport (moved from `service_runtime`).
-pub(crate) mod control_client;
 pub use airk_endpoint::explorer_assistance;
 pub(crate) use airk_host::request_journal;
+/// Client side of the native service control transport (moved from `service_runtime`).
+pub(crate) use airk_installer::control_client;
 pub mod session;
 pub use airk_host::session_protocol;
 pub mod unified_mcp;
-pub mod universal_launcher;
+pub use airk_installer::universal_launcher;
 pub mod usage_client;
 
 /// The private project-owner process role, wired with the service hooks
