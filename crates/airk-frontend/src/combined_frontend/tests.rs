@@ -611,3 +611,269 @@ fn catalog_session_bodies_keep_their_request_and_grant() {
         serde_json::to_value(request).unwrap()
     );
 }
+
+fn agent_ref(revision: CatalogRevision) -> SelectionScopeRef {
+    SelectionScopeRef {
+        owner: airk_core::scoped_reads::SelectionOwnerKind::Agent,
+        grant_nonce: Incarnation::from_bytes([0x91; 16]),
+        service_instance: Incarnation::from_bytes([0xe1; 16]),
+        scope_identity: Sha256Digest::from_bytes([0x6a; 32]),
+        catalog_revision: revision,
+    }
+}
+
+/// A two-index open agent read (U106(d)) with the same distinctive nonce
+/// and service instance as the selection fixture.
+fn open_fixture() -> Backend<OpenScope> {
+    Backend {
+        control: PathBuf::new(),
+        selection: OpenScope {
+            selection_ref: agent_ref(CatalogRevision::try_from(12_u64).unwrap()),
+            namespace: Incarnation::from_bytes([0x0a; 16]),
+            index_ids: vec![
+                IndexId::from_identity(Incarnation::from_bytes([1; 16])),
+                IndexId::from_identity(Incarnation::from_bytes([3; 16])),
+            ],
+            connect: Arc::new(
+                |_: OpenRequest| -> crate::project_client::SelectionGrantFuture {
+                    Box::pin(async {
+                        Result::<airk_core::service::ConnectionGrant>::Err(anyhow::anyhow!(
+                            "unused"
+                        ))
+                    })
+                },
+            ),
+            issue: Arc::new(
+                |_: &SelectionScopeRef,
+                 _: Sha256Digest,
+                 _: Sha256Digest|
+                 -> Result<CombinedDeliveryReceipt> {
+                    Err(ScopeReadRefused.into())
+                },
+            ),
+        },
+        children: Mutex::new(BTreeMap::new()),
+        closed: std::sync::atomic::AtomicBool::new(false),
+        client: Mutex::new(airk_core::usage::ClientFamily::Cli),
+        service_instance: tokio::sync::OnceCell::new(),
+    }
+}
+
+/// The open basis reads its named indexes with no Project; a call cannot
+/// add Projects or narrow it, and refusals echo only the open scope.
+#[tokio::test]
+async fn open_combined_session_has_no_project_and_echoes_only_its_scope() -> Result<()> {
+    let backend = open_fixture();
+    let defaults = backend.request_selection(&mut Map::new())?;
+    assert!(defaults.project_ids.is_empty());
+    assert_eq!(
+        defaults.index_ids,
+        Some(backend.selection.index_ids.clone())
+    );
+    for value in [
+        json!({"project_ids":["prj_02020202020202020202020202020202"]}),
+        json!({"project_ids":["prj_02020202020202020202020202020202"],
+            "index_ids":["idx_01010101010101010101010101010101"]}),
+        json!({"index_ids":["idx_01010101010101010101010101010101"]}),
+    ] {
+        let mut args = value.as_object().unwrap().clone();
+        assert!(backend.request_selection(&mut args).is_err(), "{value}");
+    }
+    let expected = json!({"confirmed": false, "selection": {
+        "open_scope": {"namespace": "0a".repeat(16), "catalog_revision": 12,
+            "index_ids": backend.selection.index_ids},
+        "scope_identity": "6a".repeat(32)}});
+    let reply = backend
+        .call(
+            "airk_search".into(),
+            json!({"query": "x", "project": "legacy"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .await?;
+    assert_no_selection_secret(&reply.to_string());
+    assert_eq!(canonical_body(&reply)["requested_scope"], expected);
+    let scope = backend.combined_scope().expect("a combined session");
+    assert!(scope.project_ids.is_empty());
+    assert!(backend.combined_selection().is_none());
+    assert_eq!(
+        backend.selection.discovery_grant(),
+        ("open_scope", Value::Null)
+    );
+    Ok(())
+}
+
+/// Two real catalog indexes: the open snapshot merges both whole, with no
+/// Project, under its own identity domain, and a continuation bound to it
+/// never resumes under a project selection of the same indexes (or back).
+#[test]
+fn open_snapshot_merges_whole_indexes_with_its_own_cursor_domain() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let control = base.join("control");
+    let namespace = Incarnation::from_bytes([0x44; 16]);
+    let mut registrations = Vec::new();
+    for name in ["alpha", "beta"] {
+        let root = base.join(name);
+        std::fs::create_dir_all(root.join("docs"))?;
+        registrations.push(airk_host::service_registration::prepare(
+            &root,
+            &base.join(format!("{name}-data")),
+            name,
+        )?);
+    }
+    let mut registry = airk_host::catalog_test_fixture::authority_one(&control, namespace)?;
+    for (registration, seed) in registrations.iter().zip([60u8, 120]) {
+        airk_host::catalog_test_fixture::reviewed_index(
+            &mut registry,
+            registration,
+            vec![airk_core::catalog_setup::SetupSource {
+                canonical_path: registration.root.clone(),
+                aliases: Vec::new(),
+                owner: true,
+            }],
+            seed,
+        )?;
+    }
+    let revision = registry.catalog_state()?.context("catalog")?.revision;
+    let page = registry.catalog_page(&airk_core::catalog_management::CatalogPageRequest {
+        kind: airk_core::catalog_management::CatalogKind::Indexes,
+        index_id: None,
+        project_id: None,
+        after: None,
+        expected_catalog_revision: Some(revision),
+        limit: 8,
+        max_bytes: airk_core::catalog_management::MAX_PAGE_BYTES,
+    })?;
+    let mut index_ids = page
+        .items
+        .iter()
+        .map(|item| match item {
+            CatalogItem::Index(index) => Ok(index.id),
+            _ => Err(anyhow::anyhow!("index page")),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    index_ids.sort();
+    assert_eq!(index_ids.len(), 2);
+    drop(registry);
+    let selected = QuerySelection {
+        project_ids: Vec::new(),
+        index_ids: Some(index_ids.clone()),
+        member_availability: MemberAvailability::Report,
+    };
+    let open = read_open_snapshot(&control, &agent_ref(revision), namespace, &selected)?;
+    assert!(open.projects.is_empty() && open.resolved.project_ids.is_empty());
+    assert_eq!(
+        open.members
+            .iter()
+            .map(|member| member.index.id)
+            .collect::<Vec<_>>(),
+        index_ids
+    );
+    for member in &open.members {
+        assert_eq!(member.sources.len(), 1);
+        assert_eq!(member.authority.sources.len(), 1);
+        let resolved = open.resolved.member(member.index.id).unwrap();
+        assert!(resolved.memberships.is_empty());
+        assert_eq!(resolved.scope.len(), 1);
+        assert!(resolved.scope[0].path.is_empty());
+    }
+    // Stable for the same scope; refused at any other revision.
+    assert_eq!(
+        read_open_snapshot(&control, &agent_ref(revision), namespace, &selected)?.identity,
+        open.identity
+    );
+    assert!(
+        read_open_snapshot(&control, &agent_ref(revision.next()?), namespace, &selected).is_err()
+    );
+    // A window selection of the fixture Projects reads the same two indexes.
+    let projects = [60u8, 120]
+        .map(|seed| QueryProjectId::from_identity(Incarnation::from_bytes([seed; 16])))
+        .to_vec();
+    let window_ref = SelectionScopeRef {
+        owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+        ..agent_ref(revision)
+    };
+    let window = WindowScopeSelection {
+        namespace,
+        expected_catalog_revision: revision,
+        index_ids: index_ids.clone(),
+        project_ids: projects.clone(),
+    };
+    let project_selection = QuerySelection {
+        project_ids: projects,
+        index_ids: None,
+        member_availability: MemberAvailability::Report,
+    };
+    let windowed = read_selection_snapshot(&control, &window_ref, &window, &project_selection)?;
+    assert_eq!(
+        windowed
+            .members
+            .iter()
+            .map(|member| member.index.id)
+            .collect::<Vec<_>>(),
+        index_ids
+    );
+    assert_ne!(windowed.identity, open.identity);
+    // Continuations are bound to the snapshot identity.
+    let args = json!({"limit":4}).as_object().unwrap().clone();
+    let token = |identity: Sha256Digest| -> Result<String> {
+        cursor::Continuation::new(
+            "airk_search",
+            &args,
+            identity,
+            airk_core::combined_reads::PublicationVector {
+                authority: identity,
+                observed_from_unix_ms: 10,
+                observed_to_unix_ms: 20,
+                members: index_ids
+                    .iter()
+                    .zip(1u64..)
+                    .map(
+                        |(index_id, generation)| airk_core::combined_reads::MemberPublication {
+                            index_id: *index_id,
+                            publication: Some(airk_core::evidence::RevisionEnvelope::new(
+                                "fixture".into(),
+                                airk_core::identity::RevisionToken {
+                                    incarnation: Incarnation::from_bytes([1; 16]),
+                                    generation,
+                                    revision: Sha256Digest::from_bytes([generation as u8; 32]),
+                                },
+                            )),
+                        },
+                    )
+                    .collect(),
+            },
+            index_ids
+                .iter()
+                .map(|id| (*id, Some("native".to_owned())))
+                .collect(),
+        )?
+        .encode()
+    };
+    let open_token = token(open.identity)?;
+    cursor::Continuation::decode(&open_token, "airk_search", &args, open.identity, &index_ids)?;
+    assert!(
+        cursor::Continuation::decode(
+            &open_token,
+            "airk_search",
+            &args,
+            windowed.identity,
+            &index_ids
+        )
+        .is_err()
+    );
+    let window_token = token(windowed.identity)?;
+    assert!(
+        cursor::Continuation::decode(
+            &window_token,
+            "airk_search",
+            &args,
+            open.identity,
+            &index_ids
+        )
+        .is_err()
+    );
+    Ok(())
+}

@@ -426,6 +426,22 @@ connection (least recently used dropped), and drops leases on 300 s idle,
 connection revoke or defaults change, and revision move; its callers and
 `tools_call::open_single_backend` land in step 5.
 
+Combined open basis (step 4, several indexes): `QuerySelection::validate_open`
+(no Project, 1-32 named indexes) and `resolve_open` build a
+`ResolvedSelection` whose agent `selection` admits an empty `project_ids` and
+members with no memberships, each scope one Subtree `""` atom per enabled
+source; `ResolvedSelection::validate` keeps every existing rule for catalog,
+window and admin sources. `combined_frontend::OpenScope` (with `resolve_open`)
+is a third `Session`: snapshot domain `airk/combined-open-authority/1`, so its
+continuations never resume under a catalog or selection snapshot; requested
+scope `{open_scope:{namespace, catalog_revision, index_ids}, scope_identity}`;
+discovery mode `open_scope`; a call cannot add Projects or narrow the indexes.
+Fan-out, budgets, merge, verification and in-process delivery (shared
+`deliver_in_process`, gate receipt under the live agent nonce) are the
+selection path's. `tools_call::open_combined_backend` is wired in step 5.
+Query-scope `indexes`/`sources` views require a `project_id` and so refuse
+for an open scope; `projects` is empty.
+
 Fixtures: `fixtures/split/agents/open_access.json` (selections, agent
 observations, the open fingerprint, description cases),
 `fixtures/split/agents/credentials_ledger_v1.json`, the

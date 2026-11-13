@@ -368,6 +368,56 @@ async fn combined_selection_backend(
     }
 }
 
+/// U105/U106(d): several whole indexes of an open agent read through the
+/// combined facade's open basis (no Project, its own snapshot and cursor
+/// domain). Members connect through the in-process open admission and the
+/// result is delivered under the live agent nonce, as for a selection.
+#[allow(dead_code)] // U105 step 5 calls it for `ToolSelection::Open`.
+pub(super) async fn open_combined_backend(
+    state: &Arc<super::State>,
+    selection_ref: airk_core::scoped_reads::SelectionScopeRef,
+    namespace: airk_core::identity::Incarnation,
+    index_ids: Vec<airk_core::index_catalog::IndexId>,
+    client: airk_core::usage::ClientFamily,
+) -> std::result::Result<Arc<dyn RemoteTools>, SelectionRead> {
+    let Some(gate) = state.catalog_gate.clone() else {
+        return Err(SelectionRead::Refused(
+            super::scope_grant::SCOPE_UNAVAILABLE,
+        ));
+    };
+    let owner = Arc::clone(state);
+    let scope = airk_frontend::combined_frontend::OpenScope {
+        selection_ref,
+        namespace,
+        index_ids,
+        connect: Arc::new(
+            move |request: airk_catalog_control::catalog_authority::OpenConnectRequest|
+                  -> airk_frontend::project_client::SelectionGrantFuture {
+                let owner = Arc::clone(&owner);
+                Box::pin(async move {
+                    owner
+                        .management
+                        .connect_open(request)
+                        .await?
+                        .take_in_process()
+                })
+            },
+        ),
+        issue: selection_issue(gate, state.instance),
+    };
+    let inner = airk_frontend::combined_frontend::resolve_open(state.control_root.clone(), scope)
+        .await
+        .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    inner.client(client);
+    match airk_mcp::unified::Unified::combined(Arc::clone(&inner), None) {
+        Ok(backend) => Ok(Arc::new(backend)),
+        Err(error) => {
+            let _ = released(inner.as_ref(), Ok(())).await;
+            Err(SelectionRead::Failed(error))
+        }
+    }
+}
+
 /// The in-process final-delivery receipt of a combined selection read: the
 /// gate's clock at exactly the selection's revision, then an issue ticket
 /// and the live nonce checked together under the gate lock.

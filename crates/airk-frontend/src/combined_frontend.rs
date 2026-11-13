@@ -2,11 +2,12 @@
 //! Grant-bound combined reads. Native children retain their ordinary scoped IPC,
 //! admission, revision, retry and delivery checks. This owner never indexes.
 //!
-//! One implementation serves both authority sources (selection authority
-//! spec §3.6): a persisted reviewed catalog grant (`CombinedConnectRequest`)
-//! and an in-memory window/admin selection grant ([`SelectionScope`]). Only
-//! the [`Session`] steps differ; fan-out, budgets, composition,
-//! continuations, verification and failure shapes are shared.
+//! One implementation serves every authority source (selection authority
+//! spec §3.6): a persisted reviewed catalog grant (`CombinedConnectRequest`),
+//! an in-memory window/admin selection grant ([`SelectionScope`]) and a U105
+//! open agent read of whole indexes ([`OpenScope`]). Only the [`Session`]
+//! steps differ; fan-out, budgets, composition, continuations, verification
+//! and failure shapes are shared.
 use airk_core::{
     catalog_management::{CatalogEntity, CatalogItem, CatalogSource},
     combined_reads::{MemberAvailability, QuerySelection, ResolvedSelection, SharedBudgets},
@@ -23,7 +24,7 @@ use airk_core::{
         CombinedConnectRequest, CombinedDeliveryReceipt, ScopedConnectRequest, WindowScopeSelection,
     },
 };
-use airk_kernel::scoped_reads::{ScopedReadAuthority, SelectionReadAuthority};
+use airk_kernel::scoped_reads::{OpenReadAuthority, ScopedReadAuthority, SelectionReadAuthority};
 use airk_mcp::remote::{CombinedScope, RemoteFuture, RemoteTools};
 use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
@@ -114,6 +115,7 @@ struct Snapshot<A = ScopedReadAuthority, C = ScopedConnectRequest> {
 
 type Pending<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 type SelectionRequest = airk_catalog_control::catalog_authority::SelectionConnectRequest;
+type OpenRequest = airk_catalog_control::catalog_authority::OpenConnectRequest;
 
 /// A member's read authority: its fingerprint binds the child cache, the
 /// combined identity and the member's source projection.
@@ -126,6 +128,11 @@ impl MemberAuthority for ScopedReadAuthority {
     }
 }
 impl MemberAuthority for SelectionReadAuthority {
+    fn member_fingerprint(&self) -> Result<Sha256Digest> {
+        self.fingerprint()
+    }
+}
+impl MemberAuthority for OpenReadAuthority {
     fn member_fingerprint(&self) -> Result<Sha256Digest> {
         self.fingerprint()
     }
@@ -147,6 +154,11 @@ trait Session: Send + Sync + 'static {
     fn requested(&self) -> Value;
     /// The frozen `(project_ids, index_ids)` an unnarrowed call reads.
     fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>);
+    /// The shape a call's selection must have: Projects, except for an
+    /// open read, which names indexes only (U106(d)).
+    fn check_query(&self, selection: &QuerySelection) -> Result<()> {
+        selection.validate()
+    }
     fn scope(&self) -> CombinedScope;
     fn catalog_request(&self) -> Option<&CombinedConnectRequest>;
     /// The query-scope page's `mode` and `grant`.
@@ -366,38 +378,166 @@ impl Session for SelectionScope {
         _instance: &'a tokio::sync::OnceCell<Incarnation>,
         delivery: Delivery<'a>,
     ) -> Pending<'a, CombinedDeliveryReceipt> {
+        Box::pin(deliver_in_process(
+            self,
+            control,
+            &self.selection_ref,
+            self.window_selection.namespace,
+            &self.issue,
+            delivery,
+        ))
+    }
+}
+
+/// The in-process final delivery of a selection or open read: the catalog
+/// path's `validate_delivery` (the same snapshot, still authorized at exactly
+/// the selection's revision), then the gate's receipt under the live nonce.
+async fn deliver_in_process<S: Session>(
+    session: &S,
+    control: &Path,
+    selection_ref: &SelectionScopeRef,
+    namespace: Incarnation,
+    issue: &SelectionIssue,
+    delivery: Delivery<'_>,
+) -> Result<CombinedDeliveryReceipt> {
+    let Delivery {
+        selected,
+        scope_identity,
+        result_digest,
+        deadline,
+    } = delivery;
+    let current = tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        session.snapshot(control, selected),
+    )
+    .await
+    .map_err(|_| ScopeReadRefused)??;
+    let revision = selection_ref.catalog_revision;
+    ensure!(
+        current.identity == scope_identity && current.revision == revision,
+        ScopeReadRefused
+    );
+    let receipt = issue(selection_ref, scope_identity, result_digest)?;
+    ensure!(
+        receipt.schema == 1
+            && receipt.service_instance == selection_ref.service_instance
+            && receipt.namespace == namespace
+            && receipt.catalog_revision == revision
+            && receipt.scope_identity == scope_identity
+            && receipt.result_digest == result_digest,
+        ScopeReadRefused
+    );
+    Ok(receipt)
+}
+
+/// Admits one open member's child connection in process: the service's
+/// `Management::connect_open`, then `take_in_process`. Called for the first
+/// connect and every reconnect of that child.
+pub type OpenConnect =
+    Arc<dyn Fn(OpenRequest) -> crate::project_client::SelectionGrantFuture + Send + Sync>;
+
+/// A U105/U106(d) open agent read of several whole indexes, as the service's
+/// agent plane resolved it. It has no Project: its member basis is the named
+/// indexes, each read whole, with its own snapshot identity domain
+/// (`airk/combined-open-authority/1`) and so its own continuations. Its nonce
+/// reaches only the in-process admission and gate calls; every body echoes
+/// the open scope and its identity only.
+pub struct OpenScope {
+    pub selection_ref: SelectionScopeRef,
+    pub namespace: Incarnation,
+    pub index_ids: Vec<IndexId>,
+    pub connect: OpenConnect,
+    pub issue: SelectionIssue,
+}
+
+impl Session for OpenScope {
+    type Authority = OpenReadAuthority;
+    type Child = OpenRequest;
+    fn requested(&self) -> Value {
+        json!({"open_scope":{"namespace":self.namespace,
+            "catalog_revision":self.selection_ref.catalog_revision,
+            "index_ids":self.index_ids},
+            "scope_identity":self.selection_ref.scope_identity})
+    }
+    fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>) {
+        (&[], Some(&self.index_ids))
+    }
+    fn check_query(&self, selection: &QuerySelection) -> Result<()> {
+        selection.validate_open()?;
+        // The open scope is resolved by the service; a call does not narrow it.
+        ensure!(
+            selection.index_ids.as_deref() == Some(self.index_ids.as_slice()),
+            ScopeReadRefused
+        );
+        Ok(())
+    }
+    fn scope(&self) -> CombinedScope {
+        CombinedScope {
+            project_ids: Vec::new(),
+            index_ids: Some(self.index_ids.clone()),
+            requested: self.requested(),
+        }
+    }
+    fn catalog_request(&self) -> Option<&CombinedConnectRequest> {
+        None
+    }
+    fn discovery_grant(&self) -> (&'static str, Value) {
+        ("open_scope", Value::Null)
+    }
+    fn snapshot<'a>(
+        &'a self,
+        control: &'a Path,
+        selected: &'a QuerySelection,
+    ) -> Pending<'a, Snapshot<OpenReadAuthority, OpenRequest>> {
+        let (root, selection_ref, namespace, selected) = (
+            control.to_path_buf(),
+            self.selection_ref,
+            self.namespace,
+            selected.clone(),
+        );
         Box::pin(async move {
-            let Delivery {
-                selected,
-                scope_identity,
-                result_digest,
-                deadline,
-            } = delivery;
-            // The catalog path's `validate_delivery`: the same snapshot,
-            // still authorized at exactly the selection's revision.
-            let current = tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                self.snapshot(control, selected),
-            )
-            .await
-            .map_err(|_| ScopeReadRefused)??;
-            let revision = self.selection_ref.catalog_revision;
-            ensure!(
-                current.identity == scope_identity && current.revision == revision,
-                ScopeReadRefused
-            );
-            let receipt = (self.issue)(&self.selection_ref, scope_identity, result_digest)?;
-            ensure!(
-                receipt.schema == 1
-                    && receipt.service_instance == self.selection_ref.service_instance
-                    && receipt.namespace == self.window_selection.namespace
-                    && receipt.catalog_revision == revision
-                    && receipt.scope_identity == scope_identity
-                    && receipt.result_digest == result_digest,
-                ScopeReadRefused
-            );
-            Ok(receipt)
+            tokio::task::spawn_blocking(move || {
+                read_open_snapshot(&root, &selection_ref, namespace, &selected)
+            })
+            .await?
         })
+    }
+    fn connect(
+        &self,
+        control: &Path,
+        member: &Member<OpenReadAuthority, OpenRequest>,
+    ) -> Result<Arc<crate::project_client::Backend>> {
+        let (connect, request) = (Arc::clone(&self.connect), member.selection.clone());
+        crate::project_client::selection_tools(
+            control.to_path_buf(),
+            member.index.backing.binding,
+            crate::project_client::SelectionSession {
+                window_selection: WindowScopeSelection {
+                    namespace: self.namespace,
+                    expected_catalog_revision: self.selection_ref.catalog_revision,
+                    index_ids: vec![member.index.id],
+                    project_ids: Vec::new(),
+                },
+                scope_identity: self.selection_ref.scope_identity,
+                index_id: member.index.id,
+                connect: Arc::new(move || connect(request.clone())),
+            },
+        )
+    }
+    fn deliver<'a>(
+        &'a self,
+        control: &'a Path,
+        _instance: &'a tokio::sync::OnceCell<Incarnation>,
+        delivery: Delivery<'a>,
+    ) -> Pending<'a, CombinedDeliveryReceipt> {
+        Box::pin(deliver_in_process(
+            self,
+            control,
+            &self.selection_ref,
+            self.namespace,
+            &self.issue,
+            delivery,
+        ))
     }
 }
 
@@ -617,6 +757,99 @@ fn read_selection_snapshot(
         revision,
         resolved,
         projects,
+        members,
+        identity,
+    })
+}
+
+/// The open snapshot (U106(d)), read at exactly the agent selection's
+/// catalog revision, never rolled forward. Every named index is built whole
+/// (`build_open_read_authority`); there is no Project. Its identity has its
+/// own domain, so it never equals a catalog or selection snapshot's and its
+/// continuations never resume under them.
+fn read_open_snapshot(
+    root: &Path,
+    selection_ref: &SelectionScopeRef,
+    namespace: Incarnation,
+    selected: &QuerySelection,
+) -> Result<Snapshot<OpenReadAuthority, OpenRequest>> {
+    use airk_catalog_control::catalog_authority::build_open_read_authority;
+    selected.validate_open()?;
+    ensure!(
+        selection_ref.owner == airk_core::scoped_reads::SelectionOwnerKind::Agent,
+        ScopeReadRefused
+    );
+    let revision = selection_ref.catalog_revision;
+    let mut registry =
+        ServiceRegistry::open_saved_before(root, Some(Instant::now() + Duration::from_secs(2)))?;
+    ensure!(
+        registry.catalog_pending_fence()?.is_none(),
+        ScopeReadRefused
+    );
+    let state = registry.catalog_state()?.ok_or(ScopeReadRefused)?;
+    ensure!(
+        state.activated
+            && state.authority_contract == 1
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
+            && state.namespace == namespace
+            && state.revision == revision,
+        ScopeReadRefused
+    );
+    let mut members = Vec::new();
+    let mut bases = Vec::new();
+    for index_id in selected.index_ids.iter().flatten() {
+        let child = OpenRequest {
+            selection_ref: *selection_ref,
+            namespace,
+            index_id: *index_id,
+        };
+        let authority = build_open_read_authority(&mut registry, &child)?;
+        let (index, sources) =
+            member_detail(&mut registry, state.revision, *index_id, &authority.sources)?;
+        bases.push((
+            *index_id,
+            authority
+                .sources
+                .iter()
+                .map(|source| source.source_root_id)
+                .collect::<Vec<_>>(),
+        ));
+        members.push(Member {
+            index,
+            authority,
+            sources,
+            selection: child,
+        });
+    }
+    let resolved = selected.resolve_open(&bases, selection_ref.observation())?;
+    members.sort_by_key(|member| member.index.id);
+    ensure!(
+        registry.catalog_state()?.as_ref() == Some(&state)
+            && registry.catalog_pending_fence()?.is_none(),
+        ScopeReadRefused
+    );
+    let fingerprints = members
+        .iter()
+        .map(|member| Ok((member.index.id, member.authority.fingerprint()?)))
+        .collect::<Result<Vec<_>>>()?;
+    let identity = framed_digest(
+        b"airk/combined-open-authority/1",
+        &[
+            &serde_json::to_vec(&(
+                namespace,
+                selection_ref.owner,
+                selection_ref.scope_identity,
+                revision,
+            ))?,
+            &serde_json::to_vec(&fingerprints)?,
+            &serde_json::to_vec(&resolved)?,
+        ],
+    );
+    Ok(Snapshot {
+        revision,
+        resolved,
+        projects: Vec::new(),
         members,
         identity,
     })
@@ -857,6 +1090,28 @@ pub async fn resolve_selection(
     ))
 }
 
+/// The combined facade of a U105 open agent read of more than one whole
+/// index, for the service's own M3 handler. Its current snapshot is checked
+/// first; every member connects through `scope.connect` and every result is
+/// delivered through `scope.issue`.
+pub async fn resolve_open(control: PathBuf, scope: OpenScope) -> Result<Arc<dyn RemoteTools>> {
+    let backend = Backend {
+        control: control.clone(),
+        selection: scope,
+        children: Mutex::new(BTreeMap::new()),
+        closed: std::sync::atomic::AtomicBool::new(false),
+        client: Mutex::new(airk_core::usage::ClientFamily::Cli),
+        service_instance: tokio::sync::OnceCell::new(),
+    };
+    let defaults = backend.request_selection(&mut Map::new())?;
+    backend.selection.snapshot(&control, &defaults).await?;
+    Ok(crate::unified_mcp::with_runtime_readiness(
+        None,
+        control,
+        Arc::new(backend),
+    ))
+}
+
 /// The combined facade over one session (`S` is a reviewed catalog grant by
 /// default).
 struct Backend<S = CombinedConnectRequest> {
@@ -980,7 +1235,7 @@ impl<S: Session> Backend<S> {
             index_ids,
             member_availability,
         };
-        selection.validate()?;
+        self.selection.check_query(&selection)?;
         Ok(selection)
     }
 
