@@ -95,6 +95,14 @@ and searches through the same canonical handlers as `airkctl` and VS Code.
 **Not yet served** (the API answers `not_yet_served`): the live event
 stream. Indexed evidence is always shown as text.
 
+**Not in 1.8.31** (U102; planned for 1.8.32):
+
+- the Overview's version, activity and leftovers;
+- plans on the Activity page;
+- running a recovery plan from the Recovery page;
+- code, document and evidence-inspector views beside Search (`packages/ui`);
+- admin rate limits and the operation-table coverage test.
+
 The pages are built from `packages/admin` (`npm run build`; `npm run check`
 fails when the committed bundle in `crates/airk-cli/admin-assets/` differs
 from its sources) and embedded in `airk`; they work offline.

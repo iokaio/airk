@@ -16,6 +16,8 @@ is committed but untested. No installer was rebuilt for that fix. Installer
 repair, builds and qualification are stopped at the user's direction; retained
 artifact receipts describe their original inputs.
 
+**1.8.31 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.31 for the local Windows AIRK Service installer and VSIX that complete index creation: the admin Index library and Usage pages, `airkctl library` and service management commands, typed confirmation for destructive steps, Storage cleanup and Windows sign-in startup, window search scopes, and a read-only Explorer Indexing view with **Open AIRK Admin**; see the [1.8.31 record](releases/release-1.8.31.md). The 1.8.30, 1.8.29, 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
+
 **1.8.30 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.30 for the rebuilt local Windows AIRK Service installer and VSIX (upgrades with VS Code open, setup's process scan, stdio agent-entry cleanup, downloads link); see the [1.8.30 record](releases/release-1.8.30.md). The 1.8.29, 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
 
 **1.8.29 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.29 for the rebuilt local Windows AIRK Service installer and VSIX (stuck pre-split retirement taken over, installer progress page); see the [1.8.29 record](releases/release-1.8.29.md). 1.8.28 was not used; the 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
@@ -82,7 +84,7 @@ Accepted simplification work through S7 is substantially complete; see the
 [compatibility inventory](simplify/compatibility-inventory.md), the
 [contract-generation pilot](simplify/contract-generation-pilot.md) and the first
 component contract,
-[`install_files`](../crates/airk-cli/src/install_files/CONTRACT.md). Those
+[`install_files`](../crates/airk-host/src/install_files/CONTRACT.md). Those
 structural steps changed no version, wire format or persisted state. Candidate
 source versions are synchronized at 1.8.23 for the
 installer build; the 1.8.16 `airk-state/1` baseline remains unchanged.
