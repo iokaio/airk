@@ -59,6 +59,16 @@ pub enum Command {
         lease_generation: u64,
         expires_unix_ms: u64,
     },
+    /// U105 (contract step): private host-only installation of an open
+    /// agent read's authority. A separate command keeps every other frame
+    /// unchanged; the worker refuses it (`Failed`) until open reads land.
+    InstallOpenScope {
+        identity: WorkerIdentity,
+        authority: Box<airk_kernel::scoped_reads::OpenReadAuthority>,
+        previous: Option<airk_core::service::ScopedReadRef>,
+        lease_generation: u64,
+        expires_unix_ms: u64,
+    },
     GrantScoped {
         identity: WorkerIdentity,
         caller: Incarnation,

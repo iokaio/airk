@@ -53,7 +53,7 @@
       {
         "name": "selection_unknown_owner",
         "stage": "serde",
-        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"agent\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
+        "bytes": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"robot\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}"
       },
       {
         "name": "selection_missing_nonce",

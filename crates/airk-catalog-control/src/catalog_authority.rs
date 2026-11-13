@@ -583,6 +583,7 @@ mod tests {
                     policy: None,
                     tombstone: false,
                     source_import: SourceImportState::Complete,
+                    description: None,
                 },
                 projects: vec![QueryProject {
                     id: project_id,
@@ -591,6 +592,7 @@ mod tests {
                     scope_revision: revision,
                     defaults_revision: revision,
                     default_indexes: Vec::new(),
+                    description: None,
                 }],
                 members: vec![member],
                 sources: vec![CatalogSource {

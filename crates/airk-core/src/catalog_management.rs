@@ -199,6 +199,23 @@ pub enum CatalogOperation {
         id: GrantId,
         expected_revision: CatalogRevision,
     },
+    /// U105: set (`Some`) or clear (`None`) an index's description. The
+    /// field is always encoded (`null` clears).
+    SetIndexDescription {
+        id: IndexId,
+        expected_definition_revision: CatalogRevision,
+        /// Required; `null` clears (no implicit missing-field default).
+        #[serde(deserialize_with = "Option::deserialize")]
+        description: Option<String>,
+    },
+    /// U105: set or clear an index set's (Project's) description.
+    SetProjectDescription {
+        id: QueryProjectId,
+        expected_definition_revision: CatalogRevision,
+        /// Required; `null` clears (no implicit missing-field default).
+        #[serde(deserialize_with = "Option::deserialize")]
+        description: Option<String>,
+    },
 }
 impl CatalogOperation {
     pub fn requires_worker_drain(&self) -> bool {
@@ -242,7 +259,9 @@ impl CatalogOperation {
             | Self::SetMembership { .. }
             | Self::SetProjectDefaults { .. }
             | Self::SetContext { .. }
-            | Self::CreateGrant { .. } => None,
+            | Self::CreateGrant { .. }
+            | Self::SetIndexDescription { .. }
+            | Self::SetProjectDescription { .. } => None,
         }
     }
 }
@@ -309,6 +328,12 @@ impl CatalogRequest {
             CatalogOperation::CreateProject { name, .. }
             | CatalogOperation::RenameProject { name, .. }
             | CatalogOperation::RenameIndex { name, .. } => label(name)?,
+            CatalogOperation::SetIndexDescription {
+                description: text, ..
+            }
+            | CatalogOperation::SetProjectDescription {
+                description: text, ..
+            } => description(text.as_deref())?,
             CatalogOperation::SetMembership {
                 membership,
                 expected_membership_revision,

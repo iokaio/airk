@@ -210,6 +210,7 @@ mod tests {
             policy: None,
             tombstone,
             source_import: SourceImportState::Complete,
+            description: None,
         };
         let project = |byte: u8| QueryProject {
             id: project_id(byte),
@@ -218,6 +219,7 @@ mod tests {
             scope_revision: revision(2),
             defaults_revision: revision(2),
             default_indexes: Vec::new(),
+            description: None,
         };
         let mut items = BTreeMap::new();
         for (entity, item) in [

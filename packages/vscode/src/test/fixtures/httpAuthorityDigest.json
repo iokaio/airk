@@ -41,6 +41,16 @@
         }
       },
       "authority_sha256": "343ada83ca88462332216ef7cd8a88d575a21b2418ed3e7753e6710307593ba8"
+    },
+    {
+      "name": "open-namespace",
+      "selection": {
+        "kind": "open",
+        "selection": {
+          "namespace": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "authority_sha256": "6adb428ba07fdec1551f982ad2967319ab4eb4b2814dceada9b8af02ae93aaa9"
     }
   ]
 }

@@ -105,6 +105,12 @@ pub(super) async fn response(
             code: "admin_scope_not_granted".into(),
         };
     }
+    // U105 contract step: open agent reads are not served yet.
+    if matches!(selection, ToolSelection::Open { .. }) {
+        return ControlResponse::Failure {
+            code: "not_yet_served".into(),
+        };
+    }
     match run(control, tool, arguments, selection, mode, client).await {
         Ok(result) => ControlResponse::ToolResult { result },
         Err(error) => failed(&error),
@@ -420,6 +426,10 @@ async fn run(
         // Answered by `response` before this point.
         ToolSelection::Admin => {
             anyhow::bail!("admin scope reads are served only by the admin plane")
+        }
+        // Refused by `response` before this point (U105 contract step).
+        ToolSelection::Open { .. } => {
+            anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED)
         }
         ToolSelection::Project { binding } => {
             let project =

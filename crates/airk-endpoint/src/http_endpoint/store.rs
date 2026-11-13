@@ -753,6 +753,7 @@ impl CredentialStore {
             verifier: digest(token.as_bytes()),
             revoked: false,
             revocation_reason: None,
+            open: None,
         });
         // Refuse predictable aggregate-capacity failures before publishing the
         // immutable token. Uncertain I/O failures still preserve orphan evidence.
@@ -838,6 +839,8 @@ pub fn authority_digest(selection: &HttpSelection) -> Result<Sha256Digest> {
                     airk_core::index_catalog::CatalogRevision::INITIAL;
             }
         }
+        // No catalog clock: the digest covers the namespace only.
+        HttpSelection::Open { .. } => {}
     }
     fn sorted(value: serde_json::Value) -> serde_json::Value {
         match value {

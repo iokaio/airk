@@ -98,12 +98,16 @@ impl ScopedSourceProjection {
     }
 }
 
-/// The owner plane of an in-memory selection grant (W4 window or A2 admin).
+/// The owner plane of an in-memory selection grant (W4 window, A2 admin,
+/// or a U105 open agent connection).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectionOwnerKind {
     Window,
     Admin,
+    /// U105/U106(d): an open agent read. A named index is read whole, so
+    /// its observation may carry no project memberships.
+    Agent,
 }
 
 /// In-memory selection grant identity. Never a bearer: it carries no lease,
@@ -219,9 +223,13 @@ impl ScopeObservation {
                 .collect::<Vec<_>>(),
             MAX_SELECTION,
         )?;
+        // U106(d): only an open agent read has no project memberships.
+        let agent = self
+            .selection
+            .is_some_and(|selection| selection.owner == SelectionOwnerKind::Agent);
         for member in &self.members {
             ensure!(
-                !member.memberships.is_empty()
+                (agent || !member.memberships.is_empty())
                     && member.policy_epoch <= i64::MAX as u64
                     && (member.policy_epoch == 0) == member.policy_digest.is_none(),
                 ScopeReadRefused

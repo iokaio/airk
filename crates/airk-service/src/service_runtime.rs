@@ -767,6 +767,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::AgentConnectionVerify { connection_id } => {
                 agents::verify(&state.control_root, connection_id).await
             }
+            // U105 contract step: the defaults path lands with open reads.
+            ControlMethod::AgentConnectionDefaults { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::HttpIssuerRotation { action } => {
                 rotation::response(&state.control_root, action).await
             }

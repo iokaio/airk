@@ -374,6 +374,7 @@ fn expired_projection_fixture() -> Result<(Backend, QuerySelection, Snapshot, Va
                 policy: None,
                 tombstone: false,
                 source_import: SourceImportState::Complete,
+                description: None,
             },
             authority,
             sources: vec![],

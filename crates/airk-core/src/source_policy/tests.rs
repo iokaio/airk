@@ -349,6 +349,7 @@ fn first_trim_uses_epoch_one_and_rejects_unavailable_or_rebound_indexes() -> Res
         policy: None,
         tombstone: false,
         source_import: SourceImportState::Complete,
+        description: None,
     };
     let rule_id = DenyId::from_identity(Incarnation::from_bytes([42; 16]));
     let selector = ScopeAtom {

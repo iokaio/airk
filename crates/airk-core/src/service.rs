@@ -485,6 +485,32 @@ pub enum ControlMethod {
     AgentConnectionVerify {
         connection_id: Incarnation,
     },
+    /// U105 (contract step; not served yet, `not_yet_served`): set an open
+    /// connection's default scope and agent choice. An absent field keeps
+    /// its value; `expected_defaults_revision` fences concurrent edits. The
+    /// credential generation never changes.
+    AgentConnectionDefaults {
+        connection_id: Incarnation,
+        expected_defaults_revision: u64,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        index_ids: Option<Vec<crate::index_catalog::IndexId>>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        index_set_ids: Option<Vec<crate::index_catalog::QueryProjectId>>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        agent_choice: Option<crate::service_http_credentials::AgentChoice>,
+    },
     /// M18 (split step 3e.5, `service issuer-rotation status`): the saved
     /// issuer rotation and current endpoint, as `airk runtime
     /// http-issuer-rotation --action status` printed them, read at the
@@ -735,6 +761,7 @@ impl ControlMethod {
             | Self::AgentConnectionInfo { .. }
             | Self::AgentConnectionOwnership { .. }
             | Self::AgentConnectionVerify { .. }
+            | Self::AgentConnectionDefaults { .. }
             | Self::HttpIssuerRotation { .. }
             | Self::AdminScopeGrant { .. } => {
                 return Some("console_method_not_reviewed");
@@ -1016,6 +1043,60 @@ pub enum ToolSelection {
         )]
         member_availability: Option<crate::combined_reads::MemberAvailability>,
     },
+    /// U105 (contract step; not served yet, `not_yet_served`): an open
+    /// agent read. `index_ids`/`index_set_ids` are ids or exact names
+    /// (union, at most [`crate::index_catalog::MAX_SELECTION`] each); both
+    /// empty reads the connection's default scope. `connection_id` names the
+    /// open connection whose defaults and agent choice apply.
+    Open {
+        index_ids: Vec<String>,
+        index_set_ids: Vec<String>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        connection_id: Option<Incarnation>,
+    },
+}
+
+/// The encoded bound of a [`ToolSelection::Open`] selection.
+pub const MAX_OPEN_SELECTION_BYTES: usize = 24 * 1024;
+
+impl ToolSelection {
+    /// Shape bounds only; names are resolved, and refused, by the service.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Open {
+                index_ids,
+                index_set_ids,
+                ..
+            } => {
+                for names in [index_ids, index_set_ids] {
+                    crate::index_catalog::unique_bounded(
+                        names,
+                        crate::index_catalog::MAX_SELECTION,
+                    )?;
+                    for name in names {
+                        ensure!(
+                            !name.is_empty()
+                                && name.len() <= crate::index_catalog::MAX_LABEL_BYTES
+                                && !name.chars().any(char::is_control),
+                            "invalid open scope name"
+                        );
+                    }
+                }
+                crate::index_catalog::encoded_size(self, MAX_OPEN_SELECTION_BYTES)?;
+                Ok(())
+            }
+            Self::Unselected
+            | Self::Project { .. }
+            | Self::Catalog { .. }
+            | Self::Window { .. }
+            | Self::Admin
+            | Self::Combined { .. } => Ok(()),
+        }
+    }
 }
 
 /// The issuer-rotation step the service performs for M18; only the read so far.
@@ -1524,6 +1605,11 @@ pub enum ControlResponse {
     /// V1: `{schema, connection_id, url, verified, …}`.
     AgentConnectionVerified {
         result: serde_json::Value,
+    },
+    /// U105: the open connection's stored defaults after the change.
+    AgentConnectionDefaults {
+        connection_id: Incarnation,
+        open: crate::service_http_credentials::OpenConnectionState,
     },
     /// M15a/M15 refused. `message` is the full error chain bounded to 4,096
     /// characters, as the pre-split CLI's `operation_failed` line carried it.

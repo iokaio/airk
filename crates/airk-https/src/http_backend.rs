@@ -92,6 +92,8 @@ async fn validate_details(
                 selection.validate()?;
                 Ok((HttpSelection::ImportedLegacyUnion { selection },None))
             }
+            // U105 contract step: no open admission yet (refused, never served).
+            HttpSelection::Open { .. } => anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED),
         }
     });
     tokio::select! {
@@ -298,6 +300,9 @@ impl LazyBackend {
                 HttpSelection::ImportedLegacyUnion { .. } => anyhow::bail!(
                     "multi-project HTTP routing requires its original explicit project selector"
                 ),
+                HttpSelection::Open { .. } => {
+                    anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED)
+                }
             };
             backend.client(*self.client.lock().unwrap_or_else(|e| e.into_inner()));
             if self.closed.load(Ordering::Acquire) {

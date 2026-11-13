@@ -576,6 +576,7 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, IndexReview)> {
         policy: None,
         tombstone: false,
         source_import: SourceImportState::Complete,
+        description: None,
     };
     let sources = vec![
         CatalogSource {

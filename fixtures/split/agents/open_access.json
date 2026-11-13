@@ -1,0 +1,167 @@
+{
+  "schema": "airk.split-fixture.agents-open-access/1",
+  "description": "U105/U106 contract step (docs/split/open-agent-access.md step 1). Hand-reviewed literal bytes, written independently of the code under test; digests computed by a separate script with framed_digest (AIRK-DIGEST-1, 8-byte big-endian lengths). Rejected cases name the refusing stage: serde (decode) or validate.",
+  "http_selection": {
+    "accepted": [
+      {
+        "name": "open",
+        "bytes": "{\"kind\":\"open\",\"selection\":{\"namespace\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}"
+      }
+    ],
+    "rejected": [
+      {
+        "name": "extra_field",
+        "stage": "serde",
+        "bytes": "{\"kind\":\"open\",\"selection\":{\"namespace\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"index_ids\":[]}}"
+      },
+      {
+        "name": "missing_namespace",
+        "stage": "serde",
+        "bytes": "{\"kind\":\"open\",\"selection\":{}}"
+      },
+      {
+        "name": "unknown_kind",
+        "stage": "serde",
+        "bytes": "{\"kind\":\"agent\",\"selection\":{\"namespace\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}"
+      }
+    ]
+  },
+  "tool_selection": {
+    "accepted": [
+      {
+        "name": "ids_and_names_with_connection",
+        "bytes": "{\"open\":{\"index_ids\":[\"idx_02020202020202020202020202020202\",\"Docs\"],\"index_set_ids\":[\"Team set\"],\"connection_id\":\"21212121212121212121212121212121\"}}"
+      },
+      {
+        "name": "default_scope",
+        "bytes": "{\"open\":{\"index_ids\":[],\"index_set_ids\":[]}}"
+      }
+    ],
+    "rejected": [
+      {
+        "name": "null_connection",
+        "stage": "serde",
+        "bytes": "{\"open\":{\"index_ids\":[],\"index_set_ids\":[],\"connection_id\":null}}"
+      },
+      {
+        "name": "missing_sets",
+        "stage": "serde",
+        "bytes": "{\"open\":{\"index_ids\":[]}}"
+      },
+      {
+        "name": "extra_field",
+        "stage": "serde",
+        "bytes": "{\"open\":{\"index_ids\":[],\"index_set_ids\":[],\"project_ids\":[]}}"
+      },
+      {
+        "name": "empty_name",
+        "stage": "validate",
+        "bytes": "{\"open\":{\"index_ids\":[\"\"],\"index_set_ids\":[]}}"
+      },
+      {
+        "name": "duplicate_name",
+        "stage": "validate",
+        "bytes": "{\"open\":{\"index_ids\":[\"Docs\",\"Docs\"],\"index_set_ids\":[]}}"
+      },
+      {
+        "name": "control_character",
+        "stage": "validate",
+        "bytes": "{\"open\":{\"index_ids\":[],\"index_set_ids\":[\"a\\tb\"]}}"
+      },
+      {
+        "name": "thirty_three_sets",
+        "stage": "validate",
+        "bytes": "{\"open\":{\"index_ids\":[],\"index_set_ids\":[\"set 0\",\"set 1\",\"set 2\",\"set 3\",\"set 4\",\"set 5\",\"set 6\",\"set 7\",\"set 8\",\"set 9\",\"set 10\",\"set 11\",\"set 12\",\"set 13\",\"set 14\",\"set 15\",\"set 16\",\"set 17\",\"set 18\",\"set 19\",\"set 20\",\"set 21\",\"set 22\",\"set 23\",\"set 24\",\"set 25\",\"set 26\",\"set 27\",\"set 28\",\"set 29\",\"set 30\",\"set 31\",\"set 32\"]}}"
+      },
+      {
+        "name": "name_over_256_bytes",
+        "stage": "validate",
+        "bytes": "{\"open\":{\"index_ids\":[\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"],\"index_set_ids\":[]}}"
+      }
+    ]
+  },
+  "scoped_read_ref": "{\"schema\":1,\"lease_generation\":7,\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"agent\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"fingerprint\":\"0505050505050505050505050505050505050505050505050505050505050505\"}",
+  "scope_observations": {
+    "accepted": [
+      {
+        "name": "agent_whole_index_without_memberships",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"agent\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[],\"source_root_ids\":[\"src_03030303030303030303030303030303\",\"src_04040404040404040404040404040404\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      }
+    ],
+    "rejected": [
+      {
+        "name": "window_without_memberships",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"window\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[],\"source_root_ids\":[\"src_03030303030303030303030303030303\",\"src_04040404040404040404040404040404\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "admin_without_memberships",
+        "stage": "validate",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"admin\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[],\"source_root_ids\":[\"src_03030303030303030303030303030303\",\"src_04040404040404040404040404040404\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      },
+      {
+        "name": "unknown_owner",
+        "stage": "serde",
+        "bytes": "{\"schema\":1,\"qualifier\":\"selected_subset\",\"fingerprint\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"selection\":{\"owner\":\"robot\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"members\":[{\"index_id\":\"idx_02020202020202020202020202020202\",\"memberships\":[],\"source_root_ids\":[\"src_03030303030303030303030303030303\",\"src_04040404040404040404040404040404\"],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}]}"
+      }
+    ]
+  },
+  "open_authority": {
+    "domain": "airk/scoped-read-authority/open/1",
+    "authority": "{\"schema\":1,\"backing\":\"0606060606060606060606060606060606060606060606060606060606060606\",\"index_id\":\"idx_02020202020202020202020202020202\",\"selection\":{\"owner\":\"agent\",\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"scope_identity\":\"0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\",\"catalog_revision\":5},\"sources\":[{\"source_root_id\":\"src_03030303030303030303030303030303\",\"original_root\":\"/srv/airk/source\"},{\"source_root_id\":\"src_04040404040404040404040404040404\",\"original_root\":\"/srv/airk/docs\"}],\"source_revision\":3,\"policy_epoch\":0,\"policy_digest\":null}",
+    "fingerprint": "b5c48fb0ddf6592aeb364ac1cd3a8d7b29c24de818f15f30f028d719e81925ae",
+    "selection_domain_digest": "27c429f6d124b489c37ffed00559826b62bb1c38942b835b202b81b4de71276e"
+  },
+  "descriptions": {
+    "absent_items": [
+      {
+        "name": "project_without_description",
+        "bytes": "{\"kind\":\"project\",\"value\":{\"id\":\"prj_01010101010101010101010101010101\",\"name\":\"Docs\",\"definition_revision\":1,\"scope_revision\":1,\"defaults_revision\":1,\"default_indexes\":[]}}"
+      },
+      {
+        "name": "index_without_description",
+        "bytes": "{\"kind\":\"index\",\"value\":{\"id\":\"idx_02020202020202020202020202020202\",\"name\":\"Docs\",\"backing\":{\"binding\":\"0606060606060606060606060606060606060606060606060606060606060606\",\"root\":\"/srv/airk/source\",\"data_root\":\"/srv/airk/data\",\"collection\":\"docs\"},\"definition_revision\":2,\"source_revision\":3,\"policy\":null,\"tombstone\":false,\"source_import\":\"complete\"}}"
+      }
+    ],
+    "present_items": [
+      {
+        "name": "project_with_description",
+        "bytes": "{\"kind\":\"project\",\"value\":{\"id\":\"prj_01010101010101010101010101010101\",\"name\":\"Docs\",\"definition_revision\":1,\"scope_revision\":1,\"defaults_revision\":1,\"default_indexes\":[],\"description\":\"Design notes\\nand ADRs\"}}"
+      },
+      {
+        "name": "index_with_description",
+        "bytes": "{\"kind\":\"index\",\"value\":{\"id\":\"idx_02020202020202020202020202020202\",\"name\":\"Docs\",\"backing\":{\"binding\":\"0606060606060606060606060606060606060606060606060606060606060606\",\"root\":\"/srv/airk/source\",\"data_root\":\"/srv/airk/data\",\"collection\":\"docs\"},\"definition_revision\":2,\"source_revision\":3,\"policy\":null,\"tombstone\":false,\"source_import\":\"complete\",\"description\":\"Service sources\"}}"
+      }
+    ],
+    "accepted": [
+      "Design notes\nand ADRs",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+    ],
+    "rejected": [
+      "",
+      "  \n",
+      "a\tb",
+      "a\rb",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+    ],
+    "operations": [
+      {
+        "name": "set_index_description",
+        "bytes": "{\"operation\":\"set_index_description\",\"id\":\"idx_02020202020202020202020202020202\",\"expected_definition_revision\":2,\"description\":\"Service sources\"}"
+      },
+      {
+        "name": "clear_project_description",
+        "bytes": "{\"operation\":\"set_project_description\",\"id\":\"prj_01010101010101010101010101010101\",\"expected_definition_revision\":1,\"description\":null}"
+      }
+    ],
+    "rejected_operations": [
+      {
+        "name": "missing_description",
+        "stage": "serde",
+        "bytes": "{\"operation\":\"set_index_description\",\"id\":\"idx_02020202020202020202020202020202\",\"expected_definition_revision\":2}"
+      }
+    ]
+  }
+}

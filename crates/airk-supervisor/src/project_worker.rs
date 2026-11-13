@@ -1874,6 +1874,10 @@ pub(crate) async fn serve(
                         };
                         replies.send(reply)?;
                     },
+                    // U105 contract step: open reads are not served yet.
+                    Some(Command::InstallOpenScope { .. }) => {
+                        replies.send(Reply::Failed)?;
+                    },
                     Some(Command::RevokeScope { identity: expected, scope }) => {
                         let revoked = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.revoke(expected, scope);
                         state.admission.completed();

@@ -379,6 +379,34 @@ S2b): the admin plane's injected `SelectionReader` runs the same
 | W7 | 64 KiB | 4 MiB (the frame ceiling; 3f.1) | At most eight 256 KiB drafts per drain |
 | W8, M12 | 128 KiB / 64 KiB (W8 request), 64 KiB / 128 KiB (M12 response) (3f.1) | A 64 KiB handoff and its fields |
 
+### 2.9 Open agent access (U105/U106, contract step) [landed, not served]
+
+Spec: `docs/split/open-agent-access.md` step 1. D8 is recorded by U105 and
+U106: these are wire, persisted-record, catalog-field and provenance
+additions; every existing encoding is byte-unchanged when the new parts are
+absent. Every consumer refuses the new values until its step lands.
+
+| Addition | Owner | Shape | Until served |
+|---|---|---|---|
+| `HttpSelection::Open` | `airk_core::service_http` | `{"kind":"open","selection":{"namespace":…}}` (`OpenHttpSelection`); `same_authority` compares namespaces; `authority_digest` covers the namespace only (golden `open-namespace` in `httpAuthorityDigest.json`, mirrored by `serviceHttp.ts`) | HTTPS validation, lazy backend and gateway capture refuse `open connections are not served yet` |
+| Ledger `Record.open` | `airk_core::service_http_credentials` | `OpenConnectionState {defaults_revision ≥ 1, default_index_ids ≤ 32, default_index_set_ids ≤ 32, agent_choice: off\|on}`, `default` + `skip_serializing_if`, last field; present exactly when the selection is `Open`; a predecessor refuses it (`deny_unknown_fields`) | No enrollment produces it. Format proof: `fixtures/split/agents/credentials_ledger_v1.json` |
+| `ToolSelection::Open` | `airk_core::service` | `{"open":{"index_ids":[…],"index_set_ids":[…],"connection_id"?}}`; ids or exact names, ≤ 32 each, non-empty, ≤ 256 bytes, no control characters, ≤ 24 KiB (`ToolSelection::validate`) | M3 answers `not_yet_served` |
+| `SelectionOwnerKind::Agent` | `airk_core::scoped_reads` | `"agent"`; `ScopeObservation::validate` admits empty memberships only for it | Never minted |
+| `OpenReadAuthority` | `airk_kernel::scoped_reads` | `{schema, backing, index_id, selection (owner agent), sources (≥ 1), source_revision, policy_epoch, policy_digest}`, domain `airk/scoped-read-authority/open/1`, one Subtree `""` atom per source; `Kernel::with_open_reads` | Host carrier `Command::InstallOpenScope`; the worker answers `Failed`. Source attribution refuses (no project) |
+| Descriptions | `airk_core::index_catalog` | `IndexDefinition.description`, `QueryProject.description`: `default` + `skip_serializing_if`, ≤ 1 KiB, not blank, no control characters except `
+` | Always absent (store reads `None`) |
+| `CatalogOperation::SetIndexDescription` / `SetProjectDescription` | `airk_core::catalog_management` | `{operation, id, expected_definition_revision, description: string\|null}`; no typed confirmation, no worker drain, no authority fence | The store refuses `catalog descriptions are not supported yet` |
+| `ControlMethod::AgentConnectionDefaults` → `ControlResponse::AgentConnectionDefaults` | `airk_core::service` | `{connection_id, expected_defaults_revision, index_ids?, index_set_ids?, agent_choice?}` (typed ids; `null` refused) → `{connection_id, open: OpenConnectionState}`; group `agent_connection_defaults` in `control_methods.json`; metadata relay `console_method_not_reviewed` | `not_yet_served` |
+| Refusal codes | `airk_core::service_http::open_refusal` | `agent_scope_choice_disabled`, `agent_default_scope_unset`, `scope_name_ambiguous`, `scope_name_unknown` | Unused |
+
+Fixtures: `fixtures/split/agents/open_access.json` (selections, agent
+observations, the open fingerprint, description cases),
+`fixtures/split/agents/credentials_ledger_v1.json`, the
+`agent_connection_defaults` group above.
+Reviewed fixture change: `selection_authority.json` case
+`selection_unknown_owner` used `"agent"` as its unknown owner; U106(d) makes
+`agent` a known owner, so the case now uses `"robot"` (still refused at decode).
+
 ## 3. I2 — `airkctl` command contract
 
 ### 3.1 Inventory row

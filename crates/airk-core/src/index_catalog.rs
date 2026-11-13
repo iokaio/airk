@@ -247,12 +247,34 @@ pub struct IndexDefinition {
     pub tombstone: bool,
     /// Missing private configuration is not guessed to mean primary-root only.
     pub source_import: SourceImportState,
+    /// U105: optional user-editable description. Absent, every encoding and
+    /// digest input is the pre-U105 one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 impl IndexDefinition {
     pub fn validate(&self) -> Result<()> {
         label(&self.name)?;
+        description(self.description.as_deref())?;
         self.backing.validate()
     }
+}
+
+/// The encoded bound of an index or index-set description (U105).
+pub const MAX_DESCRIPTION_BYTES: usize = 1024;
+
+/// A description is at most [`MAX_DESCRIPTION_BYTES`] of UTF-8, not blank,
+/// and has no control characters other than `\n`.
+pub fn description(value: Option<&str>) -> Result<()> {
+    if let Some(value) = value {
+        ensure!(
+            !value.trim().is_empty()
+                && value.len() <= MAX_DESCRIPTION_BYTES
+                && !value.chars().any(|c| c.is_control() && c != '\n'),
+            "invalid catalog description"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,10 +286,14 @@ pub struct QueryProject {
     pub scope_revision: CatalogRevision,
     pub defaults_revision: CatalogRevision,
     pub default_indexes: Vec<IndexId>,
+    /// U105: optional user-editable description; absent bytes are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 impl QueryProject {
     pub fn validate(&self) -> Result<()> {
         label(&self.name)?;
+        description(self.description.as_deref())?;
         unique_bounded(&self.default_indexes, MAX_SELECTION)
     }
 }

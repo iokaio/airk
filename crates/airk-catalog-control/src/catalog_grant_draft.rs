@@ -383,6 +383,7 @@ mod tests {
                     scope_revision: rev,
                     defaults_revision: rev,
                     default_indexes: Vec::new(),
+                    description: None,
                 }],
                 memberships: vec![Membership {
                     project_id,
@@ -407,6 +408,7 @@ mod tests {
                     policy: None,
                     tombstone: false,
                     source_import: SourceImportState::Complete,
+                    description: None,
                 }],
                 sources: vec![CatalogSource {
                     id: source,

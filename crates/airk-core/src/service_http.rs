@@ -156,6 +156,38 @@ pub enum HttpSelection {
     ImportedLegacyUnion {
         selection: NativeImportedHttpUnion,
     },
+    /// U105/U106(b): an open agent connection. The bearer admits the agent
+    /// to the MCP endpoint without a reviewed grant; the record's `open`
+    /// state (default scope, agent choice) decides what each call reads.
+    /// Contract only: consumers refuse it with [`OPEN_NOT_SERVED`] until the
+    /// open read path lands.
+    Open {
+        selection: OpenHttpSelection,
+    },
+}
+
+/// Refusal of a consumer that does not serve open connections yet (U105
+/// step 1, contract only).
+pub const OPEN_NOT_SERVED: &str = "open connections are not served yet";
+
+/// Open-read refusal codes (U105). Stable machine codes, no detail.
+pub mod open_refusal {
+    /// Agent choice is off and the call named indexes or index sets.
+    pub const AGENT_SCOPE_CHOICE_DISABLED: &str = "agent_scope_choice_disabled";
+    /// Agent choice is off and the connection has no default scope.
+    pub const AGENT_DEFAULT_SCOPE_UNSET: &str = "agent_default_scope_unset";
+    /// A named index or set matches more than one entry by exact name.
+    pub const SCOPE_NAME_AMBIGUOUS: &str = "scope_name_ambiguous";
+    /// A named index or set matches no id and no exact name.
+    pub const SCOPE_NAME_UNKNOWN: &str = "scope_name_unknown";
+}
+
+/// U105: the open connection's namespace only. It names no index, grant or
+/// project; the service-stored default scope lives in the credential ledger.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenHttpSelection {
+    pub namespace: Incarnation,
 }
 
 /// Original multi-project server routing, not an authorization union or a new
@@ -238,6 +270,7 @@ impl HttpSelection {
             Self::Combined { selection } => selection.validate(),
             Self::ImportedLegacy { selection } => selection.validate(),
             Self::ImportedLegacyUnion { selection } => selection.validate(),
+            Self::Open { .. } => Ok(()),
         }
     }
 
@@ -247,6 +280,7 @@ impl HttpSelection {
             Self::Combined { selection } => selection.namespace,
             Self::ImportedLegacy { selection } => selection.namespace,
             Self::ImportedLegacyUnion { selection } => selection.namespace,
+            Self::Open { selection } => selection.namespace,
         }
     }
 }

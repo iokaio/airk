@@ -243,6 +243,9 @@ pub fn installed_body(
             SelectionOwnerKind::Admin => {
                 "This admin session's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
             }
+            SelectionOwnerKind::Agent => {
+                "This agent connection's scope authorizes only the selection shown here. Changing it requires changing the connection's default scope or naming indexes when agent choice is on."
+            }
         },
         _ => return Err(ScopeReadRefused.into()),
     };

@@ -64,7 +64,7 @@ export async function publishNativeInput(control:string,content:string,check:()=
 }
 
 export interface ImportedHttpSelection {namespace:string;expected_catalog_revision:number;registration:{binding:string;root:string;data_root:string;collection:string};grant:Record<string,any>;configuration_receipt:string}
-export type HttpSelection={kind:'scoped';selection:CatalogSessionSelector}|{kind:'combined';selection:CombinedCatalogSessionSelector}|{kind:'imported_legacy';selection:ImportedHttpSelection}|{kind:'imported_legacy_union';selection:{namespace:string;selections:ImportedHttpSelection[];no_default_project:true}};
+export type HttpSelection={kind:'scoped';selection:CatalogSessionSelector}|{kind:'combined';selection:CombinedCatalogSessionSelector}|{kind:'imported_legacy';selection:ImportedHttpSelection}|{kind:'imported_legacy_union';selection:{namespace:string;selections:ImportedHttpSelection[];no_default_project:true}}|{kind:'open';selection:{namespace:string}};
 export interface EndpointDescriptor {
     schema:1;installation:string;user:string;namespace:string;generation:number;service_instance:string;
     executable_sha256:string;url:string;ca_sha256:string;certificate_sha256:string;
@@ -101,6 +101,7 @@ export function validateHttpSelection(input:unknown):HttpSelection{
         const members=selection.selections.map((member:unknown)=>{const result=validateHttpSelection({kind:'imported_legacy',selection:member}) as Extract<HttpSelection,{kind:'imported_legacy'}>;if(result.selection.namespace!==selection.namespace||seen.has(result.selection.registration.binding))throw Error('crossed_http_legacy_union');seen.add(result.selection.registration.binding);return result.selection;});
         return {kind:'imported_legacy_union',selection:{namespace:selection.namespace,selections:members,no_default_project:true}};
     }
+    if(value.kind==='open'){const selection=object(value.selection);keys(selection,['namespace']);hex(selection.namespace,32);return {kind:'open',selection:{namespace:selection.namespace}};}
     throw Error('invalid_http_selection');
 }
 /** Relates a validated native retarget to the original saved declaration.
@@ -134,6 +135,7 @@ export function sameHttpAuthority(actual:HttpSelection,expected:HttpSelection):b
         return actual.selection.namespace===expected.selection.namespace&&actual.selection.no_default_project===true&&actual.selection.selections.length===expected.selection.selections.length&&actual.selection.selections.every((member,index)=>sameHttpAuthority({kind:'imported_legacy',selection:member},{kind:'imported_legacy',selection:expected.selection.selections[index]}));
     }
     if(actual.kind==='imported_legacy_union'||expected.kind==='imported_legacy_union')return false;
+    if(actual.kind==='open'||expected.kind==='open')return actual.selection.namespace===expected.selection.namespace;
     const left={...actual.selection},right={...expected.selection};
     if(left.expected_catalog_revision<right.expected_catalog_revision)return false;
     delete (left as any).expected_catalog_revision;delete (right as any).expected_catalog_revision;
@@ -144,7 +146,7 @@ export function sameHttpAuthority(actual:HttpSelection,expected:HttpSelection):b
 export function httpAuthorityDigest(input:HttpSelection):string{
     const selection=validateHttpSelection(structuredClone(input));
     if(selection.kind==='imported_legacy_union')for(const member of selection.selection.selections)member.expected_catalog_revision=1;
-    else selection.selection.expected_catalog_revision=1;
+    else if(selection.kind!=='open')selection.selection.expected_catalog_revision=1;
     const canonical=(value:unknown):string=>{
         if(value===null||typeof value==='boolean'||typeof value==='string')return JSON.stringify(value);
         if(typeof value==='number'){if(!Number.isSafeInteger(value))throw Error('unsupported_http_authority_number');return JSON.stringify(value);}

@@ -452,35 +452,147 @@ impl SelectionReadAuthority {
     }
 }
 
+/// Read authority of a U105 open agent read (U106(d)): one named index read
+/// whole, one Subtree `""` atom per enabled source. Validated by the native
+/// host against the live catalog at exactly `selection.catalog_revision`
+/// before admission; this frozen payload alone grants nothing. Contract
+/// step: the host carrier exists, the worker refuses installation.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenReadAuthority {
+    pub schema: u32,
+    pub backing: airk_core::service::ProjectBinding,
+    pub index_id: IndexId,
+    /// Always owned by `SelectionOwnerKind::Agent`.
+    pub selection: SelectionScopeRef,
+    /// Every enabled source of the index; never empty.
+    pub sources: Vec<SourceDescriptor>,
+    pub source_revision: CatalogRevision,
+    pub policy_epoch: u64,
+    pub policy_digest: Option<Sha256Digest>,
+}
+impl OpenReadAuthority {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == 1
+                && self.selection.owner == airk_core::scoped_reads::SelectionOwnerKind::Agent
+                && !self.sources.is_empty()
+                && self.sources.len() <= MAX_SOURCE_ROOTS
+                && (self.policy_epoch == 0) == self.policy_digest.is_none()
+                && self.policy_epoch <= i64::MAX as u64
+                && self.source_revision <= self.selection.catalog_revision,
+            ScopeReadRefused
+        );
+        let mut ids = BTreeSet::new();
+        let mut roots = BTreeSet::new();
+        for source in &self.sources {
+            ensure!(
+                ids.insert(source.source_root_id)
+                    && roots.insert(&source.original_root)
+                    && source.original_root.len() <= 4096
+                    && std::path::Path::new(&source.original_root).is_absolute(),
+                ScopeReadRefused
+            );
+        }
+        airk_core::index_catalog::encoded_size(self, MAX_SCOPED_AUTHORITY_BYTES)?;
+        Ok(())
+    }
+    pub fn fingerprint(&self) -> Result<Sha256Digest> {
+        self.validate()?;
+        self.digest()
+    }
+    /// Its own domain: never equal to a catalog or selection fingerprint.
+    fn digest(&self) -> Result<Sha256Digest> {
+        Ok(framed_digest(
+            b"airk/scoped-read-authority/open/1",
+            &[&serde_json::to_vec(self)?],
+        ))
+    }
+    fn atoms(&self) -> Vec<ScopeAtom> {
+        self.sources
+            .iter()
+            .map(|source| ScopeAtom {
+                source_root_id: source.source_root_id,
+                kind: airk_core::index_catalog::PathScope::Subtree,
+                path: String::new(),
+            })
+            .collect()
+    }
+    fn compile(
+        &self,
+        primary: &str,
+        aliases: &BTreeMap<String, String>,
+    ) -> Result<CompiledReadScope> {
+        let fingerprint = self.fingerprint()?;
+        let atoms = self.atoms();
+        compile_atoms(fingerprint, &self.sources, atoms.iter(), primary, aliases)
+    }
+    fn observation(
+        &self,
+        fingerprint: Sha256Digest,
+    ) -> Result<airk_core::scoped_reads::ScopeObservation> {
+        use airk_core::scoped_reads::*;
+        let mut source_root_ids = self
+            .sources
+            .iter()
+            .map(|source| source.source_root_id)
+            .collect::<Vec<_>>();
+        source_root_ids.sort();
+        let observation = ScopeObservation {
+            schema: 1,
+            qualifier: ScopeQualifier::SelectedSubset,
+            fingerprint,
+            provenance: None,
+            grant: None,
+            selection: Some(self.selection.observation()),
+            members: vec![ScopeMemberObservation {
+                index_id: self.index_id,
+                memberships: Vec::new(),
+                source_root_ids,
+                source_revision: self.source_revision,
+                policy_epoch: self.policy_epoch,
+                policy_digest: self.policy_digest,
+            }],
+        };
+        observation.validate()?;
+        Ok(observation)
+    }
+}
+
 /// The installed authority source. Every reader goes through these accessors,
 /// so path, source and alias checks, fences and annotation are shared code.
 enum Authority {
     Catalog(ScopedReadAuthority),
     Selection(SelectionReadAuthority),
+    Open(OpenReadAuthority),
 }
 impl Authority {
     fn backing(&self) -> airk_core::service::ProjectBinding {
         match self {
             Self::Catalog(authority) => authority.backing,
             Self::Selection(authority) => authority.backing,
+            Self::Open(authority) => authority.backing,
         }
     }
     fn index_id(&self) -> IndexId {
         match self {
             Self::Catalog(authority) => authority.index_id,
             Self::Selection(authority) => authority.index_id,
+            Self::Open(authority) => authority.index_id,
         }
     }
     fn sources(&self) -> &[SourceDescriptor] {
         match self {
             Self::Catalog(authority) => &authority.sources,
             Self::Selection(authority) => &authority.sources,
+            Self::Open(authority) => &authority.sources,
         }
     }
     fn fingerprint(&self) -> Result<Sha256Digest> {
         match self {
             Self::Catalog(authority) => authority.fingerprint(),
             Self::Selection(authority) => authority.fingerprint(),
+            Self::Open(authority) => authority.fingerprint(),
         }
     }
     fn observation(
@@ -490,6 +602,7 @@ impl Authority {
         match self {
             Self::Catalog(authority) => authority.observation(fingerprint),
             Self::Selection(authority) => authority.observation(fingerprint),
+            Self::Open(authority) => authority.observation(fingerprint),
         }
     }
     fn compile(
@@ -500,6 +613,7 @@ impl Authority {
         match self {
             Self::Catalog(authority) => authority.compile(primary, aliases),
             Self::Selection(authority) => authority.compile(primary, aliases),
+            Self::Open(authority) => authority.compile(primary, aliases),
         }
     }
     /// Every selected membership is bound to exactly this source policy.
@@ -509,6 +623,9 @@ impl Authority {
                 .selected_memberships()
                 .all(|member| member.policy_epoch == epoch && member.policy_digest == digest),
             Self::Selection(authority) => {
+                authority.policy_epoch == epoch && authority.policy_digest == digest
+            }
+            Self::Open(authority) => {
                 authority.policy_epoch == epoch && authority.policy_digest == digest
             }
         }
@@ -539,6 +656,9 @@ impl Authority {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            // An open read has no project attribution; source attribution
+            // therefore refuses it until the open read path lands (fail closed).
+            Self::Open(_) => Vec::new(),
         };
         projects.sort();
         projects
@@ -781,6 +901,11 @@ impl Kernel {
     /// host's responsibility; this frozen payload grants nothing by itself.
     pub fn with_selection_reads(&self, authority: SelectionReadAuthority) -> Result<Self> {
         self.with_authority(Authority::Selection(authority))
+    }
+    /// The same separate immutable session for a U105 open agent read.
+    /// No host installs it yet (the worker refuses the carrier).
+    pub fn with_open_reads(&self, authority: OpenReadAuthority) -> Result<Self> {
+        self.with_authority(Authority::Open(authority))
     }
     fn with_authority(&self, authority: Authority) -> Result<Self> {
         ensure!(self.read_scope.is_none(), ScopeReadRefused);
@@ -2010,6 +2135,99 @@ mod tests {
                 .is::<ScopeReadRefused>()
         );
         assert_eq!(admin.scoped_read_fingerprint()?, None);
+        Ok(())
+    }
+    fn open_from(selection: &SelectionReadAuthority) -> OpenReadAuthority {
+        let mut scope = selection.selection;
+        scope.owner = airk_core::scoped_reads::SelectionOwnerKind::Agent;
+        OpenReadAuthority {
+            schema: 1,
+            backing: selection.backing,
+            index_id: selection.index_id,
+            selection: scope,
+            sources: selection.sources.clone(),
+            source_revision: selection.source_revision,
+            policy_epoch: selection.policy_epoch,
+            policy_digest: selection.policy_digest,
+        }
+    }
+    /// U106(d): the open authority's reviewed bytes and its own domain.
+    #[test]
+    fn open_fingerprint_uses_its_own_reviewed_domain() -> Result<()> {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/split/agents/open_access.json"
+        ))?;
+        let case = &fixture["open_authority"];
+        assert_eq!(case["domain"], "airk/scoped-read-authority/open/1");
+        let bytes = case["authority"].as_str().unwrap();
+        let authority: OpenReadAuthority = serde_json::from_str(bytes)?;
+        assert_eq!(serde_json::to_string(&authority)?, bytes);
+        let expected: Sha256Digest = case["fingerprint"].as_str().unwrap().parse()?;
+        assert_eq!(authority.digest()?, expected);
+        let selection_domain: Sha256Digest =
+            case["selection_domain_digest"].as_str().unwrap().parse()?;
+        assert_eq!(
+            framed_digest(
+                b"airk/scoped-read-authority/selection/1",
+                &[bytes.as_bytes()]
+            ),
+            selection_domain
+        );
+        assert_ne!(expected, selection_domain);
+        Ok(())
+    }
+    #[test]
+    fn open_authority_reads_every_source_whole_and_refuses_other_owners() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().join("source");
+        std::fs::create_dir(&root)?;
+        let admin = Kernel::open(&root, Some(dir.path().join("data")))?;
+        let mut authority = open_from(&selection_fixture(&admin.root_id()));
+        authority.backing = airk_core::service::ProjectRegistration::new(
+            admin.root_id(),
+            admin.data_root.to_str().unwrap().into(),
+            admin.collection.clone(),
+        )?
+        .binding;
+        authority.validate()?;
+        type Change = fn(&mut OpenReadAuthority);
+        let cases: [(&str, Change); 5] = [
+            ("schema", |a| a.schema = 2),
+            ("window owner", |a| {
+                a.selection.owner = airk_core::scoped_reads::SelectionOwnerKind::Window
+            }),
+            ("no source", |a| a.sources.clear()),
+            ("duplicate source", |a| a.sources.push(a.sources[0].clone())),
+            ("policy digest without epoch", |a| {
+                a.policy_digest = Some(Sha256Digest::from_bytes([1; 32]))
+            }),
+        ];
+        for (name, change) in cases {
+            let mut refused = authority.clone();
+            change(&mut refused);
+            assert!(refused.fingerprint().is_err(), "{name}");
+            assert!(admin.with_open_reads(refused).is_err(), "{name}");
+        }
+        let compiled = authority.compile(&admin.root_id(), &BTreeMap::new())?;
+        assert_eq!(compiled.atoms.len(), 1);
+        assert!(compiled.atoms[0].path.is_empty());
+        let session = admin.with_open_reads(authority.clone())?;
+        assert_eq!(
+            session.scoped_read_fingerprint()?,
+            Some(authority.fingerprint()?)
+        );
+        let observation = serde_json::to_value(session.scope_observation())?;
+        assert_eq!(observation["selection"]["owner"], "agent");
+        assert_eq!(
+            observation["members"][0]["memberships"],
+            serde_json::json!([])
+        );
+        // No project attribution yet: source attribution fails closed.
+        assert!(
+            session
+                .scoped_source_attribution(&admin.root_id(), "lib.rs")
+                .is_err()
+        );
         Ok(())
     }
 }

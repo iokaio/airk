@@ -618,3 +618,122 @@ fn fence_plans_refuse_selection_scope_targets() {
     }
     assert!(checked >= 3);
 }
+
+const OPEN_ACCESS: &str = include_str!("../../../fixtures/split/agents/open_access.json");
+
+fn open_fixture() -> Value {
+    let fixture: Value = serde_json::from_str(OPEN_ACCESS).unwrap();
+    assert_eq!(fixture["schema"], "airk.split-fixture.agents-open-access/1");
+    fixture
+}
+
+fn refused_at<T: serde::de::DeserializeOwned>(
+    case: &Value,
+    validate: impl Fn(&T) -> anyhow::Result<()>,
+) {
+    let decoded = serde_json::from_str::<T>(case["bytes"].as_str().unwrap());
+    match case["stage"].as_str().unwrap() {
+        "serde" => assert!(decoded.is_err(), "{}", case["name"]),
+        "validate" => assert!(validate(&decoded.unwrap()).is_err(), "{}", case["name"]),
+        stage => panic!("unknown stage {stage}"),
+    }
+}
+
+/// U105: open HTTP and tool selections round-trip byte-exactly and refuse
+/// at the reviewed stage.
+#[test]
+fn open_selections_match_reviewed_fixture() {
+    use crate::{service::ToolSelection, service_http::HttpSelection};
+    let fixture = open_fixture();
+    let mut checked = 0;
+    for case in fixture["http_selection"]["accepted"].as_array().unwrap() {
+        let text = case["bytes"].as_str().unwrap();
+        let selection: HttpSelection = serde_json::from_str(text).unwrap();
+        selection.validate().unwrap();
+        assert_eq!(bytes(&selection), text, "{}", case["name"]);
+        checked += 1;
+    }
+    for case in fixture["http_selection"]["rejected"].as_array().unwrap() {
+        refused_at::<HttpSelection>(case, |value| value.validate());
+        checked += 1;
+    }
+    for case in fixture["tool_selection"]["accepted"].as_array().unwrap() {
+        let text = case["bytes"].as_str().unwrap();
+        let selection: ToolSelection = serde_json::from_str(text).unwrap();
+        selection.validate().unwrap();
+        assert_eq!(bytes(&selection), text, "{}", case["name"]);
+        checked += 1;
+    }
+    for case in fixture["tool_selection"]["rejected"].as_array().unwrap() {
+        refused_at::<ToolSelection>(case, |value| value.validate());
+        checked += 1;
+    }
+    assert_eq!(checked, 14);
+}
+
+/// U106(d): an agent selection may observe a whole index without project
+/// memberships; a window or admin selection still may not.
+#[test]
+fn agent_scope_observations_match_reviewed_fixture() {
+    use crate::{scoped_reads::ScopeObservation, service::ScopedReadRef};
+    let fixture = open_fixture();
+    let text = fixture["scoped_read_ref"].as_str().unwrap();
+    let scope: ScopedReadRef = serde_json::from_str(text).unwrap();
+    scope.validate().unwrap();
+    assert_eq!(bytes(&scope), text);
+    let accepted = fixture["scope_observations"]["accepted"]
+        .as_array()
+        .unwrap();
+    assert!(!accepted.is_empty());
+    for case in accepted {
+        let text = case["bytes"].as_str().unwrap();
+        let observation: ScopeObservation = serde_json::from_str(text).unwrap();
+        observation.validate().unwrap();
+        assert_eq!(bytes(&observation), text, "{}", case["name"]);
+    }
+    for case in fixture["scope_observations"]["rejected"]
+        .as_array()
+        .unwrap()
+    {
+        refused_at::<ScopeObservation>(case, |value| value.validate());
+    }
+}
+
+/// U105: an absent description keeps every catalog item's bytes; a present
+/// one round-trips; the bound and character rules are the reviewed ones.
+#[test]
+fn catalog_descriptions_match_reviewed_fixture() {
+    use crate::catalog_management::{CatalogItem, CatalogOperation};
+    let fixture = open_fixture();
+    let cases = &fixture["descriptions"];
+    for (group, present) in [("absent_items", false), ("present_items", true)] {
+        let items = cases[group].as_array().unwrap();
+        assert_eq!(items.len(), 2, "{group}");
+        for case in items {
+            let text = case["bytes"].as_str().unwrap();
+            let item: CatalogItem = serde_json::from_str(text).unwrap();
+            assert_eq!(bytes(&item), text, "{}", case["name"]);
+            assert_eq!(text.contains("\"description\""), present);
+            if let CatalogItem::Project(project) = &item {
+                project.validate().unwrap();
+                assert_eq!(project.description.is_some(), present);
+            }
+        }
+    }
+    for text in cases["accepted"].as_array().unwrap() {
+        crate::index_catalog::description(Some(text.as_str().unwrap())).unwrap();
+    }
+    for text in cases["rejected"].as_array().unwrap() {
+        assert!(crate::index_catalog::description(Some(text.as_str().unwrap())).is_err());
+    }
+    for case in cases["operations"].as_array().unwrap() {
+        let text = case["bytes"].as_str().unwrap();
+        let operation: CatalogOperation = serde_json::from_str(text).unwrap();
+        assert_eq!(bytes(&operation), text, "{}", case["name"]);
+        assert!(operation.confirmation_target().is_none());
+        assert!(!operation.requires_worker_drain() && !operation.requires_authority_fence());
+    }
+    for case in cases["rejected_operations"].as_array().unwrap() {
+        refused_at::<CatalogOperation>(case, |_| Ok(()));
+    }
+}
