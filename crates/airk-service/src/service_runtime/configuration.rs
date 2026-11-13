@@ -14,7 +14,7 @@ pub(super) async fn prepare(
     draft: ConfigurationDraft,
 ) -> ControlResponse {
     match airk_host::service_configuration::prepare(
-        &crate::client_requests::ControlRoot(control),
+        &airk_frontend::client_requests::ControlRoot(control),
         project,
         draft,
     )

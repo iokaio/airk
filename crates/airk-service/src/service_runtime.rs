@@ -34,17 +34,17 @@ mod window_plane;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
     if error
-        .downcast_ref::<crate::catalog_coordinator::CatalogRevisionChanged>()
+        .downcast_ref::<airk_catalog_control::catalog_coordinator::CatalogRevisionChanged>()
         .is_some()
     {
         "catalog_revision_changed"
     } else if error
-        .downcast_ref::<crate::catalog_coordinator::CatalogClockPending>()
+        .downcast_ref::<airk_catalog_control::catalog_coordinator::CatalogClockPending>()
         .is_some()
     {
         "catalog_clock_pending"
     } else if let Some(pending) =
-        error.downcast_ref::<crate::project_supervisor::ConnectionSetupPending>()
+        error.downcast_ref::<airk_supervisor::project_supervisor::ConnectionSetupPending>()
     {
         pending.code()
     } else if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
@@ -54,7 +54,7 @@ fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a 
     }
 }
 
-pub use crate::usage_client::administrative_read;
+pub use airk_frontend::usage_client::administrative_read;
 
 struct State {
     http: std::sync::OnceLock<Arc<http::Owner>>,
@@ -69,10 +69,10 @@ struct State {
     runtime_sha256: Option<String>,
     shutdown: Notify,
     management: crate::service_management::Management,
-    supervisor: crate::project_supervisor::Supervisor,
-    sources: crate::source_supervisor::SourceSupervisor,
-    log: crate::service_logs::Log,
-    catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
+    supervisor: airk_supervisor::project_supervisor::Supervisor,
+    sources: airk_supervisor::source_supervisor::SourceSupervisor,
+    log: airk_host::service_logs::Log,
+    catalog_gate: Option<airk_catalog_control::catalog_admission::NativeCatalogAdmission>,
     legacy_connections: bool,
     native_administrative: crate::native_admin_connections::NativeAdministrativePool,
     native_caller: airk_core::identity::Incarnation,
@@ -82,9 +82,9 @@ struct State {
     windows: Mutex<window_plane::WindowPlane>,
     /// Sends `RevokeScope` for the selection scopes of dropped window grants
     /// (selection authority §3.3); present with the catalog gate.
-    selection_control: Option<crate::project_supervisor::CatalogControlHandle>,
+    selection_control: Option<airk_supervisor::project_supervisor::CatalogControlHandle>,
     /// A1 launch codes and admin sessions (split Phase 5), in memory.
-    admin: Arc<crate::admin_plane::AdminPlane>,
+    admin: Arc<airk_https::admin_plane::AdminPlane>,
 }
 
 /// The window plane with the system clock (Unix milliseconds) and the OS
@@ -98,7 +98,7 @@ struct State {
 fn windows(
     instance: airk_core::identity::Incarnation,
     control: std::path::PathBuf,
-    gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
+    gate: Option<airk_catalog_control::catalog_admission::NativeCatalogAdmission>,
 ) -> window_plane::WindowPlane {
     let random = || new_instance_id().expect("the OS random source is available");
     let registrar = gate.map(|gate| -> window_plane::SelectionRegistrar {
@@ -133,7 +133,7 @@ fn windows(
 /// installations revoked, under the gate lock only. Returns the pairs that
 /// still need a worker `RevokeScope`. Call with no owner lock held (§3.7).
 fn revoke_in_gate(
-    gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
+    gate: Option<&airk_catalog_control::catalog_admission::NativeCatalogAdmission>,
     dropped: window_plane::Dropped,
 ) -> Vec<(
     airk_core::service::WorkerIdentity,
@@ -164,11 +164,11 @@ fn revoke_dropped(state: &State, dropped: window_plane::Dropped) {
 /// revoked after that lock is released, with `RevokeScope` to each affected
 /// worker on a blocking thread, as for windows.
 fn admin_selection_authority(
-    gate: crate::catalog_admission::NativeCatalogAdmission,
-    control: Option<crate::project_supervisor::CatalogControlHandle>,
-) -> crate::admin_plane::SelectionAuthority {
+    gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+    control: Option<airk_supervisor::project_supervisor::CatalogControlHandle>,
+) -> airk_https::admin_plane::SelectionAuthority {
     let register = gate.clone();
-    crate::admin_plane::SelectionAuthority {
+    airk_https::admin_plane::SelectionAuthority {
         register: Arc::new(
             move |selection: &airk_core::scoped_reads::SelectionScopeRef| {
                 register.register_selection(selection).is_ok()
@@ -199,8 +199,8 @@ async fn blocking_scope_check(
 /// path under the session's grant, in process.
 fn admin_selection_reader(
     state: Arc<std::sync::OnceLock<std::sync::Weak<State>>>,
-) -> crate::admin_plane::SelectionReader {
-    Arc::new(move |read: crate::admin_plane::SelectedRead| {
+) -> airk_https::admin_plane::SelectionReader {
+    Arc::new(move |read: airk_https::admin_plane::SelectedRead| {
         let state = state.clone();
         Box::pin(async move {
             let Some(state) = state.get().and_then(std::sync::Weak::upgrade) else {
@@ -235,7 +235,7 @@ fn admin_selection_reader(
 
 /// The admin plane's A2 catalog check: the shared `scope_grant` check, off
 /// the async workers.
-fn admin_scope_check(control: std::path::PathBuf) -> crate::admin_plane::ScopeCheck {
+fn admin_scope_check(control: std::path::PathBuf) -> airk_https::admin_plane::ScopeCheck {
     Arc::new(move |selection: airk_core::service::WindowScopeSelection| {
         let control = control.clone();
         Box::pin(async move {
@@ -250,17 +250,18 @@ fn admin_scope_check(control: std::path::PathBuf) -> crate::admin_plane::ScopeCh
 /// http-trust --action inspect` printed, through the same callers
 /// (`http_endpoint::trust::saved_identity` and `manage(Inspect)`), which
 /// read the saved endpoint and the OS trust store and change nothing.
-fn admin_trust_inspect(control: std::path::PathBuf) -> crate::admin_plane::TrustInspect {
+fn admin_trust_inspect(control: std::path::PathBuf) -> airk_https::admin_plane::TrustInspect {
     Arc::new(move || {
         let control = control.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
-                let (binding, endpoint) = crate::http_endpoint::trust::saved_identity(&control)?;
-                let status = crate::http_endpoint::trust::manage(
+                let (binding, endpoint) =
+                    airk_endpoint::http_endpoint::trust::saved_identity(&control)?;
+                let status = airk_endpoint::http_endpoint::trust::manage(
                     &control.join("http-1"),
                     binding,
                     endpoint.ca_sha256,
-                    crate::http_endpoint::trust::Action::Inspect,
+                    airk_endpoint::http_endpoint::trust::Action::Inspect,
                 )?;
                 Ok(serde_json::to_value(status)?)
             })
@@ -274,7 +275,7 @@ fn admin_trust_inspect(control: std::path::PathBuf) -> crate::admin_plane::Trust
 /// failure before protected bytes may return to the ordinary failure writer.
 async fn deliver_native_read<S, F>(
     stream: &mut S,
-    gate: &crate::catalog_admission::NativeCatalogAdmission,
+    gate: &airk_catalog_control::catalog_admission::NativeCatalogAdmission,
     produce: F,
 ) -> Result<Option<ControlResponse>>
 where
@@ -485,7 +486,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 let control = state.control_root.clone();
                 let expected_revision = clock.revision;
                 let observed = tokio::task::spawn_blocking(move || {
-                    crate::combined_frontend::validate_delivery(
+                    airk_frontend::combined_frontend::validate_delivery(
                         &control,
                         &selection,
                         &query_selection,
@@ -535,8 +536,8 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                             .as_ref()
                             .and_then(|gate| gate.catalog_clock()),
                         storage_formats: Some(airk_core::storage_format::CURRENT),
-                        build: crate::runtime_metadata::process().build,
-                        build_error: crate::runtime_metadata::process().metadata_error,
+                        build: airk_supervisor::runtime_metadata::process().build,
+                        build_error: airk_supervisor::runtime_metadata::process().metadata_error,
                         logs: state.log.telemetry(),
                         version: env!("CARGO_PKG_VERSION").into(),
                         protocol: PROTOCOL_VERSION,
@@ -634,7 +635,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::ToolsCatalog {
                 detail,
                 combined: None,
-            } => crate::tool_catalog::response(&detail)?,
+            } => airk_frontend::tool_catalog::response(&detail)?,
             ControlMethod::ToolsCatalog {
                 detail,
                 combined: Some(request),
@@ -662,7 +663,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 match airk_kernel::inspect_model_catalog().and_then(|catalog| {
                     let mut document = serde_json::to_value(catalog)?;
                     document["bundled_model"] =
-                        serde_json::json!({"manifest": crate::bundled_assets::manifest()?});
+                        serde_json::json!({"manifest": airk_host::bundled_assets::manifest()?});
                     Ok(document)
                 }) {
                     Ok(document) => ControlResponse::ModelCatalog { document },
@@ -743,7 +744,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 resolve::response(&state.control_root, target).await
             }
             ControlMethod::RecordClientError { operation, input } => {
-                match crate::service_logs::record_client_error(
+                match airk_host::service_logs::record_client_error(
                     &state.control_root,
                     &operation,
                     input.as_bytes(),
@@ -978,7 +979,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
 fn admin_dispatch(
     control: std::path::PathBuf,
     instance: airk_core::identity::Incarnation,
-) -> crate::admin_plane::Dispatch {
+) -> airk_https::admin_plane::Dispatch {
     Arc::new(move |method: ControlMethod| {
         let control = control.clone();
         Box::pin(async move { request_for_instance(&control, method, instance).await })
@@ -1027,12 +1028,12 @@ async fn serve_with_admission(
     idle_grace: Option<Duration>,
     admission: Option<airk_core::install_record::StartMode>,
 ) -> Result<()> {
-    crate::install_layout::validate_control_root(root)?;
-    crate::runtime_install::require_baseline_service(root)?;
+    airk_host::install_layout::validate_control_root(root)?;
+    airk_installer::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(acquire_single_instance(root)?);
-    crate::http_endpoint::rotation::require_start_allowed(root)?;
-    crate::install_layout::record_control_root(&_ownership)?;
+    airk_endpoint::http_endpoint::rotation::require_start_allowed(root)?;
+    airk_host::install_layout::record_control_root(&_ownership)?;
     if let Some(mode) = admission {
         lifecycle::admit_start(root, mode)?;
     }
@@ -1055,15 +1056,15 @@ async fn serve_with_admission(
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(_ownership.root())?;
     let instance = new_instance_id()?;
-    let (log, log_guard) = crate::service_logs::Log::start(root.canonicalize()?, instance);
+    let (log, log_guard) = airk_host::service_logs::Log::start(root.canonicalize()?, instance);
     log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);
     let policy = Arc::new(Mutex::new(Broker::new(instance, BrokerLimits::service())?));
-    let sources = crate::source_supervisor::SourceSupervisor::start(
+    let sources = airk_supervisor::source_supervisor::SourceSupervisor::start(
         root.canonicalize()?,
         instance,
         log.clone(),
     )?;
-    let supervisor = crate::project_supervisor::Supervisor::start(
+    let supervisor = airk_supervisor::project_supervisor::Supervisor::start(
         root.canonicalize()?,
         instance,
         policy.clone(),
@@ -1071,50 +1072,52 @@ async fn serve_with_admission(
         sources.telemetry_complete.clone(),
         log.clone(),
         _ownership.clone(),
-        crate::runtime_metadata::project_worker_hooks(),
+        airk_supervisor::runtime_metadata::project_worker_hooks(),
     )?;
     let mut legacy_connections = false;
     let catalog_gate = match airk_store::service::registry::ServiceRegistry::open(root, instance) {
-        Ok(registry) => match registry.catalog_state()? {
-            None => {
-                legacy_connections = true;
-                None
-            }
-            Some(catalog) => {
-                let supported = airk_store::service::registry::catalog::capabilities();
-                ensure!(
-                    supported.supports(
-                        catalog.schema,
-                        catalog.authority_contract,
-                        catalog.policy_contract
-                    ),
-                    "catalog_authority_contract_unsupported"
-                );
-                match catalog.authority_contract {
-                    0 => {
-                        ensure!(
-                            catalog.policy_contract == 0,
-                            "catalog_authority_contract_unsupported"
-                        );
-                        legacy_connections = true;
-                        None
-                    }
-                    1 => {
-                        ensure!(
+        Ok(registry) => {
+            match registry.catalog_state()? {
+                None => {
+                    legacy_connections = true;
+                    None
+                }
+                Some(catalog) => {
+                    let supported = airk_store::service::registry::catalog::capabilities();
+                    ensure!(
+                        supported.supports(
+                            catalog.schema,
+                            catalog.authority_contract,
+                            catalog.policy_contract
+                        ),
+                        "catalog_authority_contract_unsupported"
+                    );
+                    match catalog.authority_contract {
+                        0 => {
+                            ensure!(
+                                catalog.policy_contract == 0,
+                                "catalog_authority_contract_unsupported"
+                            );
+                            legacy_connections = true;
+                            None
+                        }
+                        1 => {
+                            ensure!(
                             catalog.activated && catalog.policy_contract <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT,
                             "catalog_authority_not_ready"
                         );
-                        Some(crate::catalog_admission::NativeCatalogAdmission::new(
+                            Some(airk_catalog_control::catalog_admission::NativeCatalogAdmission::new(
                             instance,
                             catalog.namespace,
                             catalog.revision,
                             1,
                         )?)
+                        }
+                        _ => anyhow::bail!("catalog_authority_contract_unsupported"),
                     }
-                    _ => anyhow::bail!("catalog_authority_contract_unsupported"),
                 }
             }
-        },
+        }
         Err(error) if error.is::<airk_store::service::registry::catalog::AdmissionPending>() => {
             return Err(error);
         }
@@ -1155,7 +1158,7 @@ async fn serve_with_admission(
     // The A2 read runs in process; `State` is bound once it exists.
     let reader_state: Arc<std::sync::OnceLock<std::sync::Weak<State>>> =
         Arc::new(std::sync::OnceLock::new());
-    let admin = crate::admin_plane::AdminPlane::new(
+    let admin = airk_https::admin_plane::AdminPlane::new(
         admin_dispatch(root.canonicalize()?, instance),
         instance,
     )
@@ -1176,8 +1179,10 @@ async fn serve_with_admission(
         started: Instant::now(),
         last_client_activity: Mutex::new(Instant::now()),
         user: local_ipc::current_user()?,
-        executable_sha256: crate::runtime_pair::current_executable_sha256()?,
-        runtime_sha256: crate::runtime_install::installed_identity(&std::env::current_exe()?)?,
+        executable_sha256: airk_host::runtime_pair::current_executable_sha256()?,
+        runtime_sha256: airk_installer::runtime_install::installed_identity(
+            &std::env::current_exe()?,
+        )?,
         shutdown: Notify::new(),
         management,
         supervisor,
@@ -1308,12 +1313,12 @@ async fn serve_with_admission(
 }
 
 #[cfg(test)]
-use crate::control_client::prebaseline_metadata_method;
-pub use crate::control_client::{
+use crate::ipc::control::registry_busy_retry;
+#[cfg(test)]
+use airk_installer::control_client::prebaseline_metadata_method;
+pub use airk_installer::control_client::{
     request, request_for_instance, request_for_version, request_for_version_and_instance,
 };
-#[cfg(test)]
-use crate::ipc::control::registry_busy_retry;
 
 #[cfg(test)]
 mod registry_retry_tests;
@@ -1332,11 +1337,11 @@ mod connection_failure_tests {
     use tokio::io::AsyncReadExt;
 
     fn native_read_gate() -> Result<(
-        crate::catalog_admission::NativeCatalogAdmission,
+        airk_catalog_control::catalog_admission::NativeCatalogAdmission,
         Incarnation,
     )> {
         let namespace = Incarnation::from_bytes([61; 16]);
-        let gate = crate::catalog_admission::NativeCatalogAdmission::new(
+        let gate = airk_catalog_control::catalog_admission::NativeCatalogAdmission::new(
             Incarnation::from_bytes([62; 16]),
             namespace,
             CatalogRevision::INITIAL,
@@ -1346,7 +1351,7 @@ mod connection_failure_tests {
     }
 
     fn close_native_read_gate(
-        gate: &crate::catalog_admission::NativeCatalogAdmission,
+        gate: &airk_catalog_control::catalog_admission::NativeCatalogAdmission,
         namespace: Incarnation,
     ) -> Result<()> {
         // Close the real admission gate before persistence. This test focuses
@@ -1517,8 +1522,8 @@ mod window_selection_revocation_tests {
 
     const INSTANCE: [u8; 16] = [0xe1; 16];
 
-    fn gate() -> crate::catalog_admission::NativeCatalogAdmission {
-        crate::catalog_admission::NativeCatalogAdmission::new(
+    fn gate() -> airk_catalog_control::catalog_admission::NativeCatalogAdmission {
+        airk_catalog_control::catalog_admission::NativeCatalogAdmission::new(
             Incarnation::from_bytes(INSTANCE),
             Incarnation::from_bytes([0x0a; 16]),
             CatalogRevision::try_from(12u64).unwrap(),
@@ -1529,7 +1534,9 @@ mod window_selection_revocation_tests {
 
     /// A plane whose stored grants register with `gate`, as `windows`
     /// wires it, under a fixed clock and fixed identifiers.
-    fn plane(gate: &crate::catalog_admission::NativeCatalogAdmission) -> window_plane::WindowPlane {
+    fn plane(
+        gate: &airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+    ) -> window_plane::WindowPlane {
         let registrar = gate.clone();
         let mut nonces = 0u8;
         window_plane::WindowPlane::new(
@@ -1632,7 +1639,7 @@ mod connection_setup_contract_tests {
     use super::*;
     #[test]
     fn only_known_typed_pre_query_pending_errors_become_busy_codes() {
-        use crate::project_supervisor::ConnectionSetupPending as Pending;
+        use airk_supervisor::project_supervisor::ConnectionSetupPending as Pending;
         for pending in [
             Pending::Queue,
             Pending::Draining,

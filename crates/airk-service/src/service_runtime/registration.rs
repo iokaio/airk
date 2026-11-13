@@ -27,7 +27,7 @@ pub(super) fn plan(
     }
     let planned = match storage {
         RegistrationStorage::Planned => {
-            crate::service_registration::prepare(root, data, collection)
+            airk_host::service_registration::prepare(root, data, collection)
         }
         RegistrationStorage::Existing => {
             airk_kernel::service_projects::registration(root, data, collection)
@@ -41,7 +41,7 @@ pub(super) fn plan(
 
 /// M4b: create the storage the registry reserved for the project.
 pub(super) fn prepare_storage(control: &Path, project: ProjectBinding) -> ControlResponse {
-    match crate::service_registration::prepare_storage(control, project) {
+    match airk_host::service_registration::prepare_storage(control, project) {
         Ok(registration) => ControlResponse::StoragePrepared { registration },
         Err(error) => refused(&error),
     }

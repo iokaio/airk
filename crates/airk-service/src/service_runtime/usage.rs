@@ -25,11 +25,11 @@ pub(super) async fn document(
     };
     let result = match read {
         UsageDocumentRead::Settings { view } => {
-            crate::usage_client::settings_selected(control, project, view, selection).await
+            airk_frontend::usage_client::settings_selected(control, project, view, selection).await
         }
         UsageDocumentRead::ValidateSettingsFile { view, path } => match absolute(&path) {
             Ok(path) => {
-                crate::usage_client::validate_settings_file_selected(
+                airk_frontend::usage_client::validate_settings_file_selected(
                     control, project, view, &path, selection,
                 )
                 .await
@@ -37,8 +37,10 @@ pub(super) async fn document(
             Err(error) => Err(error),
         },
         UsageDocumentRead::Report { days, format } => {
-            crate::usage_client::render_selected(control, project, days, format, None, selection)
-                .await
+            airk_frontend::usage_client::render_selected(
+                control, project, days, format, None, selection,
+            )
+            .await
         }
         UsageDocumentRead::ReportFile {
             days,
@@ -46,7 +48,7 @@ pub(super) async fn document(
             price_scenario_path,
         } => match absolute(&price_scenario_path) {
             Ok(path) => {
-                crate::usage_client::render_file_selected(
+                airk_frontend::usage_client::render_file_selected(
                     control, project, days, format, &path, selection,
                 )
                 .await
@@ -60,7 +62,7 @@ pub(super) async fn document(
         Err(error) => ControlResponse::UsageReadFailed {
             message: super::tools_call::failure_message(&error),
             native: error
-                .downcast_ref::<crate::usage_client::NativeReadFailure>()
+                .downcast_ref::<airk_frontend::usage_client::NativeReadFailure>()
                 .map(|failure| failure.body().clone()),
         },
     }
@@ -74,7 +76,7 @@ async fn policy(
     selection: Option<&ScopedConnectRequest>,
 ) -> anyhow::Result<serde_json::Value> {
     let value = if let Some(selection) = selection {
-        let mut connection = crate::project_client::Connection::connect_scoped(
+        let mut connection = airk_frontend::project_client::Connection::connect_scoped(
             control,
             project,
             selection,
@@ -83,7 +85,7 @@ async fn policy(
         .await?;
         connection.read_native(NativeRead::UsagePolicy).await?
     } else {
-        crate::usage_client::administrative_read(
+        airk_frontend::usage_client::administrative_read(
             control,
             project,
             NativeRead::UsagePolicy,
@@ -91,5 +93,5 @@ async fn policy(
         )
         .await?
     };
-    crate::usage_client::require_native_success(value)
+    airk_frontend::usage_client::require_native_success(value)
 }

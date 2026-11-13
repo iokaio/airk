@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private upgrade admission and native committed-boundary observations.
 use super::*;
-use crate::checkpoint_fence::{FENCE, Fence, FenceOrigin, fence};
+use airk_host::checkpoint_fence::{FENCE, Fence, FenceOrigin, fence};
 // The packet format and the installer's fence writer/remover moved to
 // `checkpoint_packet` (split step 2b); these paths keep their callers.
-#[cfg(test)]
-use crate::checkpoint_fence::bytes;
-use crate::checkpoint_packet::immutable;
-#[cfg(test)]
-pub(crate) use crate::checkpoint_packet::{MAX_PACKET, arm_recovery};
-pub(crate) use crate::checkpoint_packet::{
-    Packet, packet_digest, packet_name, read_packet, settle,
-};
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_checkpoint::{CheckpointState, UpgradeCheckpointObservation},
+};
+#[cfg(test)]
+use airk_host::checkpoint_fence::bytes;
+use airk_host::checkpoint_packet::immutable;
+#[cfg(test)]
+pub(crate) use airk_host::checkpoint_packet::{MAX_PACKET, arm_recovery};
+pub(crate) use airk_host::checkpoint_packet::{
+    Packet, packet_digest, packet_name, read_packet, settle,
 };
 use airk_store::service::registry::checkpoint as store;
 use anyhow::Context;
@@ -162,12 +162,12 @@ impl Coordinator {
                 ensure!(saved.service_instance!=Some(state.instance),"checkpoint-prepared owner must restart before reopening sealed source and provider admission");
             }
             let current=std::env::current_exe()?.canonicalize()?;
-            let payload=crate::runtime_pair::payload_root(&current)?;
+            let payload=airk_host::runtime_pair::payload_root(&current)?;
             let identity=payload.file_name().and_then(|name|name.to_str()).context("admission release runtime identity missing")?;
             let runtimes=payload.parent().context("admission release runtime parent missing")?;
             ensure!(runtimes.file_name().is_some_and(|name|name=="runtimes"),"admission release is not an installed runtime");
             let install=runtimes.parent().context("admission release install root missing")?;
-            crate::runtime_install::verify_admission_release(install,&owner.control,operation,identity)?;
+            airk_installer::runtime_install::verify_admission_release(install,&owner.control,operation,identity)?;
             settle(&owner.control,operation)?;
             *owner.cached_fence.lock().map_err(|_|anyhow::anyhow!("checkpoint admission state unavailable"))?=None;
             owner.closed.store(false,Ordering::Release);
@@ -271,7 +271,10 @@ impl Coordinator {
             .await
         {
             Ok(workers) => workers,
-            Err(error) if error.is::<crate::project_supervisor::CheckpointResourcesPending>() => {
+            Err(error)
+                if error
+                    .is::<airk_supervisor::project_supervisor::CheckpointResourcesPending>() =>
+            {
                 observation.blocked_code = Some("checkpoint_predecessor_resources_pending".into());
                 return Ok(observation);
             }

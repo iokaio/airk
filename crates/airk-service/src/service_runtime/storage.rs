@@ -51,7 +51,7 @@ pub(super) trait ClosedLogs {
     fn delete(&self, plan: &[PurgeFile]) -> Result<Vec<PurgedFile>>;
 }
 
-impl ClosedLogs for crate::service_logs::Log {
+impl ClosedLogs for airk_host::service_logs::Log {
     fn folder(&self) -> Result<PathBuf> {
         self.log_folder()
     }
@@ -191,7 +191,7 @@ pub(super) fn inventory(locations: &Locations) -> Result<StorageInventory> {
 }
 
 fn normal(path: &Path) -> Result<PathBuf> {
-    crate::user_paths::canonical_location(&std::path::absolute(path)?)
+    airk_host::user_paths::canonical_location(&std::path::absolute(path)?)
 }
 
 /// The locations of the installation this service serves: the install

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded metadata actor keeps registry I/O off independent native health handlers.
-use crate::registry_console::{console_page, console_page_role};
+use airk_catalog_control::registry_console::{console_page, console_page_role};
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse, JobError, ProjectBinding},
@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 
 enum ManagementReply {
     Control(oneshot::Sender<ControlResponse>),
-    Scoped(oneshot::Sender<Result<crate::project_supervisor::ScopedConnectionDelivery>>),
+    Scoped(oneshot::Sender<Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery>>),
 }
 impl ManagementReply {
     fn send(self, response: ControlResponse) -> std::result::Result<(), Box<ControlResponse>> {
@@ -37,15 +37,15 @@ impl ManagementReply {
 }
 enum Envelope {
     Request(Box<ControlMethod>, ManagementReply),
-    Missing(crate::catalog_source_change_control::NativeMissingSourceEvent),
+    Missing(airk_catalog_control::catalog_source_change_control::NativeMissingSourceEvent),
     AdministrativeRead(
         ProjectBinding,
-        oneshot::Sender<Result<crate::project_supervisor::NativeAdministrativeRead>>,
+        oneshot::Sender<Result<airk_supervisor::project_supervisor::NativeAdministrativeRead>>,
     ),
     /// In-process selection admission (§3.2 step 4): no `ControlMethod`.
     Selection(
-        Box<crate::catalog_authority::SelectionConnectRequest>,
-        oneshot::Sender<Result<crate::project_supervisor::ScopedConnectionDelivery>>,
+        Box<airk_catalog_control::catalog_authority::SelectionConnectRequest>,
+        oneshot::Sender<Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery>>,
     ),
 }
 
@@ -96,12 +96,14 @@ struct MissingReporter {
     pending: Arc<AtomicUsize>,
     missing: Arc<AtomicUsize>,
 }
-impl crate::source_supervisor::MissingSourceReporter for MissingReporter {
+impl airk_supervisor::source_supervisor::MissingSourceReporter for MissingReporter {
     fn try_report(
         &self,
-        event: crate::catalog_source_change_control::NativeMissingSourceEvent,
-    ) -> std::result::Result<(), crate::catalog_source_change_control::NativeMissingSourceEvent>
-    {
+        event: airk_catalog_control::catalog_source_change_control::NativeMissingSourceEvent,
+    ) -> std::result::Result<
+        (),
+        airk_catalog_control::catalog_source_change_control::NativeMissingSourceEvent,
+    > {
         let Some(sender) = self.sender.upgrade() else {
             return Err(event);
         };
@@ -133,7 +135,7 @@ impl crate::source_supervisor::MissingSourceReporter for MissingReporter {
     }
 }
 struct MissingWork {
-    event: crate::catalog_source_change_control::NativeMissingSourceEvent,
+    event: airk_catalog_control::catalog_source_change_control::NativeMissingSourceEvent,
     nonce: Option<Incarnation>,
     draft: Option<airk_core::catalog_source_draft::SourceMutationDraft>,
     next_attempt: std::time::Instant,
@@ -148,14 +150,14 @@ impl MissingWork {
         if self.draft.is_none() {
             native.reconcile(registry)?;
             if !registry.is_registered(self.event.binding())? {
-                return Err(crate::catalog_source_change_control::NativeMissingSourceObsolete::RegistrationRetired.into());
+                return Err(airk_catalog_control::catalog_source_change_control::NativeMissingSourceObsolete::RegistrationRetired.into());
             }
             let current = registry.watch(self.event.binding())?;
             anyhow::ensure!(
                 current.project.fencing_generation == self.event.registration_epoch()
                     && current.configuration_epoch == self.event.configuration_epoch()
                     && current.observation.enabled,
-                crate::catalog_source_change_control::NativeMissingSourceObsolete::EpochChanged
+                airk_catalog_control::catalog_source_change_control::NativeMissingSourceObsolete::EpochChanged
             );
             let state = registry
                 .catalog_state()?
@@ -188,7 +190,7 @@ impl MissingWork {
             // Until this succeeds, there is no canonical request and no Store
             // mutation/fence effect. Snapshot refresh retains the event nonce.
             self.draft = Some(
-                crate::catalog_source_change_control::draft_missing_from_event(
+                airk_catalog_control::catalog_source_change_control::draft_missing_from_event(
                     registry,
                     root,
                     &selection,
@@ -215,13 +217,13 @@ impl MissingWork {
 }
 
 pub(crate) struct CatalogBinding {
-    pub gate: crate::catalog_admission::NativeCatalogAdmission,
-    pub control: crate::project_supervisor::CatalogControlHandle,
+    pub gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+    pub control: airk_supervisor::project_supervisor::CatalogControlHandle,
 }
 struct CatalogRuntime {
-    gate: crate::catalog_admission::NativeCatalogAdmission,
-    control: crate::project_supervisor::CatalogControlHandle,
-    coordinator: crate::project_supervisor::NativeCatalogCoordinator,
+    gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+    control: airk_supervisor::project_supervisor::CatalogControlHandle,
+    coordinator: airk_supervisor::project_supervisor::NativeCatalogCoordinator,
     policy_completions_pending: bool,
 }
 
@@ -267,16 +269,20 @@ impl CatalogRuntime {
         engine: airk_core::identity::Sha256Digest,
         operation: Incarnation,
     ) -> Result<bool> {
-        match crate::catalog_split_control::advance_pending(registry, root, engine, operation)? {
-            crate::catalog_split_control::SplitAdvance::Waiting(snapshot) => {
+        match airk_catalog_control::catalog_split_control::advance_pending(
+            registry, root, engine, operation,
+        )? {
+            airk_catalog_control::catalog_split_control::SplitAdvance::Waiting(snapshot) => {
                 snapshot.validate()?;
                 Ok(false)
             }
-            crate::catalog_split_control::SplitAdvance::Advanced(snapshot) => {
+            airk_catalog_control::catalog_split_control::SplitAdvance::Advanced(snapshot) => {
                 snapshot.validate()?;
                 Ok(true)
             }
-            crate::catalog_split_control::SplitAdvance::NeedOriginalFence(snapshot) => {
+            airk_catalog_control::catalog_split_control::SplitAdvance::NeedOriginalFence(
+                snapshot,
+            ) => {
                 self.reconcile(registry)?;
                 // Resume an accepted native fence before constructing another
                 // request. The coordinator retains the original exact key.
@@ -284,7 +290,9 @@ impl CatalogRuntime {
                     return Ok(false);
                 }
                 let (request, preview) =
-                    crate::catalog_source_change_control::split_cutover(registry, root, &snapshot)?;
+                    airk_catalog_control::catalog_source_change_control::split_cutover(
+                        registry, root, &snapshot,
+                    )?;
                 self.coordinator.apply_fenced(registry, &request, preview)?;
                 self.reconcile(registry)?;
                 Ok(true)
@@ -294,7 +302,7 @@ impl CatalogRuntime {
     fn initialize(
         mut binding: CatalogBinding,
         registry: &mut ServiceRegistry,
-        source: crate::source_supervisor::SourceWake,
+        source: airk_supervisor::source_supervisor::SourceWake,
     ) -> Result<Self> {
         binding.control = binding.control.with_source_wake(source);
         let state = registry
@@ -308,7 +316,7 @@ impl CatalogRuntime {
             "native catalog authority unavailable"
         );
         binding.gate.begin_issue(state.namespace, state.revision)?;
-        let mut coordinator = crate::catalog_coordinator::CatalogCoordinator::new(
+        let mut coordinator = airk_catalog_control::catalog_coordinator::CatalogCoordinator::new(
             binding.gate.clone(),
             binding.control.clone(),
         )?;
@@ -335,16 +343,17 @@ impl CatalogRuntime {
         &self,
         registry: &mut ServiceRegistry,
         request: &airk_core::service::ScopedConnectRequest,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         self.reconcile(registry)?;
         anyhow::ensure!(
             self.gate
                 .catalog_clock()
                 .is_some_and(|clock| clock.namespace == request.namespace
                     && clock.revision == request.expected_catalog_revision),
-            crate::catalog_coordinator::CatalogRevisionChanged
+            airk_catalog_control::catalog_coordinator::CatalogRevisionChanged
         );
-        let selection = crate::catalog_coordinator::native_scoped_selection(registry, request)?;
+        let selection =
+            airk_catalog_control::catalog_coordinator::native_scoped_selection(registry, request)?;
         self.control
             .issue_scoped(selection, Duration::from_secs(300))
     }
@@ -354,8 +363,8 @@ impl CatalogRuntime {
     fn connect_selection(
         &self,
         registry: &mut ServiceRegistry,
-        request: crate::catalog_authority::SelectionConnectRequest,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        request: airk_catalog_control::catalog_authority::SelectionConnectRequest,
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         self.reconcile(registry)?;
         anyhow::ensure!(
             self.gate
@@ -364,7 +373,7 @@ impl CatalogRuntime {
                     |clock| clock.namespace == request.window_selection.namespace
                         && clock.revision == request.selection_ref.catalog_revision
                 ),
-            crate::catalog_coordinator::CatalogRevisionChanged
+            airk_catalog_control::catalog_coordinator::CatalogRevisionChanged
         );
         self.control
             .issue_selection(request, Duration::from_secs(300))
@@ -373,7 +382,7 @@ impl CatalogRuntime {
         &self,
         registry: &mut ServiceRegistry,
         binding: airk_core::service::ProjectBinding,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         self.reconcile(registry)?;
         let state = registry
             .catalog_state()?
@@ -382,7 +391,7 @@ impl CatalogRuntime {
             b"airk/native-legacy-connection-context/1",
             &[binding.as_bytes()],
         );
-        let context = crate::catalog_host_context::NativeHostContext::load(
+        let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
             registry,
             key,
             Some(state.revision),
@@ -394,7 +403,7 @@ impl CatalogRuntime {
             "native compatibility context changed"
         );
         self.control.issue_legacy(
-            crate::project_supervisor::NativeLegacyAuthoritySelection {
+            airk_supervisor::project_supervisor::NativeLegacyAuthoritySelection {
                 namespace: descriptor.namespace,
                 host: descriptor.host,
                 catalog_revision: descriptor.catalog_revision,
@@ -484,9 +493,9 @@ fn request_is_read_only(method: &ControlMethod) -> bool {
     )
 }
 fn failure_response(error: anyhow::Error, read_only: bool) -> ControlResponse {
-    if let Some(unknown) =
-        error.downcast_ref::<crate::catalog_coordinator::CatalogApplyOutcomeUnknown>()
-    {
+    if let Some(unknown) = error
+        .downcast_ref::<airk_catalog_control::catalog_coordinator::CatalogApplyOutcomeUnknown>(
+    ) {
         return unknown.response();
     }
     if error
@@ -503,14 +512,16 @@ fn failure_response(error: anyhow::Error, read_only: bool) -> ControlResponse {
         };
     }
     if error
-        .downcast_ref::<crate::catalog_coordinator::CatalogApplyRejectedNoEffects>()
+        .downcast_ref::<airk_catalog_control::catalog_coordinator::CatalogApplyRejectedNoEffects>()
         .is_some()
         || error
             .downcast_ref::<airk_core::catalog_fences::FencePrepareRejected>()
             .is_some()
     {
         return ControlResponse::Failure {
-            code: if error.is::<crate::catalog_admission::NativeCatalogRetentionFull>() {
+            code: if error
+                .is::<airk_catalog_control::catalog_admission::NativeCatalogRetentionFull>()
+            {
                 "catalog_native_reconciliation_capacity"
             } else {
                 "catalog_preparation_rejected"
@@ -677,7 +688,9 @@ fn catalog_request(
         }
         ControlMethod::CatalogSourceMutationDraft { selection } => {
             Ok(Some(ControlResponse::CatalogSourceMutationDraft {
-                draft: crate::catalog_source_change_control::draft(registry, control, selection)?,
+                draft: airk_catalog_control::catalog_source_change_control::draft(
+                    registry, control, selection,
+                )?,
             }))
         }
         ControlMethod::CatalogPreview { request }
@@ -689,7 +702,7 @@ fn catalog_request(
                     | airk_core::catalog_management::CatalogOperation::RetireIndex { .. }
             ) =>
         {
-            let draft = crate::catalog_source_change_control::review_request(
+            let draft = airk_catalog_control::catalog_source_change_control::review_request(
                 registry, control, request, None,
             )?;
             Ok(Some(ControlResponse::CatalogPreview {
@@ -716,7 +729,7 @@ fn catalog_request(
             {
                 // Only first public admission is rebuilt from native state.
                 // Exact saved event/completion replays remain authoritative.
-                crate::catalog_source_change_control::review_request(
+                airk_catalog_control::catalog_source_change_control::review_request(
                     registry,
                     control,
                     request,
@@ -727,7 +740,7 @@ fn catalog_request(
                         .downcast_ref::<airk_core::catalog_source_change::SourceChangeBusy>()
                         .is_some()
                     {
-                        error.context(crate::catalog_coordinator::CatalogApplyRejectedNoEffects)
+                        error.context(airk_catalog_control::catalog_coordinator::CatalogApplyRejectedNoEffects)
                     } else {
                         error
                     }
@@ -774,7 +787,7 @@ fn catalog_request(
             }))
         }
         ControlMethod::CatalogReceipt { caller, key } => Ok(Some(
-            crate::project_supervisor::NativeCatalogCoordinator::observe_receipt(
+            airk_supervisor::project_supervisor::NativeCatalogCoordinator::observe_receipt(
                 registry,
                 catalog.map(|native| &mut native.coordinator),
                 *caller,
@@ -825,7 +838,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             project,
             expected_catalog_revision,
         } => ControlResponse::CatalogLegacyBinding {
-            observation: crate::catalog_host_context::legacy_binding(
+            observation: airk_catalog_control::catalog_host_context::legacy_binding(
                 registry,
                 project,
                 expected_catalog_revision,
@@ -835,7 +848,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             key,
             expected_catalog_revision,
         } => ControlResponse::CatalogHostContext {
-            descriptor: crate::catalog_host_context::NativeHostContext::load(
+            descriptor: airk_catalog_control::catalog_host_context::NativeHostContext::load(
                 registry,
                 key,
                 expected_catalog_revision,
@@ -849,14 +862,14 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             selection,
         } => {
             selection.validate()?;
-            let context = crate::catalog_host_context::NativeHostContext::load(
+            let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
                 registry,
                 context_key,
                 Some(selection.expected_catalog_revision),
             )?
             .for_review(&selection)?;
             ControlResponse::CatalogGrantDraft {
-                draft: crate::catalog_grant_draft::build_reviewed_grant_draft(
+                draft: airk_catalog_control::catalog_grant_draft::build_reviewed_grant_draft(
                     registry, &context, &selection,
                 )?,
             }
@@ -906,7 +919,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
                 &key,
                 &request,
                 now_ms,
-                crate::runtime_pair::engine_identity()?,
+                airk_host::runtime_pair::engine_identity()?,
             )?,
         },
         ControlMethod::Plan { id } => ControlResponse::Plan {
@@ -1055,7 +1068,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             page: registry.events(project, cursor.as_ref(), limit)?,
         },
         ControlMethod::ReferenceRefreshReceipt { caller, key } => {
-            crate::reference_refresh_control::receipt(registry, caller, &key)?
+            airk_catalog_control::reference_refresh_control::receipt(registry, caller, &key)?
         }
         ControlMethod::ConfigurationResult { id } => ControlResponse::Configuration {
             job: registry.job(id)?,
@@ -1071,7 +1084,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
                 request.configuration,
                 airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
             ) {
-                crate::reference_refresh_control::admit_response(
+                airk_catalog_control::reference_refresh_control::admit_response(
                     registry, project, caller, &key, &request,
                 )?
             } else {
@@ -1081,7 +1094,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
                         caller,
                         &key,
                         &request,
-                        crate::runtime_pair::engine_identity()?,
+                        airk_host::runtime_pair::engine_identity()?,
                     )?,
                 }
             }
@@ -1199,8 +1212,8 @@ impl Management {
     pub(crate) fn start_with_catalog(
         root: PathBuf,
         instance: Incarnation,
-        source: crate::source_supervisor::SourceWake,
-        log: crate::service_logs::Log,
+        source: airk_supervisor::source_supervisor::SourceWake,
+        log: airk_host::service_logs::Log,
         ownership: Arc<airk_store::service::ServiceLease>,
         catalog_binding: Option<CatalogBinding>,
     ) -> Result<Self> {
@@ -1216,7 +1229,7 @@ impl Management {
         let checkpoint_observed = Arc::new(AtomicBool::new(false));
         let checkpoint_freeze = checkpoint_pause.clone();
         let checkpoint_ack = checkpoint_observed.clone();
-        let recovery_fenced = crate::checkpoint_fence::admission_closed(&root)?;
+        let recovery_fenced = airk_host::checkpoint_fence::admission_closed(&root)?;
         let (ready, initialized) = sync_channel::<std::result::Result<(), String>>(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
@@ -1225,7 +1238,7 @@ impl Management {
                 let mut registry =
                     ServiceRegistry::open(&root, instance).and_then(|mut registry| {
                         registry.record_service_instance(&_ownership, instance)?;
-                        crate::install_layout::record_registry_root(
+                        airk_host::install_layout::record_registry_root(
                             &_ownership,
                             registry.incarnation()?,
                         )?;
@@ -1247,13 +1260,13 @@ impl Management {
                 let mut metadata_failed = false;
                 let mut missing_work = std::collections::VecDeque::<MissingWork>::new();
                 let mut next_catalog_resume=std::time::Instant::now();
-                let split_engine = crate::runtime_pair::engine_identity();
+                let split_engine = airk_host::runtime_pair::engine_identity();
                 let mut split_cursor = None;
-                let mut clean_break = crate::runtime_install::clean_break_background::Continuation::new(
+                let mut clean_break = airk_installer::runtime_install::clean_break_background::Continuation::new(
                     std::env::current_exe().ok(), std::time::Instant::now());
                 let mut clean_break_failed = false;
                 loop {
-                    if recovery_fenced && crate::checkpoint_fence::admission_closed(&root).unwrap_or(true)
+                    if recovery_fenced && airk_host::checkpoint_fence::admission_closed(&root).unwrap_or(true)
                         || checkpoint_freeze.load(Ordering::Acquire)
                         && active.load(Ordering::Acquire) == 0
                         && !runnable_plans.load(Ordering::Acquire)
@@ -1337,7 +1350,7 @@ impl Management {
                                 (Ok(registry),Some(native)) => work.advance(registry,&root,native),
                                 _ => Err(anyhow::anyhow!("native missing-source owner unavailable")),
                             };
-                            let settled = outcome.is_ok() || (work.draft.is_none() && outcome.as_ref().is_err_and(|error| error.downcast_ref::<crate::catalog_source_change_control::NativeMissingSourceObsolete>().is_some()));
+                            let settled = outcome.is_ok() || (work.draft.is_none() && outcome.as_ref().is_err_and(|error| error.downcast_ref::<airk_catalog_control::catalog_source_change_control::NativeMissingSourceObsolete>().is_some()));
                             if settled {
                                 active.fetch_sub(1,Ordering::AcqRel);
                                 accepted_missing.fetch_sub(1,Ordering::AcqRel);
@@ -1447,7 +1460,7 @@ impl Management {
                     );
                     let response = match method {
                         ControlMethod::Logs { limit } => {
-                            match crate::service_logs::recent(&root, limit) {
+                            match airk_host::service_logs::recent(&root, limit) {
                                 Ok(page) => ControlResponse::Logs { page },
                                 Err(_) => ControlResponse::Failure {
                                     code: "diagnostic_logs_unavailable".into(),
@@ -1456,12 +1469,12 @@ impl Management {
                         }
                         method => match registry.as_mut() {
                             Ok(registry) => {
-                                let routed = crate::catalog_split_control::execute(
+                                let routed = airk_catalog_control::catalog_split_control::execute(
                                     registry, &root, &method,
                                 )
                                 .and_then(|split| match split {
                                     Some(response) => Ok(Some(response)),
-                                    None => crate::catalog_index_setup_control::execute(
+                                    None => airk_catalog_control::catalog_index_setup_control::execute(
                                         registry, &root, &method,
                                     ),
                                 })
@@ -1475,7 +1488,7 @@ impl Management {
                                     Ok(Some(response)) => response,
                                     Ok(None) => execute_request(registry, method),
                                     Err(error) => {
-                                        let error=match &method {ControlMethod::CatalogApply{request,..}=>crate::catalog_coordinator::CatalogApplyOutcomeUnknown::capture(registry,request,error),_=>error};
+                                        let error=match &method {ControlMethod::CatalogApply{request,..}=>airk_catalog_control::catalog_coordinator::CatalogApplyOutcomeUnknown::capture(registry,request,error),_=>error};
                                         failure_response(error, request_is_read_only(&method))
                                     },
                                 };
@@ -1551,14 +1564,14 @@ impl Management {
     pub(crate) async fn request_scoped(
         &self,
         request: airk_core::service::ScopedConnectRequest,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         self.request_connection(ControlMethod::ConnectScoped { request })
             .await
     }
     pub(crate) async fn request_administrative_read(
         &self,
         project: ProjectBinding,
-    ) -> Result<crate::project_supervisor::NativeAdministrativeRead> {
+    ) -> Result<airk_supervisor::project_supervisor::NativeAdministrativeRead> {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
         if self.sender.as_ref().is_none_or(|queue| {
@@ -1578,8 +1591,8 @@ impl Management {
     /// (§3.2 step 4); the result is consumed only by `take_in_process`.
     pub(crate) async fn connect_selection(
         &self,
-        request: crate::catalog_authority::SelectionConnectRequest,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        request: airk_catalog_control::catalog_authority::SelectionConnectRequest,
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
         let sent = self
@@ -1590,7 +1603,9 @@ impl Management {
             Some(Ok(())) => {}
             Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {
                 self.pending.fetch_sub(1, Ordering::AcqRel);
-                return Err(crate::project_supervisor::ConnectionSetupPending::Queue.into());
+                return Err(
+                    airk_supervisor::project_supervisor::ConnectionSetupPending::Queue.into(),
+                );
             }
             _ => {
                 self.pending.fetch_sub(1, Ordering::AcqRel);
@@ -1605,14 +1620,14 @@ impl Management {
     pub(crate) async fn request_legacy(
         &self,
         project: airk_core::service::ProjectBinding,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         self.request_connection(ControlMethod::Connect { project })
             .await
     }
     async fn request_connection(
         &self,
         method: ControlMethod,
-    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
         let sent = self.sender.as_ref().map(|queue| {
@@ -1625,7 +1640,9 @@ impl Management {
             Some(Ok(())) => {}
             Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {
                 self.pending.fetch_sub(1, Ordering::AcqRel);
-                return Err(crate::project_supervisor::ConnectionSetupPending::Queue.into());
+                return Err(
+                    airk_supervisor::project_supervisor::ConnectionSetupPending::Queue.into(),
+                );
             }
             _ => {
                 self.pending.fetch_sub(1, Ordering::AcqRel);
@@ -1648,7 +1665,7 @@ impl Management {
     }
     pub(crate) fn missing_reporter(
         &self,
-    ) -> Arc<dyn crate::source_supervisor::MissingSourceReporter> {
+    ) -> Arc<dyn airk_supervisor::source_supervisor::MissingSourceReporter> {
         Arc::new(MissingReporter {
             sender: self.sender.as_ref().map(Arc::downgrade).unwrap_or_default(),
             pending: self.pending.clone(),
@@ -1679,7 +1696,7 @@ mod tests {
             airk_core::identity::Sha256Digest::from_bytes([147; 32]),
         )?;
         // The real actor samples this before entering its frozen receive.
-        assert!(crate::checkpoint_fence::admission_closed(&root)?);
+        assert!(airk_host::checkpoint_fence::admission_closed(&root)?);
         let (sender, receiver) = sync_channel(1);
         let (reply, response) = oneshot::channel();
         let observed = AtomicBool::new(false);
@@ -1696,7 +1713,7 @@ mod tests {
                 // submit the epoch strictly after durable fence removal. No
                 // clock scheduling, process startup or mutation retry is used.
                 crate::service_runtime::checkpoint::settle(&root, operation).unwrap();
-                assert!(!crate::checkpoint_fence::admission_closed(&root).unwrap());
+                assert!(!airk_host::checkpoint_fence::admission_closed(&root).unwrap());
                 assert!(
                     sender
                         .send(Envelope::Request(
@@ -1739,7 +1756,7 @@ mod tests {
             .await
             .err()
             .expect("full queue must reject");
-        assert!(full.is::<crate::project_supervisor::ConnectionSetupPending>());
+        assert!(full.is::<airk_supervisor::project_supervisor::ConnectionSetupPending>());
         assert_eq!(owner.pending.load(Ordering::Acquire), 0);
         drop(receiver);
         let closed = owner
@@ -1747,7 +1764,7 @@ mod tests {
             .await
             .err()
             .expect("closed queue must reject");
-        assert!(!closed.is::<crate::project_supervisor::ConnectionSetupPending>());
+        assert!(!closed.is::<airk_supervisor::project_supervisor::ConnectionSetupPending>());
         assert_eq!(owner.pending.load(Ordering::Acquire), 0);
         Ok(())
     }

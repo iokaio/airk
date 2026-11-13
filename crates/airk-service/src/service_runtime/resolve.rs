@@ -13,7 +13,12 @@ const NOT_REGISTERED: &str = "project is not registered with this service";
 pub(super) async fn response(control: &Path, target: ResolveTarget) -> ControlResponse {
     let resolved = match &target {
         ResolveTarget::Catalog { request } => {
-            return match crate::service_frontend::resolve_scoped(None, Some(control), request).await
+            return match airk_frontend::service_frontend::resolve_scoped(
+                None,
+                Some(control),
+                request,
+            )
+            .await
             {
                 Ok(selected) => ControlResponse::Resolved {
                     registration: selected.project.registration,
@@ -23,7 +28,7 @@ pub(super) async fn response(control: &Path, target: ResolveTarget) -> ControlRe
                 },
             };
         }
-        ResolveTarget::Binding { project } => crate::service_frontend::saved(
+        ResolveTarget::Binding { project } => airk_frontend::service_frontend::saved(
             control,
             Some(*project),
             Path::new(""),
@@ -40,7 +45,7 @@ pub(super) async fn response(control: &Path, target: ResolveTarget) -> ControlRe
                     code: "project_location_relative".into(),
                 };
             }
-            crate::service_frontend::saved(
+            airk_frontend::service_frontend::saved(
                 control,
                 None,
                 Path::new(root),

@@ -74,7 +74,7 @@ fn commit(
 
 fn reconcile_registry(gate: &NativeCatalogAdmission, registry: &ServiceRegistry) -> Result<()> {
     // Same canonical metadata/clock routine called by CatalogRuntime::reconcile.
-    crate::catalog_coordinator::refresh_catalog_clock(gate, registry).map(|_| ())
+    airk_catalog_control::catalog_coordinator::refresh_catalog_clock(gate, registry).map(|_| ())
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn actor_preserves_full_terminal_receipt_while_unrelated_cleanup_keeps_admission
     let root = owner.path().join("control");
     crate::local_ipc::prepare_root(&root)?;
     let mut registry =
-        crate::catalog_test_fixture::authority_one(&root, Incarnation::from_bytes([1; 16]))?;
+        airk_host::catalog_test_fixture::authority_one(&root, Incarnation::from_bytes([1; 16]))?;
     let projects = [
         QueryProjectId::from_identity(Incarnation::from_bytes([2; 16])),
         QueryProjectId::from_identity(Incarnation::from_bytes([3; 16])),

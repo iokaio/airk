@@ -9,7 +9,9 @@ use std::path::Path;
 pub(super) async fn response(control: &Path, action: HttpIssuerRotationStep) -> ControlResponse {
     let control = control.to_path_buf();
     let read = tokio::task::spawn_blocking(move || match action {
-        HttpIssuerRotationStep::Status => crate::http_endpoint::rotation::output(&control, None),
+        HttpIssuerRotationStep::Status => {
+            airk_endpoint::http_endpoint::rotation::output(&control, None)
+        }
     })
     .await
     .map_err(anyhow::Error::from)

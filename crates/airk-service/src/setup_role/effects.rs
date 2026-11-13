@@ -27,11 +27,11 @@ const SESSIONS: Duration = Duration::from_secs(15);
 /// roster, `user_paths`), both channels, both layout families, plus the
 /// pre-split Inno `standalone` folder and the fixed pointer folder.
 pub(crate) fn reserved_roots() -> Result<Vec<PathBuf>> {
-    use crate::user_paths::{Channel, UserPaths};
+    use airk_host::user_paths::{Channel, UserPaths};
     let mut roots = Vec::new();
     for channel in [Channel::Stable, Channel::Preview] {
         let historical = UserPaths::historical(channel)?;
-        let discovered = crate::runtime_install::discover_user_paths(channel)?;
+        let discovered = airk_installer::runtime_install::discover_user_paths(channel)?;
         for paths in [historical, discovered] {
             roots.extend([
                 paths.install,
@@ -86,11 +86,11 @@ pub(crate) struct Predecessor {
 /// The pre-split installation roots that exist (both channels, both layout
 /// families), each with its read-only replacement plan.
 pub(crate) fn predecessors(candidate: &str, operation: &str) -> Result<Vec<Predecessor>> {
-    use crate::user_paths::{Channel, UserPaths};
+    use airk_host::user_paths::{Channel, UserPaths};
     let mut roots = Vec::new();
     for channel in [Channel::Stable, Channel::Preview] {
         roots.push(UserPaths::historical(channel)?.install);
-        roots.push(crate::runtime_install::discover_user_paths(channel)?.install);
+        roots.push(airk_installer::runtime_install::discover_user_paths(channel)?.install);
     }
     roots.sort();
     roots.dedup();
@@ -98,7 +98,7 @@ pub(crate) fn predecessors(candidate: &str, operation: &str) -> Result<Vec<Prede
         .into_iter()
         .filter(|root| std::fs::symlink_metadata(root).is_ok())
         .map(|install| {
-            let plan = crate::runtime_install::replacement_plan(
+            let plan = airk_installer::runtime_install::replacement_plan(
                 &install,
                 candidate,
                 Some(operation),
@@ -128,7 +128,7 @@ pub(crate) fn unretired_items() -> Result<Vec<airk_core::install_record::Leftove
 
 /// Retire one predecessor through the existing receipts-only replacement.
 pub(crate) fn retire(install: &Path, candidate: &str, operation: &str) -> Result<Value> {
-    crate::runtime_install::replace_installation(install, candidate, Some(operation), None)
+    airk_installer::runtime_install::replace_installation(install, candidate, Some(operation), None)
 }
 
 /// The blocker a running pre-split AIRK editor extension raises for placing
@@ -136,7 +136,8 @@ pub(crate) fn retire(install: &Path, candidate: &str, operation: &str) -> Result
 /// again after setup retires it, so setup waits until it is updated or its
 /// editor is closed. An incomplete observation is reported, not ignored.
 pub(crate) fn old_extension_blocker(version: &str) -> Option<String> {
-    let audit = crate::legacy_processes::audit_where(&super::plan::pre_split_extension_image);
+    let audit =
+        airk_installer::legacy_processes::audit_where(&super::plan::pre_split_extension_image);
     if !audit.complete {
         return Some(format!(
             "process_observation_incomplete: running editor extensions could not all be observed ({})",
@@ -288,7 +289,7 @@ pub(crate) fn await_sessions(images: &[PathBuf]) -> Result<String> {
         let mut open = Vec::new();
         let mut incomplete = None;
         for image in images.iter().filter(|image| image.is_file()) {
-            let audit = crate::legacy_processes::audit(image);
+            let audit = airk_installer::legacy_processes::audit(image);
             if !audit.complete && incomplete.is_none() {
                 incomplete = Some(format!(
                     "processes running {} could not all be observed ({})",
@@ -357,7 +358,7 @@ pub(crate) fn register_login(
         );
     }
     let result = (|| -> Result<&'static str> {
-        let manager = crate::service_manager::ServiceManager::for_installation(
+        let manager = airk_installer::service_manager::ServiceManager::for_installation(
             state,
             airk,
             &install_id.to_string(),
@@ -392,7 +393,7 @@ pub(crate) fn unregister_login(
     if host == Host::Macos {
         return Ok("none_registered");
     }
-    let manager = crate::service_manager::ServiceManager::for_installation(
+    let manager = airk_installer::service_manager::ServiceManager::for_installation(
         state,
         airk,
         &install_id.to_string(),
@@ -407,14 +408,14 @@ pub(crate) fn unregister_login(
 /// Install the service's HTTPS issuer into this user's trust store (the OS
 /// shows its consent dialog). `None` when the issuer does not exist yet.
 pub(crate) fn apply_trust(state: &Path) -> Result<Option<String>> {
-    let Ok((binding, endpoint)) = crate::http_endpoint::trust::saved_identity(state) else {
+    let Ok((binding, endpoint)) = airk_endpoint::http_endpoint::trust::saved_identity(state) else {
         return Ok(None);
     };
-    let status = crate::http_endpoint::trust::manage(
+    let status = airk_endpoint::http_endpoint::trust::manage(
         &state.join("http-1"),
         binding,
         endpoint.ca_sha256,
-        crate::http_endpoint::trust::Action::Install,
+        airk_endpoint::http_endpoint::trust::Action::Install,
     )?;
     Ok(Some(format!(
         "{} (CA SHA-256 {})",
@@ -424,10 +425,12 @@ pub(crate) fn apply_trust(state: &Path) -> Result<Option<String>> {
 
 /// Remove trust this installation added, through its ownership receipt.
 pub(crate) fn remove_trust(state: &Path) -> Result<String> {
-    Ok(match crate::http_endpoint::trust::remove_owned(state)? {
-        Some(status) => format!("{} (CA SHA-256 {})", status.outcome, status.ca_sha256),
-        None => "none_owned".into(),
-    })
+    Ok(
+        match airk_endpoint::http_endpoint::trust::remove_owned(state)? {
+            Some(status) => format!("{} (CA SHA-256 {})", status.outcome, status.ca_sha256),
+            None => "none_owned".into(),
+        },
+    )
 }
 
 /// Start the installed service through the installed `airkctl` (U94).

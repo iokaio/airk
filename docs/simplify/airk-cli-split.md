@@ -413,3 +413,35 @@ platform files (`runtime_macos_login.rs`, `service_manager_{linux,macos}.rs`) an
 - Clippy, default and `local-inference`: pass.
 - Library tests are identical by identity: default 1070, `local-inference` 1109
   (`artifacts/split-https-lib{,-li}.log` against step 2b).
+
+## Step 3i: `airk-service` extracted; `airk-cli` is the composition root (12 November 2026)
+
+4 modules (31 files) moved into `crates/airk-service`: `native_admin_connections`,
+`service_management`, `service_runtime` and `setup_role`. `widen_visibility.py` widened 1 definition.
+
+- **Test-only edge.** `setup_role`'s I2 contract test compares its copy with
+  `airkctl::contract::I2_CONTRACT`, so `airk-service` has the same test-only `airkctl`
+  dev-dependency that `airk-cli` already had.
+- **Re-exports.** 20 `pub(crate) use` re-exports in `airk-cli` lost their users, and a clean
+  all-targets compile in both configurations is the evidence. Deleted: the catalog-control, https,
+  service-management and supervisor aliases, plus `legacy_processes`, `checkpoint_fence`,
+  `checkpoint_packet`, `request_journal` and `control_client`. `catalog_grant_draft` and
+  `catalog_host_context` are still used by `standalone_setup` tests, so they are now
+  `cfg(test)`, as is `airk-service`'s own `catalog_coordinator` alias (used only by
+  `receipt_tests`). Cargo drops an identical warning repeated in the lib and lib-test builds, so
+  "used only by tests" was established by compiling, not from the warning list.
+- **What remains in `airk-cli`.** 4 modules and 2,958 production lines:
+  - `role_admission`, `runtime_commands`, `standalone_setup`;
+  - the `service_configuration` facade;
+  - the binary's `main.rs`;
+  - re-exports kept for the integration tests' paths.
+
+  `module_graph.py --groups` reports 0 back edges and 0 unassigned modules.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests across all ten crates are identical by identity: default 1070,
+  `local-inference` 1109 (`artifacts/split-service-lib{,-li}.log` against step 2b).
+- The `airk-cli` integration tests are run at the 1.8.31 gates.
+- Follow-up crate work is in [airk-cli-split-followups.md](airk-cli-split-followups.md).

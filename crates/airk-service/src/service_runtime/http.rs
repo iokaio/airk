@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The native service owns the retained HTTPS socket, identity and enrollment.
 use super::*;
-use crate::http_endpoint::{
-    self, BoundEndpoint, CredentialStore, InstallationBinding, TlsIdentity,
-};
 use airk_core::{
     identity::Incarnation,
     service_http::{
         EndpointDescriptor, EndpointState, HTTP_CONTRACT_VERSION, HttpConnectionInfo,
         HttpSelection, LoopbackMcpUrl,
     },
+};
+use airk_endpoint::http_endpoint::{
+    self, BoundEndpoint, CredentialStore, InstallationBinding, TlsIdentity,
 };
 use std::{
     path::PathBuf,
@@ -26,7 +26,7 @@ pub(super) struct Owner {
     credentials: Arc<Mutex<CredentialStore>>,
     ca_file: PathBuf,
     tls: watch::Sender<tokio_rustls::TlsAcceptor>,
-    gateway: crate::http_gateway::Gateway,
+    gateway: airk_https::http_gateway::Gateway,
     shutdown: CancellationToken,
     checkpoint: Arc<checkpoint::Coordinator>,
     ownership: Arc<airk_store::service::ServiceLease>,
@@ -90,7 +90,7 @@ impl Owner {
         let (tls, receiver) = watch::channel(identity.acceptor());
         let control = state.control_root.clone();
         let weak: Weak<State> = Arc::downgrade(state);
-        let validate: crate::http_gateway::ValidateRequest =
+        let validate: airk_https::http_gateway::ValidateRequest =
             Arc::new(move |credential, context| {
                 let control = control.clone();
                 let weak = weak.clone();
@@ -104,14 +104,14 @@ impl Owner {
                     if let Some(owner) = state.http.get() {
                         owner.update_state()?;
                     }
-                    let factory = crate::http_backend::factory_attached(
+                    let factory = airk_https::http_backend::factory_attached(
                         control,
                         credential.selection,
                         credential.explorer_descriptor,
                         context,
                     )
                     .await?;
-                    Ok(crate::http_backend::with_query_capacity(
+                    Ok(airk_https::http_backend::with_query_capacity(
                         factory,
                         state.supervisor.query_capacity_reader(),
                     ))
@@ -120,14 +120,14 @@ impl Owner {
         let checkpoint = state.checkpoint.clone();
         let closed = Arc::new(move || checkpoint.admission_closed().unwrap_or(true));
         let checkpoint = state.checkpoint.clone();
-        let admit: crate::http_gateway::AdmitRequest =
+        let admit: airk_https::http_gateway::AdmitRequest =
             Arc::new(move || Ok(Arc::new(checkpoint.admit()?)));
-        let gateway = crate::http_gateway::Gateway::new(
+        let gateway = airk_https::http_gateway::Gateway::new(
             &descriptor,
             credentials.clone(),
             receiver,
             validate,
-            crate::http_gateway::NativeAdmission {
+            airk_https::http_gateway::NativeAdmission {
                 closed,
                 gate,
                 admit,
@@ -208,7 +208,7 @@ impl Owner {
             CancellationToken::new(),
         )
         .with_lifetime_guard(Arc::new(self.checkpoint.admit()?));
-        let selection = crate::http_backend::validate(control, &selection, &context).await?;
+        let selection = airk_https::http_backend::validate(control, &selection, &context).await?;
         let credentials = self.credentials.clone();
         let saved = selection.clone();
         let guard = context.lifetime_guard();
@@ -242,7 +242,7 @@ impl Owner {
             let _guard = guard;
             let _ownership = ownership;
             if let Some(descriptor) = explorer_descriptor.as_ref() {
-                crate::explorer_assistance::window_plan(descriptor)?;
+                airk_endpoint::explorer_assistance::window_plan(descriptor)?;
             }
             let mut credentials = credentials
                 .lock()

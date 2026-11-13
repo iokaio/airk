@@ -20,6 +20,7 @@ airk-store = { path = "crates/airk-store" }
 airk-retrieval = { path = "crates/airk-retrieval", default-features = false }
 airk-kernel = { path = "crates/airk-kernel", default-features = false }
 airk-mcp = { path = "crates/airk-mcp" }
+airk-service = { path = "crates/airk-service" }
 airk-https = { path = "crates/airk-https" }
 airk-frontend = { path = "crates/airk-frontend" }
 airk-supervisor = { path = "crates/airk-supervisor" }

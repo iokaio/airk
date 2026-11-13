@@ -656,9 +656,12 @@ impl Setup {
             self.inventory.version
         );
         let airkctl = plan::program_file(&program, &self.inventory.executables.airkctl);
-        crate::service_manager::check_executable_identity(&airkctl, &format!("airkctl {VERSION}"))
-            .context("pair_mismatch: the placed airkctl reports another version")?;
-        let (inventory_sha256, bundle_sha256) = crate::admin_plane::embedded_asset_digests();
+        airk_installer::service_manager::check_executable_identity(
+            &airkctl,
+            &format!("airkctl {VERSION}"),
+        )
+        .context("pair_mismatch: the placed airkctl reports another version")?;
+        let (inventory_sha256, bundle_sha256) = airk_https::admin_plane::embedded_asset_digests();
         ensure!(
             self.inventory.admin_assets.inventory_sha256 == inventory_sha256
                 && self.inventory.admin_assets.bundle_sha256 == bundle_sha256,
@@ -734,7 +737,7 @@ impl Setup {
             contracts: Contracts {
                 i1_protocol: airk_core::service::PROTOCOL_VERSION,
                 i2_contract: I2_CONTRACT,
-                i3_admin: crate::admin_contract::I3_CONTRACT,
+                i3_admin: airk_endpoint::admin_contract::I3_CONTRACT,
                 i4_record: I4_RECORD,
                 state: STATE_CONTRACT.into(),
             },
@@ -1187,7 +1190,7 @@ impl Setup {
 
 /// The locations of this user's installation as its pointer and record name
 /// them (`None` without a pointer); used by `service_locations` (U89).
-pub(crate) fn installed_locations() -> Result<Option<airk_core::install_record::Locations>> {
+pub fn installed_locations() -> Result<Option<airk_core::install_record::Locations>> {
     Ok(files::read_installation()?.map(|installed| installed.record.locations))
 }
 
@@ -1212,8 +1215,8 @@ impl LoginTarget {
         )
     }
 
-    fn manager(&self) -> Result<crate::service_manager::ServiceManager> {
-        crate::service_manager::ServiceManager::for_installation(
+    fn manager(&self) -> Result<airk_installer::service_manager::ServiceManager> {
+        airk_installer::service_manager::ServiceManager::for_installation(
             &self.state,
             &self.airk,
             &self.install_id.to_string(),
@@ -1229,7 +1232,7 @@ pub(crate) fn login_target(control: &Path) -> Result<Option<LoginTarget>> {
     };
     let record = installed.record;
     let normal = |path: &Path| -> Result<PathBuf> {
-        crate::user_paths::canonical_location(&std::path::absolute(path)?)
+        airk_host::user_paths::canonical_location(&std::path::absolute(path)?)
     };
     let state = PathBuf::from(&record.locations.state);
     if normal(control)? != normal(&state)? {
@@ -1317,8 +1320,10 @@ pub async fn serve_login(install_id: Incarnation) -> Result<()> {
     );
     let state = PathBuf::from(&record.locations.state);
     // U89: this service writes its logs to the record's `locations.logs`.
-    crate::service_locations::adopt(crate::service_locations::installed(&record.locations)?)?;
-    let manager = crate::service_manager::ServiceManager::for_installation(
+    airk_host::service_locations::adopt(airk_host::service_locations::installed(
+        &record.locations,
+    )?)?;
+    let manager = airk_installer::service_manager::ServiceManager::for_installation(
         &state,
         &airk,
         &install_id.to_string(),

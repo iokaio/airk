@@ -3,18 +3,18 @@
 //! 3a.2b and 3a.2d; `docs/split/contracts.md` §2.2): each resolves the
 //! selection as `--service-project`, `--catalog-session` or
 //! `--combined-session` with `--service-runtime-dir` did, then runs the shared
-//! CLI call path (`crate::tool_call`). It lives with the service dispatch
+//! CLI call path (`airk_frontend::tool_call`). It lives with the service dispatch
 //! because it uses the same project clients and front-end resolution the
 //! dispatch already uses.
-use crate::tool_call::{
-    call, is_local_help, local_help, project_backend, require_envelope, with_defaults,
-};
 use airk_core::{
     identity::Incarnation,
     service::{
         CombinedConnectRequest, ControlResponse, ToolResponseMode, ToolSelection,
         ToolsCatalogDetail, WindowLease,
     },
+};
+use airk_frontend::tool_call::{
+    call, is_local_help, local_help, project_backend, require_envelope, with_defaults,
 };
 use airk_mcp::{remote::RemoteTools, response::ResponseMode};
 use anyhow::{Result, ensure};
@@ -66,7 +66,7 @@ async fn combined_backend(
     request: &CombinedConnectRequest,
     client: airk_core::usage::ClientFamily,
 ) -> Result<Arc<dyn RemoteTools>> {
-    let inner = crate::combined_frontend::resolve(None, Some(control), request).await?;
+    let inner = airk_frontend::combined_frontend::resolve(None, Some(control), request).await?;
     inner.client(client);
     Ok(Arc::new(airk_mcp::unified::Unified::combined(inner, None)?))
 }
@@ -83,7 +83,7 @@ pub(super) async fn combined_catalog(
             Err(error) => return failed(&error),
         };
     let catalog = backend.catalog();
-    let result = crate::tool_catalog::response_from(detail, catalog);
+    let result = airk_frontend::tool_catalog::response_from(detail, catalog);
     match released(backend.as_ref(), result).await {
         Ok(response) => response,
         Err(error) => failed(&error),
@@ -201,7 +201,9 @@ pub(super) async fn selection_read(
 
 /// The service's in-process admission of one selection member: a fresh
 /// `connect_selection` then `take_in_process` on every call.
-fn selection_connect(state: &Arc<super::State>) -> crate::combined_frontend::SelectionConnect {
+fn selection_connect(
+    state: &Arc<super::State>,
+) -> airk_frontend::combined_frontend::SelectionConnect {
     use crate::{catalog_authority::SelectionConnectRequest, project_client::SelectionGrantFuture};
     let owner = Arc::clone(state);
     Arc::new(
@@ -227,18 +229,19 @@ async fn single_selection_backend(
     let registration = selection_backing(&state.control_root, grant, index_id)
         .await
         .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
-    let request = crate::catalog_authority::SelectionConnectRequest {
+    let request = airk_catalog_control::catalog_authority::SelectionConnectRequest {
         selection_ref: grant.selection_ref,
         window_selection: grant.selection.clone(),
         index_id,
     };
     let admit = selection_connect(state);
-    let connect: crate::project_client::SelectionConnector =
-        Arc::new(move || -> crate::project_client::SelectionGrantFuture { admit(request.clone()) });
-    let inner = crate::project_client::selection_tools(
+    let connect: airk_frontend::project_client::SelectionConnector = Arc::new(
+        move || -> airk_frontend::project_client::SelectionGrantFuture { admit(request.clone()) },
+    );
+    let inner = airk_frontend::project_client::selection_tools(
         state.control_root.clone(),
         registration.binding,
-        crate::project_client::SelectionSession {
+        airk_frontend::project_client::SelectionSession {
             window_selection: grant.selection.clone(),
             scope_identity: grant.scope_identity,
             index_id,
@@ -269,15 +272,16 @@ async fn combined_selection_backend(
             super::scope_grant::SCOPE_UNAVAILABLE,
         ));
     };
-    let scope = crate::combined_frontend::SelectionScope {
+    let scope = airk_frontend::combined_frontend::SelectionScope {
         selection_ref: grant.selection_ref,
         window_selection: grant.selection.clone(),
         connect: selection_connect(state),
         issue: selection_issue(gate, state.instance),
     };
-    let inner = crate::combined_frontend::resolve_selection(state.control_root.clone(), scope)
-        .await
-        .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    let inner =
+        airk_frontend::combined_frontend::resolve_selection(state.control_root.clone(), scope)
+            .await
+            .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
     inner.client(client);
     match airk_mcp::unified::Unified::combined(Arc::clone(&inner), None) {
         Ok(backend) => Ok(Arc::new(backend)),
@@ -292,9 +296,9 @@ async fn combined_selection_backend(
 /// gate's clock at exactly the selection's revision, then an issue ticket
 /// and the live nonce checked together under the gate lock.
 fn selection_issue(
-    gate: crate::catalog_admission::NativeCatalogAdmission,
+    gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
     instance: airk_core::identity::Incarnation,
-) -> crate::combined_frontend::SelectionIssue {
+) -> airk_frontend::combined_frontend::SelectionIssue {
     use airk_core::scoped_reads::ScopeReadRefused;
     Arc::new(
         move |selection: &airk_core::scoped_reads::SelectionScopeRef,
@@ -418,9 +422,10 @@ async fn run(
             anyhow::bail!("admin scope reads are served only by the admin plane")
         }
         ToolSelection::Project { binding } => {
-            let project = crate::service_frontend::resolve_control(control, binding).await?;
+            let project =
+                airk_frontend::service_frontend::resolve_control(control, binding).await?;
             let registration = project.registration;
-            let inner = crate::project_client::tools(project.control, registration.binding);
+            let inner = airk_frontend::project_client::tools(project.control, registration.binding);
             inner.client(client);
             let backend = project_backend(
                 inner,
@@ -431,9 +436,10 @@ async fn run(
         }
         ToolSelection::Catalog { request } => {
             let selected =
-                crate::service_frontend::resolve_scoped(None, Some(control), &request).await?;
+                airk_frontend::service_frontend::resolve_scoped(None, Some(control), &request)
+                    .await?;
             let registration = selected.project.registration;
-            let inner = crate::project_client::scoped_tools(
+            let inner = airk_frontend::project_client::scoped_tools(
                 selected.project.control,
                 registration.binding,
                 selected.selection,
