@@ -135,6 +135,76 @@ impl QuerySelection {
     /// memberships of the selection's projects and indexes, read by the native
     /// owner at exactly the selection's catalog revision. The same rules as
     /// [`Self::resolve`] apply; no grant identity is created.
+    /// U105/U106(d): an open agent read names indexes only and reads each
+    /// whole. It has no Project, so it never passes [`Self::validate`].
+    pub fn validate_open(&self) -> Result<()> {
+        ensure!(self.project_ids.is_empty(), "an open read names no Project");
+        let indexes = self
+            .index_ids
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("an open read names its indexes"))?;
+        ensure!(!indexes.is_empty(), "index subset must not be empty");
+        unique_bounded(indexes, MAX_SELECTION)?;
+        encoded_size(self, 4096)?;
+        Ok(())
+    }
+
+    /// Resolve an open agent read (U106(d)): every named index is a member
+    /// read whole, one Subtree `""` atom per enabled source, with no Project
+    /// membership. `members` are the native owner's `(index, sources)` read
+    /// at exactly the agent selection's catalog revision, one per named index.
+    pub fn resolve_open(
+        &self,
+        members: &[(IndexId, Vec<SourceRootId>)],
+        selection: crate::scoped_reads::ScopeSelectionObservation,
+    ) -> Result<ResolvedSelection> {
+        self.validate_open()?;
+        ensure!(
+            selection.owner == crate::scoped_reads::SelectionOwnerKind::Agent,
+            "an open read requires an agent selection"
+        );
+        let named = self
+            .index_ids
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let observed = members.iter().map(|(id, _)| *id).collect::<BTreeSet<_>>();
+        ensure!(
+            members.len() == observed.len() && named == observed,
+            "open members differ from the named indexes"
+        );
+        let mut resolved = members
+            .iter()
+            .map(|(index_id, sources)| {
+                ensure!(
+                    !sources.is_empty() && sources.len() <= crate::index_catalog::MAX_SOURCE_ROOTS,
+                    "an open member reads 1 to 17 sources"
+                );
+                Ok(ResolvedMember {
+                    index_id: *index_id,
+                    memberships: Vec::new(),
+                    scope: canonical_scope_union(sources.iter().map(|source| ScopeAtom {
+                        source_root_id: *source,
+                        kind: crate::index_catalog::PathScope::Subtree,
+                        path: String::new(),
+                    }))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        resolved.sort_by_key(|member| member.index_id);
+        let resolved = ResolvedSelection {
+            project_ids: Vec::new(),
+            members: resolved,
+            grant_id: None,
+            grant_revision: None,
+            selection: Some(selection),
+            member_availability: self.member_availability,
+        };
+        resolved.validate()?;
+        Ok(resolved)
+    }
+
     pub fn resolve_selection(
         &self,
         memberships: &[GrantedMembership],
@@ -282,9 +352,17 @@ impl ResolvedSelection {
             "selected scope requires exactly one authority source"
         );
         unique_bounded(&self.project_ids, MAX_SELECTION)?;
+        // U106(d): only an agent selection is an open read, with no Project.
+        let open = self.selection.is_some_and(|selection| {
+            selection.owner == crate::scoped_reads::SelectionOwnerKind::Agent
+        });
         ensure!(
-            !self.project_ids.is_empty()
-                && self.project_ids.windows(2).all(|pair| pair[0] < pair[1]),
+            if open {
+                self.project_ids.is_empty()
+            } else {
+                !self.project_ids.is_empty()
+                    && self.project_ids.windows(2).all(|pair| pair[0] < pair[1])
+            },
             "noncanonical selected Projects"
         );
         let ids = self
@@ -298,6 +376,21 @@ impl ResolvedSelection {
             "noncanonical selected indexes"
         );
         for member in &self.members {
+            if open {
+                // Read whole: one Subtree "" atom per source, no membership.
+                ensure!(
+                    member.memberships.is_empty()
+                        && !member.scope.is_empty()
+                        && member.scope.len() <= crate::index_catalog::MAX_SOURCE_ROOTS
+                        && member.scope.iter().all(|atom| {
+                            atom.kind == crate::index_catalog::PathScope::Subtree
+                                && atom.path.is_empty()
+                        })
+                        && member.scope == canonical_scope_union(member.scope.iter().cloned())?,
+                    "an open member is not read whole"
+                );
+                continue;
+            }
             ensure!(
                 !member.memberships.is_empty(),
                 "selected member has no authorization"

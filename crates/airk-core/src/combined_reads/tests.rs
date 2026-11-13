@@ -550,3 +550,113 @@ fn selection_resolution_keeps_the_grant_rules_and_changes_only_its_source() -> R
     assert!(neither.validate().is_err());
     Ok(())
 }
+
+fn agent_observation() -> crate::scoped_reads::ScopeSelectionObservation {
+    crate::scoped_reads::ScopeSelectionObservation {
+        owner: crate::scoped_reads::SelectionOwnerKind::Agent,
+        scope_identity: Sha256Digest::from_bytes([0x0a; 32]),
+        catalog_revision: CatalogRevision::INITIAL,
+    }
+}
+
+/// U106(d): an open read resolves its named indexes whole, with no Project,
+/// and shares the combined budget split across its members.
+#[test]
+fn open_resolution_reads_named_indexes_whole_and_shares_budgets() -> Result<()> {
+    let query = selection(Vec::new(), Some(vec![index(2), index(1)]));
+    assert!(
+        query.validate().is_err(),
+        "an open read never passes the Project rule"
+    );
+    query.validate_open()?;
+    let members = vec![
+        (index(2), vec![root(5), root(4)]),
+        (index(1), vec![root(3)]),
+    ];
+    let resolved = query.resolve_open(&members, agent_observation())?;
+    assert!(resolved.project_ids.is_empty());
+    assert_eq!(
+        resolved
+            .members
+            .iter()
+            .map(|member| member.index_id)
+            .collect::<Vec<_>>(),
+        vec![index(1), index(2)]
+    );
+    for member in &resolved.members {
+        assert!(member.memberships.is_empty());
+        assert!(member.project_ids().is_empty());
+        assert!(
+            member
+                .scope
+                .iter()
+                .all(|atom| atom.kind == PathScope::Subtree && atom.path.is_empty())
+        );
+    }
+    assert_eq!(resolved.member(index(2)).unwrap().scope.len(), 2);
+    let budgets = SharedBudgets {
+        limit: 11,
+        max_bytes: 4096,
+        deadline_ms: 1000,
+        verification_max_sources: 0,
+        verification_max_bytes: 0,
+        verification_deadline_ms: 0,
+    };
+    let allocations = budgets.allocate(&resolved)?;
+    assert_eq!(allocations.len(), 2);
+    assert_eq!(allocations.iter().map(|a| a.limit).sum::<usize>(), 11);
+    let observation = serde_json::to_value(resolved.observation()?)?;
+    assert_eq!(observation["project_ids"], json!([]));
+    assert_eq!(observation["selection"]["owner"], "agent");
+    // Its identity is never a window selection's over the same members.
+    let mut window = resolved.clone();
+    window.selection = Some(crate::scoped_reads::ScopeSelectionObservation {
+        owner: crate::scoped_reads::SelectionOwnerKind::Window,
+        ..agent_observation()
+    });
+    assert!(
+        window.validate().is_err(),
+        "a window selection needs a Project"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_resolution_refuses_projects_owners_and_member_mismatches() -> Result<()> {
+    let query = selection(Vec::new(), Some(vec![index(1)]));
+    let whole = vec![(index(1), vec![root(3)])];
+    // A Project or no named index is not an open read.
+    assert!(
+        selection(vec![project(1)], Some(vec![index(1)]))
+            .resolve_open(&whole, agent_observation())
+            .is_err()
+    );
+    assert!(selection(Vec::new(), None).validate_open().is_err());
+    // Only an agent selection.
+    let window = crate::scoped_reads::ScopeSelectionObservation {
+        owner: crate::scoped_reads::SelectionOwnerKind::Window,
+        ..agent_observation()
+    };
+    assert!(query.resolve_open(&whole, window).is_err());
+    // Members equal the named indexes exactly and read at least one source.
+    for members in [
+        vec![],
+        vec![(index(2), vec![root(3)])],
+        vec![(index(1), vec![root(3)]), (index(2), vec![root(4)])],
+        vec![(index(1), vec![root(3)]), (index(1), vec![root(4)])],
+        vec![(index(1), vec![])],
+    ] {
+        assert!(query.resolve_open(&members, agent_observation()).is_err());
+    }
+    // A narrowed atom or a project membership is not a whole open member.
+    let mut resolved = query.resolve_open(&whole, agent_observation())?;
+    resolved.members[0].scope[0].path = "src".into();
+    assert!(resolved.validate().is_err());
+    let mut resolved = query.resolve_open(&whole, agent_observation())?;
+    resolved.members[0].memberships.push(member(1, 1, ""));
+    assert!(resolved.validate().is_err());
+    let mut resolved = query.resolve_open(&whole, agent_observation())?;
+    resolved.project_ids.push(project(1));
+    assert!(resolved.validate().is_err());
+    Ok(())
+}
