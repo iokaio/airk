@@ -1,20 +1,20 @@
 {
   "files": {
-    "app.4f5926ba.css": {
+    "app.0e1ab1c6.css": {
       "content_type": "text/css; charset=utf-8",
-      "sha256": "4f5926baeca04fa4da10c6c561640211ca6acbdd7cb123ea55ea6c8b6d6fe814"
+      "sha256": "0e1ab1c650fd1f4a97ebb3ecf0a9b2d537a7f75acdecc5dd4c37e906f536ecf7"
     },
-    "app.866adf0a.js": {
+    "app.4ed978b6.js": {
       "content_type": "text/javascript; charset=utf-8",
-      "sha256": "866adf0a82dea87c425e144f0db76506e2cfae1c0f6a42ff609bba814cc9c42d"
+      "sha256": "4ed978b6c401187c2851295ee825870844da25cf2bf43654f2a218754154566c"
     },
     "index.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "17ad29db88fab4cdfdde9f6c06c9f122ef7c2ff69950db062c8e038132e19d75"
+      "sha256": "57457c2996aa7f1edbd3df9bbd5b3b58788cc60b2cb93b6947af2f6a254f54be"
     },
     "launch.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "17ad29db88fab4cdfdde9f6c06c9f122ef7c2ff69950db062c8e038132e19d75"
+      "sha256": "57457c2996aa7f1edbd3df9bbd5b3b58788cc60b2cb93b6947af2f6a254f54be"
     }
   },
   "schema": "airk-admin-assets/1"

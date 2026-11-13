@@ -9,6 +9,59 @@ use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
 use std::path::Path;
 
+/// Why a setup review refused its inputs, as a failure code (the service
+/// answers `Failure { code }` with it instead of the generic
+/// `invalid_registry_request`). Attached as context, so the original error
+/// chain stays for diagnosis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexSetupRefused(pub &'static str);
+impl std::fmt::Display for IndexSetupRefused {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(self.0)
+    }
+}
+
+/// Pure: the refusal code of a setup review error, when it is one the user
+/// can act on (a missing folder, overlapping folders, occupied or redirected
+/// storage); `None` keeps the generic code.
+pub fn setup_refusal(error: &anyhow::Error) -> Option<&'static str> {
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    }) {
+        return Some("index_setup_path_missing");
+    }
+    let text = format!("{error:#}");
+    [
+        // The most specific causes first: the first match wins.
+        ("alias namespace", "index_setup_alias_unavailable"),
+        ("must already exist", "index_setup_path_missing"),
+        ("overlaps", "index_setup_paths_overlap"),
+        ("must be disjoint", "index_setup_paths_overlap"),
+        ("roots overlap", "index_setup_paths_overlap"),
+        ("occupied", "index_setup_storage_occupied"),
+        ("redirected", "index_setup_path_redirected"),
+        ("linked", "index_setup_path_redirected"),
+        ("must be a directory", "index_setup_path_not_a_folder"),
+        ("plain directory", "index_setup_path_not_a_folder"),
+        (
+            "additional source is not a directory",
+            "index_setup_path_not_a_folder",
+        ),
+    ]
+    .into_iter()
+    .find(|(needle, _)| text.contains(needle))
+    .map(|(_, code)| code)
+}
+
+fn refused(error: anyhow::Error) -> anyhow::Error {
+    match setup_refusal(&error) {
+        Some(code) => error.context(IndexSetupRefused(code)),
+        None => error,
+    }
+}
+
 pub fn execute(
     registry: &mut ServiceRegistry,
     control: &Path,
@@ -70,15 +123,22 @@ fn execute_inner(
                 Path::new(&selection.primary_root),
                 Path::new(&selection.data_root),
                 &selection.collection,
-            )?;
+            )
+            .map_err(refused)?;
             let mut sources = vec![SetupSource {
                 canonical_path: registration.root.clone(),
                 aliases: Vec::new(),
                 owner: true,
             }];
             for root in &selection.additional_roots {
-                let path = Path::new(&root.path).canonicalize()?;
-                ensure!(path.is_dir(), "additional source is not a directory");
+                let path = Path::new(&root.path)
+                    .canonicalize()
+                    .map_err(|error| refused(error.into()))?;
+                if !path.is_dir() {
+                    return Err(refused(anyhow::anyhow!(
+                        "additional source is not a directory"
+                    )));
+                }
                 sources.push(SetupSource {
                     canonical_path: path
                         .to_str()
@@ -105,7 +165,7 @@ fn execute_inner(
                     && state.revision == request.expected_catalog_revision,
                 "setup review catalog changed"
             );
-            let review = crate::catalog_index_setup::review(control, &request)?;
+            let review = crate::catalog_index_setup::review(control, &request).map_err(refused)?;
             ControlResponse::CatalogIndexSetupDraft {
                 request_digest: request.identity()?,
                 draft: IndexSetupDraft::new(
@@ -178,4 +238,62 @@ fn execute_inner(
         }
         _ => unreachable!("setup method was classified before native work"),
     }))
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    #[test]
+    fn setup_review_errors_name_what_the_user_can_fix() {
+        let missing = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::NotFound))
+            .context("pin custom storage parent");
+        assert_eq!(setup_refusal(&missing), Some("index_setup_path_missing"));
+        for (message, code) in [
+            (
+                "service sources and planned storage must be disjoint",
+                "index_setup_paths_overlap",
+            ),
+            (
+                "native setup source overlaps private storage",
+                "index_setup_paths_overlap",
+            ),
+            (
+                "index storage overlaps service control",
+                "index_setup_paths_overlap",
+            ),
+            (
+                "custom index storage is occupied without matching native ownership",
+                "index_setup_storage_occupied",
+            ),
+            (
+                "native setup destination redirected",
+                "index_setup_path_redirected",
+            ),
+            (
+                "service source must be a directory",
+                "index_setup_path_not_a_folder",
+            ),
+            (
+                "native source alias namespace is occupied or unavailable",
+                "index_setup_alias_unavailable",
+            ),
+        ] {
+            assert_eq!(
+                setup_refusal(&anyhow::anyhow!(message)),
+                Some(code),
+                "{message}"
+            );
+        }
+        assert_eq!(
+            setup_refusal(&anyhow::anyhow!("native setup catalog changed")),
+            None
+        );
+        let wrapped = refused(anyhow::anyhow!("native setup destination redirected"));
+        assert_eq!(
+            wrapped.downcast_ref::<IndexSetupRefused>(),
+            Some(&IndexSetupRefused("index_setup_path_redirected"))
+        );
+        assert!(format!("{wrapped:#}").contains("destination redirected"));
+    }
 }

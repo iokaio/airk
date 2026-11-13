@@ -166,3 +166,13 @@ fn breadcrumbs_and_parents_stop_at_the_root() {
         assert_eq!(parent(Path::new("/")), None);
     }
 }
+
+#[test]
+fn a_folder_without_subfolders_lists_as_empty() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let base = PathBuf::from(shown(&root.path().canonicalize()?));
+    std::fs::write(base.join("only-a-file.txt"), "x")?;
+    let listing = folder(&base, &Marks::default(), false, None)?;
+    assert!(listing.entries.is_empty() && listing.continuation.is_none());
+    Ok(())
+}

@@ -617,6 +617,8 @@ def operations():
         # M24: the Browse dialog of the path fields (folders only, never files).
         ("files.browse", "FolderBrowse", MGMT),
         ("logs.recent", "Logs", MGMT), ("logs.export", "LogsExport", MGMT),
+        # The local HTTPS MCP endpoint an agent is pointed at (no credential).
+        ("agents.endpoint", "AgentEndpoint", MGMT),
         ("agents.connection", "HttpConnectionInfo", MGMT), ("agents.ownership", "HttpConnectionOwnership", MGMT),
         ("agents.verify", "AgentConnectionVerify", MGMT), ("https.trust_status", "HttpTrust.Inspect", MGMT),
         ("https.rotation_status", "HttpIssuerRotation.Status", MGMT), ("models.catalog", "ModelCatalog", MGMT),

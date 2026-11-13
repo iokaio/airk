@@ -461,5 +461,10 @@ fn the_record_step_creates_missing_data_and_cache_locations() -> anyhow::Result<
         assert!(std::path::Path::new(location).is_dir(), "{location}");
     }
     super::files::prepare_locations(&locations)?;
+    // An existing cache folder made by something else, with the folder's
+    // inherited permissions, is held to the preflight's rule only.
+    std::fs::remove_dir(&locations.cache)?;
+    std::fs::create_dir(&locations.cache)?;
+    super::files::prepare_locations(&locations)?;
     Ok(())
 }

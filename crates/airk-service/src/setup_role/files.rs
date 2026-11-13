@@ -354,8 +354,16 @@ pub(crate) fn write_owner_file(folder: &Path, name: &str, bytes: &[u8]) -> Resul
 /// "delete data" have neither.
 pub(crate) fn prepare_locations(locations: &airk_core::install_record::Locations) -> Result<()> {
     for location in [&locations.data, &locations.cache] {
-        airk_ipc::endpoint::prepare_root(Path::new(location))
-            .with_context(|| format!("location_unavailable: {location}"))?;
+        let path = Path::new(location);
+        // An existing folder passed the preflight's rule (`owned_folder`,
+        // which accepts SYSTEM and Administrators); hold it to that same rule
+        // here, never a stricter one, so placement cannot fail after review.
+        let checked = if std::fs::symlink_metadata(path).is_ok() {
+            owned_folder(path)
+        } else {
+            airk_ipc::endpoint::prepare_root(path)
+        };
+        checked.with_context(|| format!("location_unavailable: {location}"))?;
     }
     Ok(())
 }

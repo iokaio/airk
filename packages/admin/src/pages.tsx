@@ -4,7 +4,7 @@
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { reviewedCall } from './api';
-import { body, isDigest, isIncarnation, MAX_PAGE_LIMIT, OPS } from './operations';
+import { body, isDigest, isIncarnation, MAX_INDEX_LIST_LIMIT, MAX_PAGE_LIMIT, OPS } from './operations';
 import {
   bindingsIn,
   Command,
@@ -18,18 +18,16 @@ import {
   useCall,
 } from './render';
 
-const short = (id: string): string => id.slice(0, 12);
-
 export function Overview(): JSX.Element {
   const [health, runHealth] = useCall();
   const [indexes, runIndexes] = useCall();
   const [workers, runWorkers] = useCall();
   const [after, setAfter] = useState('');
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(MAX_INDEX_LIST_LIMIT);
   const [projects, setProjects] = useState('');
   useEffect(() => {
     void runHealth(OPS.health, body.health());
-    void runIndexes(OPS.indexesList, body.indexesList(null, 50));
+    void runIndexes(OPS.indexesList, body.indexesList(null, MAX_INDEX_LIST_LIMIT));
   }, []);
   const projectList = list(projects);
   const projectsValid = projectList.every(isDigest);
@@ -49,11 +47,18 @@ export function Overview(): JSX.Element {
             invalid={after !== '' && !isDigest(after)}
             onInput={setAfter}
           />
-          <NumberField label="Limit" value={limit} min={1} max={MAX_PAGE_LIMIT} onInput={setLimit} />
+          <NumberField label="Limit" value={limit} min={1} max={MAX_INDEX_LIST_LIMIT} onInput={setLimit} />
           <button
             type="button"
             disabled={after !== '' && !isDigest(after)}
-            onClick={() => void runIndexes(OPS.indexesList, body.indexesList(after === '' ? null : after, limit))}
+            onClick={() => {
+              // A continuation must name the revision of the page it continues.
+              const page = (resultOf(indexes) as { page?: { revision?: number } } | undefined)?.page;
+              void runIndexes(
+                OPS.indexesList,
+                body.indexesList(after === '' ? null : after, limit, after === '' ? null : page?.revision ?? null),
+              );
+            }}
           >
             Load
           </button>
@@ -86,170 +91,6 @@ export function Overview(): JSX.Element {
           </button>
         </div>
         <Outcome state={workers} />
-      </Panel>
-    </>
-  );
-}
-
-export function Activity(): JSX.Element {
-  const [events, runEvents] = useCall();
-  const [requests, runRequests] = useCall();
-  const [job, runJob] = useCall();
-  const [jobAction, runJobAction] = useCall();
-  const [pause, runPause] = useCall();
-  const [eventProject, setEventProject] = useState('');
-  const [eventLimit, setEventLimit] = useState(50);
-  const [jobId, setJobId] = useState('');
-  const [pauseProject, setPauseProject] = useState('');
-  const eventProjectValid = eventProject === '' || isDigest(eventProject);
-  const loadEvents = (cursor: unknown): void =>
-    void runEvents(OPS.eventsPage, body.eventsPage(eventProject === '' ? null : eventProject, cursor, eventLimit));
-  const page = resultOf(events);
-  const next =
-    typeof page === 'object' && page !== null ? (page as Record<string, unknown>).next : undefined;
-  const jobValid = isDigest(jobId);
-  const pauseValid = isDigest(pauseProject);
-  return (
-    <>
-      <Panel title="Events">
-        <div class="row">
-          <Field
-            label="Project binding (optional)"
-            value={eventProject}
-            invalid={!eventProjectValid}
-            onInput={setEventProject}
-          />
-          <NumberField label="Limit" value={eventLimit} min={1} max={MAX_PAGE_LIMIT} onInput={setEventLimit} />
-          <button type="button" disabled={!eventProjectValid} onClick={() => loadEvents(null)}>
-            Load latest
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            disabled={!eventProjectValid || next === undefined || next === null}
-            onClick={() => loadEvents(next)}
-          >
-            Next page
-          </button>
-        </div>
-        <Outcome state={events} />
-      </Panel>
-      <Panel title="Saved requests">
-        <button type="button" onClick={() => void runRequests(OPS.requestsList, body.requestsList())}>
-          Load
-        </button>
-        <Outcome state={requests} />
-      </Panel>
-      <Panel title="Job">
-        <div class="row">
-          <Field label="Job id" wide value={jobId} invalid={jobId !== '' && !jobValid} onInput={setJobId} />
-          <button type="button" disabled={!jobValid} onClick={() => void runJob(OPS.jobsGet, body.jobsGet(jobId))}>
-            Load
-          </button>
-        </div>
-        <Outcome state={job} />
-        {jobValid ? (
-          <div class="actions">
-            <Confirm
-              phrase={`retry ${short(jobId)}`}
-              action="Retry job"
-              onConfirm={() => void runJobAction(OPS.jobsRetry, body.jobsRetry(jobId))}
-            />
-            <Confirm
-              phrase={`cancel ${short(jobId)}`}
-              action="Cancel job"
-              danger
-              onConfirm={() => void runJobAction(OPS.jobsCancel, body.jobsCancel(jobId))}
-            />
-          </div>
-        ) : null}
-        <Outcome state={jobAction} />
-      </Panel>
-      <Panel title="Pause or resume an index">
-        <Field
-          label="Project binding"
-          wide
-          value={pauseProject}
-          invalid={pauseProject !== '' && !pauseValid}
-          onInput={setPauseProject}
-        />
-        {pauseValid ? (
-          <div class="actions">
-            <Confirm
-              phrase={`pause ${short(pauseProject)}`}
-              action="Pause"
-              onConfirm={() => void runPause(OPS.indexesPause, body.indexesPause(pauseProject, true))}
-            />
-            <Confirm
-              phrase={`resume ${short(pauseProject)}`}
-              action="Resume"
-              onConfirm={() => void runPause(OPS.indexesPause, body.indexesPause(pauseProject, false))}
-            />
-          </div>
-        ) : null}
-        <Outcome state={pause} />
-      </Panel>
-    </>
-  );
-}
-
-export function Agents(): JSX.Element {
-  const [info, runInfo] = useCall();
-  const [ownership, runOwnership] = useCall();
-  const [revoke, runRevoke] = useCall();
-  const [id, setId] = useState('');
-  const valid = isIncarnation(id);
-  const shown = valid ? id : '<connection-id>';
-  return (
-    <>
-      <Panel title="Connection">
-        <div class="row">
-          <Field label="Connection id" wide value={id} invalid={id !== '' && !valid} onInput={setId} />
-          <button
-            type="button"
-            disabled={!valid}
-            onClick={() => void runInfo(OPS.agentsConnection, body.agentsConnection(id))}
-          >
-            Connection info
-          </button>
-          <button
-            type="button"
-            disabled={!valid}
-            onClick={() => void runOwnership(OPS.agentsOwnership, body.agentsOwnership(id))}
-          >
-            Ownership
-          </button>
-        </div>
-        <Outcome state={info} />
-        <Outcome state={ownership} />
-      </Panel>
-      <Panel title="Revoke">
-        <p>
-          Revoking ends this connection's credential. Agent configuration files are not changed; use the
-          commands below for that.
-        </p>
-        {valid ? (
-          <Confirm
-            phrase={`revoke ${id}`}
-            action="Revoke connection"
-            danger
-            onConfirm={() => void runRevoke(OPS.agentsRevoke, body.agentsRevoke(id))}
-          />
-        ) : (
-          <p class="muted">Enter a connection id first.</p>
-        )}
-        <Outcome state={revoke} />
-      </Panel>
-      <Panel title="Change agent configuration">
-        <p>
-          Connecting creates credentials and writes agent configuration, so it is never done over HTTP. Run
-          these on this machine:
-        </p>
-        <Command text="airkctl agents list" />
-        <Command text="airkctl agents connect --help" />
-        <Command text={`airkctl agents repair --connection-id ${shown}`} />
-        <Command text={`airkctl agents remove --connection-id ${shown}`} />
-        <Command text={`airkctl agents verify --connection-id ${shown}`} />
       </Panel>
     </>
   );
@@ -568,44 +409,6 @@ export function Search(): JSX.Element {
         </form>
         <p class="muted">Results are indexed evidence and are shown as plain text.</p>
         <Outcome state={search} />
-      </Panel>
-    </>
-  );
-}
-
-export function Help(): JSX.Element {
-  const [catalog, runCatalog] = useCall();
-  const [toolHelp, runToolHelp] = useCall();
-  const [topic, runTopic] = useCall();
-  const [tool, setTool] = useState('airk_search');
-  const [topicName, setTopicName] = useState('');
-  useEffect(() => {
-    void runCatalog(OPS.toolsCatalog, body.toolsList());
-  }, []);
-  return (
-    <>
-      <Panel title="Tools">
-        <Outcome state={catalog} />
-        <div class="row">
-          <Field label="Tool" value={tool} onInput={setTool} />
-          <button
-            type="button"
-            disabled={tool === ''}
-            onClick={() => void runToolHelp(OPS.toolsCatalog, body.toolsHelp(tool))}
-          >
-            Tool help
-          </button>
-        </div>
-        <Outcome state={toolHelp} />
-      </Panel>
-      <Panel title="Help topics">
-        <div class="row">
-          <Field label="Topic (empty for the index)" value={topicName} onInput={setTopicName} />
-          <button type="button" onClick={() => void runTopic(OPS.searchCall, body.helpTopic(topicName))}>
-            Show
-          </button>
-        </div>
-        <Outcome state={topic} />
       </Panel>
     </>
   );

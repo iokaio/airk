@@ -1175,6 +1175,10 @@
           "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"breadcrumb\":[],\"entries\":[{\"name\":\"C:\",\"path\":\"C:/\",\"kind\":\"folder\",\"start\":\"drive\"},{\"name\":\"fictional\",\"path\":\"C:/Users/fictional\",\"kind\":\"folder\",\"start\":\"home\"},{\"name\":\"indexes\",\"path\":\"C:/AIRK Service/data/indexes\",\"kind\":\"folder\",\"start\":\"airk_location\",\"airk_location\":\"data\"}],\"truncated\":false,\"marks_complete\":true}}"
         },
         {
+          "name": "empty_folder",
+          "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"path\":\"D:/code/empty\",\"parent\":\"D:/code\",\"breadcrumb\":[{\"name\":\"D:\",\"path\":\"D:/\"},{\"name\":\"code\",\"path\":\"D:/code\"},{\"name\":\"empty\",\"path\":\"D:/code/empty\"}],\"entries\":[],\"truncated\":false,\"marks_complete\":true}}"
+        },
+        {
           "name": "folder_page",
           "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"path\":\"D:/code\",\"parent\":\"D:/\",\"breadcrumb\":[{\"name\":\"D:\",\"path\":\"D:/\"},{\"name\":\"code\",\"path\":\"D:/code\"}],\"entries\":[{\"name\":\".cache\",\"path\":\"D:/code/.cache\",\"kind\":\"folder\",\"hidden\":true},{\"name\":\"airk\",\"path\":\"D:/code/airk\",\"kind\":\"folder\",\"indexes\":[{\"index\":\"airk\",\"use\":\"indexed_root\"}]},{\"name\":\"shared\",\"path\":\"D:/code/shared\",\"kind\":\"link\"}],\"continuation\":\"shared\",\"truncated\":false,\"marks_complete\":true}}"
         }

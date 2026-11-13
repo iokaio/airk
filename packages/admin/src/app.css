@@ -437,3 +437,505 @@ button.link:hover {
 .crumbs {
   align-items: center;
 }
+
+/* Help and Activity pages. */
+/* Help and Activity pages. Uses only the --airk-* tokens (light and dark). */
+
+.small {
+  font-size: 0.8rem;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Status badges: a tinted border and text, readable in both themes. */
+.badge {
+  display: inline-block;
+  padding: 0 0.45em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.badge-ok {
+  color: var(--airk-ok);
+}
+
+.badge-warn {
+  color: var(--airk-warn);
+}
+
+.badge-danger {
+  color: var(--airk-danger);
+}
+
+.badge-info {
+  color: var(--airk-accent);
+}
+
+.badge-muted {
+  color: var(--airk-muted);
+}
+
+/* Data tables. */
+.table-wrap {
+  overflow-x: auto;
+  margin: 0.5rem 0;
+  border: 1px solid var(--airk-border);
+  border-radius: 4px;
+  background: var(--airk-bg);
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+table.data th,
+table.data td {
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--airk-border);
+  overflow-wrap: anywhere;
+}
+
+table.data thead th {
+  font-weight: 600;
+  color: var(--airk-muted);
+  background: var(--airk-surface);
+}
+
+table.data tbody tr:last-child th,
+table.data tbody tr:last-child td {
+  border-bottom: none;
+}
+
+table.data tbody th {
+  font-weight: normal;
+}
+
+details.complete {
+  margin-top: 0.6rem;
+}
+
+/* Help: an index column beside the reading pane. */
+.help-layout {
+  display: grid;
+  grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.help-index {
+  position: sticky;
+  top: 0.5rem;
+  max-height: calc(100vh - 5rem);
+  overflow: auto;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px solid var(--airk-border);
+  border-radius: 6px;
+  background: var(--airk-surface);
+}
+
+.help-index .field {
+  min-width: 0;
+}
+
+.help-index h3 {
+  margin-top: 0.9rem;
+}
+
+.help-index h4 {
+  margin: 0.6rem 0 0.2rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--airk-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.help-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.help-list li {
+  padding: 0.1rem 0;
+}
+
+.help-list button.link {
+  width: 100%;
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+
+.help-list button.link.current {
+  background: var(--airk-bg);
+  color: var(--airk-text);
+  font-weight: 600;
+}
+
+.help-view {
+  min-width: 0;
+}
+
+.help-doc {
+  max-width: 52rem;
+}
+
+.markdown p {
+  margin: 0 0 0.6rem;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.6rem;
+  padding-left: 1.4rem;
+}
+
+.markdown li {
+  margin: 0.15rem 0;
+}
+
+.markdown pre.doc {
+  margin: 0 0 0.6rem;
+}
+
+.markdown a {
+  color: var(--airk-accent);
+  overflow-wrap: anywhere;
+}
+
+.truncated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--airk-warn);
+  border-radius: 4px;
+  color: var(--airk-warn);
+}
+
+/* Activity: the job detail card. */
+.job-card {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .help-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .help-index {
+    position: static;
+    max-height: none;
+  }
+}
+
+/* Agents and Usage pages. */
+/* Agents and Usage pages (agents.tsx, usage.tsx). --airk-* tokens only, so light
+   and dark follow app.css. To be merged into app.css. */
+
+.au-url {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.au-url code {
+  font-size: 1.05rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.au-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.au-badge {
+  display: inline-block;
+  padding: 0 0.45rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.au-ok {
+  color: var(--airk-ok);
+}
+
+.au-warn {
+  color: var(--airk-warn);
+}
+
+.au-bad {
+  color: var(--airk-danger);
+}
+
+.au-neutral {
+  color: var(--airk-muted);
+}
+
+.au-bad-text {
+  color: var(--airk-danger);
+}
+
+.au-warn-text {
+  color: var(--airk-warn);
+}
+
+.au-problem {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--airk-danger);
+  background: var(--airk-bg);
+  border-radius: 0 4px 4px 0;
+}
+
+.au-problem p {
+  margin: 0.15rem 0;
+  color: var(--airk-danger);
+}
+
+.au-detail {
+  font-family: var(--airk-mono);
+  font-size: 0.8rem;
+  color: var(--airk-muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.au-problem .au-detail {
+  color: var(--airk-muted);
+}
+
+.au-warning,
+.au-notice {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--airk-warn);
+  border-radius: 4px;
+  background: var(--airk-bg);
+}
+
+.au-notice {
+  border-color: var(--airk-border);
+  color: var(--airk-muted);
+  font-size: 0.85rem;
+}
+
+.au-complete {
+  margin-top: 0.5rem;
+}
+
+.au-sub {
+  border-top: 1px solid var(--airk-border);
+  margin-top: 0.6rem;
+  padding-top: 0.2rem;
+}
+
+.au-result p {
+  margin: 0.3rem 0;
+}
+
+.au-steps {
+  margin: 0.3rem 0 0.6rem;
+  padding-left: 1.3rem;
+}
+
+.au-steps li {
+  margin: 0.15rem 0;
+}
+
+/* Client tabs. */
+.au-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  border-bottom: 1px solid var(--airk-border);
+}
+
+button.au-tab {
+  background: transparent;
+  color: var(--airk-text);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  margin-bottom: -1px;
+}
+
+button.au-tab.current {
+  background: var(--airk-bg);
+  border-color: var(--airk-border);
+  font-weight: 600;
+}
+
+button.au-tab:focus-visible {
+  outline: 2px solid var(--airk-accent);
+  outline-offset: 1px;
+}
+
+.au-tabpanel {
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px solid var(--airk-border);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  background: var(--airk-bg);
+}
+
+/* Copyable snippets. */
+.au-snippet {
+  margin: 0.5rem 0;
+}
+
+.au-snippet figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-family: var(--airk-mono);
+  font-size: 0.8rem;
+  color: var(--airk-muted);
+}
+
+.au-snippet pre {
+  background: var(--airk-code-bg);
+}
+
+/* Usage summary tiles. */
+.au-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.6rem 0;
+}
+
+.au-tile {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--airk-border);
+  border-radius: 6px;
+  background: var(--airk-bg);
+}
+
+.au-tile-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.au-tile-label {
+  font-size: 0.85rem;
+}
+
+.au-tile-note {
+  font-size: 0.75rem;
+  color: var(--airk-muted);
+}
+
+.au-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+/* Tables. */
+.au-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.au-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+.au-table caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.3rem;
+}
+
+.au-table th,
+.au-table td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--airk-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.au-table th {
+  color: var(--airk-muted);
+  font-weight: 600;
+}
+
+.au-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Daily bar chart inside the history table. */
+.au-bar-col {
+  width: 40%;
+  min-width: 8rem;
+}
+
+.au-bar {
+  position: relative;
+  display: block;
+  height: 0.7rem;
+  border-radius: 2px;
+  background: var(--airk-code-bg);
+}
+
+.au-bar-fill,
+.au-bar-failed {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+}
+
+.au-bar-fill {
+  background: var(--airk-accent);
+}
+
+.au-bar-failed {
+  background: var(--airk-danger);
+}
+
+.au-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

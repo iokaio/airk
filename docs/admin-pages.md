@@ -77,7 +77,34 @@ The page can be opened on a route: `airkctl admin open --page index-library
 --for-folder <folder>` prefills a new index for that folder. The VS Code
 Explorer's **Create an index for this folder** uses this route.
 
-**Usage** shows the usage report, policy and settings documents.
+**Usage** shows whether usage recording is on and what it keeps, then the
+report for a chosen index and period (1, 7, 14 or 30 days): calls and
+failures, per-client and per-operation tables, a daily history with bars,
+estimates labelled as estimates ("not available" when the service has none)
+and recording health. Changing the recording mode is an `airkctl` command,
+shown ready to copy.
+
+**Agents** shows your MCP endpoint (URL, state and whether Windows trusts the
+service's certificate, with the fix command when it does not), how to connect
+an agent automatically (VS Code **Connect Coding Agent**, or `airkctl agents
+connect`), and how to configure one by hand: ready-to-copy entries for Claude
+Code (`.mcp.json`), Codex (`config.toml`), VS Code / Copilot (`mcp.json`) and
+any other MCP client (URL, Streamable HTTP, `Authorization: Bearer` from
+`airkctl agents credential`), each with its certificate trust step. They are
+the same entries `airkctl agents connect` writes. An existing connection can be
+looked up, verified and revoked. Creating a connection is never done over
+HTTP.
+
+**Activity** loads the recent events as a table (local time, what happened,
+index, job), with an index filter and older pages; a job opens as a card with
+retry or cancel; saved requests and pause or resume of an index chosen by
+name.
+
+**Help** lists the help topics and tools with a filter; a topic or a tool's
+parameters are shown as readable text and tables.
+
+Every page keeps the complete native result available under **Complete result
+(JSON)**.
 
 **Storage** lists the service's locations with their sizes (U100):
 program, data, state, cache and logs.
@@ -100,7 +127,7 @@ and searches through the same canonical handlers as `airkctl` and VS Code.
 **Not yet served** (the API answers `not_yet_served`): the live event
 stream. Indexed evidence is always shown as text.
 
-**Not in 1.8.31 or 1.8.32** (U102; planned for a later candidate):
+**Not in 1.8.31–1.8.33** (U102; planned for a later candidate):
 
 - the Overview's version, activity and leftovers;
 - plans on the Activity page;

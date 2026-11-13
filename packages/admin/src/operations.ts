@@ -58,8 +58,10 @@ export const OPS = {
   loginInstall: 'service.login_startup_install',
   loginUninstall: 'service.login_startup_uninstall',
   logsRecent: 'logs.recent',
+  agentsEndpoint: 'agents.endpoint',
   agentsConnection: 'agents.connection',
   agentsOwnership: 'agents.ownership',
+  agentsVerify: 'agents.verify',
   agentsRevoke: 'agents.revoke',
   trustStatus: 'https.trust_status',
   rotationStatus: 'https.rotation_status',
@@ -86,6 +88,8 @@ export function isIncarnation(value: string): boolean {
 }
 
 export const MAX_PAGE_LIMIT = 500;
+/** `indexes.list` pages (`ServiceRegistry::list_role`: 1..=32). */
+export const MAX_INDEX_LIST_LIMIT = 32;
 
 /** Catalog ids (`index_catalog.rs` catalog_id!): a prefix and 32 lowercase hex. */
 export type CatalogPrefix = 'prj_' | 'idx_' | 'src_' | 'ctx_' | 'grt_' | 'deny_';
@@ -207,8 +211,9 @@ export const body = {
   health: () => 'health',
   resources: () => 'resources',
   workers: (projects: string[]) => ({ workers: { projects } }),
-  indexesList: (after: string | null, limit: number) => ({
-    projects: { after, revision: null, limit },
+  /** Registered indexes, 1..=32 per page; a continuation names the page's `revision`. */
+  indexesList: (after: string | null, limit: number, revision: number | null = null) => ({
+    projects: { after, revision, limit },
   }),
   indexesPause: (project: string, paused: boolean) => ({ pause: { project, paused } }),
   /** CatalogPageRequest; limit ≤ MAX_SELECTION (32), max_bytes ≤ 48 KiB. */
@@ -296,10 +301,14 @@ export const body = {
   /** U101: Windows login startup. */
   loginStartup: (action: 'status' | 'install' | 'uninstall') => ({ login_startup: { action } }),
   logsRecent: (limit: number) => ({ logs: { limit } }),
+  /** M15a: the checked local HTTPS endpoint (AgentEndpoint {}). */
+  agentsEndpoint: () => ({ agent_endpoint: {} }),
   agentsConnection: (connectionId: string) => ({ agent_connection_info: { connection_id: connectionId } }),
   agentsOwnership: (connectionId: string) => ({
     agent_connection_ownership: { connection_id: connectionId },
   }),
+  /** V1: probe /mcp with the stored credential; the token never leaves the service. */
+  agentsVerify: (connectionId: string) => ({ agent_connection_verify: { connection_id: connectionId } }),
   agentsRevoke: (connectionId: string) => ({ http_revoke: { connection_id: connectionId } }),
   trustStatus: () => ({ http_trust: { action: 'inspect' } }),
   rotationStatus: () => ({ http_issuer_rotation: { action: 'status' } }),

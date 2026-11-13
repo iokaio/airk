@@ -149,8 +149,13 @@ impl FolderListing {
             self.path.is_some() || (self.parent.is_none() && self.breadcrumb.is_empty()),
             "the starting list has no parent or breadcrumb"
         );
+        // Checked separately so a folder with no subfolders (no entries) is valid.
         ensure!(
-            self.path.is_none() == self.entries.iter().all(|entry| entry.start.is_some()),
+            self.path.is_some() || self.entries.iter().all(|entry| entry.start.is_some()),
+            "every entry of the starting list carries its start reason"
+        );
+        ensure!(
+            self.path.is_none() || self.entries.iter().all(|entry| entry.start.is_none()),
             "only the starting list carries start reasons"
         );
         ensure!(
@@ -206,6 +211,8 @@ mod tests {
             "a folder listing has no start reasons"
         );
         folder.entries = vec![entry("code", None)];
+        folder.validate().unwrap();
+        folder.entries = Vec::new();
         folder.validate().unwrap();
         folder.entries = (0..=MAX_FOLDER_ENTRIES)
             .map(|n| entry(&n.to_string(), None))

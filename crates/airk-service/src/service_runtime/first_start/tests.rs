@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use anyhow::Context;
 use std::fs;
 
 fn registry_bytes(root: &Path) -> Result<Vec<u8>> {
@@ -54,5 +55,34 @@ fn a_used_root_without_a_catalog_is_refused_without_writing() -> Result<()> {
             .catalog_state()?
             .is_none()
     );
+    Ok(())
+}
+
+#[test]
+fn an_interrupted_first_start_genesis_completes_on_the_next_start() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let lease = ServiceLease::acquire(root.path())?;
+    let control = lease.root().to_path_buf();
+    // A first start that stopped after migrating (a crash, a killed process).
+    let installer = airk_host::runtime_pair::engine_identity()?;
+    let operation = airk_kernel::service_broker::new_instance_id()?;
+    let mut interrupted = CatalogGenesis::begin(lease, installer, operation)?;
+    interrupted.backup()?;
+    interrupted.migrate()?;
+    let lease = interrupted.into_service_lease();
+    assert_ne!(
+        genesis::pending(&control)?.map(|receipt| receipt.stage),
+        Some(GenesisStage::Settled)
+    );
+    let lease = ensure_catalog(lease)?;
+    let catalog = ServiceRegistry::open_saved(&control)?
+        .catalog_state()?
+        .context("the resumed Genesis created no catalog")?;
+    assert!(catalog.activated);
+    assert_eq!(
+        genesis::pending(&control)?.map(|receipt| receipt.stage),
+        Some(GenesisStage::Settled)
+    );
+    drop(lease);
     Ok(())
 }

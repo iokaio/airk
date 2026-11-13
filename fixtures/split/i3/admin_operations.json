@@ -927,6 +927,27 @@
    ]
   },
   {
+   "operation": "agents.endpoint",
+   "method": "AgentEndpoint",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
    "operation": "agents.connection",
    "method": "HttpConnectionInfo",
    "plane": "management",

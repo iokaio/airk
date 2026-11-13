@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! M24 folder browsing (`airk_core::folder_browse`): the folders in one
 //! folder, or the starting list, for AIRK Admin's Browse dialog and
-//! `airkctl folders`. Read-only: folders only, never file names, and a link,
-//! junction or other reparse point is listed but never entered.
+//! `airkctl folders`. Read-only: folders only, never file names; a symbolic
+//! link or junction is listed but never entered.
 //!
 //! Decision logic (`page`, `Marks::mark`, `crumbs`, `key`) is pure; the file
 //! system walk and the Windows drive list are thin.
@@ -26,6 +26,7 @@ const NOT_A_FOLDER: &str = "folder_not_a_folder";
 const LINK: &str = "folder_link_not_followed";
 const NOT_READABLE: &str = "folder_not_readable";
 const NOT_ABSOLUTE: &str = "folder_path_not_absolute";
+const INVALID: &str = "folder_request_invalid";
 /// Catalog pages read for index marks before `marks_complete: false`.
 const MAX_MARK_PAGES: usize = 8;
 
@@ -50,8 +51,8 @@ pub(super) struct Marks {
 /// How paths compare: separators unified, the verbatim prefix and a trailing
 /// separator dropped, and case folded on Windows.
 pub(super) fn key(path: &str) -> String {
-    let unified = path.replace('\\', "/");
-    let trimmed = unified.strip_prefix("//?/").unwrap_or(&unified);
+    let unified = shown(Path::new(path)).replace('\\', "/");
+    let trimmed = unified.as_str();
     let trimmed = if trimmed.len() > 1 && !trimmed.ends_with(":/") {
         trimmed.trim_end_matches('/')
     } else {
@@ -67,6 +68,10 @@ pub(super) fn key(path: &str) -> String {
 /// A path as shown: the verbatim `\\?\` prefix removed.
 pub(super) fn shown(path: &Path) -> String {
     let text = path.to_string_lossy();
+    // `\\?\UNC\server\share` is `\\server\share`; `\\?\D:\x` is `D:\x`.
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
     text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned()
 }
 
@@ -194,7 +199,9 @@ pub(super) fn parent(path: &Path) -> Option<String> {
 /// continue after the last one kept.
 fn fit(mut listing: FolderListing) -> Result<FolderListing> {
     while serde_json::to_vec(&listing)?.len() > MAX_FOLDER_LISTING_BYTES {
-        if listing.entries.pop().is_none() {
+        // Never answer an empty page that hides folders: a path whose own
+        // breadcrumb leaves no room for one entry is refused instead.
+        if listing.entries.pop().is_none() || listing.entries.is_empty() {
             bail!("{NOT_READABLE}: the folder path is too long to list");
         }
         listing.continuation = listing.entries.last().map(|entry| entry.name.clone());
@@ -210,7 +217,7 @@ pub(super) fn browse(
     show_hidden: bool,
     after: Option<&str>,
 ) -> Result<FolderListing> {
-    validate_request(path, after)?;
+    validate_request(path, after).map_err(|error| anyhow::anyhow!("{INVALID}: {error}"))?;
     let locations = super::storage::served_locations(control).ok();
     let (indexes, complete) = index_roots(control);
     let marks = Marks::new(locations.as_ref(), indexes, complete);
@@ -300,8 +307,22 @@ pub(super) fn folder(
     show_hidden: bool,
     after: Option<&str>,
 ) -> Result<FolderListing> {
-    if !path.is_absolute() {
-        bail!("{NOT_ABSOLUTE}: give a full path, such as D:\\code");
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
+    {
+        bail!("{NOT_ABSOLUTE}: give a full path without . or .., such as D:\\code");
+    }
+    // No link or junction is followed anywhere in the path, not only at its end.
+    for ancestor in path.ancestors().skip(1) {
+        if std::fs::symlink_metadata(ancestor).is_ok_and(|metadata| link_ancestor(&metadata)) {
+            bail!(
+                "{LINK}: {} goes through the link {}; open the folder it points to",
+                shown(path),
+                shown(ancestor)
+            );
+        }
     }
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -383,18 +404,25 @@ fn walk(path: &Path) -> Result<(Vec<Found>, bool)> {
     Ok((found, false))
 }
 
-/// Not followed: a symbolic link, or on Windows any reparse point (junctions).
+/// Not followed: a symbolic link, or on Windows a junction. Rust reports
+/// both, and only name-surrogate reparse points, as symlinks; cloud-file
+/// folders (OneDrive placeholders) are reparse points too but ordinary
+/// folders, and stay browsable.
 fn is_link(metadata: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
+    metadata.file_type().is_symlink()
+}
+
+/// A link above the listed folder; root-owned Unix links (macOS `/var`,
+/// `/tmp`) are host aliases, as setup's `files::no_links` treats them.
+fn link_ancestor(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
     {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        metadata.file_type().is_symlink()
-            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        use std::os::unix::fs::MetadataExt;
+        is_link(metadata) && metadata.uid() != 0
     }
-    #[cfg(not(windows))]
+    #[cfg(not(unix))]
     {
-        metadata.file_type().is_symlink()
+        is_link(metadata)
     }
 }
 

@@ -4,9 +4,9 @@ Runtime installation and upgrades display a VS Code progress notification labele
 
 Historical 1.5.4–1.8.13 installation records the exact activation intent before stopping the verified optional manager and terminating approved predecessor processes, including older versions and Windows clients holding the stable launcher. Captured native process identities prevent PID reuse from redirecting termination. All captured processes share a five-second exit wait; verification, manager control, copying and startup are additional. Historical macOS installation uses authenticated graceful shutdown. The 1.8.14 migration retains version-specific predecessor retirement, rather than assuming those old processes implement the new checkpoint protocol. See [installation](service-installation.md) for ownership and platform limits.
 
-The current local candidate is **1.8.32** (13 November 2026): see the
-[1.8.32 record](releases/release-1.8.32.md). Manifests and lockfiles are synchronized at 1.8.32.
-1.8.31 ([record](releases/release-1.8.31.md)); 1.8.30 ([record](releases/release-1.8.30.md)); 1.8.29 ([record](releases/release-1.8.29.md)); 1.8.28 was not used. 1.8.27 ([record](releases/release-1.8.27.md)), 1.8.26 ([record](releases/release-1.8.26.md)), 1.8.25 ([record](releases/release-1.8.25.md)), 1.8.24 ([record](releases/release-1.8.24.md)), the
+The current local candidate is **1.8.33** (13 November 2026): see the
+[1.8.33 record](releases/release-1.8.33.md). Manifests and lockfiles are synchronized at 1.8.33.
+1.8.32 ([record](releases/release-1.8.32.md)); 1.8.31 ([record](releases/release-1.8.31.md)); 1.8.30 ([record](releases/release-1.8.30.md)); 1.8.29 ([record](releases/release-1.8.29.md)); 1.8.28 was not used. 1.8.27 ([record](releases/release-1.8.27.md)), 1.8.26 ([record](releases/release-1.8.26.md)), 1.8.25 ([record](releases/release-1.8.25.md)), 1.8.24 ([record](releases/release-1.8.24.md)), the
 first split build, and the 1.8.23 paragraph below are dated history.
 
 The 1.8.23 candidate was prepared on 10 November 2026. It corrected

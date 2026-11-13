@@ -3,7 +3,7 @@
 // rendered as text nodes; no HTML sink is used anywhere in this package. Bidi and
 // C0/C1 control characters are shown as visible escapes.
 import type { ComponentChildren, JSX } from 'preact';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { call, NOT_RUNNING, reviewOf, type CallResult } from './api';
 import type { Operation } from './operations';
 
@@ -82,10 +82,14 @@ export type CallState =
 
 export function useCall(): [CallState, (operation: Operation, body: unknown) => Promise<CallResult>] {
   const [state, setState] = useState<CallState>({ phase: 'idle' });
+  // Only the newest call shows: an older answer that arrives late is returned
+  // to its caller but never replaces the newer one on screen.
+  const latest = useRef(0);
   const run = async (operation: Operation, body: unknown): Promise<CallResult> => {
+    const ticket = ++latest.current;
     setState({ phase: 'pending', operation });
     const result = await call(operation, body);
-    setState({ phase: 'done', operation, result, at: Date.now() });
+    if (ticket === latest.current) setState({ phase: 'done', operation, result, at: Date.now() });
     return result;
   };
   return [state, run];

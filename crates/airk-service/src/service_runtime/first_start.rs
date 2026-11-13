@@ -29,17 +29,23 @@ use airk_store::service::{
         },
     },
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use std::path::Path;
 
 const REGISTRY: &str = "service-1.4.sqlite3";
 
 /// The reason an admitted start refuses a control root it cannot give a catalog.
 pub(super) const REFUSED: &str = "catalog_genesis_refused";
+/// The reason when Genesis could not run now (a held lease, a disk error).
+pub(super) const FAILED: &str = "catalog_genesis_failed";
 
 /// Run fresh Genesis when the lease's control root has no catalog, holding
-/// `lease` throughout; return the same lease. A settled Genesis or an existing catalog returns the
-/// lease untouched; an interrupted Genesis of this installer resumes.
+/// `lease` throughout; return the same lease. An existing activated catalog
+/// returns the lease untouched; an interrupted Genesis of this build resumes.
+///
+/// The caller runs this before anything else opens the registry: `begin`
+/// fences ordinary registry admission until settlement, so an interrupted
+/// Genesis is only completed here.
 pub(super) fn ensure_catalog(lease: ServiceLease) -> Result<ServiceLease> {
     let root = lease.root().to_path_buf();
     let root = root.as_path();
@@ -48,6 +54,15 @@ pub(super) fn ensure_catalog(lease: ServiceLease) -> Result<ServiceLease> {
         .as_ref()
         .is_some_and(|receipt| receipt.stage == GenesisStage::Settled)
     {
+        // A settled receipt is only trusted with its live, activated catalog.
+        let live = root.join(REGISTRY).try_exists()?
+            && ServiceRegistry::open_saved(root)?
+                .catalog_state()?
+                .is_some_and(|catalog| catalog.activated);
+        ensure!(
+            live,
+            "{FAILED}: the index catalog recorded as created is missing or not activated"
+        );
         return Ok(lease);
     }
     if saved.is_none()
@@ -58,18 +73,40 @@ pub(super) fn ensure_catalog(lease: ServiceLease) -> Result<ServiceLease> {
     {
         return Ok(lease);
     }
+    run_genesis(lease, saved.map(|receipt| receipt.operation)).map_err(classify)
+}
+
+/// The leading code of a Genesis failure: only the store's "this registry
+/// was already used" refusals (and a receipt left by another build) need a
+/// reinstall; anything else is a failed attempt the next start resumes.
+fn classify(error: anyhow::Error) -> anyhow::Error {
+    let text = format!("{error:#}");
+    if text.starts_with(REFUSED) || text.starts_with(FAILED) {
+        return error;
+    }
+    if text.contains("requires the real catalog upgrade")
+        || text.contains("refuses an existing catalog or earlier registry format")
+        || text.contains("genesis belongs to another operation or installer")
+    {
+        error.context(format!(
+            "{REFUSED}: this AIRK Service state has no index catalog and cannot be given one;              it was used or left half-prepared by another build. Uninstall AIRK Service, choose              to delete its data, and install it again"
+        ))
+    } else {
+        error.context(format!(
+            "{FAILED}: the index catalog could not be created yet; the next start continues"
+        ))
+    }
+}
+
+fn run_genesis(lease: ServiceLease, resumed: Option<Incarnation>) -> Result<ServiceLease> {
+    let root = lease.root().to_path_buf();
+    let root = root.as_path();
     let installer = airk_host::runtime_pair::engine_identity()?;
-    let operation = match &saved {
-        Some(receipt) => receipt.operation,
+    let operation = match resumed {
+        Some(operation) => operation,
         None => airk_kernel::service_broker::new_instance_id()?,
     };
-    let mut owner = CatalogGenesis::begin(lease, installer, operation).with_context(|| {
-        format!(
-            "{REFUSED}: this AIRK Service state has no index catalog and cannot be given one; \
-             it was used by an earlier build without an index catalog. Uninstall AIRK Service, \
-             choose to delete its data, and install it again"
-        )
-    })?;
+    let mut owner = CatalogGenesis::begin(lease, installer, operation)?;
     let mut receipt = owner.receipt()?;
     if receipt.authority_v1.is_none() {
         if matches!(

@@ -93,6 +93,19 @@ function parseAdditional(value: string): ({ alias: string; path: string } | null
     });
 }
 
+/**
+ * An alias for an additional root the service accepts (`roots::validate_alias`):
+ * 1..32 of [a-z0-9_-], not `primary`, and not already used in the list.
+ */
+function aliasFor(path: string, existing: ({ alias: string; path: string } | null)[]): string {
+  const stem = collectionFrom(folderName(path)).slice(0, 28).replace(/-+$/, '') || 'source';
+  const base = stem === 'primary' ? 'primary-root' : stem;
+  const used = new Set(existing.flatMap((entry) => (entry === null ? [] : [entry.alias])));
+  let alias = base;
+  for (let n = 2; used.has(alias); n += 1) alias = `${base}-${n}`;
+  return alias;
+}
+
 /** A non-negative safe integer from decimal text. */
 function parseCount(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
@@ -474,6 +487,21 @@ function previewOf(revision: number | null, operation: CatalogRequestBody['opera
 const DATA_ROOT_HINT =
   "Each index keeps its storage in its own folder. By default that is a folder named after the collection inside the installation's data location; the setup creates it, so it does not need to exist yet.";
 
+/** Readable reasons for the setup review's refusal codes (service `IndexSetupRefused`). */
+const SETUP_FAILURES: Record<string, string> = {
+  index_setup_path_missing:
+    "A folder does not exist: the folder to index, or the data root's parent folder. Check the paths, or use Browse….",
+  index_setup_paths_overlap:
+    "The folders overlap: the folder to index, the additional folders and the data root must not contain each other or AIRK's own service folders.",
+  index_setup_storage_occupied:
+    'The data root already holds files that belong to something else. Choose an empty or new folder (the default does this).',
+  index_setup_path_redirected:
+    'A path goes through a link or junction. Choose the real folder instead.',
+  index_setup_path_not_a_folder: 'A path names a file, not a folder.',
+  index_setup_alias_unavailable:
+    "An additional folder's alias is already taken inside the folder to index (it holds a folder named @alias). Change the alias.",
+};
+
 function DraftSummary(props: { draft: Rec }): JSX.Element {
   const d = props.draft;
   const request = rec(d.request);
@@ -767,14 +795,19 @@ function SetupIndex(props: {
               setDataRoot(chosen);
               setDataTouched(true);
             } else {
-              const alias = collectionFrom(folderName(chosen)) || 'source';
-              setAdditional((current) => `${current.trim() === '' ? '' : `${current.trimEnd()}\n`}${alias}=${chosen}`);
+              setAdditional((current) => {
+                const alias = aliasFor(chosen, parseAdditional(current));
+                return `${current.trim() === '' ? '' : `${current.trimEnd()}\n`}${alias}=${chosen}`;
+              });
             }
             setPicking(null);
           }}
         />
       ) : null}
       {draftValue !== null ? <DraftSummary draft={draftValue} /> : null}
+      {SETUP_FAILURES[failedCode(draft) ?? ''] !== undefined ? (
+        <p class="error">{SETUP_FAILURES[failedCode(draft) ?? '']}</p>
+      ) : null}
       <Outcome state={draft} />
       {result !== null && token === null ? (
         <p class="error">The service answered without a review token, so this setup cannot be applied here.</p>

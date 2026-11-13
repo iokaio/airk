@@ -7,7 +7,7 @@
 // here: a folder that does not exist yet is chosen by name, and the setup
 // review says it will be created.
 import type { JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { call, type CallResult } from './api';
 import { body, OPS } from './operations';
 
@@ -78,6 +78,30 @@ function marks(entry: { airk_location?: string; indexes?: FolderEntry['indexes']
 
 const START_LABEL: Record<string, string> = { drive: 'Drive', home: 'Home', airk_location: 'AIRK data' };
 
+/** The folder above `path` (`C:\\foo` → `C:\\`, `/srv` → `/`), or '' at a root. */
+export function parentOf(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  const at = Math.max(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'));
+  if (at < 0) return '';
+  const parent = trimmed.slice(0, at);
+  if (/^[A-Za-z]:$/.test(parent)) return `${parent}\\`;
+  if (parent === '' && trimmed.startsWith('/')) return '/';
+  return parent;
+}
+
+/** A new folder name Windows and POSIX both accept (no `.`/`..`, trailing dot or space, controls, reserved names). */
+export function validFolderName(name: string): boolean {
+  return (
+    name.length >= 1 &&
+    name.length <= 128 &&
+    !/[\\/:*?"<>|\u0000-\u001f]/.test(name) &&
+    name !== '.' &&
+    name !== '..' &&
+    !/[ .]$/.test(name) &&
+    !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(name)
+  );
+}
+
 export function FolderPicker(props: {
   title: string;
   /** The folder to open at; empty or missing opens the starting list. */
@@ -94,10 +118,46 @@ export function FolderPicker(props: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState('');
+  const dialog = useRef<HTMLDivElement>(null);
+  const pathInput = useRef<HTMLInputElement>(null);
+  // Only the newest listing request may update the dialog.
+  const ticket = useRef(0);
+
+  // Focus moves into the dialog and returns to the opener when it closes.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    pathInput.current?.focus();
+    return () => opener?.focus();
+  }, []);
+
+  /** Escape closes; Tab stays inside the dialog (aria-modal). */
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      props.onClose();
+      return;
+    }
+    if (event.key !== 'Tab' || dialog.current === null) return;
+    const focusable = [
+      ...dialog.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href]'),
+    ];
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const open = async (path: string | null, after: string | null = null, showHidden = hidden): Promise<void> => {
+    const mine = ++ticket.current;
     setBusy(true);
     const answer = await browse(path, showHidden, after);
+    if (mine !== ticket.current) return;
     setBusy(false);
     if ('error' in answer) {
       setError(answer.error);
@@ -131,27 +191,29 @@ export function FolderPicker(props: {
         return;
       }
       // A folder that does not exist yet: show its nearest listed parent.
-      const parent = initial.replace(/[\\/][^\\/]*[\\/]?$/, '');
+      const parent = parentOf(initial);
       const up = parent !== '' && parent !== initial ? await browse(parent, false, null) : opened;
-      if ('listing' in up) {
+      if ('listing' in up && props.allowNew) {
+        // Index storage that does not exist yet is expected: setup creates it.
         setListing(up.listing);
-        if (props.allowNew) setNewName(initial.slice(parent.length).replace(/^[\\/]+|[\\/]+$/g, ''));
-      } else if ('listing' in first) {
-        setListing(first.listing);
+        setNewName(initial.slice(parent.length).replace(/^[\\/]+|[\\/]+$/g, ''));
+        return;
       }
+      if ('listing' in up) setListing(up.listing);
+      else if ('listing' in first) setListing(first.listing);
       setError(opened.error);
     })();
   }, []);
 
   const here = listing?.path ?? null;
   const cleanNew = newName.trim();
-  const newValid = cleanNew === '' || /^[^\\/:*?"<>|]{1,128}$/.test(cleanNew);
+  const newValid = cleanNew === '' || validFolderName(cleanNew);
   const selected = here === null ? null : cleanNew !== '' && newValid ? joinPath(here, cleanNew) : here;
 
   return (
-    <div class="overlay" role="dialog" aria-modal="true" aria-label={props.title}>
+    <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="folder-picker-title" onKeyDown={onKeyDown} ref={dialog}>
       <div class="picker">
-        <h3>{props.title}</h3>
+        <h3 id="folder-picker-title">{props.title}</h3>
         <div class="actions">
           <span class="muted">Start at:</span>
           {starts.map((entry) => (
@@ -192,7 +254,7 @@ export function FolderPicker(props: {
             {listing.breadcrumb.map((crumb, index) => (
               <span key={crumb.path}>
                 {index > 0 ? ' › ' : ''}
-                <button type="button" class="link" onClick={() => void open(crumb.path)}>
+                <button type="button" class="link" disabled={busy} onClick={() => void open(crumb.path)}>
                   {crumb.name}
                 </button>
               </span>
@@ -209,11 +271,13 @@ export function FolderPicker(props: {
             <li key={entry.path}>
               {entry.kind === 'link' ? (
                 <span class="muted" title={entry.path}>
-                  ⤷ {entry.name} (link: not followed)
+                  <span aria-hidden="true">⤷ </span>
+                  {entry.name} (link: not followed)
                 </span>
               ) : (
-                <button type="button" class="link" title={entry.path} onClick={() => void open(entry.path)}>
-                  📁 {entry.name}
+                <button type="button" class="link" title={entry.path} disabled={busy} onClick={() => void open(entry.path)}>
+                  <span aria-hidden="true">📁 </span>
+                  {entry.name}
                 </button>
               )}
               {entry.hidden ? <span class="muted"> (hidden)</span> : null}

@@ -493,6 +493,15 @@ fn request_is_read_only(method: &ControlMethod) -> bool {
     )
 }
 fn failure_response(error: anyhow::Error, read_only: bool) -> ControlResponse {
+    // An index setup review that refused its folders names why (missing,
+    // overlapping, occupied, redirected) instead of the generic code.
+    if let Some(refused) =
+        error.downcast_ref::<airk_catalog_control::catalog_index_setup_control::IndexSetupRefused>()
+    {
+        return ControlResponse::Failure {
+            code: refused.0.into(),
+        };
+    }
     if let Some(unknown) = error
         .downcast_ref::<airk_catalog_control::catalog_coordinator::CatalogApplyOutcomeUnknown>(
     ) {
