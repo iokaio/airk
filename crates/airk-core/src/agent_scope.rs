@@ -56,6 +56,14 @@ pub enum Requested<'a> {
         indexes: &'a [IndexId],
         sets: &'a [QueryProjectId],
     },
+    /// U109: with agent choice off, the named indexes and sets narrow the
+    /// connection's assigned set (its default scope); never outside it.
+    Narrowed {
+        indexes: &'a [String],
+        sets: &'a [String],
+        default_indexes: &'a [IndexId],
+        default_sets: &'a [QueryProjectId],
+    },
 }
 
 /// The choice rules of one read. `connection` is the open connection's
@@ -67,22 +75,30 @@ pub fn requested<'a>(
     connection: Option<&'a OpenConnectionState>,
 ) -> Result<Requested<'a>, &'static str> {
     let named = !index_names.is_empty() || !set_names.is_empty();
+    let assigned = |open: &OpenConnectionState| {
+        !open.default_index_ids.is_empty() || !open.default_index_set_ids.is_empty()
+    };
     match connection {
-        _ if named && connection.is_some_and(|open| open.agent_choice == AgentChoice::Off) => {
-            Err(open_refusal::AGENT_SCOPE_CHOICE_DISABLED)
+        // U109: choice off narrows within the assigned set, never outside it.
+        Some(open) if named && open.agent_choice == AgentChoice::Off => {
+            if !assigned(open) {
+                return Err(open_refusal::AGENT_DEFAULT_SCOPE_UNSET);
+            }
+            Ok(Requested::Narrowed {
+                indexes: index_names,
+                sets: set_names,
+                default_indexes: &open.default_index_ids,
+                default_sets: &open.default_index_set_ids,
+            })
         }
         _ if named => Ok(Requested::Named {
             indexes: index_names,
             sets: set_names,
         }),
-        Some(open)
-            if !open.default_index_ids.is_empty() || !open.default_index_set_ids.is_empty() =>
-        {
-            Ok(Requested::Defaults {
-                indexes: &open.default_index_ids,
-                sets: &open.default_index_set_ids,
-            })
-        }
+        Some(open) if assigned(open) => Ok(Requested::Defaults {
+            indexes: &open.default_index_ids,
+            sets: &open.default_index_set_ids,
+        }),
         _ => Err(open_refusal::AGENT_DEFAULT_SCOPE_UNSET),
     }
 }
@@ -106,26 +122,48 @@ fn live_index<'a>(listing: &'a CatalogListing, id: &IndexId) -> Option<&'a Index
 }
 
 /// One index name: an `idx_` id of a live index, else the exact name of
-/// exactly one live index.
+/// exactly one live index, else a unique case-insensitive name.
 pub fn index_by_name(listing: &CatalogListing, name: &str) -> Result<IndexId, &'static str> {
     if let Ok(id) = name.parse::<IndexId>() {
         return live_index(listing, &id)
             .map(|index| index.id)
             .ok_or(open_refusal::SCOPE_NAME_UNKNOWN);
     }
-    let mut found = listing
+    let names: Vec<(IndexId, &str)> = listing
         .indexes
         .iter()
-        .filter(|index| !index.tombstone && index.name == name);
-    match (found.next(), found.next()) {
-        (Some(index), None) => Ok(index.id),
-        (Some(_), Some(_)) => Err(open_refusal::SCOPE_NAME_AMBIGUOUS),
-        (None, _) => Err(open_refusal::SCOPE_NAME_UNKNOWN),
+        .filter(|index| !index.tombstone)
+        .map(|index| (index.id, index.name.as_str()))
+        .collect();
+    select_name(&names, name)
+}
+
+/// [`by_name`] over borrowed candidates.
+fn select_name<T: Copy>(candidates: &[(T, &str)], name: &str) -> Result<T, &'static str> {
+    let exact: Vec<T> = candidates
+        .iter()
+        .filter(|(_, candidate)| *candidate == name)
+        .map(|(id, _)| *id)
+        .collect();
+    let found = if exact.is_empty() {
+        let folded = name.to_lowercase();
+        candidates
+            .iter()
+            .filter(|(_, candidate)| candidate.to_lowercase() == folded)
+            .map(|(id, _)| *id)
+            .collect()
+    } else {
+        exact
+    };
+    match found.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(open_refusal::SCOPE_NAME_UNKNOWN),
+        _ => Err(open_refusal::SCOPE_NAME_AMBIGUOUS),
     }
 }
 
 /// One index set name: a `prj_` id of a present set, else the exact name of
-/// exactly one set.
+/// exactly one set, else a unique case-insensitive name.
 pub fn set_by_name(listing: &CatalogListing, name: &str) -> Result<QueryProjectId, &'static str> {
     if let Ok(id) = name.parse::<QueryProjectId>() {
         return listing
@@ -135,15 +173,12 @@ pub fn set_by_name(listing: &CatalogListing, name: &str) -> Result<QueryProjectI
             .map(|project| project.id)
             .ok_or(open_refusal::SCOPE_NAME_UNKNOWN);
     }
-    let mut found = listing
+    let names: Vec<(QueryProjectId, &str)> = listing
         .projects
         .iter()
-        .filter(|project| project.name == name);
-    match (found.next(), found.next()) {
-        (Some(project), None) => Ok(project.id),
-        (Some(_), Some(_)) => Err(open_refusal::SCOPE_NAME_AMBIGUOUS),
-        (None, _) => Err(open_refusal::SCOPE_NAME_UNKNOWN),
-    }
+        .map(|project| (project.id, project.name.as_str()))
+        .collect();
+    select_name(&names, name)
 }
 
 /// The live member indexes of a set, in id order.
@@ -162,9 +197,17 @@ pub fn resolve(
     listing: &CatalogListing,
     requested: Requested<'_>,
 ) -> Result<Vec<IndexId>, &'static str> {
+    if let Requested::Narrowed { .. } = requested {
+        return if outside_assigned_set(listing, requested)?.is_empty() {
+            narrowed(listing, requested)
+        } else {
+            Err(open_refusal::AGENT_SCOPE_CHOICE_DISABLED)
+        };
+    }
     let mut indexes = BTreeSet::new();
     let mut sets = Vec::new();
     match requested {
+        Requested::Narrowed { .. } => unreachable!("handled above"),
         Requested::Named {
             indexes: names,
             sets: set_names,
@@ -205,6 +248,63 @@ pub fn resolve(
         return Err(open_refusal::AGENT_SCOPE_TOO_LARGE);
     }
     Ok(indexes.into_iter().collect())
+}
+
+/// The named part of a narrowed request, resolved (sets expanded).
+fn narrowed(
+    listing: &CatalogListing,
+    requested: Requested<'_>,
+) -> Result<Vec<IndexId>, &'static str> {
+    let Requested::Narrowed { indexes, sets, .. } = requested else {
+        return resolve(listing, requested);
+    };
+    resolve(listing, Requested::Named { indexes, sets })
+}
+
+/// U109: the named indexes (sets expanded) of a narrowed request that lie
+/// outside the connection's assigned set, in id order; empty when the
+/// request stays inside it. Other requests have nothing outside.
+pub fn outside_assigned_set(
+    listing: &CatalogListing,
+    requested: Requested<'_>,
+) -> Result<Vec<IndexId>, &'static str> {
+    let Requested::Narrowed {
+        default_indexes,
+        default_sets,
+        ..
+    } = requested
+    else {
+        return Ok(Vec::new());
+    };
+    let assigned: BTreeSet<IndexId> = resolve(
+        listing,
+        Requested::Defaults {
+            indexes: default_indexes,
+            sets: default_sets,
+        },
+    )?
+    .into_iter()
+    .collect();
+    Ok(narrowed(listing, requested)?
+        .into_iter()
+        .filter(|id| !assigned.contains(id))
+        .collect())
+}
+
+/// The refusal message of a narrowed request outside the assigned set.
+pub fn outside_message(listing: &CatalogListing, outside: &[IndexId]) -> String {
+    let names: Vec<String> = outside
+        .iter()
+        .map(|id| match live_index(listing, id) {
+            Some(index) => format!("{} ({id})", index.name),
+            None => id.to_string(),
+        })
+        .collect();
+    format!(
+        "{} {} outside this connection's assigned set; choose indexes inside it, or ask the user to let the agent choose indexes in the AIRK Explorer.",
+        names.join(", "),
+        if names.len() == 1 { "is" } else { "are" }
+    )
 }
 
 /// Check stored defaults against the catalog: every index live, every set

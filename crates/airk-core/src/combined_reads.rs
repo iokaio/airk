@@ -515,7 +515,7 @@ pub struct SharedBudgets {
     /// U107: every member's count allocation, exactly (1..=100); `limit` is
     /// then the overall cap. Absent, the encoding is the pre-U107 one and the
     /// count budget is split evenly. Byte, deadline and verification budgets
-    /// stay shared either way. Contract step: not yet applied by `allocate`.
+    /// stay shared either way.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -534,6 +534,30 @@ fn present_per_index<'de, D: serde::Deserializer<'de>>(
 /// U107: the per-index count times the member count exceeds the call's
 /// overall count cap (its `limit`, or the per-call maximum of 100).
 pub const LIMIT_PER_INDEX_TOO_LARGE: &str = "combined_limit_per_index_too_large";
+
+/// U107: `limit_per_index` times the member count exceeds the overall cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitPerIndexTooLarge;
+impl std::fmt::Display for LimitPerIndexTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(LIMIT_PER_INDEX_TOO_LARGE)
+    }
+}
+impl std::error::Error for LimitPerIndexTooLarge {}
+
+/// U107: the overall count cap of a read with `limit_per_index` over
+/// `members` indexes: the caller's `limit`, else members x per-index. The
+/// per-index total may not exceed that cap nor the per-call maximum of 100.
+pub fn per_index_cap(members: usize, limit: Option<usize>, per_index: usize) -> Result<usize> {
+    ensure!(
+        (1..=MAX_SELECTION).contains(&members) && (1..=100).contains(&per_index),
+        "invalid limit_per_index request"
+    );
+    let total = members * per_index;
+    let cap = limit.unwrap_or(total);
+    ensure!(total <= cap && cap <= 100, LimitPerIndexTooLarge);
+    Ok(cap)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -587,13 +611,22 @@ impl SharedBudgets {
             "noncanonical combined members"
         );
         let n = members.len() as u64;
+        // U107: exactly the per-index count, under the overall cap.
+        if let Some(per_index) = self.limit_per_index {
+            ensure!(
+                members.len() * per_index <= self.limit,
+                LimitPerIndexTooLarge
+            );
+        }
         let part = |total: u64, offset: usize| total / n + u64::from((offset as u64) < total % n);
         Ok(members
             .into_iter()
             .enumerate()
             .map(|(offset, index_id)| MemberAllocation {
                 index_id,
-                limit: part(self.limit as u64, offset) as usize,
+                limit: self
+                    .limit_per_index
+                    .unwrap_or_else(|| part(self.limit as u64, offset) as usize),
                 max_bytes: part(self.max_bytes as u64, offset) as usize,
                 deadline_ms: part(self.deadline_ms, offset),
                 verification_max_sources: part(self.verification_max_sources as u64, offset)

@@ -255,6 +255,7 @@ fn request() -> Result<CompositionRequest> {
         authority: Sha256Digest::from_bytes([7; 32]),
         observed_from_unix_ms: 10,
         observed_to_unix_ms: 20,
+        index_names: Default::default(),
     })
 }
 fn sources() -> Result<Vec<MemberSource>> {
@@ -275,6 +276,7 @@ fn input(i: u8, hits: Vec<Value>) -> Result<MemberInput> {
         exhausted: false,
         index_id: index(i),
         sources: sources()?,
+        elapsed_ms: None,
         result: json!({"publication":revision(i as u64),"collection":"fixture",
         "hits":hits,"truncated":false,"search_execution":{"served_mode":"lexical","incomplete":false},
         "source_verification":{"full_native_receipt":{"references":[1,2],"dated":true}}}),
@@ -296,6 +298,7 @@ fn single_required_member_failure_exposes_exact_safe_read_retry_without_losing_n
         exhausted: false,
         result: hint.clone(),
         sources: vec![],
+        elapsed_ms: None,
     };
     let result = compose(&composition, vec![failed.clone()])?;
     let value = serde_json::to_value(&result)?;
@@ -391,6 +394,7 @@ fn failed_and_unqueried_members_keep_complete_native_retry_data_in_report_and_re
         exhausted: false,
         index_id: index(2),
         sources: vec![],
+        elapsed_ms: None,
         result: json!({"isError":true,
         "content":[{"type":"text","text":"helper unavailable"}],"structuredContent":{"error":{"code":"helper_unavailable",
         "retry":{"fresh_brokerage_required":true,"query_replay_safe":false},"custom_nested_detail":[1,2,3]},
@@ -542,6 +546,7 @@ fn actual_projection_shapes_have_qualified_real_pointer_targets() -> Result<()> 
                 exhausted: false,
                 index_id: index(1),
                 sources: sources()?,
+                elapsed_ms: None,
                 result: body.clone(),
             }],
         )?;
@@ -567,6 +572,7 @@ fn textual_native_envelope_is_materialized_without_losing_original_transport_dat
             exhausted: false,
             index_id: index(1),
             sources: sources()?,
+            elapsed_ms: None,
             result: original.clone(),
         }],
     )?;
@@ -579,6 +585,7 @@ fn textual_native_envelope_is_materialized_without_losing_original_transport_dat
         exhausted: false,
         index_id: index(1),
         sources: sources()?,
+        elapsed_ms: None,
         result: json!({"content":[{"type":"text","text":"not JSON evidence"}],"isError":false}),
     };
     assert!(compose(&request, vec![bad]).is_err());
@@ -610,6 +617,7 @@ fn exhausted_cursor_members_retain_exact_native_observations_without_false_parti
         exhausted: true,
         index_id: index(2),
         sources: vec![],
+        elapsed_ms: None,
         result: json!({"publication":revision(2),"files":17,"index_state":"available","observed_unix_ms":20}),
     };
     let result = compose(
@@ -710,6 +718,7 @@ fn conditional_file_info_qualifies_its_exact_metadata_root_without_inventing_loc
                 exhausted: false,
                 result,
                 sources: sources()?,
+                elapsed_ms: None,
             }],
         )?;
         assert_eq!(result.ranking.len(), 1);
@@ -789,6 +798,7 @@ fn capability_common_fields_roundtrip_one_two_and_thirty_two_complete_members() 
                 exhausted: false,
                 result: body.clone(),
                 sources: vec![],
+                elapsed_ms: None,
             })
             .collect();
         let response = compose_capabilities(&request, inputs)?;
@@ -834,6 +844,7 @@ fn capability_sharing_keeps_failed_member_and_distinct_fields_and_other_reads_in
             exhausted: false,
             result: first.clone(),
             sources: vec![],
+            elapsed_ms: None,
         },
         MemberInput {
             index_id: index(2),
@@ -841,6 +852,7 @@ fn capability_sharing_keeps_failed_member_and_distinct_fields_and_other_reads_in
             exhausted: false,
             result: failure.clone(),
             sources: vec![],
+            elapsed_ms: None,
         },
     ];
     let ordinary = compose(&request, inputs.clone())?;
@@ -926,6 +938,7 @@ fn thirty_two_full_native_shaped_search_members_fit_and_materialize_without_drop
             exhausted: false,
             result: body,
             sources: sources()?,
+            elapsed_ms: None,
         });
     }
     let result = compose(&request, inputs)?;
@@ -1053,5 +1066,35 @@ fn member_elapsed_time_is_optional_and_absent_by_default() -> Result<()> {
     let decoded: ComposedMember = serde_json::from_value(member.clone())?;
     assert_eq!(decoded.elapsed_ms, Some(17));
     assert_eq!(serde_json::to_value(&decoded)?, member);
+    Ok(())
+}
+
+/// U108 behaviour: a read member carries its own elapsed time and every
+/// member and ranked reference its catalog display name; an unqueried
+/// member has no elapsed time, and without names nothing is added.
+#[test]
+fn members_carry_their_elapsed_time_and_index_names() -> Result<()> {
+    let mut composition = request()?;
+    composition.index_names = [(index(1), "Docs".to_owned()), (index(2), "Code".to_owned())]
+        .into_iter()
+        .collect();
+    let mut read = input(1, vec![hit("api/one.rs", "one")])?;
+    read.elapsed_ms = Some(12);
+    // Member 2 is never queried.
+    let combined = compose(&composition, vec![read])?;
+    let value = serde_json::to_value(&combined)?;
+    assert_eq!(value["members"][0]["elapsed_ms"], 12);
+    assert_eq!(value["members"][0]["index_name"], "Docs");
+    assert!(value["members"][1].get("elapsed_ms").is_none());
+    assert_eq!(value["members"][1]["index_name"], "Code");
+    assert_eq!(value["ranking"][0]["index_name"], "Docs");
+    // The origin stays name-free: follow-up reads reuse it.
+    assert!(value["ranking"][0]["origin"].get("index_name").is_none());
+    let unnamed = serde_json::to_value(compose(
+        &request()?,
+        vec![input(1, vec![hit("api/one.rs", "one")])?],
+    )?)?;
+    assert!(unnamed["members"][0].get("index_name").is_none());
+    assert!(unnamed["ranking"][0].get("index_name").is_none());
     Ok(())
 }

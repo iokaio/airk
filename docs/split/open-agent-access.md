@@ -13,9 +13,11 @@ Line citations are from that trace; verify them before editing.
   sets) and an **agent choice** flag, `off` by default. The Explorer's applied
   search scope and `airkctl agents default` set them; a change takes effect on
   the next call.
-- Choice `off`: every call reads exactly the default scope. A call naming
-  indexes or sets is refused `agent_scope_choice_disabled`; the list tool is not
-  in `tools/list` and refuses if called.
+- Choice `off` (amended by U109): never outside the assigned set. A call naming
+  nothing reads the whole default scope (the assigned set); a call may name
+  indexes or sets to narrow it, and anything outside it is refused
+  `agent_scope_choice_disabled` with the outside indexes named. The list tool
+  is not in `tools/list` and refuses if called.
 - Choice `on`: read tools accept `index_ids` and `index_set_ids` (ids or exact
   names, union, at most 32 each), and `list_indexes` lists every index and set
   with id, name, description and indexed paths (a set lists its member indexes).

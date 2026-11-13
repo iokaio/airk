@@ -2002,3 +2002,50 @@ async fn delayed_old_authenticated_clock_cannot_replace_newer_cached_authority()
     f.gateway.close().await;
     Ok(())
 }
+
+/// U106(f): a catalog revision move fences a grant-bound connection's
+/// delivery ticket, but an open connection's ticket follows the current
+/// issue of its namespace, so the same TCP connection keeps delivering.
+#[tokio::test]
+async fn an_open_connection_survives_a_revision_move_and_a_scoped_one_does_not()
+-> anyhow::Result<()> {
+    let f = fixture(57421)?;
+    let credential = f
+        .gateway
+        .0
+        .credentials
+        .lock()
+        .unwrap()
+        .authenticate(&f.token, now_ms())?;
+    let open = airk_core::service_http::HttpSelection::Open {
+        selection: airk_core::service_http::OpenHttpSelection {
+            namespace: credential.selection.namespace(),
+        },
+    };
+    let scoped = ConnectionFence::new(f.gateway.0.native_gate.clone());
+    scoped.capture(&credential.selection)?;
+    let opened = ConnectionFence::new(f.gateway.0.native_gate.clone());
+    opened.capture(&open)?;
+    let before = opened.authenticated_ticket()?;
+    let next = airk_core::index_catalog::CatalogRevision::INITIAL.next()?;
+    f.gateway
+        .0
+        .native_gate
+        .observe_catalog_commit(airk_core::index_catalog::CatalogRevision::INITIAL, next)?;
+    // Grant-bound: fenced, and cannot recapture on the same connection.
+    assert!(scoped.check().is_err());
+    assert!(scoped.capture(&credential.selection).is_err());
+    assert!(matches!(
+        scoped.poll(|| Poll::Ready(Ok(7usize))),
+        Poll::Ready(Err(_))
+    ));
+    // Open: the same connection keeps checking, capturing and delivering,
+    // now under the current issue.
+    opened.check()?;
+    opened.capture(&open)?;
+    let after = opened.authenticated_ticket()?;
+    assert_ne!(before, after);
+    let delivered = opened.poll(|| Poll::Ready(Ok(7usize)));
+    assert!(matches!(delivered, Poll::Ready(Ok(7))));
+    Ok(())
+}

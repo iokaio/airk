@@ -30,6 +30,11 @@ pub struct CompositionRequest {
     pub authority: Sha256Digest,
     pub observed_from_unix_ms: u64,
     pub observed_to_unix_ms: u64,
+    /// U108: each member's catalog display name, as the snapshot read it.
+    /// Display text only: no identity input. A member without one composes
+    /// without `index_name`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub index_names: BTreeMap<IndexId, String>,
 }
 
 /// A native-validated source projection, not a source spelling from a hit.
@@ -53,6 +58,9 @@ pub struct MemberInput {
     /// Complete native envelope, or the complete canonical structured body.
     pub result: Value,
     pub sources: Vec<MemberSource>,
+    /// U108: the member read's own elapsed time (absent for an exhausted
+    /// member resumed from its retained publication).
+    pub elapsed_ms: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +76,11 @@ pub enum MemberOutcome {
 #[serde(deny_unknown_fields)]
 pub struct ComposedMember {
     pub index_id: IndexId,
+    /// U108: the index's catalog display name; display text only (no scope,
+    /// snapshot, cursor or continuation identity input), absent when the
+    /// composer was given none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_name: Option<String>,
     pub is_error: bool,
     pub allocation: MemberAllocation,
     pub outcome: MemberOutcome,
@@ -80,8 +93,7 @@ pub struct ComposedMember {
     /// absent for an unqueried or resumed-exhausted one. Documented timing:
     /// it is no input of any scope, snapshot, cursor or continuation
     /// identity; like the observation interval, it is part of the delivered
-    /// bytes the delivery receipt's result digest covers. Contract step: not
-    /// yet measured.
+    /// bytes the delivery receipt's result digest covers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elapsed_ms: Option<u64>,
 }
@@ -94,6 +106,10 @@ pub struct RankedReference {
     /// JSON Pointer into this complete combined response, not a transport token.
     pub result_pointer: String,
     pub index_id: IndexId,
+    /// U108: the index's catalog display name (display text only; never part
+    /// of the origin, which follow-up reads reuse).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_name: Option<String>,
     pub local_rank: usize,
     pub rank_contribution: f64,
     pub origin: RankedOrigin,
@@ -481,6 +497,7 @@ fn compose_inner(
             });
             members.push(ComposedMember {
                 index_id: allocation.index_id,
+                index_name: request.index_names.get(&allocation.index_id).cloned(),
                 is_error: false,
                 allocation,
                 outcome: MemberOutcome::Unqueried,
@@ -561,6 +578,7 @@ fn compose_inner(
                 ranking.push(RankedReference {
                     result_pointer: format!("/members/{offset}/result{body_pointer}{pointer}"),
                     index_id: allocation.index_id,
+                    index_name: request.index_names.get(&allocation.index_id).cloned(),
                     local_rank,
                     rank_contribution: rank_contribution(local_rank),
                     origin: RankedOrigin::from_full(
@@ -577,6 +595,7 @@ fn compose_inner(
         }
         members.push(ComposedMember {
             index_id: allocation.index_id,
+            index_name: request.index_names.get(&allocation.index_id).cloned(),
             is_error: member_failed,
             allocation,
             outcome: if member_failed {
@@ -588,7 +607,11 @@ fn compose_inner(
             },
             result: input.result,
             cutoff: (input.exhausted && !member_failed).then(|| "continuation_exhausted".into()),
-            elapsed_ms: None,
+            elapsed_ms: if input.exhausted {
+                None
+            } else {
+                input.elapsed_ms
+            },
         });
     }
     // All candidates have a single origin/index contribution. Independent

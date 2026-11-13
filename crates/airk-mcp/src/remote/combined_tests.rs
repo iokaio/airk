@@ -235,6 +235,7 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
                 primary: true,
                 aliases: Vec::new(),
             }],
+            elapsed_ms: None,
         });
         tools.close().await?;
     }
@@ -253,6 +254,7 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
             authority: Sha256Digest::from_bytes([11; 32]),
             observed_from_unix_ms: 1,
             observed_to_unix_ms: 2,
+            index_names: Default::default(),
         },
         inputs,
     )?;

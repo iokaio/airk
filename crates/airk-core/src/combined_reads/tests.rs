@@ -695,3 +695,97 @@ fn shared_budget_encodings_match_the_reviewed_fixture() -> Result<()> {
     );
     Ok(())
 }
+
+/// U107 behaviour: the reviewed allocation cases of
+/// `fixtures/wire/combined_budgets.json`, through `per_index_cap` and
+/// `SharedBudgets::allocate`.
+#[test]
+fn per_index_allocations_match_the_reviewed_fixture() -> Result<()> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/wire/combined_budgets.json"
+    ))?;
+    for case in fixture["allocations"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let members = case["members"].as_u64().unwrap() as usize;
+        let limit = case["limit"].as_u64().map(|limit| limit as usize);
+        let per_index = case["limit_per_index"].as_u64().map(|value| value as usize);
+        let indexes: Vec<_> = (1..=members as u8).map(index).collect();
+        let selection = QuerySelection {
+            project_ids: Vec::new(),
+            index_ids: Some(indexes.clone()),
+            member_availability: MemberAvailability::Report,
+        }
+        .resolve_open(
+            &indexes
+                .iter()
+                .map(|id| (*id, vec![root(1)]))
+                .collect::<Vec<_>>(),
+            agent_observation(),
+        )?;
+        let overall = match per_index {
+            Some(per_index) => match per_index_cap(members, limit, per_index) {
+                Ok(cap) => cap,
+                Err(error) => {
+                    assert!(error.is::<LimitPerIndexTooLarge>(), "{name}: {error}");
+                    assert_eq!(case["refused"], LIMIT_PER_INDEX_TOO_LARGE, "{name}");
+                    continue;
+                }
+            },
+            None => limit.unwrap(),
+        };
+        assert!(case.get("refused").is_none(), "{name} was not refused");
+        if let Some(expected) = case.get("expected_overall_limit") {
+            assert_eq!(overall as u64, expected.as_u64().unwrap(), "{name}");
+        }
+        let budgets = SharedBudgets {
+            limit: overall,
+            max_bytes: case["max_bytes"].as_u64().unwrap() as usize,
+            deadline_ms: 2000,
+            verification_max_sources: 0,
+            verification_max_bytes: 0,
+            verification_deadline_ms: 0,
+            limit_per_index: per_index,
+        };
+        let allocations = budgets.allocate(&selection)?;
+        let limits: Vec<u64> = allocations.iter().map(|a| a.limit as u64).collect();
+        match case.get("expected_limits") {
+            Some(expected) => assert_eq!(serde_json::to_value(&limits)?, *expected, "{name}"),
+            None => assert!(
+                limits
+                    .iter()
+                    .all(|limit| Some(*limit) == case["expected_limits_each"].as_u64()),
+                "{name}"
+            ),
+        }
+        if let Some(expected) = case.get("expected_max_bytes") {
+            let bytes: Vec<u64> = allocations.iter().map(|a| a.max_bytes as u64).collect();
+            assert_eq!(serde_json::to_value(&bytes)?, *expected, "{name}");
+        }
+    }
+    // A per-index request whose total exceeds the carried cap is refused by
+    // `allocate` itself, not only by the cap helper.
+    let selection = QuerySelection {
+        project_ids: Vec::new(),
+        index_ids: Some(vec![index(1), index(2)]),
+        member_availability: MemberAvailability::Report,
+    }
+    .resolve_open(
+        &[(index(1), vec![root(1)]), (index(2), vec![root(1)])],
+        agent_observation(),
+    )?;
+    let over = SharedBudgets {
+        limit: 9,
+        max_bytes: 8192,
+        deadline_ms: 2000,
+        verification_max_sources: 0,
+        verification_max_bytes: 0,
+        verification_deadline_ms: 0,
+        limit_per_index: Some(5),
+    };
+    assert!(
+        over.allocate(&selection)
+            .unwrap_err()
+            .is::<LimitPerIndexTooLarge>()
+    );
+    Ok(())
+}

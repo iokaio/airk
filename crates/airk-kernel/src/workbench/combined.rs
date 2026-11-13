@@ -49,6 +49,11 @@ pub fn operation_catalog() -> Value {
             .extend(constraints.as_array().unwrap().iter().cloned());
     }
     catalog["scope"] = json!("explicit frozen Project/index selection");
+    // U107: one declaration for every operation with `limit` (the combined
+    // capabilities reply embeds this catalog under the public body bound, so
+    // it is not repeated per operation; the MCP catalogs describe it).
+    catalog["combined_controls"] =
+        json!({"limit_per_index":{"type":"integer","minimum":1,"maximum":100,"with":"limit"}});
     catalog
 }
 
@@ -75,6 +80,7 @@ fn parse_combined_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
             "--index-ids" => Some("index_ids"),
             "--member-availability" => Some("member_availability"),
             "--origin-publication" => Some("origin_publication"),
+            "--limit-per-index" => Some("limit_per_index"),
             _ => None,
         };
         if let Some(key) = key {
@@ -88,6 +94,12 @@ fn parse_combined_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
             );
             let value = if key.ends_with("_ids") {
                 serde_json::from_str(value)?
+            } else if key == "limit_per_index" {
+                json!(
+                    value
+                        .parse::<u64>()
+                        .context("--limit-per-index takes a number")?
+                )
             } else {
                 json!(value)
             };
@@ -174,6 +186,17 @@ fn validate_combined_step(
     for key in SELECTORS {
         native.args.remove(*key);
     }
+    // U107: validated by the combined owner, which removes it before the
+    // native read.
+    if let Some(per_index) = native.args.remove("limit_per_index") {
+        ensure!(
+            per_index
+                .as_u64()
+                .is_some_and(|value| (1..=100).contains(&value))
+                && step_takes_limit(&native.tool),
+            "limit_per_index requires an integer 1..100 on a read with limit"
+        );
+    }
     if let Some(publication) = native.args.remove("origin_publication") {
         publication
             .as_str()
@@ -188,6 +211,13 @@ fn validate_combined_step(
         );
     }
     validate_step(&native, prefix, bound)
+}
+
+/// Whether a Workbench operation's native schema takes `limit`.
+fn step_takes_limit(tool: &str) -> bool {
+    super::operation_catalog()["operations"][tool]["properties"]
+        .get("limit")
+        .is_some()
 }
 
 fn needs_origin(tool: &str) -> bool {
@@ -991,6 +1021,42 @@ mod tests {
         ))?;
         let error=run(execute(request(json!({"schema":REQUEST_SCHEMA,"mode":"execute","plan":prepared.plan,"budgets":{"calls":11}})),selection(),identity(),|_,_|async{panic!("changed prepared budget must not dispatch")})).unwrap_err();
         assert!(error.to_string().contains("controls changed"));
+        Ok(())
+    }
+
+    /// U107: the Workbench offers and passes the per-index count exactly as
+    /// the CLI and MCP do; the combined owner applies it.
+    #[test]
+    fn per_index_counts_pass_through_to_combined_reads() -> Result<()> {
+        let catalog = operation_catalog();
+        assert_eq!(
+            catalog["combined_controls"]["limit_per_index"]["maximum"],
+            100
+        );
+        let command = "/search Queue --limit 8 --limit-per-index 4";
+        let prepared = run(execute(
+            request(json!({"schema":REQUEST_SCHEMA,"text":command})),
+            selection(),
+            identity(),
+            |_, _| async { panic!("prepare must be inert") },
+        ))?;
+        assert_eq!(prepared.plan.steps[0].args["limit_per_index"], 4);
+        assert_eq!(prepared.plan.steps[0].args["limit"], 8);
+        for bad in [
+            "/search Queue --limit-per-index 0",
+            "/search Queue --limit-per-index many",
+        ] {
+            assert!(
+                run(execute(
+                    request(json!({"schema":REQUEST_SCHEMA,"text":bad})),
+                    selection(),
+                    identity(),
+                    |_, _| async { panic!("an invalid plan must not dispatch") },
+                ))
+                .is_err(),
+                "{bad}"
+            );
+        }
         Ok(())
     }
 

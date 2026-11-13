@@ -14,7 +14,7 @@ An open connection admits the agent to AIRK; which indexes it reads is the defau
 
 **Let the agent choose indexes** is off by default:
 
-- **Off**: the agent searches only its default scope. It cannot list or pick indexes, and a call that names an index or index set is refused.
+- **Off**: the agent searches only its default scope. Never outside the assigned set: a request may narrow to some of its indexes or index sets (for a more specific follow-up), but the agent cannot list indexes, and a request naming an index outside the assigned set is refused.
 - **On**: the agent can list every index and index set on this computer, with their descriptions and indexed folders, and search any of them. A call that names nothing still uses the default scope. Any agent with this setting on can read every index of your user account.
 
 After the setting changes, a running agent may need to reload its tool list: in Claude Code run `/mcp`; restart Codex; in VS Code restart the AIRK server from MCP: List Servers if the tool list does not change. Descriptions are edited in Indexing › Search scope.

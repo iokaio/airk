@@ -40,6 +40,7 @@ use std::{
 };
 
 mod cursor;
+mod member_runner;
 
 // A canonical body is bounded separately from its public MCP presentation.
 // structuredContent retains N bytes; quoting the identical JSON in content
@@ -1699,6 +1700,272 @@ impl<S: Session> Backend<S> {
         Ok(result)
     }
 
+    /// One member of a combined read (U107: run concurrently by
+    /// `member_runner`, consumed in canonical order). The member's own
+    /// deadline is min(the read's remaining deadline, its allocation),
+    /// measured from the read's one start; a member that would start after
+    /// the read's deadline is skipped (composed as unqueried), as before.
+    async fn read_member(
+        &self,
+        plan: &MemberPlan<'_>,
+        member: &Member<S::Authority, S::Child>,
+        allocation: &airk_core::combined_reads::MemberAllocation,
+    ) -> Result<MemberRead> {
+        use airk_core::verification::{VerificationAllocation, VerificationMode};
+        let budgets = plan.budgets;
+        let started = plan.started;
+        let context = plan.context;
+        if plan
+            .continuation
+            .is_some_and(|cursor| cursor.is_exhausted(member.index.id))
+        {
+            let result = plan
+                .resume_status
+                .get(&member.index.id)
+                .cloned()
+                .ok_or(ScopeReadRefused)?;
+            return Ok(MemberRead::Read {
+                input: airk_kernel::combined_reads::MemberInput {
+                    index_id: member.index.id,
+                    result: canonical_body(&result),
+                    is_error: false,
+                    exhausted: true,
+                    sources: vec![],
+                    elapsed_ms: None,
+                },
+                exhausted_cursor: true,
+                cursor: None,
+                verification_failed: false,
+            });
+        }
+        if !allocation.admits_read()
+            || started.elapsed() >= Duration::from_millis(budgets.deadline_ms)
+        {
+            return Ok(MemberRead::Skipped);
+        }
+        let member_started = Instant::now();
+        let child = self.child(member)?;
+        let mut child_args = plan.args.clone();
+        // U107: a read control of the combined owner, never a native argument.
+        child_args.remove("limit_per_index");
+        if let Some(continuation) = plan.continuation {
+            child_args.remove("cursor");
+            if let Some(cursor) = continuation.cursor(member.index.id) {
+                child_args.insert("cursor".into(), json!(cursor));
+            }
+        }
+        let properties = plan.properties;
+        if properties.contains_key("limit") {
+            child_args.insert("limit".into(), json!(allocation.limit));
+        }
+        if properties.contains_key("max_bytes") {
+            child_args.insert("max_bytes".into(), json!(allocation.max_bytes));
+        }
+        if properties.contains_key("response_mode") {
+            child_args.insert("response_mode".into(), json!("full"));
+        }
+        if properties.contains_key("include_status") {
+            child_args.insert("include_status".into(), json!(true));
+        }
+        if plan.enabled {
+            child_args.retain(|key, _| !key.starts_with("verification"));
+            child_args.insert("verification".into(), json!("off"));
+        }
+        let remaining = Duration::from_millis(budgets.deadline_ms)
+            .saturating_sub(started.elapsed())
+            .min(Duration::from_millis(allocation.deadline_ms));
+        let mut result = match tokio::time::timeout(
+            remaining,
+            child.call_with_read_context(
+                plan.tool.into(),
+                child_args,
+                plan.capacity,
+                context.narrowed(Instant::now() + remaining),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => failure(
+                "member_observation_unavailable",
+                None,
+                &self.selection.requested(),
+            ),
+            Err(_) => failure(
+                "member_deadline_exhausted",
+                None,
+                &self.selection.requested(),
+            ),
+        };
+        if let Some(expected) = plan.origin {
+            let body = canonical_body(&result);
+            let actual = publication_token(&body).map(str::to_owned);
+            if actual.as_deref() != Some(expected) {
+                result = failure(
+                    "origin_publication_expired",
+                    Some(true),
+                    &self.selection.requested(),
+                );
+            }
+        }
+        if let Some(continuation) = plan.continuation {
+            let body = canonical_body(&result);
+            if publication_token(&body).is_none_or(|token| {
+                continuation
+                    .validate_publication(member.index.id, token)
+                    .is_err()
+            }) {
+                return Ok(MemberRead::Stop(failure(
+                    "combined_cursor_expired",
+                    Some(true),
+                    &self.selection.requested(),
+                )));
+            }
+        }
+        let mut published_sources = Vec::new();
+        if !result_failed(&result)
+            && (plan.origin.is_some()
+                || !airk_core::verification::ReferenceInventory::collect(&canonical_body(&result))
+                    .references
+                    .is_empty())
+        {
+            let body = canonical_body(&result);
+            let expected = publication_token(&body)
+                .context("member evidence publication required")?
+                .parse()?;
+            let remaining =
+                Duration::from_millis(budgets.deadline_ms).saturating_sub(started.elapsed());
+            let projection = if let Some(projection) = plan.resume_status.get(&member.index.id) {
+                Ok(Ok(projection.clone()))
+            } else {
+                tokio::time::timeout(
+                    remaining,
+                    child.call_native_with_context(
+                        airk_core::native_reads::NativeRead::SourceProjection {
+                            publication: expected,
+                        },
+                        context.narrowed(Instant::now() + remaining),
+                    ),
+                )
+                .await
+            };
+            match projection {
+                Ok(Ok(projection)) => {
+                    match serde_json::from_value::<airk_core::scoped_reads::ScopedSourceProjection>(
+                        canonical_body(&projection),
+                    ) {
+                        Ok(projection)
+                            if projection.validate().is_ok()
+                                && projection.publication.token == expected
+                                && projection.scope_fingerprint
+                                    == member.authority.member_fingerprint()? =>
+                        {
+                            published_sources = projection
+                                .sources
+                                .into_iter()
+                                .map(|source| airk_kernel::combined_reads::MemberSource {
+                                    source_root_id: source.source_root_id,
+                                    original_root: source.original_root,
+                                    primary: source.primary,
+                                    aliases: source.aliases,
+                                })
+                                .collect();
+                        }
+                        _ => result = source_projection_failure(&result, Some(projection)),
+                    }
+                }
+                _ => result = source_projection_failure(&result, None),
+            }
+        }
+        if plan.enabled && plan.verification_budget.is_some() && !result_failed(&result) {
+            let projection = canonical_body(&result);
+            let controls = airk_core::verification::VerificationControls {
+                verification: Some(
+                    plan.verification_budget
+                        .map_or(VerificationMode::Off, |budget| budget.mode),
+                ),
+                ..plan.verification
+            };
+            let deadline = *plan
+                .verification_deadline
+                .lock()
+                .map_err(|_| ScopeReadRefused)?
+                .get_or_insert_with(|| {
+                    Instant::now() + Duration::from_millis(budgets.verification_deadline_ms)
+                });
+            let deadline = deadline.min(started + Duration::from_millis(budgets.deadline_ms));
+            let remaining_ms = deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64;
+            let allocation = VerificationAllocation {
+                max_sources: allocation.verification_max_sources,
+                max_bytes: allocation.verification_max_bytes,
+                deadline_ms: allocation.verification_deadline_ms.min(remaining_ms),
+            };
+            result = if let Some(window) = verification_window(deadline, allocation.deadline_ms) {
+                match tokio::time::timeout(
+                    window,
+                    child.call_native_with_context(
+                        airk_core::native_reads::NativeRead::VerifyProjection {
+                            value: projection,
+                            controls,
+                            allocation: Some(allocation),
+                            receipt_bytes_budget: Some(32768 / plan.member_count),
+                        },
+                        context.narrowed(Instant::now() + window),
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok(value)) => native_envelope(value),
+                    Ok(Err(_)) | Err(_) => verification_uncertainty(
+                        &result,
+                        controls.verification.unwrap_or(VerificationMode::Report),
+                    ),
+                }
+            } else {
+                verification_not_submitted(
+                    &result,
+                    controls.verification.unwrap_or(VerificationMode::Report),
+                )
+            };
+        }
+        let is_error = result_failed(&result);
+        let result = canonical_body(&result);
+        let verification_failed = plan
+            .verification_budget
+            .is_some_and(|budget| budget.mode == VerificationMode::Require)
+            && !airk_core::verification::ReferenceInventory::collect(&result)
+                .references
+                .is_empty()
+            && result
+                .pointer("/source_verification/requirements_satisfied")
+                .and_then(Value::as_bool)
+                != Some(true);
+        let cursor = match cursor::child_cursor(&result) {
+            Ok(cursor) if !is_error => Some(cursor),
+            _ => None,
+        };
+        let elapsed_ms = member_started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        Ok(MemberRead::Read {
+            input: airk_kernel::combined_reads::MemberInput {
+                index_id: member.index.id,
+                result,
+                is_error,
+                exhausted: false,
+                sources: published_sources,
+                elapsed_ms: Some(elapsed_ms),
+            },
+            exhausted_cursor: false,
+            cursor,
+            verification_failed,
+        })
+    }
+
     async fn execute_read(
         &self,
         tool: &str,
@@ -1712,12 +1979,8 @@ impl<S: Session> Backend<S> {
             capacity,
             context,
         } = admission;
-        use airk_core::verification::{
-            VerificationAllocation, VerificationControls, VerificationMode,
-        };
-        use airk_kernel::combined_reads::{
-            CompositionRequest, MemberInput, compose, compose_capabilities,
-        };
+        use airk_core::verification::VerificationControls;
+        use airk_kernel::combined_reads::{CompositionRequest, compose, compose_capabilities};
         let origin = match args
             .remove("origin_publication")
             .map(serde_json::from_value::<String>)
@@ -1786,6 +2049,9 @@ impl<S: Session> Backend<S> {
         }
         let mut native_validation = args.clone();
         native_validation.remove("cursor");
+        // U107: a control of the combined owner; it stays in `args` so the
+        // continuation identity binds it.
+        native_validation.remove("limit_per_index");
         if airk_mcp::combined::validate_native_arguments(tool, &native_validation).is_err() {
             return Ok(failure(
                 "invalid_native_arguments",
@@ -1805,15 +2071,51 @@ impl<S: Session> Backend<S> {
         } else {
             None
         };
-        let limit = args
+        let requested_limit = args
             .get("limit")
             .map(|value| serde_json::from_value::<usize>(value.clone()))
-            .transpose()?
-            .unwrap_or(if properties.contains_key("limit") {
+            .transpose()?;
+        // U107: each member returns exactly `limit_per_index`; `limit` is then
+        // the overall cap (default members x per-index).
+        let limit_per_index = match args.get("limit_per_index") {
+            None => None,
+            Some(value) => match serde_json::from_value::<usize>(value.clone()) {
+                Ok(per_index)
+                    if (1..=100).contains(&per_index) && properties.contains_key("limit") =>
+                {
+                    Some(per_index)
+                }
+                _ => {
+                    return Ok(failure(
+                        "invalid_native_arguments",
+                        Some(false),
+                        &self.selection.requested(),
+                    ));
+                }
+            },
+        };
+        let limit = match limit_per_index {
+            Some(per_index) => match airk_core::combined_reads::per_index_cap(
+                before.members.len(),
+                requested_limit,
+                per_index,
+            ) {
+                Ok(cap) => cap,
+                Err(error) if error.is::<airk_core::combined_reads::LimitPerIndexTooLarge>() => {
+                    return Ok(failure(
+                        airk_core::combined_reads::LIMIT_PER_INDEX_TOO_LARGE,
+                        Some(false),
+                        &self.selection.requested(),
+                    ));
+                }
+                Err(error) => return Err(error),
+            },
+            None => requested_limit.unwrap_or(if properties.contains_key("limit") {
                 16
             } else {
                 before.members.len()
-            });
+            }),
+        };
         let max_bytes = args
             .get("max_bytes")
             .map(|value| serde_json::from_value::<usize>(value.clone()))
@@ -1826,7 +2128,7 @@ impl<S: Session> Backend<S> {
             verification_max_sources: verification_budget.map_or(0, |budget| budget.max_sources),
             verification_max_bytes: verification_budget.map_or(0, |budget| budget.max_bytes),
             verification_deadline_ms: verification_budget.map_or(0, |budget| budget.deadline_ms),
-            limit_per_index: None,
+            limit_per_index,
         };
         let allocations = budgets.allocate(&before.resolved)?;
         let started = Instant::now();
@@ -1909,255 +2211,89 @@ impl<S: Session> Backend<S> {
         let mut child_cursors = BTreeMap::new();
         let mut resumable = properties.contains_key("cursor");
         let mut verification_failed_members = Vec::new();
-        let mut verification_deadline = None;
+        // U107: one verification window for the whole read, opened by the
+        // first member that verifies, as the serial loop opened it.
+        let verification_deadline = std::sync::Mutex::new(None::<Instant>);
+        let plan = MemberPlan {
+            tool,
+            args: &args,
+            properties,
+            continuation: continuation.as_ref(),
+            resume_status: &resume_status,
+            origin: origin.as_deref(),
+            budgets: &budgets,
+            started,
+            enabled,
+            verification,
+            verification_budget,
+            verification_deadline: &verification_deadline,
+            member_count: before.members.len(),
+            capacity,
+            context: &context,
+        };
+        // U107: member reads run concurrently, at most the read's query
+        // concurrency at once (capacity 1 is the former serial loop), and are
+        // consumed in canonical member order. A stopping answer (an expired
+        // continuation) ends the read before any later member starts.
+        let mut reads: Vec<member_runner::MemberFuture<'_, Result<MemberRead>>> =
+            Vec::with_capacity(before.members.len());
         for (member, allocation) in before.members.iter().zip(&allocations) {
-            if continuation
-                .as_ref()
-                .is_some_and(|cursor| cursor.is_exhausted(member.index.id))
-            {
-                let result = resume_status
-                    .remove(&member.index.id)
-                    .ok_or(ScopeReadRefused)?;
-                child_cursors.insert(member.index.id, None);
-                results.push(MemberInput {
-                    index_id: member.index.id,
-                    result: canonical_body(&result),
-                    is_error: false,
-                    exhausted: true,
-                    sources: vec![],
-                });
-                continue;
-            }
-            if !allocation.admits_read()
-                || started.elapsed() >= Duration::from_millis(budgets.deadline_ms)
-            {
-                continue;
-            }
-            let child = self.child(member)?;
-            let mut child_args = args.clone();
-            if let Some(continuation) = &continuation {
-                child_args.remove("cursor");
-                if let Some(cursor) = continuation.cursor(member.index.id) {
-                    child_args.insert("cursor".into(), json!(cursor));
-                }
-            }
-            if properties.contains_key("limit") {
-                child_args.insert("limit".into(), json!(allocation.limit));
-            }
-            if properties.contains_key("max_bytes") {
-                child_args.insert("max_bytes".into(), json!(allocation.max_bytes));
-            }
-            if properties.contains_key("response_mode") {
-                child_args.insert("response_mode".into(), json!("full"));
-            }
-            if properties.contains_key("include_status") {
-                child_args.insert("include_status".into(), json!(true));
-            }
-            if enabled {
-                child_args.retain(|key, _| !key.starts_with("verification"));
-                child_args.insert("verification".into(), json!("off"));
-            }
-            let remaining = Duration::from_millis(budgets.deadline_ms)
-                .saturating_sub(started.elapsed())
-                .min(Duration::from_millis(allocation.deadline_ms));
-            let mut result = match tokio::time::timeout(
-                remaining,
-                child.call_with_read_context(
-                    tool.into(),
-                    child_args,
-                    capacity,
-                    context.narrowed(Instant::now() + remaining),
-                ),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(_)) => failure(
-                    "member_observation_unavailable",
-                    None,
-                    &self.selection.requested(),
-                ),
-                Err(_) => failure(
-                    "member_deadline_exhausted",
-                    None,
-                    &self.selection.requested(),
-                ),
-            };
-            if let Some(expected) = &origin {
-                let body = canonical_body(&result);
-                let actual = publication_token(&body).map(str::to_owned);
-                if actual.as_deref() != Some(expected) {
-                    result = failure(
-                        "origin_publication_expired",
-                        Some(true),
-                        &self.selection.requested(),
-                    );
-                }
-            }
-            if let Some(continuation) = &continuation {
-                let body = canonical_body(&result);
-                if publication_token(&body).is_none_or(|token| {
-                    continuation
-                        .validate_publication(member.index.id, token)
-                        .is_err()
-                }) {
-                    return Ok(failure(
-                        "combined_cursor_expired",
-                        Some(true),
-                        &self.selection.requested(),
-                    ));
-                }
-            }
-            let mut published_sources = Vec::new();
-            if !result_failed(&result)
-                && (origin.is_some()
-                    || !airk_core::verification::ReferenceInventory::collect(&canonical_body(
-                        &result,
-                    ))
-                    .references
-                    .is_empty())
-            {
-                let body = canonical_body(&result);
-                let expected = publication_token(&body)
-                    .context("member evidence publication required")?
-                    .parse()?;
-                let remaining =
-                    Duration::from_millis(budgets.deadline_ms).saturating_sub(started.elapsed());
-                let projection = if let Some(projection) = resume_status.get(&member.index.id) {
-                    Ok(Ok(projection.clone()))
-                } else {
-                    tokio::time::timeout(
-                        remaining,
-                        child.call_native_with_context(
-                            airk_core::native_reads::NativeRead::SourceProjection {
-                                publication: expected,
-                            },
-                            context.narrowed(Instant::now() + remaining),
-                        ),
-                    )
-                    .await
-                };
-                match projection {
-                    Ok(Ok(projection)) => {
-                        match serde_json::from_value::<
-                            airk_core::scoped_reads::ScopedSourceProjection,
-                        >(canonical_body(&projection))
-                        {
-                            Ok(projection)
-                                if projection.validate().is_ok()
-                                    && projection.publication.token == expected
-                                    && projection.scope_fingerprint
-                                        == member.authority.member_fingerprint()? =>
-                            {
-                                published_sources = projection
-                                    .sources
-                                    .into_iter()
-                                    .map(|source| airk_kernel::combined_reads::MemberSource {
-                                        source_root_id: source.source_root_id,
-                                        original_root: source.original_root,
-                                        primary: source.primary,
-                                        aliases: source.aliases,
-                                    })
-                                    .collect();
+            reads.push(Box::pin(self.read_member(&plan, member, allocation)));
+        }
+        let outcomes = member_runner::run_in_order(
+            capacity.clamp(1, before.members.len().max(1)),
+            reads,
+            MemberRead::stops,
+        )
+        .await;
+        for outcome in outcomes {
+            match outcome? {
+                MemberRead::Skipped => {}
+                MemberRead::Stop(failure) => return Ok(failure),
+                MemberRead::Read {
+                    input,
+                    exhausted_cursor,
+                    cursor,
+                    verification_failed,
+                } => {
+                    if exhausted_cursor {
+                        child_cursors.insert(input.index_id, None);
+                    } else {
+                        extend_observation_interval(
+                            &input.result,
+                            &mut observed_from_unix_ms,
+                            &mut observed_to_unix_ms,
+                        );
+                        if verification_failed {
+                            verification_failed_members.push(input.index_id);
+                        }
+                        if resumable {
+                            match cursor {
+                                Some(cursor) => {
+                                    child_cursors.insert(input.index_id, cursor);
+                                }
+                                None => resumable = false,
                             }
-                            _ => result = source_projection_failure(&result, Some(projection)),
                         }
                     }
-                    _ => result = source_projection_failure(&result, None),
+                    results.push(input);
                 }
             }
-            if enabled && verification_budget.is_some() && !result_failed(&result) {
-                let projection = canonical_body(&result);
-                let controls = VerificationControls {
-                    verification: Some(
-                        verification_budget.map_or(VerificationMode::Off, |budget| budget.mode),
-                    ),
-                    ..verification
-                };
-                let deadline = *verification_deadline.get_or_insert_with(|| {
-                    Instant::now() + Duration::from_millis(budgets.verification_deadline_ms)
-                });
-                let deadline = deadline.min(started + Duration::from_millis(budgets.deadline_ms));
-                let remaining_ms = deadline
-                    .saturating_duration_since(Instant::now())
-                    .as_millis()
-                    .min(u128::from(u64::MAX)) as u64;
-                let allocation = VerificationAllocation {
-                    max_sources: allocation.verification_max_sources,
-                    max_bytes: allocation.verification_max_bytes,
-                    deadline_ms: allocation.verification_deadline_ms.min(remaining_ms),
-                };
-                result = if let Some(window) = verification_window(deadline, allocation.deadline_ms)
-                {
-                    match tokio::time::timeout(
-                        window,
-                        child.call_native_with_context(
-                            airk_core::native_reads::NativeRead::VerifyProjection {
-                                value: projection,
-                                controls,
-                                allocation: Some(allocation),
-                                receipt_bytes_budget: Some(32768 / before.members.len()),
-                            },
-                            context.narrowed(Instant::now() + window),
-                        ),
-                    )
-                    .await
-                    {
-                        Ok(Ok(value)) => native_envelope(value),
-                        Ok(Err(_)) | Err(_) => verification_uncertainty(
-                            &result,
-                            controls.verification.unwrap_or(VerificationMode::Report),
-                        ),
-                    }
-                } else {
-                    verification_not_submitted(
-                        &result,
-                        controls.verification.unwrap_or(VerificationMode::Report),
-                    )
-                };
-            }
-            let is_error = result_failed(&result);
-            let result = canonical_body(&result);
-            extend_observation_interval(
-                &result,
-                &mut observed_from_unix_ms,
-                &mut observed_to_unix_ms,
-            );
-            if verification_budget.is_some_and(|budget| budget.mode == VerificationMode::Require)
-                && !airk_core::verification::ReferenceInventory::collect(&result)
-                    .references
-                    .is_empty()
-                && result
-                    .pointer("/source_verification/requirements_satisfied")
-                    .and_then(Value::as_bool)
-                    != Some(true)
-            {
-                verification_failed_members.push(member.index.id);
-            }
-            if resumable {
-                match cursor::child_cursor(&result) {
-                    Ok(cursor) if !is_error => {
-                        child_cursors.insert(member.index.id, cursor);
-                    }
-                    _ => resumable = false,
-                }
-            }
-            results.push(MemberInput {
-                index_id: member.index.id,
-                result,
-                is_error,
-                exhausted: false,
-                sources: published_sources,
-            });
         }
         let after = self.selection.snapshot(&self.control, selected).await?;
         ensure!(before.identity == after.identity, ScopeReadRefused);
+        let index_names = before
+            .members
+            .iter()
+            .map(|member| (member.index.id, member.index.name.clone()))
+            .collect();
         let request = CompositionRequest {
             selection: before.resolved,
             budgets,
             authority: before.identity,
             observed_from_unix_ms,
             observed_to_unix_ms: now_ms().max(observed_to_unix_ms),
+            index_names,
         };
         let response = if tool == "airk_capabilities" {
             compose_capabilities(&request, results)?
@@ -2213,6 +2349,47 @@ impl<S: Session> Backend<S> {
             started + Duration::from_millis(budgets.deadline_ms),
         )
         .await
+    }
+}
+
+/// The read-wide inputs every member read of one combined read shares.
+struct MemberPlan<'a> {
+    tool: &'a str,
+    args: &'a Map<String, Value>,
+    properties: &'a Map<String, Value>,
+    continuation: Option<&'a cursor::Continuation>,
+    resume_status: &'a BTreeMap<IndexId, Value>,
+    origin: Option<&'a str>,
+    budgets: &'a SharedBudgets,
+    started: Instant,
+    enabled: bool,
+    verification: airk_core::verification::VerificationControls,
+    verification_budget: Option<airk_core::verification::VerificationBudget>,
+    verification_deadline: &'a std::sync::Mutex<Option<Instant>>,
+    member_count: usize,
+    capacity: usize,
+    context: &'a airk_mcp::read_attempt::ReadAttemptContext,
+}
+
+/// One member read's outcome, consumed in canonical member order.
+enum MemberRead {
+    /// Not started: no allocation, or the read's deadline had passed.
+    Skipped,
+    /// The whole read answers this failure (an expired continuation).
+    Stop(Value),
+    Read {
+        input: airk_kernel::combined_reads::MemberInput,
+        /// An exhausted member resumed from its retained publication.
+        exhausted_cursor: bool,
+        /// The member's own continuation; `None` ends resumability.
+        cursor: Option<Option<String>>,
+        verification_failed: bool,
+    },
+}
+impl MemberRead {
+    /// A failure or a stopping answer ends the read in canonical order.
+    fn stops(outcome: &Result<Self>) -> bool {
+        !matches!(outcome, Ok(Self::Skipped | Self::Read { .. }))
     }
 }
 

@@ -443,6 +443,23 @@ selection path's. `tools_call::open_combined_backend` is wired in step 5.
 Query-scope `indexes`/`sources` views require a `project_id` and so refuse
 for an open scope; `projects` is empty.
 
+Names (open reads, `agents default`, CLI and MCP alike;
+`agent_scope::index_by_name`/`set_by_name`): an `idx_`/`prj_` id, else the
+exact name, else a unique case-insensitive (lowercased) name; several matches
+at the deciding level refuse `scope_name_ambiguous`, none
+`scope_name_unknown`. An index and a set may share a name: `index_ids` looks
+it up among indexes and `index_set_ids` among sets.
+
+Choice off (U109): never outside the assigned set. `agent_scope::requested`
+returns `Narrowed` for a choice-off call that names anything (an empty
+assigned set refuses `agent_default_scope_unset`); `resolve` reads the named
+indexes (sets expanded) only when they are a non-empty subset of the
+assigned set (default indexes plus default sets' live members); otherwise
+the call is a tool error `agent_scope_choice_disabled` whose message names
+the outside indexes (`outside_assigned_set`, `outside_message`), the same
+envelope through the CLI and MCP. `airk_mcp::open::catalog(Off)` offers the
+selectors with the narrowing description; `list_indexes` is still absent.
+
 Service and CLI (step 5): M3 `ToolSelection::Open` is
 `service_runtime::open_reads::response`. `help` answers in process. The
 connection's open state is reread from the durable ledger on every call;
@@ -476,7 +493,13 @@ HTTPS MCP (step 6): the service injects `http_backend::OpenHooks` into the
 gateway's validation (the pattern of the admin plane's selection reader):
 `reader` is `open_reads::response` (the M3 path, with the connection id; the
 MCP session inserts its response mode as for every read) and `choice` reads the
-connection's agent choice from the live credential store. The open backend
+connection's agent choice from the live credential store. U106(f): an open
+connection's `ConnectionFence` ticket follows the gate's current issue of its
+namespace (re-captured on every check, capture and write), and its cached
+service and credential delivery cell are kept across a revision move, so a
+catalog change does not close it; a pending catalog fence, revocation and
+service end still deny it. Grant-bound connections still pin their captured
+ticket. The open backend
 keeps no state from connect time: `catalog()` is
 `airk_mcp::open::catalog(current choice)` on every `tools/list`, and each call
 removes `index_ids`/`index_set_ids` from the arguments (arrays of strings,
@@ -510,18 +533,29 @@ Reviewed fixture change: `selection_authority.json` case
 `selection_unknown_owner` used `"agent"` as its unknown owner; U106(d) makes
 `agent` a known owner, so the case now uses `"robot"` (still refused at decode).
 
-### 2.10 Per-index result counts and member timing (U107, U108) [contract landed, behaviour next]
+### 2.10 Per-index result counts, member timing and names (U107, U108) [served]
 
 | Addition | Owner | Shape | State |
 |---|---|---|---|
-| `SharedBudgets.limit_per_index` | `airk_core::combined_reads` | optional `1..=100`, `default` + `skip_serializing_if` (last field), `null` refused; absent encoding is the pre-U107 one (`fixtures/wire/combined_budgets.json`, hand-written expectations including the allocation cases the behaviour step must reproduce) | Validated; `allocate` still splits evenly until the behaviour step |
-| `limit_per_index` read argument | `airk_mcp::combined::limit_per_index_schema` | integer 1-100 on every combined (native and public catalog) and open read tool that takes `limit`; help/`tools help` show it from the schema | Offered; native argument validation refuses it until the behaviour step |
-| Refusal code | `airk_core::combined_reads::LIMIT_PER_INDEX_TOO_LARGE` | `combined_limit_per_index_too_large` | Unused until the behaviour step |
-| `ComposedMember.elapsed_ms` | `airk_kernel::combined_reads` | optional milliseconds, `default` + `skip_serializing_if`: present for read members, absent for unqueried and resumed-exhausted ones; documented timing (no identity input; normalized by the parity harness, whose clock fields already include `elapsed_ms`) | Always absent until the behaviour step measures it |
+| `SharedBudgets.limit_per_index` | `airk_core::combined_reads` | optional `1..=100`, `default` + `skip_serializing_if` (last field), `null` refused; absent encoding is the pre-U107 one (`fixtures/wire/combined_budgets.json`, hand-written expectations including the allocation cases) | `allocate` gives each member exactly it (refusing a total above `limit`); `per_index_cap` computes the overall cap (default members × per-index, at most 100) |
+| `limit_per_index` read argument | `airk_mcp::combined::limit_per_index_schema` | integer 1-100 on every combined (native and public catalog) and open read tool that takes `limit`, and on Workbench combined operations with `limit` (`--limit-per-index`); help/`tools help` show it from the schema; `airkctl tools call` passes it in `--args` (no flag) | The combined owner applies it and removes it before each member's native call; a one-index selection or open read applies it as `limit` |
+| Refusal code | `airk_core::combined_reads::LIMIT_PER_INDEX_TOO_LARGE` | `combined_limit_per_index_too_large` | A tool error (`LimitPerIndexTooLarge`) |
+| `ComposedMember.elapsed_ms` | `airk_kernel::combined_reads` | optional milliseconds, `default` + `skip_serializing_if`: present for read members, absent for unqueried and resumed-exhausted ones; documented timing (no identity input; normalized by the parity harness, whose clock fields already include `elapsed_ms`) | Measured per member read (`MemberInput.elapsed_ms`) |
+| `ComposedMember.index_name`, `RankedReference.index_name` | `airk_kernel::combined_reads` | optional catalog display name, `default` + `skip_serializing_if`, from `CompositionRequest.index_names` (empty map: absent; the frontend fills it from the snapshot's index definitions for catalog, selection and open reads); never on `RankedOrigin`/`QualifiedOrigin`; no identity input; compared by parity harnesses | Served |
 
 The continuation identity hashes the read arguments, so a present
 `limit_per_index` binds the cursor and an absent one leaves every existing
 cursor byte-identical.
+
+Concurrent member reads (U107): `combined_frontend::member_runner` runs the
+member reads of one combined read with at most the read's query concurrency
+in flight (capacity 1 is the former serial loop) and yields them in
+canonical member order. Each member checks the read's deadline when it
+starts (a later start is an unqueried member, as before) and reads under
+min(the read's remaining deadline, its allocation), measured from the read's
+one start; the verification window opens at the first member that verifies.
+An expired continuation in canonical order ends the read before later
+members start. The composed result shape is unchanged.
 
 ## 3. I2 — `airkctl` command contract
 

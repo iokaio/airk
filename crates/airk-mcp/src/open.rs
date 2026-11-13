@@ -29,9 +29,19 @@ pub fn list_indexes_tool() -> Tool {
     .expect("static list_indexes definition")
 }
 
-fn selector(what: &str) -> Value {
+fn selector(what: &str, choice: AgentChoice) -> Value {
+    let description = match choice {
+        AgentChoice::On => format!(
+            "{what} to read whole: each an id, exact name, or a unique case-insensitive name from list_indexes. Union of index_ids and index_set_ids; omit both to read this connection's default scope."
+        ),
+        // U109: narrowing only, never outside the assigned set.
+        AgentChoice::Off => format!(
+            "Optional: narrow this request to some {} of the assigned set; never outside it. Each is an id, exact name, or a unique case-insensitive name. Omit to read the whole assigned set.",
+            what.to_lowercase()
+        ),
+    };
     json!({"type":"array","items":{"type":"string","minLength":1,"maxLength":256},"maxItems":32,"uniqueItems":true,
-        "description":format!("{what} to read whole: ids or exact names from list_indexes. Union of index_ids and index_set_ids; omit both to read this connection's default scope.")})
+        "description":description})
 }
 
 /// Whether `name` is a native evidence read (a public alias of a native
@@ -63,9 +73,9 @@ pub fn catalog(choice: AgentChoice) -> Vec<Tool> {
                         crate::combined::limit_per_index_schema(),
                     );
                 }
-                if read && choice == AgentChoice::On {
-                    properties.insert("index_ids".into(), selector("Indexes"));
-                    properties.insert("index_set_ids".into(), selector("Index sets"));
+                if read {
+                    properties.insert("index_ids".into(), selector("Indexes", choice));
+                    properties.insert("index_set_ids".into(), selector("Index sets", choice));
                 }
             }
             tool
@@ -93,17 +103,24 @@ mod tests {
     }
 
     #[test]
-    fn choice_off_offers_no_selector_and_no_list_tool() {
+    fn choice_off_offers_narrowing_selectors_and_no_list_tool() {
         let off = catalog(AgentChoice::Off);
         assert!(!names(&off).contains(&LIST_INDEXES.to_owned()));
         assert!(!names(&off).contains(&"projects".to_owned()));
+        let native = crate::local::tools();
         for tool in &off {
             let keys = properties(tool);
             assert!(!keys.contains(&"project".into()), "{}", tool.name);
-            assert!(!keys.contains(&"index_set_ids".into()), "{}", tool.name);
+            // U109: reads may narrow within the assigned set.
+            let selected = SELECTORS.iter().all(|key| keys.contains(&(*key).into()));
+            assert_eq!(selected, native_read(&tool.name, &native), "{}", tool.name);
         }
         let search = off.iter().find(|tool| tool.name == "search").unwrap();
-        assert!(!properties(search).contains(&"index_ids".into()));
+        let description = search.input_schema["properties"]["index_ids"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.contains("of the assigned set"), "{description}");
+        assert!(description.contains("never outside it"), "{description}");
         // U107: a default scope may span several indexes in either choice.
         assert!(properties(search).contains(&"limit_per_index".into()));
     }

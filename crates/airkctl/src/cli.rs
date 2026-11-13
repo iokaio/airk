@@ -457,7 +457,8 @@ enum AgentsCommand {
     },
     /// Set an open connection's default scope and agent choice; the agent's next call uses it.
     ///
-    /// --index and --set take ids or exact names and replace the whole default scope;
+    /// --index and --set take an id, exact name or unique case-insensitive name and replace the
+    /// whole default scope;
     /// --clear empties it. Without --expected-revision the current defaults revision is
     /// read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
     Default {
@@ -466,10 +467,10 @@ enum AgentsCommand {
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
-        /// An index (`idx_…` or its exact name) in the default scope (repeatable).
+        /// An index (`idx_…`, exact name or unique case-insensitive name) in the default scope (repeatable).
         #[arg(long = "index")]
         indexes: Vec<String>,
-        /// An index set (`prj_…` or its exact name) in the default scope (repeatable).
+        /// An index set (`prj_…`, exact name or unique case-insensitive name) in the default scope (repeatable).
         #[arg(long = "set")]
         sets: Vec<String>,
         /// Empty the default scope.
@@ -877,7 +878,8 @@ enum ToolsCommand {
     },
     /// Invoke an MCP tool and print its unchanged result envelope as JSON.
     ///
-    /// --index and --set read whole indexes and index sets (ids or exact names) through the
+    /// --index and --set read whole indexes and index sets (id, exact name or unique
+    /// case-insensitive name) through the
     /// open read path an agent uses; --connection applies that open connection's default scope
     /// and agent choice, exactly as its MCP calls do. list_indexes always takes that path.
     Call {
@@ -888,10 +890,12 @@ enum ToolsCommand {
         /// Read a UTF-8 JSON object from a regular file (maximum 64 KiB).
         #[arg(long)]
         args_file: Option<PathBuf>,
-        /// An index to read whole: `idx_…` or its exact name (repeatable, at most 32).
+        /// An index to read whole: `idx_…`, exact name or unique case-insensitive name (repeatable, at
+        /// most 32).
         #[arg(long = "index")]
         indexes: Vec<String>,
-        /// An index set to read as its member indexes: `prj_…` or its exact name (repeatable).
+        /// An index set to read as its member indexes: `prj_…`, exact name or unique case-insensitive
+        /// name (repeatable).
         #[arg(long = "set")]
         sets: Vec<String>,
         /// The open agent connection whose default scope and agent choice apply.

@@ -3260,17 +3260,20 @@ async fn exposed_code_facts_preserve_retained_producer_kind_and_language_labels(
 /// One command line's observable result: exit code, stdout (an envelope or
 /// document normalized like the other parity tests, or literal text) and the
 /// final error message without its program prefix.
-/// Reviewed addition (U107): the pre-split capture predates the combined
-/// read argument `limit_per_index`. Only that schema property is removed from
-/// the new side's catalog outputs (`tools list --json`, `tools help`); every
-/// other byte is still compared.
-fn without_limit_per_index(mut outcome: Value) -> Value {
+/// Reviewed additions (U107, U108): the pre-split capture predates the
+/// combined read argument `limit_per_index` and the combined result's
+/// `index_name` (members and ranked references). Only that schema property
+/// and those name fields are removed from the new side's outputs; every
+/// other byte is still compared. (Member `elapsed_ms` is timing, which
+/// `stable` already removes from both sides.)
+fn without_reviewed_additions(mut outcome: Value) -> Value {
     fn walk(value: &mut Value) {
         match value {
             Value::Object(fields) => {
                 if let Some(Value::Object(properties)) = fields.get_mut("properties") {
                     properties.remove("limit_per_index");
                 }
+                fields.remove("index_name");
                 fields.values_mut().for_each(walk);
             }
             Value::Array(values) => values.iter_mut().for_each(walk),
@@ -3491,7 +3494,7 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
             (code, stdout, stderr)
         })
         .await?;
-        let new = without_limit_per_index(ctl_outcome(
+        let new = without_reviewed_additions(ctl_outcome(
             Some(i32::from(new.0)),
             &new.1,
             &new.2,
@@ -3960,10 +3963,12 @@ async fn open_reads_keep_cli_and_pipe_results_and_follow_connection_defaults() -
             "airk_search",
             "agent_default_scope_unset",
         ),
+        // U109: with choice off a name narrows the assigned set, and an
+        // empty assigned set cannot be narrowed.
         (
             open_selection(&[&index_name], &[], Some(connection_id)),
             "airk_search",
-            "agent_scope_choice_disabled",
+            "agent_default_scope_unset",
         ),
         (
             open_selection(&[], &[], Some(connection_id)),
@@ -4118,10 +4123,11 @@ async fn open_https_connection_follows_choice_and_defaults_on_the_same_session()
         .iter()
         .find(|tool| tool["name"] == "search")
         .context("search tool")?;
+    // U109: with choice off the selectors only narrow the assigned set.
     ensure!(
-        search["inputSchema"]["properties"]
-            .get("index_ids")
-            .is_none(),
+        search["inputSchema"]["properties"]["index_ids"]["description"]
+            .as_str()
+            .is_some_and(|text| text.contains("never outside it")),
         "{search}"
     );
     let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"});
@@ -4149,7 +4155,8 @@ async fn open_https_connection_follows_choice_and_defaults_on_the_same_session()
     if let Some(difference) = first_difference(&left, &right, "") {
         anyhow::bail!("MCP and pipe open reads differ: {difference}");
     }
-    // Naming a scope is refused while choice is off.
+    // U109: with choice off a name outside the assigned set is refused and
+    // named; a name inside it narrows the read.
     let named = mcp.call(5, "search", {
         let mut named = arguments.clone();
         named["index_ids"] = json!([f.indexes[1]]);
@@ -4159,8 +4166,176 @@ async fn open_https_connection_follows_choice_and_defaults_on_the_same_session()
         named["result"]["structuredContent"]["error"]["code"], "agent_scope_choice_disabled",
         "{named}"
     );
+    let message = named["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .context("refusal message")?;
+    ensure!(
+        message.contains(&f.indexes[1].to_string())
+            && message.contains("outside this connection's assigned set"),
+        "{message}"
+    );
+    set_open_defaults(
+        &f,
+        connection_id,
+        2,
+        Some(vec![f.indexes[0], f.indexes[1]]),
+        None,
+    )
+    .await?;
+    let narrowed = mcp.call(9, "search", {
+        let mut narrowed = arguments.clone();
+        narrowed["index_ids"] = json!([f.indexes[0]]);
+        narrowed
+    })?;
+    ensure!(narrowed["result"]["isError"] != true, "{narrowed}");
+    let (left, right) = (
+        without_selection_source(stable(logical_comparison_copy(&body(
+            &narrowed["result"],
+        )?)?)?),
+        without_selection_source(stable(logical_comparison_copy(&body(&piped)?)?)?),
+    );
+    if let Some(difference) = first_difference(&left, &right, "") {
+        anyhow::bail!("narrowed read is not the one-index read: {difference}");
+    }
+    // Names, as setup creates them: an index and a set both named "airk".
+    for line in [
+        vec![
+            "library",
+            "rename",
+            "--index",
+            &index_text(&f, 0),
+            "--name",
+            "airk",
+            "--yes",
+        ],
+        vec![
+            "library",
+            "set-rename",
+            "--set",
+            &project_text(&f, 0),
+            "--name",
+            "airk",
+            "--yes",
+        ],
+    ] {
+        let (code, _, stderr) = airkctl_full(&f, &line).await?;
+        ensure!(code == 0, "{line:?}: {stderr}");
+    }
+    // U106(f): the renames moved the catalog revision; this open connection
+    // keeps working on the same TLS/MCP session and reads the new names.
+    // The assigned set is now the set "airk" (indexes 0 and 1).
+    let changed = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::AgentConnectionDefaults {
+            connection_id,
+            expected_defaults_revision: 3,
+            index_ids: Some(Vec::new()),
+            index_set_ids: Some(vec![f.projects[0]]),
+            agent_choice: None,
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(changed, ControlResponse::AgentConnectionDefaults { .. }),
+        "{}",
+        serde_json::to_string(&changed)?
+    );
+    // Narrow by the set name: both members; by an index name (a unique
+    // case-insensitive match): that index alone.
+    let by_set = mcp.call(10, "search", {
+        let mut named = arguments.clone();
+        named["index_set_ids"] = json!(["airk"]);
+        named["limit_per_index"] = json!(1);
+        named
+    })?;
+    ensure!(by_set["result"]["isError"] != true, "{by_set}");
+    let by_set_body = body(&by_set["result"])?;
+    let members: Vec<Value> = by_set_body["members"]
+        .as_array()
+        .context("members absent")?
+        .iter()
+        .map(|member| member["index_id"].clone())
+        .collect();
+    assert_eq!(members, vec![json!(f.indexes[0]), json!(f.indexes[1])]);
+    for member in by_set_body["members"].as_array().unwrap() {
+        assert_eq!(member["allocation"]["limit"], 1, "{member}");
+    }
+    assert_eq!(by_set_body["members"][0]["index_name"], "airk");
+    let by_index = mcp.call(11, "search", {
+        let mut named = arguments.clone();
+        named["index_ids"] = json!(["AIRK"]);
+        named
+    })?;
+    ensure!(by_index["result"]["isError"] != true, "{by_index}");
+    let (left, right) = (
+        without_selection_source(stable(logical_comparison_copy(&body(
+            &by_index["result"],
+        )?)?)?),
+        without_selection_source(stable(logical_comparison_copy(&body(&piped)?)?)?),
+    );
+    if let Some(difference) = first_difference(&left, &right, "") {
+        anyhow::bail!("index-name narrowing is not the one-index read: {difference}");
+    }
+    // The CLI reaches the same path with the same names and controls.
+    let connection_text = connection_id.to_string();
+    for (label, reply, extra) in [
+        ("set name", &by_set, vec!["--set", "airk"]),
+        ("index name", &by_index, vec!["--index", "AIRK"]),
+    ] {
+        let mut cli_arguments = arguments.clone();
+        if label == "set name" {
+            cli_arguments["limit_per_index"] = json!(1);
+        }
+        let argument_text = cli_arguments.to_string();
+        let mut line = vec!["tools", "call", "search", "--connection", &connection_text];
+        line.extend(extra);
+        line.extend(["--args", &argument_text]);
+        let (code, stdout, stderr) = airkctl_full(&f, &line).await?;
+        ensure!(code == 0, "CLI {label}: {stderr}");
+        let from_cli: Value = serde_json::from_str(&stdout)?;
+        let (left, right) = (
+            stable(logical_comparison_copy(&body(&from_cli)?)?)?,
+            stable(logical_comparison_copy(&body(&reply["result"])?)?)?,
+        );
+        if let Some(difference) = first_difference(&left, &right, "") {
+            anyhow::bail!("CLI and HTTPS {label} narrowing differ: {difference}");
+        }
+    }
+    // A name outside the assigned set is refused and named, through both.
+    let outside_id = f.indexes[2].to_string();
+    let outside = mcp.call(12, "search", {
+        let mut named = arguments.clone();
+        named["index_ids"] = json!([outside_id]);
+        named
+    })?;
+    assert_eq!(
+        outside["result"]["structuredContent"]["error"]["code"], "agent_scope_choice_disabled",
+        "{outside}"
+    );
+    let argument_text = arguments.to_string();
+    let (code, stdout, _) = airkctl_full(
+        &f,
+        &[
+            "tools",
+            "call",
+            "search",
+            "--connection",
+            &connection_text,
+            "--index",
+            &outside_id,
+            "--args",
+            &argument_text,
+        ],
+    )
+    .await?;
+    ensure!(code != 0, "outside narrowing was not refused");
+    let from_cli: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(
+        from_cli["structuredContent"],
+        outside["result"]["structuredContent"]
+    );
     // Choice on: the same session lists the selectors and the list tool.
-    set_open_defaults(&f, connection_id, 2, None, Some(AgentChoice::On)).await?;
+    set_open_defaults(&f, connection_id, 4, None, Some(AgentChoice::On)).await?;
     let on = mcp.request(6, "tools/list", json!({}))?;
     ensure!(
         listed_tools(&on)?.contains(&"list_indexes".to_owned()),
@@ -4197,4 +4372,80 @@ async fn open_https_connection_follows_choice_and_defaults_on_the_same_session()
         2
     );
     f.assert_sources_unchanged()
+}
+
+/// U107/U108 (behaviour): `limit_per_index` gives each selected index exactly
+/// that many results under the overall cap, for a catalog session and an open
+/// read alike; it binds the continuation; an oversized request is refused;
+/// each read member reports its elapsed time and index name.
+#[tokio::test]
+async fn per_index_counts_apply_to_catalog_and_open_reads_and_bind_cursors() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let catalog = airk_core::service::ToolSelection::Combined {
+        request: f.session.clone(),
+        project_ids: None,
+        index_ids: None,
+        member_availability: None,
+    };
+    let open = open_selection(
+        &[&f.indexes[0].to_string(), &f.indexes[1].to_string()],
+        &[],
+        None,
+    );
+    // A cursor tool: the scoped members hold more than one file each.
+    let arguments = json!({"limit_per_index":1,"max_bytes":8192,"verification":"off"});
+    for (label, selection) in [("catalog", catalog.clone()), ("open", open.clone())] {
+        let read = pipe_read(&f, selection.clone(), "airk_list_files", &arguments)
+            .await?
+            .map_err(|refused| anyhow::anyhow!("{label} read refused: {refused}"))?;
+        ensure!(read["isError"] != true, "{label}: {read}");
+        let value = body(&read)?;
+        let members = value["members"].as_array().context("members absent")?;
+        assert_eq!(members.len(), 2, "{label}: {value}");
+        for member in members {
+            assert_eq!(member["allocation"]["limit"], 1, "{label}: {member}");
+            ensure!(member["elapsed_ms"].is_u64(), "{label}: {member}");
+            ensure!(member["index_name"].is_string(), "{label}: {member}");
+        }
+        // The continuation binds limit_per_index.
+        let cursor = value["cursor"]
+            .as_str()
+            .context("cursor absent")?
+            .to_owned();
+        let mut resumed = arguments.clone();
+        resumed["cursor"] = json!(cursor);
+        let next = pipe_read(&f, selection.clone(), "airk_list_files", &resumed)
+            .await?
+            .map_err(|refused| anyhow::anyhow!("{label} resume refused: {refused}"))?;
+        ensure!(next["isError"] != true, "{label}: {next}");
+        resumed["limit_per_index"] = json!(2);
+        let changed = pipe_read(&f, selection.clone(), "airk_list_files", &resumed)
+            .await?
+            .map_err(|refused| anyhow::anyhow!("{label} changed refused: {refused}"))?;
+        assert_eq!(
+            body(&changed)?["error"]["code"],
+            "combined_cursor_expired",
+            "{label}: {changed}"
+        );
+        // Two indexes x 60 exceeds the per-call maximum of 100.
+        let mut oversized = arguments.clone();
+        oversized["limit_per_index"] = json!(60);
+        let refused = pipe_read(&f, selection, "airk_list_files", &oversized)
+            .await?
+            .map_err(|refused| anyhow::anyhow!("{label} oversized refused: {refused}"))?;
+        assert_eq!(
+            body(&refused)?["error"]["code"],
+            "combined_limit_per_index_too_large",
+            "{label}: {refused}"
+        );
+    }
+    f.assert_sources_unchanged()
+}
+
+fn index_text(f: &Fixture, n: usize) -> String {
+    f.indexes[n].to_string()
+}
+fn project_text(f: &Fixture, n: usize) -> String {
+    f.projects[n].to_string()
 }

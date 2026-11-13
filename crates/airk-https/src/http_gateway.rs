@@ -611,7 +611,7 @@ impl Gateway {
                 .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
             if let Some(entry) = clients.get_mut(&authenticated.connection_id)
                 && entry.generation == authenticated.generation
-                && entry.ticket == ticket
+                && (entry.ticket == ticket || delivery.follows_current())
             {
                 // Re-enrollment can refresh only the saved minimum clock after
                 // this service already validated the current native clock. It
@@ -636,6 +636,7 @@ impl Gateway {
                         )
                     })?;
                 entry.selection = authenticated.selection;
+                entry.ticket = ticket;
                 return Ok((entry.service.clone(), None));
             }
             if clients.len() >= 128 && !clients.contains_key(&authenticated.connection_id) {
@@ -779,11 +780,17 @@ impl CredentialDeliveryRegistry {
                     || credential.expires_unix_ms == state.expires,
                 "credential expiry changed without generation rotation"
             );
+            // U106(f): an open credential's ticket follows the current issue.
+            let follows = matches!(
+                credential.selection,
+                airk_core::service_http::HttpSelection::Open { .. }
+            );
             if state.id == credential.connection_id
                 && state.generation == credential.generation
                 && state.expires == credential.expires_unix_ms
-                && state.ticket == ticket
+                && (state.ticket == ticket || follows)
             {
+                state.ticket = ticket;
                 return Ok(old.clone());
             }
             state.revoked = true;
@@ -835,6 +842,12 @@ impl CredentialDeliveryRegistry {
 struct ConnectionFence {
     gate: NativeCatalogAdmission,
     ticket: Arc<Mutex<Option<IssueTicket>>>,
+    /// U106(f): the namespace of an open connection, whose ticket follows
+    /// the gate's current issue instead of pinning the captured revision:
+    /// each open call re-resolves and leases at the current revision, so a
+    /// revision move does not fence it. A pending catalog fence, revocation
+    /// and service end still deny it. `None` for grant-bound connections.
+    follows: Arc<Mutex<Option<Incarnation>>>,
     credential: Arc<Mutex<Option<Arc<Mutex<CredentialDelivery>>>>>,
     read_context: Arc<Mutex<Option<ReadDeliveryCell>>>,
     requests: Arc<Mutex<RequestDeliveryState>>,
@@ -855,6 +868,7 @@ impl ConnectionFence {
         Self {
             gate,
             ticket: Arc::new(Mutex::new(None)),
+            follows: Arc::new(Mutex::new(None)),
             credential: Arc::new(Mutex::new(None)),
             read_context: Arc::new(Mutex::new(None)),
             requests: Default::default(),
@@ -987,10 +1001,17 @@ impl ConnectionFence {
                 .map(|member| member.expected_catalog_revision)
                 .max()
                 .ok_or_else(|| std::io::Error::other("empty imported HTTP authority"))?,
-            // U105: an open connection has no saved catalog clock; any current
-            // revision of its namespace admits it, and a later move fences the
-            // captured ticket as for every other selection.
-            HttpSelection::Open { .. } => airk_core::index_catalog::CatalogRevision::INITIAL,
+            // U106(f): an open connection has no saved catalog clock; its
+            // ticket follows the current issue of its namespace.
+            HttpSelection::Open { selection } => {
+                *self
+                    .follows
+                    .lock()
+                    .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))? =
+                    Some(selection.namespace);
+                self.held_ticket()?;
+                return Ok(());
+            }
         };
         let mut held = self
             .ticket
@@ -1012,14 +1033,37 @@ impl ConnectionFence {
         }
         Ok(())
     }
-    fn authenticated_ticket(&self) -> anyhow::Result<IssueTicket> {
-        let ticket = self
+    /// The ticket this connection delivers under: the captured one, or for
+    /// an open connection the gate's current issue of its namespace (stored
+    /// as the held ticket). `Err` when the gate admits no delivery.
+    fn held_ticket(&self) -> anyhow::Result<Option<IssueTicket>> {
+        let follows = *self
+            .follows
+            .lock()
+            .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))?;
+        let mut held = self
             .ticket
             .lock()
-            .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))?
-            .ok_or_else(|| {
-                std::io::Error::other("HTTP authentication has no native delivery ticket")
-            })?;
+            .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))?;
+        if let Some(namespace) = follows {
+            *held = Some(self.gate.capture_current_issue(
+                namespace,
+                airk_core::index_catalog::CatalogRevision::INITIAL,
+            )?);
+        }
+        Ok(*held)
+    }
+    /// Whether this connection's ticket follows the current issue (U106(f)).
+    fn follows_current(&self) -> bool {
+        self.follows
+            .lock()
+            .map(|follows| follows.is_some())
+            .unwrap_or(false)
+    }
+    fn authenticated_ticket(&self) -> anyhow::Result<IssueTicket> {
+        let ticket = self.held_ticket()?.ok_or_else(|| {
+            std::io::Error::other("HTTP authentication has no native delivery ticket")
+        })?;
         self.gate.check_issue(ticket)?;
         Ok(ticket)
     }
@@ -1044,11 +1088,7 @@ impl ConnectionFence {
                 .map_err(|_| std::io::Error::other("credential fence unavailable"))?
                 .check()?;
         }
-        if let Some(ticket) = *self
-            .ticket
-            .lock()
-            .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))?
-        {
+        if let Some(ticket) = self.held_ticket()? {
             self.gate.check_issue(ticket)?;
         }
         Ok(())
@@ -1111,11 +1151,12 @@ impl ConnectionFence {
         {
             return Poll::Ready(Err(error));
         }
-        let ticket = match self.ticket.lock() {
-            Ok(held) => *held,
+        let ticket = match self.held_ticket() {
+            Ok(held) => held,
             Err(_) => {
-                return Poll::Ready(Err(std::io::Error::other(
-                    "HTTP delivery fence unavailable",
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "HTTP delivery fenced; open a fresh connection",
                 )));
             }
         };

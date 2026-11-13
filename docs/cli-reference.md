@@ -627,7 +627,7 @@ Options:
 ```text
 Set an open connection's default scope and agent choice; the agent's next call uses it.
 
---index and --set take ids or exact names and replace the whole default scope; --clear empties it. Without --expected-revision the current defaults revision is read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
+--index and --set take an id, exact name or unique case-insensitive name and replace the whole default scope; --clear empties it. Without --expected-revision the current defaults revision is read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
 
 Usage: airkctl agents default [OPTIONS] --connection-id <CONNECTION_ID>
 
@@ -648,7 +648,7 @@ Options:
           The AIRK service's control directory
 
       --index <INDEXES>
-          An index (`idx_…` or its exact name) in the default scope (repeatable)
+          An index (`idx_…`, exact name or unique case-insensitive name) in the default scope (repeatable)
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -657,7 +657,7 @@ Options:
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --set <SETS>
-          An index set (`prj_…` or its exact name) in the default scope (repeatable)
+          An index set (`prj_…`, exact name or unique case-insensitive name) in the default scope (repeatable)
 
       --clear
           Empty the default scope
@@ -6668,7 +6668,7 @@ Options:
 ```text
 Invoke an MCP tool and print its unchanged result envelope as JSON.
 
---index and --set read whole indexes and index sets (ids or exact names) through the open read path an agent uses; --connection applies that open connection's default scope and agent choice, exactly as its MCP calls do. list_indexes always takes that path.
+--index and --set read whole indexes and index sets (id, exact name or unique case-insensitive name) through the open read path an agent uses; --connection applies that open connection's default scope and agent choice, exactly as its MCP calls do. list_indexes always takes that path.
 
 Usage: airkctl tools call [OPTIONS] <TOOL>
 
@@ -6693,7 +6693,7 @@ Options:
           The AIRK service's control directory
 
       --index <INDEXES>
-          An index to read whole: `idx_…` or its exact name (repeatable, at most 32)
+          An index to read whole: `idx_…`, exact name or unique case-insensitive name (repeatable, at most 32)
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -6702,7 +6702,7 @@ Options:
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --set <SETS>
-          An index set to read as its member indexes: `prj_…` or its exact name (repeatable)
+          An index set to read as its member indexes: `prj_…`, exact name or unique case-insensitive name (repeatable)
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each

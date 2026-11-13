@@ -25,7 +25,7 @@ export const AGENT_CHOICES: readonly { client: AgentClient; label: string; recon
         reloadTools: 'If the tool list does not change, restart the AIRK server from MCP: List Servers.' },
 ];
 /** What the choice switch means, shown beside it. */
-export const CHOICE_OFF_TEXT = 'Off (default): the agent searches only its default scope, which is this window\'s search scope while it follows the window. It cannot list or pick indexes.';
+export const CHOICE_OFF_TEXT = 'Off (default): the agent searches only its default scope, which is this window\'s search scope while it follows the window. It can narrow a request to some of those indexes, but never searches outside its assigned set.';
 export const CHOICE_ON_TEXT = 'On: the agent can list every index and index set on this computer, with their descriptions and folders, and search any of them. A call that names nothing still uses the default scope.';
 export const NO_RECONNECT_TEXT = 'Changing the default scope takes effect on the agent\'s next call; no reconnect is needed.';
 
@@ -85,7 +85,7 @@ export function AgentsScreen(props: ScreenProps) {
         <article class="card">
             <div class="section-head"><h2>Connect a coding agent</h2>
                 <AdminButton page="agents" label="Open AIRK Admin" ghost disabled={!props.state.trusted} choose={false} /></div>
-            <p>Connect Claude Code, Codex or VS Code / GitHub Copilot to AIRK for this folder. The agent's default scope is this window's search scope and follows it when you apply another one. The agent cannot list or pick other indexes unless you turn on "Let the agent choose indexes" for it below.</p>
+            <p>Connect Claude Code, Codex or VS Code / GitHub Copilot to AIRK for this folder. The agent's default scope is this window's search scope and follows it when you apply another one. The agent can narrow a request to part of that assigned set, but never searches outside it unless you turn on "Let the agent choose indexes" for it below.</p>
             {!scope?.available ? <p class="callout" role="status">The window search scope is not available from this AIRK Service.</p>
                 : scope.active ? <p role="status">Search scope: <strong>{scope.label}</strong>{scope.automatic ? ' (this folder\'s index, chosen automatically)' : ''}
                     {view?.windowScope?.items.length ? <> · <ScopeNames items={view.windowScope.items} /></> : ''}</p>

@@ -220,6 +220,7 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
             authority: identity,
             observed_from_unix_ms: 10,
             observed_to_unix_ms: 20,
+            index_names: Default::default(),
         };
         let inputs = indexes
             .iter()
@@ -230,6 +231,7 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
                 is_error: false,
                 exhausted: false,
                 sources: vec![],
+                elapsed_ms: None,
             })
             .collect();
         let mut combined = serde_json::to_value(compose_capabilities(&request, inputs)?)?;

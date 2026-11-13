@@ -217,6 +217,18 @@ pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlRespo
     };
     let index_ids = match agent_scope::resolve(&listing, requested) {
         Ok(ids) => ids,
+        // U109: a choice-off call outside the assigned set names what is
+        // outside it, in the tool error the CLI and MCP both receive.
+        Err(code) if code == open_refusal::AGENT_SCOPE_CHOICE_DISABLED => {
+            let outside =
+                agent_scope::outside_assigned_set(&listing, requested).unwrap_or_default();
+            return ControlResponse::ToolResult {
+                result: airk_mcp::unified::failure(
+                    code,
+                    &agent_scope::outside_message(&listing, &outside),
+                ),
+            };
+        }
         Err(code) => return refused(code),
     };
     let Some(revision) = listing.revision else {
@@ -239,6 +251,13 @@ pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlRespo
             return refused(agent_scope::SCOPE_UNAVAILABLE);
         }
     };
+    let mut arguments = call.arguments;
+    if index_ids.len() == 1 {
+        arguments = match tools_call::single_index_arguments(arguments) {
+            Ok(arguments) => arguments,
+            Err(result) => return ControlResponse::ToolResult { result },
+        };
+    }
     let backend = match index_ids.as_slice() {
         [index_id] => {
             tools_call::open_single_backend(
@@ -262,9 +281,7 @@ pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlRespo
         }
     };
     let read = match backend {
-        Ok(backend) => {
-            tools_call::read_through(backend, call.tool, call.arguments, call.mode).await
-        }
+        Ok(backend) => tools_call::read_through(backend, call.tool, arguments, call.mode).await,
         Err(refusal) => Err(refusal),
     };
     match read {

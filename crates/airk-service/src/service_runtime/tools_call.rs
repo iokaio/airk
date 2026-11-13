@@ -191,11 +191,64 @@ pub(super) async fn selection_read(
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
 ) -> std::result::Result<Value, SelectionRead> {
-    let backend = match grant.selection.index_ids.as_slice() {
-        [index_id] => single_selection_backend(state, grant, *index_id, client).await?,
-        _ => combined_selection_backend(state, grant, client).await?,
+    let (backend, arguments) = match grant.selection.index_ids.as_slice() {
+        [index_id] => {
+            let arguments = match single_index_arguments(arguments) {
+                Ok(arguments) => arguments,
+                Err(refusal) => return Ok(refusal),
+            };
+            (
+                single_selection_backend(state, grant, *index_id, client).await?,
+                arguments,
+            )
+        }
+        _ => (
+            combined_selection_backend(state, grant, client).await?,
+            arguments,
+        ),
     };
     read_through(backend, tool, arguments, mode).await
+}
+
+/// U107: a one-index selection or open read applies `limit_per_index` as
+/// its member's `limit` (the combined rule with one member: the per-index
+/// count under the overall cap); its native tool never sees the control. A
+/// refusal is the tool error a combined read gives.
+pub(super) fn single_index_arguments(
+    mut arguments: Map<String, Value>,
+) -> std::result::Result<Map<String, Value>, Value> {
+    use airk_core::combined_reads::{LIMIT_PER_INDEX_TOO_LARGE, per_index_cap};
+    let Some(value) = arguments.remove("limit_per_index") else {
+        return Ok(arguments);
+    };
+    let invalid = || {
+        airk_mcp::unified::failure(
+            "invalid_native_arguments",
+            "limit_per_index must be an integer 1..100 and limit an integer 1..100.",
+        )
+    };
+    let per_index = value
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=100).contains(value))
+        .ok_or_else(invalid)?;
+    let limit = match arguments.get("limit") {
+        None => None,
+        Some(limit) => Some(
+            limit
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(invalid)?,
+        ),
+    };
+    if per_index_cap(1, limit, per_index).is_err() {
+        return Err(airk_mcp::unified::failure(
+            LIMIT_PER_INDEX_TOO_LARGE,
+            "limit_per_index exceeds limit or 100.",
+        ));
+    }
+    arguments.insert("limit".into(), per_index.into());
+    Ok(arguments)
 }
 
 /// One call through a selection or open backend and the canonical

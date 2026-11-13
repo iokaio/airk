@@ -421,7 +421,7 @@ test('U105 an open connection shows its default scope, Follow and the choice swi
     assert.equal(switches().length,1,'settings show once per open connection; a grant-bound connection has none');
     assert.equal(switches()[0].props.checked,false,'agent choice is off');
     assert.match(text(tree),/Let the agent choose indexes/);
-    assert.match(text(tree),/Off \(default\): the agent searches only its default scope, which is this window's search scope while it follows the window\. It cannot list or pick indexes\./);
+    assert.match(text(tree),/Off \(default\): the agent searches only its default scope, which is this window's search scope while it follows the window\. It can narrow a request to some of those indexes, but never searches outside its assigned set\./);
     assert.match(text(tree),/This connection reads the scope it was connected with; manage it in AIRK Admin › Agents\./);
     const follow=()=>nodes(f.render()).find(node=>node.type==='input'&&node.props.type==='checkbox'&&node.props.role!=='switch');
     assert.equal(follow().props.checked,true);

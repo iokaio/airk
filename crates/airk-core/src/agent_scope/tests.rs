@@ -100,17 +100,23 @@ fn names(values: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn choice_off_reads_only_the_default_scope_and_refuses_names() {
+fn choice_off_narrows_within_the_default_scope() {
     let off = open(AgentChoice::Off, &[1], &[]);
     let docs = names(&["docs"]);
+    // U109: names narrow the assigned set (checked when resolved).
     assert_eq!(
         requested(&docs, &[], Some(&off)),
-        Err("agent_scope_choice_disabled")
+        Ok(Requested::Narrowed {
+            indexes: &docs,
+            sets: &[],
+            default_indexes: &[index_id(1)],
+            default_sets: &[],
+        })
     );
-    assert_eq!(
+    assert!(matches!(
         requested(&[], &docs, Some(&off)),
-        Err("agent_scope_choice_disabled")
-    );
+        Ok(Requested::Narrowed { .. })
+    ));
     assert_eq!(
         requested(&[], &[], Some(&off)),
         Ok(Requested::Defaults {
@@ -121,6 +127,11 @@ fn choice_off_reads_only_the_default_scope_and_refuses_names() {
     let unset = open(AgentChoice::Off, &[], &[]);
     assert_eq!(
         requested(&[], &[], Some(&unset)),
+        Err("agent_default_scope_unset")
+    );
+    // An empty assigned set cannot be narrowed either.
+    assert_eq!(
+        requested(&docs, &[], Some(&unset)),
         Err("agent_default_scope_unset")
     );
     assert_eq!(list_allowed(Some(&off)), Err("agent_scope_choice_disabled"));
@@ -170,7 +181,12 @@ fn names_resolve_by_id_then_exact_name_and_refuse_ambiguity() {
         Ok(vec![index_id(2)])
     );
     assert_eq!(resolve_names(&["code"], &[]), Err("scope_name_ambiguous"));
-    assert_eq!(resolve_names(&["Docs"], &[]), Err("scope_name_unknown"));
+    // A unique case-insensitive name selects too (after an exact miss).
+    assert_eq!(resolve_names(&["Docs"], &[]), Ok(vec![index_id(1)]));
+    assert_eq!(
+        resolve_names(&["documents"], &[]),
+        Err("scope_name_unknown")
+    );
     // A retired index is unknown by id and by name.
     assert_eq!(resolve_names(&["old"], &[]), Err("scope_name_unknown"));
     assert_eq!(
@@ -354,5 +370,94 @@ fn pages_stay_within_the_budget_and_cursors_are_revision_bound() {
     assert_eq!(
         list_page(&catalog, Some("garbage"), 48 * 1024),
         Err("list_cursor_expired")
+    );
+}
+
+/// U109: with choice off a call may name a non-empty subset of the assigned
+/// set (default sets expanded); anything outside it is refused and named.
+#[test]
+fn choice_off_names_must_stay_inside_the_assigned_set() {
+    let catalog = listing();
+    // Assigned: index 3 and set 10 (members 1 and 2).
+    let off = open(AgentChoice::Off, &[3], &[10]);
+    let ask = |indexes: &[&str], sets: &[&str]| {
+        let (indexes, sets) = (names(indexes), names(sets));
+        let requested = requested(&indexes, &sets, Some(&off)).unwrap();
+        (
+            resolve(&catalog, requested),
+            outside_assigned_set(&catalog, requested).unwrap_or_default(),
+        )
+    };
+    let docs = index_id(1).to_string();
+    let web = set_id(10).to_string();
+    // A subset is read alone; a named assigned set is inside too.
+    assert_eq!(ask(&[&docs], &[]), (Ok(vec![index_id(1)]), vec![]));
+    assert_eq!(
+        ask(&[], &[&web]),
+        (Ok(vec![index_id(1), index_id(2)]), vec![])
+    );
+    // Retired index 4 of set 10 is not a member read, so set 10 is inside.
+    // Set 12 is empty: nothing to read.
+    assert_eq!(
+        ask(&[], &[&set_id(12).to_string()]).0,
+        Err("scoped_read_unavailable")
+    );
+    // Outside: refused, and the outside indexes are named.
+    let mut assigned_one = open(AgentChoice::Off, &[1], &[]);
+    assigned_one.defaults_revision = 4;
+    let outside = names(&[&index_id(2).to_string()]);
+    let narrowed = requested(&outside, &[], Some(&assigned_one)).unwrap();
+    assert_eq!(
+        resolve(&catalog, narrowed),
+        Err("agent_scope_choice_disabled")
+    );
+    let named = outside_assigned_set(&catalog, narrowed).unwrap();
+    assert_eq!(named, vec![index_id(2)]);
+    let message = outside_message(&catalog, &named);
+    assert!(message.starts_with("code ("), "{message}");
+    assert!(
+        message.contains("outside this connection's assigned set"),
+        "{message}"
+    );
+    // A set only partly inside is refused.
+    let web_names = names(&[&web]);
+    let partly = requested(&[], &web_names, Some(&assigned_one)).unwrap();
+    assert_eq!(
+        resolve(&catalog, partly),
+        Err("agent_scope_choice_disabled")
+    );
+    assert_eq!(
+        outside_assigned_set(&catalog, partly).unwrap(),
+        vec![index_id(2)]
+    );
+}
+
+/// Name precedence: an id, then the exact name, then a unique
+/// case-insensitive name; several matches at the deciding level refuse.
+#[test]
+fn names_fall_back_to_a_unique_case_insensitive_match() {
+    let mut catalog = listing();
+    catalog.indexes.push(index(5, "Readme", false));
+    catalog.indexes.push(index(6, "README", false));
+    catalog.projects.push(set(13, "Airk"));
+    // Exact wins even when a case variant exists.
+    assert_eq!(index_by_name(&catalog, "Readme"), Ok(index_id(5)));
+    assert_eq!(index_by_name(&catalog, "README"), Ok(index_id(6)));
+    // Case-only matches: unique accepted, several refused.
+    assert_eq!(index_by_name(&catalog, "DOCS"), Ok(index_id(1)));
+    assert_eq!(
+        index_by_name(&catalog, "readme"),
+        Err("scope_name_ambiguous")
+    );
+    assert_eq!(set_by_name(&catalog, "airk"), Ok(set_id(13)));
+    assert_eq!(set_by_name(&catalog, "WEB"), Err("scope_name_ambiguous"));
+    // The id form is never a name.
+    assert_eq!(
+        index_by_name(&catalog, &index_id(5).to_string().to_uppercase()),
+        Err("scope_name_unknown")
+    );
+    assert_eq!(
+        index_by_name(&catalog, &index_id(5).to_string()),
+        Ok(index_id(5))
     );
 }
