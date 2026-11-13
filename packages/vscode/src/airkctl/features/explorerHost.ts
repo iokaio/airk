@@ -9,7 +9,9 @@
 //! resume, watch on/off, retry, cancel) as `airkctl` commands. The window
 //! search scope (W4), Assistance drafts and handoffs use the session's window
 //! plane when their capabilities are advertised (windowScope.ts,
-//! windowAssistance.ts).
+//! windowAssistance.ts). U104: Management › Agents lists and disconnects this
+//! folder's agent entries (windowAgents.ts), and the search scope creates index
+//! sets through `airkctl library set-create`.
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { AgentConfigHealth } from '../../agentConfigHealth';
@@ -23,7 +25,8 @@ import type { ConsolePage, RecordValue } from '../../serviceClient';
 import type { ConsoleObservation, ServiceConsoleState } from '../../serviceConsoleView';
 import { AirkctlUnavailable, type Airkctl, type AirkctlState } from '../index';
 import type { AdminOpener, AdminTarget } from './adminOpener';
-import { WindowScope } from './windowScope';
+import { libraryCommands, WindowScope } from './windowScope';
+import { WindowAgents } from './windowAgents';
 import { HANDOFF_CAPABILITY, WindowAssistance, WindowHandoffs } from './windowAssistance';
 import { commandOutcome, LiveStatus, liveRow, LOGS_ARGV, usageArgv, workActionArgv, type CommandOutcome, type LiveObservation } from './liveStatus';
 
@@ -120,6 +123,8 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     /** This window's search scope (U77, W4). */
     readonly windowScope: WindowScope;
     readonly assistance: WindowAssistance;
+    /** Management › Agents (U104). */
+    readonly agents: WindowAgents;
     /** Live Progress/Watch reads and session status/job events (U103). */
     readonly live: LiveStatus;
     private readonly publisher: WindowHandoffs;
@@ -142,7 +147,8 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         this.windowScope = new WindowScope(airkctl.session, capabilities, context.workspaceState, () => {
             const installation = airkctl.installation, first = this.specs()[0];
             return installation && first ? { command: installation.airkctl, installDir: installation.record.locations.program, root: first.root } : undefined;
-        }, line => output.appendLine(line));
+        }, line => output.appendLine(line), libraryCommands(airkctl.session));
+        this.agents = new WindowAgents(airkctl, () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, () => this.requireReadyState(), line => output.appendLine(line));
         this.assistance = new WindowAssistance(airkctl.session, capabilities, this.suggestions, line => output.appendLine(line));
         this.publisher = new WindowHandoffs(airkctl.session, () => this.suggestionsBinding());
         this.live = new LiveStatus(airkctl.session, () => this.publishLive(), undefined, undefined, line => output.appendLine(line));

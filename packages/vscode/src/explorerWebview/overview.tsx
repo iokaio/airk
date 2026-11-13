@@ -61,14 +61,16 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
         <section class="workspace">
             <div class="workspace-heading"><div><p class="eyebrow">Local evidence. Clear provenance.</p><h1>{project?.name ?? 'Your workspace'}</h1>
                 <p>{project && status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div>
-                <AdminButton page="overview" disabled={!state.trusted} /></div>
+                <span class="actions"><button type="button" class="ghost" onClick={() => props.go({ workspace: 'manage', tab: 'agents' })}>Connect an agent</button>
+                    <AdminButton page="overview" disabled={!state.trusted} /></span></div>
             <ScopeBanner state={state} go={props.go} />
             {first && <Notice condition noticeKey={noticeKey("overview-connection", first)}><p>{first}</p></Notice>}
             {journeyError && <Notice condition noticeKey={noticeKey("overview-error", journeyError)} role="alert"><p>{journeyError}</p></Notice>}
             {project && route?.state === 'not_readable' && <article class="card not-readable" role="status">
                 <h2>Not readable yet</h2>
                 <p>{route.message ?? `${route.indexName ?? 'This index'} is in no index set, so searches cannot read it yet.`} Indexing continues; progress is shown below. Reads need at least one index set (code <code>{route.code ?? 'index_read_unavailable'}</code>).</p>
-                <AdminButton page="index-library" index={route.indexId} label="Make readable in AIRK Admin" disabled={!state.trusted} choose={false} />
+                <div class="actions"><button type="button" onClick={() => props.go({ workspace: 'indexing', tab: 'window' })}>Choose it in Search scope</button>
+                    <AdminButton page="index-library" index={route.indexId} label="Make readable in AIRK Admin" ghost disabled={!state.trusted} choose={false} /></div>
             </article>}
             {project && route?.state === 'failed' && <Notice condition noticeKey={noticeKey('read-route', route.code, route.message)} role="alert"><p>This window's index could not be resolved in the index library ({route.code}). {route.message}</p></Notice>}
             {state.trusted && state.connection === 'ready' && !state.projects.length && <CreateIndexForFolders folders={state.workspaceFolders} />}

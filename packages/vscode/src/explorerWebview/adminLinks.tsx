@@ -44,7 +44,8 @@ export function CreateIndexForFolders(props: { folders?: readonly string[]; disa
     </article>;
 }
 
-/** Management tabs that open the matching admin page (Activity and Usage are read in the Explorer, U103);
+/** Management tabs that open the matching admin page (Activity and Usage are read in the Explorer, U103;
+ * Agents are connected in the Explorer, U104, and this entry stays for its Admin link);
  * routes stay valid for links, help and agent drafts. */
 const MANAGE_PAGES: Readonly<Record<string, { page: AdminPage; title: string; text: string }>> = {
     overview: { page: 'overview', title: 'Overview', text: 'Service health, indexes and work in progress.' },

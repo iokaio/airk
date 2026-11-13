@@ -251,6 +251,8 @@ export interface SearchScopeSummary {
     readonly catalogRevision?: number;
     /** How Explorer reads this window's index when no scope was chosen (U103). Absent until resolved. */
     readonly route?: ReadRouteView;
+    /** (U104) The granted scope is the automatic one for this window's index (present only when true). */
+    readonly automatic?: boolean;
 }
 
 /** The read route of this window's index. `scope`: under a window scope (chosen, or automatic for
@@ -735,6 +737,9 @@ export type AdminPage = typeof ADMIN_PAGES[number];
 export const LIBRARY_METHODS = ['page', 'detail', 'policy', 'split'] as const;
 export const LIBRARY_KINDS = ['indexes', 'projects', 'memberships', 'sources'] as const;
 const REF = { kind: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_-]+$/ } as const;
+/** Agents Management › Agents connects (`airkctl agents connect --client`; U91, U104). */
+export const AGENT_CLIENTS = ['claude', 'codex', 'vscode'] as const;
+export type AgentClient = typeof AGENT_CLIENTS[number];
 
 export const WEBVIEW_MESSAGES = {
     'ready': {},
@@ -788,6 +793,8 @@ export const WEBVIEW_MESSAGES = {
     'indexing.recommendations.use': {},
     'indexing.scope.read': { kind:{kind:'enum',values:['indexes','projects'],optional:true},next:{kind:'bool',optional:true} },
     'indexing.scope.apply': { selection:{kind:'json',max:4096},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
+    /** U104: save the checked indexes and the members of the checked sets as a new named index set (`library set-create --index`). */
+    'indexing.scope.saveSet': { name:{kind:'string',min:1,max:128}, selection:{kind:'json',max:4096} },
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
     /** U103: one everyday action on the selected index; `job` names the job for retry and cancel. */
@@ -796,6 +803,12 @@ export const WEBVIEW_MESSAGES = {
     'work.usage': { days: { kind: 'int', min: 1, max: 365 } },
     /** U103: recent activity: this window's session status/job events and `airkctl service logs`. */
     'work.activity': {},
+    /** U104: Management › Agents: this window folder's agent entries (`airkctl agents list --no-user`) and the window scope. */
+    'agents.read': {},
+    /** U104: connect an agent to the window's search scope (host hook `connectAgentToScope`). */
+    'agents.connect': { client: { kind: 'enum', values: AGENT_CLIENTS } },
+    /** U104: remove this folder's entries naming one connection (`airkctl agents remove --connection-id`). */
+    'agents.disconnect': { connectionId: { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ } },
     /** Read-only index library (U97): one native catalog read through the window's airkctl session. */
     'library.read': {
         method: { kind: 'enum', values: LIBRARY_METHODS },
@@ -864,6 +877,7 @@ const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessa
     'indexing.scope.apply', 'indexing.recommendations.use', 'indexing.recommendations.copy',
     'strategy.run.export', 'details.copy', 'clipboard.write',
     'manage.command', 'work.action', 'planner.saveInWorkspace', 'planner.exportJSON',
+    'indexing.scope.saveSet', 'agents.connect', 'agents.disconnect',
     'strategy.export', 'studio.save', 'suggestions.resolve',
     'suggestions.applied', 'suggestions.discardAll', 'handoff.share',
     'recipes.save', 'recipes.delete', 'recipes.export',

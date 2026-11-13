@@ -21,12 +21,15 @@ use super::{Context, Selection, VERSION, fail, installed, print_control, running
 use crate::contract::{ErrorLine, ExitClass};
 use airk_core::{
     catalog_management::{
-        CatalogEntity, CatalogItem, CatalogKind, CatalogOperation, CatalogPageRequest,
-        CatalogRequest, ConfirmationTarget, MAX_PAGE_BYTES,
+        CatalogCursor, CatalogEntity, CatalogItem, CatalogKind, CatalogOperation,
+        CatalogPageRequest, CatalogRequest, CatalogSource, ConfirmationTarget, MAX_PAGE_BYTES,
     },
     catalog_setup::{IndexSetupDraft, IndexSetupSelection, SetupAdditionalRoot},
     catalog_source_change::IndexRetirementReason,
-    index_catalog::{CatalogRevision, IndexDefinition, MAX_SELECTION, QueryProject},
+    index_catalog::{
+        CatalogRevision, IndexDefinition, IndexId, MAX_SELECTION, Membership, PathScope,
+        QueryProject, QueryProjectId, ScopeAtom,
+    },
     service::{ControlMethod, ControlResponse, RequestKey},
 };
 use clap::Subcommand;
@@ -110,10 +113,14 @@ pub(super) enum LibraryCommand {
         #[command(flatten)]
         apply: ApplyArgs,
     },
-    /// Create an index set.
+    /// Create an index set; with --index, add each index with every enabled source root, whole
+    /// (an empty set with the same name is reused instead of creating another).
     SetCreate {
         #[arg(long)]
         name: String,
+        /// An index (`idx_…`) to add to the set (repeatable); the memberships apply with --yes.
+        #[arg(long = "index")]
+        indexes: Vec<String>,
         #[command(flatten)]
         apply: ApplyArgs,
     },
@@ -248,11 +255,13 @@ pub(super) fn run(cx: &mut Context, selection: Selection, command: LibraryComman
                 Err(error) => Err(usage(cx, &format!("invalid --operation: {error}"))),
             }
         }
-        LibraryCommand::SetCreate { name, apply } => change(cx, &selection, apply, |cx, _| {
-            let id = crate::journal::mint().map_err(|line| fail(cx, &line))?;
-            let id = format!("prj_{id}")
-                .parse()
-                .map_err(|_| usage(cx, "index set id"))?;
+        LibraryCommand::SetCreate {
+            name,
+            indexes,
+            apply,
+        } if !indexes.is_empty() => set_create_with(cx, &selection, name, indexes, apply),
+        LibraryCommand::SetCreate { name, apply, .. } => change(cx, &selection, apply, |cx, _| {
+            let id = new_set_id(cx)?;
             Ok(CatalogOperation::CreateProject { id, name })
         }),
         LibraryCommand::SetRename { set, name, apply } => {
@@ -619,9 +628,23 @@ fn change(
 ) -> Result<u8, u8> {
     let control = control(cx, selection, apply.runtime_dir)?;
     let operation = build(cx, &control)?;
-    let expected_catalog_revision = current_revision(cx, &control)?;
+    reviewed(cx, &control, operation, apply.yes, apply.confirm.as_deref()).map(|(code, _)| code)
+}
+
+/// Preview `operation` at the current revision and print the preview; when
+/// `yes`, check the typed confirmation and apply under the same request
+/// identity, printing the answer. Returns the exit code and whether the
+/// service answered with a receipt.
+fn reviewed(
+    cx: &mut Context,
+    control: &Path,
+    operation: CatalogOperation,
+    yes: bool,
+    confirm: Option<&str>,
+) -> Result<(u8, bool), u8> {
+    let expected_catalog_revision = current_revision(cx, control)?;
     let (namespace, epoch) =
-        crate::journal::epoch(&control, VERSION).map_err(|line| fail(cx, &line))?;
+        crate::journal::epoch(control, VERSION).map_err(|line| fail(cx, &line))?;
     let caller = crate::journal::mint().map_err(|line| fail(cx, &line))?;
     let nonce = crate::journal::mint().map_err(|line| fail(cx, &line))?;
     let request = CatalogRequest {
@@ -636,21 +659,21 @@ fn change(
     };
     let response = self::request(
         cx,
-        &control,
+        control,
         ControlMethod::CatalogPreview {
             request: request.clone(),
         },
     )?;
     let code = print_control(cx, &response);
     let ControlResponse::CatalogPreview { preview_digest, .. } = response else {
-        return Ok(code);
+        return Ok((code, false));
     };
-    if code != 0 || !apply.yes {
-        return Ok(code);
+    if code != 0 || !yes {
+        return Ok((code, false));
     }
     // U98: the same rule and the same current name the admin pages check.
-    if let Some(name) = confirmation(cx, &control, &request.operation, expected_catalog_revision)?
-        && apply.confirm.as_deref() != Some(name.as_str())
+    if let Some(name) = confirmation(cx, control, &request.operation, expected_catalog_revision)?
+        && confirm != Some(name.as_str())
     {
         return Err(fail(
             cx,
@@ -662,18 +685,256 @@ fn change(
     }
     let applied = self::request(
         cx,
-        &control,
+        control,
         ControlMethod::CatalogApply {
             request,
             preview_digest,
         },
     )?;
-    Ok(print_control(cx, &applied))
+    let code = print_control(cx, &applied);
+    Ok((
+        code,
+        code == 0 && matches!(applied, ControlResponse::CatalogApplied { .. }),
+    ))
+}
+
+fn new_set_id(cx: &mut Context) -> Result<QueryProjectId, u8> {
+    let id = crate::journal::mint().map_err(|line| fail(cx, &line))?;
+    format!("prj_{id}")
+        .parse()
+        .map_err(|_| usage(cx, "index set id"))
+}
+
+/// Every page of `kind` (for one index or set) at one catalog revision.
+fn pages(
+    cx: &mut Context,
+    control: &Path,
+    kind: CatalogKind,
+    index_id: Option<IndexId>,
+    project_id: Option<QueryProjectId>,
+    revision: CatalogRevision,
+) -> Result<Vec<CatalogItem>, u8> {
+    let mut after: Option<CatalogCursor> = None;
+    let mut items = Vec::new();
+    loop {
+        let method = ControlMethod::CatalogPage {
+            request: CatalogPageRequest {
+                kind,
+                index_id,
+                project_id,
+                after: after.clone(),
+                expected_catalog_revision: Some(revision),
+                limit: MAX_SELECTION,
+                max_bytes: MAX_PAGE_BYTES,
+            },
+        };
+        let page = match request(cx, control, method)? {
+            ControlResponse::CatalogPage { page, .. } => page,
+            other => return Err(print_control(cx, &other).max(1)),
+        };
+        if page.revision != revision {
+            return Err(fail(
+                cx,
+                &refused(
+                    "catalog_changed",
+                    "the catalog changed while it was read; run the command again",
+                ),
+            ));
+        }
+        items.extend(page.items);
+        match page.continuation {
+            Some(next)
+                if after
+                    .as_ref()
+                    .is_none_or(|previous| previous.after < next.after) =>
+            {
+                after = Some(next);
+            }
+            Some(_) => {
+                return Err(fail(
+                    cx,
+                    &refused("catalog_changed", "catalog continuation did not advance"),
+                ));
+            }
+            None => return Ok(items),
+        }
+    }
+}
+
+/// The membership scope that reads all of `index`: one whole-subtree atom per
+/// enabled source root of that index, as index setup and the admin's Make
+/// readable build it.
+fn whole_scope(index: IndexId, sources: &[CatalogSource]) -> Vec<ScopeAtom> {
+    sources
+        .iter()
+        .filter(|source| source.index_id == index && source.enabled)
+        .map(|source| ScopeAtom {
+            source_root_id: source.id,
+            kind: PathScope::Subtree,
+            path: String::new(),
+        })
+        .collect()
+}
+
+/// `set-create --index` (U104): the admin's Make readable for several
+/// indexes. Each index's whole scope is read first; an empty set named
+/// `name` is reused, otherwise one is created; then each index is added by a
+/// reviewed `SetMembership`. Every step's answer is printed and the first
+/// refusal stops. Without --yes only the creation of the set is previewed.
+fn set_create_with(
+    cx: &mut Context,
+    selection: &Selection,
+    name: String,
+    indexes: Vec<String>,
+    apply: ApplyArgs,
+) -> Result<u8, u8> {
+    let control = control(cx, selection, apply.runtime_dir)?;
+    let mut ids: Vec<IndexId> = Vec::new();
+    for text in indexes {
+        let id = parse(cx, "--index", Some(text))?.ok_or(2u8)?;
+        if ids.contains(&id) {
+            return Err(usage(cx, &format!("--index {id} is named twice")));
+        }
+        ids.push(id);
+    }
+    let revision = current_revision(cx, &control)?;
+    let mut scopes = Vec::new();
+    for index in &ids {
+        let sources = pages(
+            cx,
+            &control,
+            CatalogKind::Sources,
+            Some(*index),
+            None,
+            revision,
+        )?
+        .into_iter()
+        .filter_map(|item| match item {
+            CatalogItem::Source(source) => Some(source),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+        let scope = whole_scope(*index, &sources);
+        if scope.is_empty() {
+            return Err(fail(
+                cx,
+                &refused(
+                    "index_set_scope_empty",
+                    &format!(
+                        "index {index} has no enabled source root, so a membership would grant nothing"
+                    ),
+                ),
+            ));
+        }
+        scopes.push((*index, scope));
+    }
+    // Only an EMPTY set with this name is reused (one an interrupted run
+    // left); a set that already holds indexes is never merged into.
+    let mut reused = None;
+    for item in pages(cx, &control, CatalogKind::Projects, None, None, revision)? {
+        let CatalogItem::Project(project) = item else {
+            continue;
+        };
+        if project.name != name {
+            continue;
+        }
+        let members = pages(
+            cx,
+            &control,
+            CatalogKind::Memberships,
+            None,
+            Some(project.id),
+            revision,
+        )?;
+        if members.is_empty() {
+            reused = Some(project.id);
+            break;
+        }
+    }
+    let id = match reused {
+        Some(id) => {
+            let code = super::json_line(
+                cx,
+                &serde_json::json!({"status": "index_set_reused", "id": id, "name": name}),
+            );
+            if code != 0 {
+                return Ok(code);
+            }
+            id
+        }
+        None => {
+            let id = new_set_id(cx)?;
+            let operation = CatalogOperation::CreateProject {
+                id,
+                name: name.clone(),
+            };
+            let (code, applied) = reviewed(cx, &control, operation, apply.yes, None)?;
+            if code != 0 || !applied {
+                return Ok(code);
+            }
+            id
+        }
+    };
+    if !apply.yes {
+        return Ok(0);
+    }
+    let set = id.to_string();
+    for (index, scope) in scopes {
+        let project = project(cx, &control, &set)?;
+        let operation = CatalogOperation::SetMembership {
+            membership: Membership {
+                project_id: id,
+                index_id: index,
+                revision: CatalogRevision::INITIAL,
+                scope,
+            },
+            expected_scope_revision: project.scope_revision,
+            expected_membership_revision: None,
+        };
+        let (code, applied) = reviewed(cx, &control, operation, true, None)?;
+        if code != 0 || !applied {
+            return Ok(code.max(1));
+        }
+    }
+    Ok(0)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::collection_from;
+    use super::{collection_from, whole_scope};
+    use airk_core::{
+        catalog_management::CatalogSource,
+        identity::Incarnation,
+        index_catalog::{IndexId, PathScope, ScopeAtom, SourceRootId},
+    };
+
+    #[test]
+    fn a_new_membership_reads_every_enabled_root_of_its_index_whole() {
+        let index: IndexId = "idx_01010101010101010101010101010101".parse().unwrap();
+        let other: IndexId = "idx_02020202020202020202020202020202".parse().unwrap();
+        let root = |byte: u8| SourceRootId::from_identity(Incarnation::from_bytes([byte; 16]));
+        let source = |id: u8, of: IndexId, enabled: bool| CatalogSource {
+            id: root(id),
+            index_id: of,
+            canonical_path: format!("/src/{id}"),
+            owner: id == 3,
+            enabled,
+            aliases: Vec::new(),
+        };
+        let sources = [
+            source(3, index, true),
+            source(4, index, false),
+            source(5, other, true),
+            source(6, index, true),
+        ];
+        let whole = |id: u8| ScopeAtom {
+            source_root_id: root(id),
+            kind: PathScope::Subtree,
+            path: String::new(),
+        };
+        assert_eq!(whole_scope(index, &sources), vec![whole(3), whole(6)]);
+        assert_eq!(whole_scope(index, &sources[1..3]), Vec::<ScopeAtom>::new());
+    }
 
     #[test]
     fn collections_follow_the_name() {

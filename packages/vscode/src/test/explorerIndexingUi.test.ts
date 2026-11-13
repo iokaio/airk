@@ -303,34 +303,97 @@ test('Search scope lists every index set and marks edited choices as unapplied',
     tree=f.render();assert.match(text(tree),/Changes not applied/);assert.doesNotMatch(text(tree),/Selection active/);
 });
 
-test('Apply is enabled only for a changed, valid selection; an index alone needs an index set (U103)', async () => {
+test('U104 Apply follows the union: changed or automatic selections apply; outside and set-less indexes are listed, never refused', async () => {
     const { scopeApplyState } = webview('indexing.tsx', {}, exports => exports).exports;
+    const other = 'prj_' + '99'.repeat(16);
     const sets = { [indexId]: [projectId] }, applied = { appliedIndexes: [], appliedProjects: [projectId], indexSets: sets, indexSetsComplete: true };
-    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [], projects: [projectId] })), { changed: false, valid: true, enabled: false, unreadable: [], outside: [] }, 'nothing changed');
-    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [indexId], projects: [projectId] })), { changed: true, valid: true, enabled: true, unreadable: [], outside: [] });
-    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [indexId], projects: [] })), { changed: true, valid: true, enabled: true, unreadable: [], outside: [] }, 'an index alone with a set is valid');
-    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [secondId], projects: [] })), { changed: true, valid: false, enabled: false, unreadable: [secondId], outside: [] }, 'an index in no set');
-    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [secondId], projects: [projectId] })), { changed: true, valid: false, enabled: false, unreadable: [], outside: [secondId] });
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [], projects: [projectId] })), { changed: false, valid: true, enabled: false, extra: [], newSets: [] }, 'nothing changed');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [indexId], projects: [projectId] })), { changed: true, valid: true, enabled: true, extra: [], newSets: [] }, 'a member of a checked set adds nothing');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [indexId], projects: [] })), { changed: true, valid: true, enabled: true, extra: [indexId], newSets: [] }, 'an index alone with a set');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [secondId], projects: [] })), { changed: true, valid: true, enabled: true, extra: [secondId], newSets: [secondId] }, 'an index in no set gets one on Apply');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [secondId], projects: [projectId] })), { changed: true, valid: true, enabled: true, extra: [secondId], newSets: [secondId] }, 'a set plus a set-less index');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexSets: { ...sets, [secondId]: [other] }, indexes: [secondId], projects: [projectId] })),
+        { changed: true, valid: true, enabled: true, extra: [secondId], newSets: [] }, 'a set plus an index of another set is a union');
+    assert.deepEqual(plain(scopeApplyState({ indexes: [indexId], projects: [], appliedIndexes: [indexId], appliedProjects: [], automatic: true, indexSets: sets, indexSetsComplete: true })),
+        { changed: false, valid: true, enabled: true, extra: [indexId], newSets: [] }, 'the automatic scope can be applied unchanged to make it the user choice');
     assert.deepEqual(plain(scopeApplyState({ indexes: [secondId], projects: [], appliedIndexes: [], appliedProjects: [], indexSetsComplete: false })),
-        { changed: true, valid: true, enabled: true, unreadable: [], outside: [] }, 'unknown memberships leave validation to the service');
-    assert.deepEqual(plain(scopeApplyState({ indexes: [], projects: [], appliedIndexes: [], appliedProjects: [] })), { changed: false, valid: true, enabled: false, unreadable: [], outside: [] }, 'nothing checked and nothing applied');
+        { changed: true, valid: true, enabled: true, extra: [], newSets: [] }, 'unknown memberships leave validation to the service');
+    assert.deepEqual(plain(scopeApplyState({ indexes: [], projects: [], appliedIndexes: [], appliedProjects: [] })), { changed: false, valid: true, enabled: false, extra: [], newSets: [] }, 'nothing checked and nothing applied');
+    const many = Array.from({ length: 33 }, (_, n) => 'idx_' + n.toString(16).padStart(2, '0').repeat(16));
+    const large = scopeApplyState({ indexes: [], projects: [projectId], appliedIndexes: [], appliedProjects: [], indexSets: Object.fromEntries(many.map(id => [id, [projectId]])), indexSetsComplete: true });
+    assert.equal(large.enabled, false); assert.match(large.limit, /at most 32 indexes; this selection has 33/);
 });
 
-test('checking an index that is in no index set disables Apply and offers Make readable for it', async () => {
+test('U104 checking an index in no index set keeps Apply enabled and says Apply creates a set named after it', async () => {
     const f=screen('window',{searchScope:{indexes:[indexValue,secondValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],active:false,indexSets:{[indexId]:[projectId]},indexSetsComplete:true,responses:[]}});
     let tree=f.render();await f.flush();tree=f.render();
     const apply=()=>button(f.render(),/^Apply selection$/);
     assert.equal(apply().props.disabled,true,'nothing changed');
-    assert.match(text(tree),/In no index set: not readable yet/);
+    assert.match(text(tree),/In no index set: Apply creates an index set named after it/);
     const box=(label:string)=>nodes(nodes(f.render()).find(node=>node.type==='label'&&text(node).includes(label))).find(node=>node.type==='input');
-    box('Second index').props.onChange({currentTarget:{checked:true}});
+    box('Second index').props.onChange({currentTarget:{checked:true}});box('Application Project').props.onChange({currentTarget:{checked:true}});
     tree=f.render();
-    assert.equal(apply().props.disabled,true,'a set-less index cannot be applied');
-    const readable=component(tree,'AdminButton').find(node=>node.props.index===secondId);
-    assert.ok(readable); assert.equal(readable.props.page,'index-library'); assert.equal(readable.props.label,'Make readable in AIRK Admin');
-    assert.doesNotMatch(text(tree),/Choose at least one index set/);
-    box('Second index').props.onChange({currentTarget:{checked:false}});box('Application index').props.onChange({currentTarget:{checked:true}});
-    assert.equal(apply().props.disabled,false,'an index alone that a set holds can be applied');
+    assert.equal(apply().props.disabled,false,'a set plus a set-less index can be applied');
+    assert.match(text(tree),/Second index is in no index set\. Apply creates an index set named “Second index” for it/);
+    assert.equal(component(tree,'AdminButton').some(node=>node.props.index===secondId),false,'no Make readable callout on this page');
+    assert.doesNotMatch(text(tree),/narrow/);
+    nodes(tree).find(node=>node.type==='form').props.onSubmit({preventDefault(){}});await f.flush();
+    assert.deepEqual(plain(f.sent.find(message=>message.type==='indexing.scope.apply').selection),{index_ids:[secondId],project_ids:[projectId]});
+});
+
+test('U104 the automatic scope enables Apply unchanged; Save as index set sends the checked choice; Connect an agent opens Management › Agents', async () => {
+    const f=screen('window',{searchScope:{indexes:[indexValue,secondValue],projects:[projectValue],selectedIndexIds:[indexId],selectedProjectIds:[],active:true,automatic:true,indexSets:{[indexId]:[projectId]},indexSetsComplete:true,responses:[]}});
+    let went:unknown;f.props.go=(route:unknown)=>{went=route;};
+    let tree=f.render();await f.flush();tree=f.render();
+    assert.equal(button(tree,/^Apply selection$/).props.disabled,false);
+    assert.match(text(tree),/read automatically\. Apply to make it this window's chosen scope/);
+    const save=()=>button(f.render(),/^Save as index set$/);
+    assert.equal(save().props.disabled,true,'a name is required');
+    nodes(f.render()).find(node=>node.type==='input'&&node.props.type==='text').props.onInput({currentTarget:{value:'  Review set '}});
+    assert.equal(save().props.disabled,false);
+    save().props.onClick();await f.flush();await f.flush();
+    assert.deepEqual(plain(f.sent.map(fields).filter(message=>message.type!=='indexing.scope.read')),[{type:'indexing.scope.saveSet',name:'Review set',selection:{index_ids:[indexId],project_ids:[]}}]);
+    assert.equal(f.sent.at(-1).type,'indexing.scope.read','the choices are read again after saving');
+    const links=nodes(f.render()).filter(node=>node.type==='button'&&/^Connect an agent$/.test(text(node)));
+    assert.ok(links.length>=1);links[0].props.onClick();
+    assert.deepEqual(plain(went),{workspace:'manage',tab:'agents'});
+});
+
+test('U104 Management › Agents lists this folder\'s entries, disconnects one and runs the Connect hook for the chosen agent', async () => {
+    const searchScope={available:true,active:true,outOfDate:false,remembered:true,label:'Application Project'};
+    const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',projects:[],features:{},searchScope};
+    const props:any={state,route:{workspace:'manage',tab:'agents'},go(){},publications:[]};
+    const f=webview('agents.tsx',state,exports=>exports.AgentsScreen(props));
+    const id='0a'.repeat(16),report={entries:[],checked:[],future_native_field:'kept'};
+    const listed={folder:'/work/app',report,entries:[{client:'claude',agent:'claude',file:'/work/app/.mcp.json',scope:'project',serverKey:'airk',connectionId:id,status:'ok'}]};
+    f.hold('agents.read');f.render();await f.flush();
+    assert.deepEqual(f.sent.map(fields),[{type:'agents.read'}]);
+    f.release('agents.read',listed);await f.flush();
+    let tree=f.render();
+    assert.match(text(tree),/Search scope: Application Project/);
+    assert.match(text(tree),/Claude Code · \/work\/app\/\.mcp\.json · airk · connection 0a0a/);
+    assert.deepEqual(plain(component(tree,'CompleteNativeResponse').at(-1).props.value),report,'the complete native report is shown');
+    assert.ok(component(tree,'AdminButton').some(node=>node.props.page==='agents'),'Open AIRK Admin stays for advanced management');
+    assert.deepEqual(plain(nodes(tree).filter(node=>node.type==='option').map(node=>node.props.value)),['claude','codex','vscode']);
+    nodes(tree).find(node=>node.type==='select').props.onChange({currentTarget:{value:'codex'}});
+    f.hold('agents.connect');button(f.render(),/^Connect$/).props.onClick();await f.flush();
+    f.release('agents.connect',{status:'pending',client:'codex',message:'Coming in the next step: connecting is being redesigned.'});await f.flush();
+    assert.match(text(f.render()),/Coming in the next step/);
+    f.hold('agents.disconnect');button(f.render(),/^Disconnect$/).props.onClick();await f.flush();
+    f.release('agents.disconnect',{schema:1,actions:[]});await f.flush();
+    f.release('agents.read',{...listed,entries:[]});await f.flush();
+    assert.deepEqual(f.sent.map(fields).slice(1),[{type:'agents.connect',client:'codex'},{type:'agents.disconnect',connectionId:id},{type:'agents.read'}]);
+    assert.match(text(f.render()),/No AIRK agent entries in this folder/);
+    // Without an applied scope, Connect is disabled and the page links to Search scope.
+    let went:unknown;
+    const none:any={...state,searchScope:{...searchScope,active:false}};
+    const g=webview('agents.tsx',none,exports=>exports.AgentsScreen({...props,state:none,go(route:unknown){went=route;}}));
+    g.hold('agents.read');tree=g.render();await g.flush();tree=g.render();
+    assert.equal(button(tree,/^Connect$/).props.disabled,true);
+    assert.match(text(tree),/No search scope is applied in this window/);
+    button(tree,/^Choose a search scope$/).props.onClick();assert.deepEqual(plain(went),{workspace:'indexing',tab:'window'});
+    const screens=webview('workspaces.tsx',{},exports=>exports).exports.SCREENS;
+    assert.equal(screens['manage/agents'].name,'AgentsScreen');
 });
 
 test('Refresh choices is suggested only while it is enabled, and Dismiss only with loaded recommendations', async () => {

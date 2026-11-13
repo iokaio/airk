@@ -4,7 +4,7 @@ import Module from 'node:module';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import type { ExplorerViewState } from '../explorerContracts';
-import { parseWebviewMessage } from '../explorerContracts';
+import { explorerRequestPolicy, parseWebviewMessage } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
 import { HandoffStore } from '../explorerHandoffs';
 import { IndexingCatalogController } from '../indexingCatalogController';
@@ -1101,6 +1101,33 @@ test('U103 index actions reach the host with the selected index and return the c
         assert.equal(parseWebviewMessage({ v: 1, type: 'work.action', requestId: 'w', action: 'restart', project }), undefined);
         assert.equal(parseWebviewMessage({ v: 1, type: 'work.action', requestId: 'w', action: 'retry', project, job: 'short' }), undefined);
     } finally { f.explorer.dispose(); }
+});
+
+test('U104 Management › Agents and Save as index set reach their host hooks; their messages are strictly typed', async () => {
+    const f = controller(), calls: unknown[][] = [];
+    (f.host as any).agents = {
+        read: async () => { calls.push(['read']); return { folder: '/w', entries: [], report: { entries: [] } }; },
+        connectAgentToScope: async (client: string) => { calls.push(['connect', client]); return { status: 'pending', client, message: 'Coming in the next step.' }; },
+        disconnect: async (id: string) => { calls.push(['disconnect', id]); throw Object.assign(new Error('Removal refused.'), { code: 'agents_remove_refused' }); },
+    };
+    const id = '0a'.repeat(16);
+    try {
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'agents.read' }), { folder: '/w', entries: [], report: { entries: [] } });
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'agents.connect', client: 'vscode' }), { status: 'pending', client: 'vscode', message: 'Coming in the next step.' });
+        await assert.rejects((f.explorer as any).dispatch({ type: 'agents.disconnect', connectionId: id }), (error: any) => error.error.code === 'agents_remove_refused');
+        assert.deepEqual(calls, [['read'], ['connect', 'vscode'], ['disconnect', id]]);
+        assert.ok(parseWebviewMessage({ v: 1, type: 'agents.connect', requestId: 'a', client: 'codex' }));
+        assert.equal(parseWebviewMessage({ v: 1, type: 'agents.connect', requestId: 'a', client: 'gemini' }), undefined);
+        assert.equal(parseWebviewMessage({ v: 1, type: 'agents.disconnect', requestId: 'a', connectionId: 'short' }), undefined);
+        assert.ok(parseWebviewMessage({ v: 1, type: 'indexing.scope.saveSet', requestId: 'a', name: 'Set', selection: { index_ids: [], project_ids: [] } }));
+        assert.equal(parseWebviewMessage({ v: 1, type: 'indexing.scope.saveSet', requestId: 'a', name: '', selection: {} }), undefined);
+        assert.equal(explorerRequestPolicy('agents.disconnect').uncertain, true);
+        assert.equal(explorerRequestPolicy('indexing.scope.saveSet').uncertain, true);
+        assert.equal(explorerRequestPolicy('agents.read').uncertain, false);
+    } finally { f.explorer.dispose(); }
+    const plain = controller();
+    try { await assert.rejects((plain.explorer as any).dispatch({ type: 'agents.read' }), (error: any) => error.error.code === 'CAPABILITY_DISABLED'); }
+    finally { plain.explorer.dispose(); }
 });
 
 test('U103 an index in no index set is never read through the binding route; the header names the cause', async () => {

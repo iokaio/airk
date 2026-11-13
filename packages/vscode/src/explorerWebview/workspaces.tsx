@@ -15,6 +15,7 @@ import { ReviewChangesScreen, ReviewImpactScreen, ReviewTestsScreen } from './re
 import { LibraryScreen, StudioScreen } from './strategies';
 import { IndexingScreen } from './indexing';
 import { ActivityScreen, UsageScreen } from './manageViews';
+import { AgentsScreen } from './agents';
 
 export interface ScreenProps {
     manageEmbedded?: boolean;
@@ -40,12 +41,12 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'manage/overview': AdminHandoffScreen,
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,
-    // U103: activity and usage are read here; the other Management tabs open AIRK Admin.
+    // U103: activity and usage are read here; U104: agents are connected here; the other Management tabs open AIRK Admin.
     'manage/activity': ActivityScreen,
     'manage/repair': AdminHandoffScreen,
     'manage/storage': AdminHandoffScreen,
     'manage/service': AdminHandoffScreen,
-    'manage/agents': AdminHandoffScreen,
+    'manage/agents': AgentsScreen,
     'manage/usage': UsageScreen,
     'manage/logs': AdminHandoffScreen,
     'code/symbols': SymbolsScreen,

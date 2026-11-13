@@ -2900,7 +2900,7 @@ Commands:
   setup        Draft a new index for --root (and --data-dir) and print the service's review; --apply also creates it
   setup-apply  Apply a draft `setup` printed (the whole `catalog_index_setup_draft` line or its `draft`)
   change       Preview any catalog operation (JSON, as the admin pages send it); --yes applies the preview
-  set-create   Create an index set
+  set-create   Create an index set; with --index, add each index with every enabled source root, whole (an empty set with the same name is reused instead of creating another)
   set-rename   Rename an index set
   set-delete   Delete an index set (its indexes stay); needs --confirm <set name>
   rename       Rename an index
@@ -3220,7 +3220,7 @@ Options:
 ## airkctl library set-create
 
 ```text
-Create an index set
+Create an index set; with --index, add each index with every enabled source root, whole (an empty set with the same name is reused instead of creating another)
 
 Usage: airkctl library set-create [OPTIONS] --name <NAME>
 
@@ -3234,26 +3234,29 @@ Options:
           [default: text]
           [possible values: json, text]
 
+      --index <INDEXES>
+          An index (`idx_…`) to add to the set (repeatable); the memberships apply with --yes
+
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
-
-      --yes
-          Apply the previewed change
-
-      --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
+      --yes
+          Apply the previewed change
+
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
-      --runtime-dir <RUNTIME_DIR>
-
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session

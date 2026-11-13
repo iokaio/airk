@@ -27,7 +27,7 @@ export interface NativeHostContextDescriptor extends CatalogObject {
 export interface CatalogView {
     setEditor?:{id:string;name:string;indexIds:string[];complete:boolean;responses:CatalogObject[]};
     /** The window search scope choices (U77): `outOfDate` after a `scoped_read_unavailable` read; `namespace`/`revision` of the one catalog revision read. */
-    searchScope?: { indexes:CatalogObject[];projects:CatalogObject[];selectedIndexIds:string[];selectedProjectIds:string[];managedProjectIds?:string[];active:boolean;outOfDate?:boolean;namespace?:string;revision?:number;indexContinuation?:CatalogObject|null;projectContinuation?:CatalogObject|null;indexResponses?:CatalogObject[];projectResponses?:CatalogObject[];responses:CatalogObject[];indexSets?:Record<string,string[]>;indexSetsComplete?:boolean;indexSetsError?:string;membershipResponses?:CatalogObject[] };
+    searchScope?: { indexes:CatalogObject[];projects:CatalogObject[];selectedIndexIds:string[];selectedProjectIds:string[];managedProjectIds?:string[];active:boolean;outOfDate?:boolean;namespace?:string;revision?:number;indexContinuation?:CatalogObject|null;projectContinuation?:CatalogObject|null;indexResponses?:CatalogObject[];projectResponses?:CatalogObject[];responses:CatalogObject[];indexSets?:Record<string,string[]>;indexSetsComplete?:boolean;indexSetsError?:string;membershipResponses?:CatalogObject[];automatic?:boolean };
     capabilities?:CatalogObject;
     canReviewSplit?:boolean; splitFormOpen?:boolean; splitReview?:SplitReview; submittedSplitReview?:SplitReview; splitSourceState?:CatalogObject;
     splitStatus?:CatalogObject; reviewedSplitStatus?:CatalogObject;

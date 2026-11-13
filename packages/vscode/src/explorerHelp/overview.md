@@ -12,7 +12,7 @@ The Overview shows the selected project and its published index. The status pill
 
 The pill names a known cause: **indexing 992/2,016 files** (committed of captured files in the running attempt; **indexing…** when the counts are not reported), **paused**, or **not readable: no index set** when the index belongs to no index set. **index unavailable** means the service reported no readable publication without another cause.
 
-Without a chosen search scope, the window reads its folder's index automatically through the index sets that hold it. An index in no index set is not readable yet: the Overview says so and offers **Make readable in AIRK Admin**; indexing continues meanwhile.
+Without a chosen search scope, the window reads its folder's index automatically through the index sets that hold it. An index in no index set is not readable yet: the Overview says so and offers **Choose it in Search scope** (applying it creates an index set named after it) or **Make readable in AIRK Admin**; indexing continues meanwhile. **Connect an agent** opens Management › Agents.
 
 **Index actions** run the everyday actions on the selected index: Index now, Pause or Resume, Turn watching on or off, and Retry or Cancel a job. Each shows its native result.
 

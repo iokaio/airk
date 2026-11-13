@@ -36,7 +36,7 @@ import type { AssistanceWindowStatus } from './explorerContracts';
 import type { SearchDraft } from './explorerDrafts';
 import { nativeSavedSourceState, readResultBody, verificationLabel } from './sourceVerification';
 import { ServiceError } from './serviceClient';
-import type { ReadRouteView, WorkAction } from './explorerContracts';
+import type { AgentClient, ReadRouteView, WorkAction } from './explorerContracts';
 import type { CommandOutcome } from './airkctl/features/liveStatus';
 
 /** The narrow surface of the service extension that the Explorer may use. */
@@ -65,6 +65,8 @@ export interface ExplorerHost {
     activity?(): Promise<{ events: Record<string, unknown>[]; eventsOmitted: boolean; logs: CommandOutcome }>;
     /** U103: one everyday index action as an `airkctl` command (complete native outcome, refused or not). */
     workAction?(action: WorkAction, project: string, job?: string): Promise<CommandOutcome>;
+    /** U104: Management › Agents: this folder's agent entries, Disconnect and the Connect hook. */
+    readonly agents?: AgentsHost;
     /** U103: how the selected index is read without a chosen scope; `not_readable` refuses reads. */
     readRoute?(): ReadRouteView | undefined;
     /** U103: the Explorer selected this project; its index is read under the automatic scope. */
@@ -104,6 +106,13 @@ export interface ExplorerHost {
     openAdmin?(target: AdminTarget, choose: boolean): Promise<void>;
 }
 
+/** Management › Agents (U104, airkctl/features/windowAgents.ts). */
+export interface AgentsHost {
+    read(): Promise<unknown>;
+    disconnect(connectionId: string): Promise<unknown>;
+    /** Connect `client` to the window's search scope (one hook, rewired when the connection model lands). */
+    connectAgentToScope(client: AgentClient): Promise<unknown>;
+}
 /** Shares one reviewed Studio or Planner snapshot with a coding agent. */
 export interface HandoffPublisher {
     share(kind: 'studio' | 'planner', revision: number, content: string, publication?: string): ExplorerHandoff | Promise<ExplorerHandoff>;
@@ -122,6 +131,8 @@ export interface WindowScopeHost {
     /** Which index sets hold each index (U103: Apply checks an index-only pick before sending it). */
     readIndexSets?(): Promise<void>;
     applySearchScope(selection: Record<string, unknown>): Promise<Record<string, unknown>>;
+    /** U104: save the checked indexes and the members of the checked sets as a new named index set. */
+    saveIndexSet?(name: string, selection: Record<string, unknown>): Promise<Record<string, unknown>>;
     clearSearchScope(): Promise<void>;
     onDidChange(listener: () => void): { dispose(): void };
 }
@@ -670,7 +681,7 @@ export class ExplorerController implements vscode.Disposable {
             const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
             // Using recommended advice and applying an agent search draft select the window search
             // scope themselves, which starts a new evidence epoch; their own committed outcome stands.
-            const managementOrLocal=['admin.open','manage.command','work.action','work.usage','work.activity','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
+            const managementOrLocal=['admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -730,6 +741,11 @@ export class ExplorerController implements vscode.Disposable {
             case 'indexing.scope.apply': {
                 const scope=this.scopeHost();
                 return this.scopeWork(()=>scope.applySearchScope(message.selection));
+            }
+            case 'indexing.scope.saveSet': {
+                const scope=this.scopeHost();
+                if(!scope.saveIndexSet)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Creating index sets is not available in this window.'));
+                return this.scopeWork(()=>scope.saveIndexSet!(message.name,message.selection));
             }
             case 'library.read': {
                 this.requireAuthorization(true);
@@ -847,6 +863,15 @@ export class ExplorerController implements vscode.Disposable {
                 this.requireAuthorization(true);
                 if(!this.host.activity)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Activity is not available in this window.'));
                 return this.host.activity();
+            }
+            // U104: Management › Agents. Failures keep their native code (scopeWork).
+            case 'agents.read':
+            case 'agents.connect':
+            case 'agents.disconnect': {
+                this.requireAuthorization(true);
+                const agents=this.host.agents;
+                if(!agents)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Agent connections are not available in this window.'));
+                return this.scopeWork(()=>message.type==='agents.read'?agents.read():message.type==='agents.connect'?agents.connectAgentToScope(message.client):agents.disconnect(message.connectionId));
             }
             case 'search.form': {
                 const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks } = message;

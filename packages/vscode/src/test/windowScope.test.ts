@@ -85,15 +85,15 @@ test('apply sends exactly one scope_select frame with the set members at the rea
     assert.equal(scope.active, true);
     assert.deepEqual(scope.searchScopeSummary(), { available: true, active: true, outOfDate: false, remembered: true, label: 'Set 1',
         indexIds: [idx(1), idx(2)], projectIds: [prj(1)], scopeIdentity: 'cd'.repeat(32), catalogRevision: 7 });
-    assert.deepEqual(store.values.get(WINDOW_SCOPE_KEY), { namespace, project_ids: [prj(1)], index_ids: [idx(1), idx(2)], explicit: false });
+    assert.deepEqual(store.values.get(WINDOW_SCOPE_KEY), { namespace, project_ids: [prj(1)], index_ids: [], explicit: false, union: true }, 'U104: the checked choice is remembered as a union');
     const spec = scope.spec()!;
     assert.equal(spec.windowScope!.key, windowScopeKey({ namespace, project_ids: [prj(1)], index_ids: [idx(2), idx(1)] }), 'the key ignores order');
     assert.match(spec.service!.project, /^[0-9a-f]{64}$/);
-    // Narrowing to an index outside the chosen sets is refused before any frame.
-    await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [prj(1)] }), (error: any) => error.code === 'window_scope_index_outside_sets');
-    // An index alone is read through the sets that hold it (U103); an index in no set is refused with Make readable.
+    // U104: an index outside the chosen sets is added through its own sets; one in no set, without a
+    // set-create command, is refused before any frame with the way to give it a set.
+    await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [prj(1)] }), (error: any) => error.code === 'window_scope_index_not_readable');
     await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [] }), (error: any) => error.code === 'window_scope_index_not_readable'
-        && /Make it readable in AIRK Admin/.test(error.message) && error.nativeResponse.index_ids[0] === idx(9));
+        && /create an index set named after it, or make it readable in AIRK Admin/.test(error.message) && error.nativeResponse.index_ids[0] === idx(9));
     assert.equal(s.selects.length, 1);
     await scope.applySearchScope({ index_ids: [], project_ids: [] });
     assert.deepEqual(s.releases, [1]); assert.equal(scope.active, false);
@@ -137,7 +137,8 @@ test('a remembered choice is applied again only after the catalog is read at its
     await scope.restore();
     assert.deepEqual(s.controls.slice(0, 2).map(method => [method.catalog_page.request.kind, method.catalog_page.request.expected_catalog_revision]), [['indexes', null], ['projects', 9]],
         'the catalog is read again before the grant');
-    assert.deepEqual(s.selects.at(-1), { namespace, expected_catalog_revision: 9, index_ids: [idx(2)], project_ids: [prj(1)] }, 'the current revision, never the stale one');
+    assert.deepEqual(s.selects.at(-1), { namespace, expected_catalog_revision: 9, index_ids: [idx(1), idx(2)], project_ids: [prj(1)] },
+        'the current revision, never the stale one; U104: a checked member index does not narrow its set');
     assert.equal(scope.active, true);
     // A remembered index no longer in its set is not applied; the user reselects.
     const stale = memento({ [WINDOW_SCOPE_KEY]: { namespace, project_ids: [prj(1)], index_ids: [idx(5)], explicit: true } }), s2 = session(() => 3);

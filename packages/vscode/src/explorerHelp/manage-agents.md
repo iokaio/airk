@@ -8,14 +8,16 @@ related_airk_help: agent-setup, mcp
 ---
 # Agent connections
 
-Coding-agent connections and their access are created and revoked in AIRK Admin, Agents. In VS Code, Connect Coding Agent writes an agent entry for an existing connection, and Reconnect Coding Agents repairs stale entries.
+Management › Agents connects coding agents to this window's folder. Choose the agent (Claude Code, Codex or VS Code / GitHub Copilot) and choose **Connect**; the agent reads the indexes in this window's search scope. When no search scope is applied, choose one in Indexing › Search scope first.
 
-Management moved from the Explorer to the AIRK admin pages; this window reads indexes and evidence only. Its Management tabs open the matching admin page.
+Connecting an agent to the search scope is being completed: in this version Connect says it is coming in the next step and changes nothing. Until then, connect agents in AIRK Admin › Agents.
 
-Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
+**Connected agents** lists the AIRK entries in this folder's agent configuration files (`airkctl agents list`) with their file, connection and status, and the complete native report. **Disconnect** removes the entries that name that connection (`airkctl agents remove --connection-id`); other servers and settings in the file are kept.
+
+Choose **Open AIRK Admin** for advanced connection management. If the VS Code browser reports a certificate problem, choose Open in my browser.
 
 ## Steps
 
-1. Choose **Open AIRK Admin**.
-2. In AIRK Admin, open **Agents** to see connections, ownership and the exact `airkctl agents ...` command to apply.
-3. Run that command (or use this window's agent connection commands) to connect, repair or remove an agent entry.
+1. Apply a search scope in Indexing › Search scope.
+2. In Management › Agents, choose the agent and **Connect**.
+3. Reconnect the running agent: Claude Code with `/mcp` or a restart, Codex with a restart; VS Code restarts the MCP server when its configuration changes.

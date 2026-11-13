@@ -234,3 +234,44 @@ fn cli_reference_documents_every_public_command() {
         "regenerate with AIRK_WRITE_CLI_REFERENCE=1 cargo test -p airkctl --lib cli_reference"
     );
 }
+
+/// U104: `library set-create --index` checks its indexes before any request.
+#[test]
+fn set_create_indexes_are_checked_before_the_service() {
+    let missing = std::env::temp_dir().join("airkctl-no-such-control-root");
+    let missing = missing.to_str().unwrap();
+    let (code, _, stderr) = run_line(&[
+        "library",
+        "set-create",
+        "--name",
+        "Docs",
+        "--index",
+        "not-an-index",
+        "--runtime-dir",
+        missing,
+    ]);
+    assert_eq!(
+        (code, stderr.as_str()),
+        (2, "airkctl: invalid --index: not-an-index\n")
+    );
+    let index = "idx_01010101010101010101010101010101";
+    let (code, _, stderr) = run_line(&[
+        "library",
+        "set-create",
+        "--name",
+        "Docs",
+        "--index",
+        index,
+        "--index",
+        index,
+        "--runtime-dir",
+        missing,
+    ]);
+    assert_eq!(
+        (code, stderr.as_str()),
+        (
+            2,
+            "airkctl: --index idx_01010101010101010101010101010101 is named twice\n"
+        )
+    );
+}

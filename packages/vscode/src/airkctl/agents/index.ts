@@ -35,24 +35,26 @@ export async function inputCredential(airkctl: Airkctl, input: unknown): Promise
 }
 
 const projectArgs = (projects: readonly string[]) => projects.flatMap(project => ['--project', project]);
+/** What the `agents` wrappers need of the facade: the window session's JSON command runner. */
+export interface AgentsRunner { readonly session: { json(argv: readonly string[]): Promise<unknown> } }
 /** `agents list` for the window's folders: the complete native report. */
-export function listAgents(airkctl: Airkctl, projects: readonly string[], includeUser = true): Promise<unknown> {
+export function listAgents(airkctl: AgentsRunner, projects: readonly string[], includeUser = true): Promise<unknown> {
     return airkctl.session.json(['agents', 'list', ...projectArgs(projects), ...(includeUser ? [] : ['--no-user'])]);
 }
 /** `agents repair`: rewrites stale entries; `replacement` replaces unknown connections. */
-export function repairAgents(airkctl: Airkctl, projects: readonly string[], replacement?: string): Promise<unknown> {
+export function repairAgents(airkctl: AgentsRunner, projects: readonly string[], replacement?: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'repair', ...projectArgs(projects), '--no-user', ...(replacement ? ['--connection-id', replacement] : [])]);
 }
 /** `agents remove`: deletes AIRK's entries (only those naming `connectionId`, when given). */
-export function removeAgents(airkctl: Airkctl, projects: readonly string[], connectionId?: string): Promise<unknown> {
+export function removeAgents(airkctl: AgentsRunner, projects: readonly string[], connectionId?: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'remove', ...projectArgs(projects), '--no-user', ...(connectionId ? ['--connection-id', connectionId] : [])]);
 }
 /** `agents connect` reusing an existing connection; enrolling a new one is an admin action (U6). */
-export function connectAgent(airkctl: Airkctl, client: Client, connectionId: string, project: string): Promise<unknown> {
+export function connectAgent(airkctl: AgentsRunner, client: Client, connectionId: string, project: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'connect', '--client', client, '--connection-id', connectionId, '--project', project]);
 }
 /** `agents info`: an existing connection's references (never its credential). */
-export function connectionInfo(airkctl: Airkctl, connectionId: string): Promise<unknown> {
+export function connectionInfo(airkctl: AgentsRunner, connectionId: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'info', '--connection-id', connectionId]);
 }
 /** The endpoint URL of a connection's `agents info` answer. */
