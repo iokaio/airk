@@ -250,6 +250,7 @@ fn request() -> Result<CompositionRequest> {
             verification_max_sources: 8,
             verification_max_bytes: 16384,
             verification_deadline_ms: 2000,
+            limit_per_index: None,
         },
         authority: Sha256Digest::from_bytes([7; 32]),
         observed_from_unix_ms: 10,
@@ -1035,5 +1036,22 @@ fn open_members_qualify_whole_index_evidence_without_a_project() -> Result<()> {
     // And a Project-scoped composition never yields a Project-free origin.
     let scoped = compose(&request()?, vec![input(1, vec![hit("api/one.rs", "one")])?])?;
     assert_eq!(scoped.ranking[0].origin.project_ids, vec![project(1)]);
+    Ok(())
+}
+
+/// U108 contract: a composed member without a measured time encodes as
+/// before (no `elapsed_ms` key); a measured time round-trips.
+#[test]
+fn member_elapsed_time_is_optional_and_absent_by_default() -> Result<()> {
+    let combined = compose(&request()?, vec![input(1, vec![hit("api/one.rs", "one")])?])?;
+    let value = serde_json::to_value(&combined)?;
+    for member in value["members"].as_array().unwrap() {
+        assert!(member.get("elapsed_ms").is_none(), "{member}");
+    }
+    let mut member = value["members"][0].clone();
+    member["elapsed_ms"] = json!(17);
+    let decoded: ComposedMember = serde_json::from_value(member.clone())?;
+    assert_eq!(decoded.elapsed_ms, Some(17));
+    assert_eq!(serde_json::to_value(&decoded)?, member);
     Ok(())
 }

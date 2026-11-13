@@ -374,6 +374,7 @@ fn all_shared_allocations_sum_to_one_total_in_canonical_index_order() -> Result<
                 verification_max_sources: 8,
                 verification_max_bytes: 103,
                 verification_deadline_ms: 89,
+                limit_per_index: None,
             };
             let allocated = budgets.allocate(&resolved)?;
             assert_eq!(allocated.iter().map(|a| a.limit).sum::<usize>(), limit);
@@ -601,6 +602,7 @@ fn open_resolution_reads_named_indexes_whole_and_shares_budgets() -> Result<()> 
         verification_max_sources: 0,
         verification_max_bytes: 0,
         verification_deadline_ms: 0,
+        limit_per_index: None,
     };
     let allocations = budgets.allocate(&resolved)?;
     assert_eq!(allocations.len(), 2);
@@ -658,5 +660,38 @@ fn open_resolution_refuses_projects_owners_and_member_mismatches() -> Result<()>
     let mut resolved = query.resolve_open(&whole, agent_observation())?;
     resolved.project_ids.push(project(1));
     assert!(resolved.validate().is_err());
+    Ok(())
+}
+
+/// U107 contract: `limit_per_index` is absent from the pre-U107 encoding,
+/// the last field when present, bounded to 1..100 and never `null`
+/// (`fixtures/wire/combined_budgets.json`).
+#[test]
+fn shared_budget_encodings_match_the_reviewed_fixture() -> Result<()> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/wire/combined_budgets.json"
+    ))?;
+    for case in fixture["encodings"].as_array().unwrap() {
+        let budgets: SharedBudgets = serde_json::from_value(case["budgets"].clone())?;
+        budgets.validate()?;
+        let bytes = case["bytes"].as_str().unwrap();
+        assert_eq!(serde_json::to_string(&budgets)?, bytes, "{}", case["name"]);
+        assert_eq!(serde_json::from_str::<SharedBudgets>(bytes)?, budgets);
+    }
+    for case in fixture["invalid_budgets"].as_array().unwrap() {
+        let budgets: SharedBudgets = serde_json::from_value(case["budgets"].clone())?;
+        assert!(budgets.validate().is_err(), "{}", case["name"]);
+    }
+    for case in fixture["rejected_encodings"].as_array().unwrap() {
+        assert!(
+            serde_json::from_str::<SharedBudgets>(case["bytes"].as_str().unwrap()).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+    assert_eq!(
+        LIMIT_PER_INDEX_TOO_LARGE,
+        "combined_limit_per_index_too_large"
+    );
     Ok(())
 }

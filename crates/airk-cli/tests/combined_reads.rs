@@ -3260,6 +3260,50 @@ async fn exposed_code_facts_preserve_retained_producer_kind_and_language_labels(
 /// One command line's observable result: exit code, stdout (an envelope or
 /// document normalized like the other parity tests, or literal text) and the
 /// final error message without its program prefix.
+/// Reviewed addition (U107): the pre-split capture predates the combined
+/// read argument `limit_per_index`. Only that schema property is removed from
+/// the new side's catalog outputs (`tools list --json`, `tools help`); every
+/// other byte is still compared.
+fn without_limit_per_index(mut outcome: Value) -> Value {
+    fn walk(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                if let Some(Value::Object(properties)) = fields.get_mut("properties") {
+                    properties.remove("limit_per_index");
+                }
+                fields.values_mut().for_each(walk);
+            }
+            Value::Array(values) => values.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    match &mut outcome["stdout"] {
+        Value::String(text) => {
+            let mut kept = String::with_capacity(text.len());
+            let mut closing: Option<(String, String)> = None;
+            for line in text.split_inclusive('\n') {
+                let bare = line.trim_end_matches(['\r', '\n']);
+                if let Some((with_comma, without)) = &closing {
+                    if bare == with_comma || bare == without {
+                        closing = None;
+                    }
+                    continue;
+                }
+                let body = bare.trim_start();
+                if body.starts_with("\"limit_per_index\": {") {
+                    let indent = &bare[..bare.len() - body.len()];
+                    closing = Some((format!("{indent}}},"), format!("{indent}}}")));
+                    continue;
+                }
+                kept.push_str(line);
+            }
+            *text = kept;
+        }
+        other => walk(other),
+    }
+    outcome
+}
+
 fn ctl_outcome(code: Option<i32>, stdout: &[u8], stderr: &[u8], prefix: &str) -> Result<Value> {
     let text = String::from_utf8_lossy(stdout).into_owned();
     let stdout = match serde_json::from_str::<Value>(&text) {
@@ -3447,7 +3491,12 @@ async fn airkctl_combined_reads_print_what_airk_printed() -> Result<()> {
             (code, stdout, stderr)
         })
         .await?;
-        let new = ctl_outcome(Some(i32::from(new.0)), &new.1, &new.2, "airkctl: ")?;
+        let new = without_limit_per_index(ctl_outcome(
+            Some(i32::from(new.0)),
+            &new.1,
+            &new.2,
+            "airkctl: ",
+        )?);
         let new: Value = serde_json::from_str(&parity.canonical(&serde_json::to_string(&new)?))?;
         assert!(
             new == old,

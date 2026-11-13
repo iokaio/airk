@@ -1582,6 +1582,7 @@ impl<S: Session> Backend<S> {
             verification_max_sources: budget.max_sources,
             verification_max_bytes: budget.max_bytes,
             verification_deadline_ms: budget.deadline_ms.min(remaining),
+            limit_per_index: None,
         };
         let allocations = total.allocate(&before.resolved)?;
         let mut subsets = BTreeMap::<IndexId, MemberProjection>::new();
@@ -1825,6 +1826,7 @@ impl<S: Session> Backend<S> {
             verification_max_sources: verification_budget.map_or(0, |budget| budget.max_sources),
             verification_max_bytes: verification_budget.map_or(0, |budget| budget.max_bytes),
             verification_deadline_ms: verification_budget.map_or(0, |budget| budget.deadline_ms),
+            limit_per_index: None,
         };
         let allocations = budgets.allocate(&before.resolved)?;
         let started = Instant::now();

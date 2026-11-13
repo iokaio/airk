@@ -28,6 +28,12 @@ pub fn query_scope_tool(name: &str) -> Tool {
     })).expect("static query_scope catalog")
 }
 
+/// U107: the per-index count selector of a multi-index read tool (one
+/// that takes `limit`).
+pub fn limit_per_index_schema() -> Value {
+    json!({"type":"integer","minimum":1,"maximum":100,"description":"Results each selected index returns, exactly; results stay grouped by index in members. limit becomes the overall cap and defaults to the number of indexes x limit_per_index; refused (combined_limit_per_index_too_large) when that exceeds limit or 100. Byte, deadline and verification budgets stay shared evenly across indexes. Omit to split limit evenly."})
+}
+
 fn controls(mut tool: Tool) -> Tool {
     let schema = Arc::make_mut(&mut tool.input_schema);
     let properties = schema.entry("properties").or_insert_with(|| json!({}));
@@ -38,6 +44,9 @@ fn controls(mut tool: Tool) -> Tool {
         .remove("project");
     properties["project_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Explicit Projects within the frozen reviewed connection grant. Omission keeps the connection's captured selection; no workspace or saved-default expansion."});
     properties["index_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^idx_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Optional explicit index subset of the selected Projects. Qualified follow-up reads require one originating index."});
+    if properties.get("limit").is_some() {
+        properties["limit_per_index"] = limit_per_index_schema();
+    }
     properties["member_availability"] = json!({"type":"string","enum":["report","require"],"default":"report","description":"Report retains usable data and complete member failures. Require returns non-success if any selected member cannot answer; independent of saved-source verification."});
     if !matches!(
         tool.name.as_ref(),
@@ -464,5 +473,40 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod limit_per_index_tests {
+    use super::*;
+
+    /// U107: exactly the combined read tools that take `limit` offer
+    /// `limit_per_index`, in the native-name and the public catalogs.
+    #[test]
+    fn limit_per_index_follows_limit_in_both_combined_catalogs() {
+        for catalog in [catalog(), public_catalog()] {
+            let mut offered = 0;
+            for tool in &catalog {
+                let properties = tool.input_schema["properties"].as_object();
+                let has = |key: &str| properties.is_some_and(|map| map.contains_key(key));
+                let combined_read = has("member_availability");
+                assert_eq!(
+                    has("limit_per_index"),
+                    combined_read && has("limit"),
+                    "{}",
+                    tool.name
+                );
+                offered += usize::from(has("limit_per_index"));
+            }
+            assert!(offered > 0);
+        }
+        let search = public_catalog()
+            .into_iter()
+            .find(|tool| tool.name == "search")
+            .unwrap();
+        assert_eq!(
+            search.input_schema["properties"]["limit_per_index"],
+            limit_per_index_schema()
+        );
     }
 }

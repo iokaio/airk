@@ -510,6 +510,19 @@ Reviewed fixture change: `selection_authority.json` case
 `selection_unknown_owner` used `"agent"` as its unknown owner; U106(d) makes
 `agent` a known owner, so the case now uses `"robot"` (still refused at decode).
 
+### 2.10 Per-index result counts and member timing (U107, U108) [contract landed, behaviour next]
+
+| Addition | Owner | Shape | State |
+|---|---|---|---|
+| `SharedBudgets.limit_per_index` | `airk_core::combined_reads` | optional `1..=100`, `default` + `skip_serializing_if` (last field), `null` refused; absent encoding is the pre-U107 one (`fixtures/wire/combined_budgets.json`, hand-written expectations including the allocation cases the behaviour step must reproduce) | Validated; `allocate` still splits evenly until the behaviour step |
+| `limit_per_index` read argument | `airk_mcp::combined::limit_per_index_schema` | integer 1-100 on every combined (native and public catalog) and open read tool that takes `limit`; help/`tools help` show it from the schema | Offered; native argument validation refuses it until the behaviour step |
+| Refusal code | `airk_core::combined_reads::LIMIT_PER_INDEX_TOO_LARGE` | `combined_limit_per_index_too_large` | Unused until the behaviour step |
+| `ComposedMember.elapsed_ms` | `airk_kernel::combined_reads` | optional milliseconds, `default` + `skip_serializing_if`: present for read members, absent for unqueried and resumed-exhausted ones; documented timing (no identity input; normalized by the parity harness, whose clock fields already include `elapsed_ms`) | Always absent until the behaviour step measures it |
+
+The continuation identity hashes the read arguments, so a present
+`limit_per_index` binds the cursor and an absent one leaves every existing
+cursor byte-identical.
+
 ## 3. I2 — `airkctl` command contract
 
 ### 3.1 Inventory row

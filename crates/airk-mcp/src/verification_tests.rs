@@ -215,6 +215,7 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
                 verification_max_sources: 8,
                 verification_max_bytes: 16384,
                 verification_deadline_ms: 2000,
+                limit_per_index: None,
             },
             authority: identity,
             observed_from_unix_ms: 10,

@@ -141,6 +141,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i4/interruptions.json
 !fixtures/wire/airkctl_session_frames.json
 !fixtures/wire/catalog_receipt.json
+!fixtures/wire/combined_budgets.json
 !fixtures/wire/native_outcomes.json
 !fixtures/wire/read_retry_decisions.json
 !fixtures/wire/read_retry_envelopes.json

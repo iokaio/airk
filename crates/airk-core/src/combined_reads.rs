@@ -512,7 +512,28 @@ pub struct SharedBudgets {
     pub verification_max_sources: usize,
     pub verification_max_bytes: u64,
     pub verification_deadline_ms: u64,
+    /// U107: every member's count allocation, exactly (1..=100); `limit` is
+    /// then the overall cap. Absent, the encoding is the pre-U107 one and the
+    /// count budget is split evenly. Byte, deadline and verification budgets
+    /// stay shared either way. Contract step: not yet applied by `allocate`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_per_index"
+    )]
+    pub limit_per_index: Option<usize>,
 }
+
+/// `limit_per_index` is a number when present; `null` is refused.
+fn present_per_index<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<usize>, D::Error> {
+    usize::deserialize(deserializer).map(Some)
+}
+
+/// U107: the per-index count times the member count exceeds the call's
+/// overall count cap (its `limit`, or the per-call maximum of 100).
+pub const LIMIT_PER_INDEX_TOO_LARGE: &str = "combined_limit_per_index_too_large";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -535,6 +556,11 @@ impl MemberAllocation {
 impl SharedBudgets {
     pub fn validate(&self) -> Result<()> {
         crate::validate_budget(self.limit, self.max_bytes)?;
+        ensure!(
+            self.limit_per_index
+                .is_none_or(|per_index| (1..=100).contains(&per_index)),
+            "limit_per_index must be 1..100"
+        );
         ensure!(
             (1..=30_000).contains(&self.deadline_ms),
             "combined deadline must be 1..30000 ms"

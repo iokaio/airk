@@ -114,6 +114,7 @@ COPY fixtures/split/i4/role_admission.json ./fixtures/split/i4/role_admission.js
 COPY fixtures/split/i4/interruptions.json ./fixtures/split/i4/interruptions.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
+COPY fixtures/wire/combined_budgets.json ./fixtures/wire/combined_budgets.json
 COPY fixtures/wire/native_outcomes.json ./fixtures/wire/native_outcomes.json
 COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decisions.json
 COPY fixtures/wire/read_retry_envelopes.json ./fixtures/wire/read_retry_envelopes.json

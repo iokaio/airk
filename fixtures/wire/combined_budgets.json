@@ -1,0 +1,34 @@
+{
+  "schema": "airk.wire-fixture.combined-budgets/1",
+  "contract": "docs/split/split-plan.md §2.1 U107; docs/split/contracts.md §2.9 (limit_per_index). Owner airk_core::combined_reads::SharedBudgets. Expectations written by hand, independently of the code under test.",
+  "rule": "Absent limit_per_index: every budget is split evenly over the n members in canonical index order, the first (total mod n) members getting one more. Present limit_per_index k (1..100): each member's count allocation is exactly k; limit is the overall cap, defaulting to n*k; n*k above limit or above 100 is refused as combined_limit_per_index_too_large. max_bytes, deadline_ms and the verification budgets stay split evenly in both cases.",
+  "encodings": [
+    {
+      "name": "absent_is_the_pre_u107_encoding",
+      "budgets": {"limit": 8, "max_bytes": 8192, "deadline_ms": 2000, "verification_max_sources": 0, "verification_max_bytes": 0, "verification_deadline_ms": 0},
+      "bytes": "{\"limit\":8,\"max_bytes\":8192,\"deadline_ms\":2000,\"verification_max_sources\":0,\"verification_max_bytes\":0,\"verification_deadline_ms\":0}"
+    },
+    {
+      "name": "present_is_the_last_field",
+      "budgets": {"limit": 10, "max_bytes": 8192, "deadline_ms": 2000, "verification_max_sources": 0, "verification_max_bytes": 0, "verification_deadline_ms": 0, "limit_per_index": 5},
+      "bytes": "{\"limit\":10,\"max_bytes\":8192,\"deadline_ms\":2000,\"verification_max_sources\":0,\"verification_max_bytes\":0,\"verification_deadline_ms\":0,\"limit_per_index\":5}"
+    }
+  ],
+  "invalid_budgets": [
+    {"name": "per_index_zero", "budgets": {"limit": 8, "max_bytes": 8192, "deadline_ms": 2000, "verification_max_sources": 0, "verification_max_bytes": 0, "verification_deadline_ms": 0, "limit_per_index": 0}},
+    {"name": "per_index_above_the_call_maximum", "budgets": {"limit": 100, "max_bytes": 8192, "deadline_ms": 2000, "verification_max_sources": 0, "verification_max_bytes": 0, "verification_deadline_ms": 0, "limit_per_index": 101}}
+  ],
+  "rejected_encodings": [
+    {"name": "per_index_null", "bytes": "{\"limit\":8,\"max_bytes\":8192,\"deadline_ms\":2000,\"verification_max_sources\":0,\"verification_max_bytes\":0,\"verification_deadline_ms\":0,\"limit_per_index\":null}"}
+  ],
+  "allocations": [
+    {"name": "even_split_two", "members": 2, "limit": 8, "limit_per_index": null, "max_bytes": 8192, "expected_limits": [4, 4], "expected_max_bytes": [4096, 4096]},
+    {"name": "even_split_remainder_first", "members": 3, "limit": 8, "limit_per_index": null, "max_bytes": 8192, "expected_limits": [3, 3, 2], "expected_max_bytes": [2731, 2731, 2730]},
+    {"name": "per_index_default_cap", "members": 2, "limit": null, "limit_per_index": 5, "max_bytes": 8192, "expected_overall_limit": 10, "expected_limits": [5, 5], "expected_max_bytes": [4096, 4096]},
+    {"name": "per_index_under_an_explicit_cap", "members": 2, "limit": 12, "limit_per_index": 5, "max_bytes": 8192, "expected_overall_limit": 12, "expected_limits": [5, 5], "expected_max_bytes": [4096, 4096]},
+    {"name": "per_index_one_member", "members": 1, "limit": null, "limit_per_index": 7, "max_bytes": 8192, "expected_overall_limit": 7, "expected_limits": [7], "expected_max_bytes": [8192]},
+    {"name": "per_index_thirty_two_at_the_maximum", "members": 32, "limit": null, "limit_per_index": 3, "max_bytes": 8192, "expected_overall_limit": 96, "expected_limits_each": 3},
+    {"name": "per_index_above_an_explicit_cap", "members": 2, "limit": 9, "limit_per_index": 5, "max_bytes": 8192, "refused": "combined_limit_per_index_too_large"},
+    {"name": "per_index_above_the_overall_maximum", "members": 3, "limit": null, "limit_per_index": 40, "max_bytes": 8192, "refused": "combined_limit_per_index_too_large"}
+  ]
+}

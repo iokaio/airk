@@ -248,6 +248,7 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
                 verification_max_sources: 8,
                 verification_max_bytes: 16 * 1024 * 1024,
                 verification_deadline_ms: 2000,
+                limit_per_index: None,
             },
             authority: Sha256Digest::from_bytes([11; 32]),
             observed_from_unix_ms: 1,

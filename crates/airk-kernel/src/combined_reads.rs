@@ -75,6 +75,15 @@ pub struct ComposedMember {
     pub result: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cutoff: Option<String>,
+    /// U108: this member's own read time (its native call through its
+    /// source projection and verification), present for a read member and
+    /// absent for an unqueried or resumed-exhausted one. Documented timing:
+    /// it is no input of any scope, snapshot, cursor or continuation
+    /// identity; like the observation interval, it is part of the delivered
+    /// bytes the delivery receipt's result digest covers. Contract step: not
+    /// yet measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 pub use airk_core::combined_reads::QualifiedOrigin;
@@ -484,6 +493,7 @@ fn compose_inner(
                     }
                     .into(),
                 ),
+                elapsed_ms: None,
             });
             continue;
         };
@@ -578,6 +588,7 @@ fn compose_inner(
             },
             result: input.result,
             cutoff: (input.exhausted && !member_failed).then(|| "continuation_exhausted".into()),
+            elapsed_ms: None,
         });
     }
     // All candidates have a single origin/index contribution. Independent

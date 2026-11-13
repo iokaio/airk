@@ -56,6 +56,13 @@ pub fn catalog(choice: AgentChoice) -> Vec<Tool> {
             let schema = Arc::make_mut(&mut tool.input_schema);
             if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
                 properties.remove("project");
+                // U107: an open read may span several indexes in any choice.
+                if read && properties.contains_key("limit") {
+                    properties.insert(
+                        "limit_per_index".into(),
+                        crate::combined::limit_per_index_schema(),
+                    );
+                }
                 if read && choice == AgentChoice::On {
                     properties.insert("index_ids".into(), selector("Indexes"));
                     properties.insert("index_set_ids".into(), selector("Index sets"));
@@ -97,6 +104,8 @@ mod tests {
         }
         let search = off.iter().find(|tool| tool.name == "search").unwrap();
         assert!(!properties(search).contains(&"index_ids".into()));
+        // U107: a default scope may span several indexes in either choice.
+        assert!(properties(search).contains(&"limit_per_index".into()));
     }
 
     #[test]
@@ -121,7 +130,7 @@ mod tests {
         let public = crate::unified::tools();
         let mut stripped = search.clone();
         let schema = Arc::make_mut(&mut stripped.input_schema);
-        for key in SELECTORS {
+        for key in SELECTORS.into_iter().chain(["limit_per_index"]) {
             schema["properties"].as_object_mut().unwrap().remove(key);
         }
         let mut original = public
