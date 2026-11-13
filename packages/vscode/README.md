@@ -34,6 +34,10 @@ and the service.
 
 **1.8.35 split candidate (13 November 2026).** This extension works with a
 separately installed AIRK Service ([split plan](https://github.com/iokaio/airk/blob/main/docs/split/split-plan.md) §8).
+The advanced split source keeps Reconnect's reviewed removal entries across
+confirmation and repair, requires verified exact-entry CLI support, and reports
+partial action errors. Existing VSIX/installer receipts retain their original
+source identities; this source checkpoint does not rebuild those artifacts.
 Indexes are created and changed in AIRK Admin, which opens in VS Code or in
 your browser (setting `airk.admin.openIn`). The Explorer shows live indexing
 progress, job, watch and pause state, usage and recent activity, and offers the

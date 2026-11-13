@@ -3,8 +3,8 @@
 **Advanced split source checkpoint (13 November 2026).** P0 restores extracted
 component test ownership and the `airkctl` one-shot command stack. The first P1
 correction fences automatic scope switching/reselection and retains both
-revocation obligations of an uncertain lease renewal. Exact-entry removal has a
-prepared native contract; its handler is not served yet. Candidate version
+revocation obligations of an uncertain lease renewal. Exact-entry removal now preserves reviewed agent rows across confirmation and
+repair, revalidates live entries and retains partial action errors. Candidate version
 remains 1.8.35; earlier installer/VSIX receipts retain their original
 source identities. Progress and checks: [execution ledger](simplify/one-process-ledger.md).
 

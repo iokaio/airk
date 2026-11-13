@@ -64,10 +64,38 @@ fn version_answers_locally_in_both_formats() {
             "agents/1",
             "agents-launch/1",
             "agents-verify/1",
+            "agents-entry-remove/1",
             "admin-launch/1",
             "window-scope/1"
         ])
     );
+}
+
+#[test]
+fn exact_entry_raw_argument_bound_and_conflicts_are_checked_before_discovery() {
+    let selector = r#"{"agent":"claude","scope":"project","file":"/fixture/.mcp.json","containerPath":["mcpServers"],"serverKey":"airk","transport":"stdio","status":"stdio_retired"}"#;
+    let at_limit = format!(
+        "{selector}{}",
+        " ".repeat(crate::contract::MAX_INVOKE_ARG_BYTES - selector.len())
+    );
+    assert!(parse_agent_entry(&at_limit).is_ok());
+    assert!(parse_agent_entry(&(at_limit + " ")).is_err());
+    for args in [
+        vec!["agents", "remove", "--entry", "{}"],
+        vec!["agents", "remove", "--entry"],
+        vec![
+            "agents",
+            "remove",
+            "--entry",
+            selector,
+            "--connection-id",
+            "11111111111111111111111111111111",
+        ],
+    ] {
+        let (code, stdout, _) = run_line(&args);
+        assert_eq!(code, 2, "{args:?}");
+        assert!(stdout.is_empty());
+    }
 }
 
 #[test]

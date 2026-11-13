@@ -83,6 +83,30 @@ impl Entry {
     }
 }
 
+/// Compare the exact observed row again using the source being edited and fresh observations.
+pub(crate) fn revalidate_entry(
+    source: &str,
+    expected: &Entry,
+    observations: &Observations<'_>,
+) -> Result<(), String> {
+    let report =
+        Classifier::new(observations).file(expected.agent, expected.scope, &expected.file, source);
+    let matches: Vec<_> = report
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.container_path == expected.container_path
+                && entry.server_key == expected.server_key
+        })
+        .collect();
+    if matches.len() != 1 || matches[0] != expected {
+        return Err(
+            "selected agent entry changed before its edit; this entry was not changed".into(),
+        );
+    }
+    Ok(())
+}
+
 /// The classification of one file.
 #[derive(Debug, Default)]
 pub(crate) struct FileReport {

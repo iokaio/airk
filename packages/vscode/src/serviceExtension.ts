@@ -16,7 +16,8 @@ import { ADMIN_OPEN_IN_SETTING, AdminOpener, type AdminOpenIn, type AdminTarget 
 import { ADMIN_PAGES, type AdminPage } from './explorerContracts';
 import { ACTION_LABELS, guidance, type GuidanceAction } from './airkctl/status/guidance';
 import {
-    connectAgent, connectionInfo, connectionUrl, credentialHeader, inputCredential, listAgents, removeAgents, repairAgents,
+    connectAgent, connectionInfo, connectionUrl, credentialHeader, inputCredential, listAgents, repairAgents,
+    agentEntries, agentActionErrors, removableAgentEntry, sameAgentEntry, requireEntryRemoval, removeAgentEntries,
     reportedConnections, retiredStdioWithoutIndex, sweepWithoutService, type Client, type RemovedEntry,
 } from './airkctl/agents/index';
 import { setEvidenceTransport } from './explorerEvidence';
@@ -162,19 +163,40 @@ class SplitExtension implements vscode.Disposable {
         await this.requireReady();
         const projects = this.folders();
         const report = await listAgents(this.airkctl, projects, false) as Record<string, unknown>;
-        const findings = Array.isArray(report.findings) ? report.findings as Record<string, unknown>[] : [];
         this.output.appendLine(`AIRK agents list:\n${JSON.stringify(report, null, 2)}`);
-        if (!findings.length) { void vscode.window.showInformationMessage('AIRK: every recognized agent entry is current.'); return; }
+        const before = agentEntries(report);
+        const reviewed = before.filter(removableAgentEntry);
+        const findings = Array.isArray(report.findings) ? report.findings as Record<string, unknown>[] : [];
+        if (!findings.length) {
+            if (before.some(entry => entry.status === null) || (report.blockers as unknown[]).length) {
+                throw new Error('Agent configuration evidence is incomplete; see the native report in Output.');
+            }
+            void vscode.window.showInformationMessage('AIRK: every recognized agent entry is current.'); return;
+        }
         const choice = await vscode.window.showWarningMessage(`AIRK found ${findings.length} stale agent ${findings.length === 1 ? 'entry' : 'entries'}. Repair rewrites entries whose connection still exists; entries with no connection are removed and recorded.`, { modal: true }, 'Repair');
         if (choice !== 'Repair') { return; }
+        if (reviewed.length) { requireEntryRemoval(this.airkctl); }
         const repaired = await repairAgents(this.airkctl, projects);
         this.output.appendLine(`AIRK agents repair:\n${JSON.stringify(repaired, null, 2)}`);
+        const errors = agentActionErrors(repaired);
         const after = await listAgents(this.airkctl, projects, false) as Record<string, unknown>;
-        const unknown = (Array.isArray(after.findings) ? after.findings as Record<string, unknown>[] : []).filter(item => item.problem === 'https_unknown_connection' || item.problem === 'stdio_retired' || item.problem === 'stdio_missing_command');
-        if (unknown.length) {
-            const removed = await removeAgents(this.airkctl, projects);
-            this.output.appendLine(`AIRK agents remove:\n${JSON.stringify(removed, null, 2)}`);
+        this.output.appendLine(`AIRK agents list after repair:\n${JSON.stringify(after, null, 2)}`);
+        const remaining = agentEntries(after);
+        if ((after.blockers as unknown[]).length || remaining.some(entry => entry.status === null)) {
+            errors.push('Agent configuration evidence is incomplete; see the native report in Output.');
         }
+        const selected = reviewed.filter(entry => remaining.some(current => removableAgentEntry(current) && sameAgentEntry(entry, current)));
+        if (selected.length !== reviewed.length) { errors.push('Some reviewed removal targets changed or disappeared; review the current entries again.'); }
+        for (const entry of remaining.filter(entry => entry.status !== null && entry.status !== 'ok'
+            && !selected.some(selectedEntry => sameAgentEntry(entry, selectedEntry)))) {
+            errors.push(`${entry.file} / ${entry.serverKey} remains ${entry.status}; review it again.`);
+        }
+        if (selected.length) {
+            const removed = await removeAgentEntries(this.airkctl, projects, selected);
+            this.output.appendLine(`AIRK agents remove:\n${JSON.stringify(removed, null, 2)}`);
+            errors.push(...agentActionErrors(removed));
+        }
+        if (errors.length) { throw new Error(`Agent repair is incomplete:\n${errors.join('\n')}`); }
         void vscode.window.showInformationMessage('AIRK: agent entries were repaired. Running agents may need a restart to reconnect.', 'Show Output')
             .then(action => action ? this.output.show(true) : undefined);
     }

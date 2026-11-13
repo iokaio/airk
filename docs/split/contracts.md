@@ -752,10 +752,10 @@ The crate that owns these OS adapters under U27's edge limit is Q3.
   widened only if no false types appear (u64, `Option` presence, pilot W2/W4).
   Semantic rules stay hand-written and fixture-tested.
 
-### 3.12 Exact agent-entry removal input (R01; prepared, not served)
+### 3.12 Exact agent-entry removal input (R01)
 
-Prepare the additive `airkctl agents remove --entry <JSON>` input before its
-handler or extension consumer. Each repeatable argument is one complete
+The additive `airkctl agents remove --entry <JSON>` input landed before its
+handler and extension consumer. Each repeatable argument is one complete
 native `agents list` `entries` row (`Entry`, owned by
 `crates/airkctl/src/agents/config/classify.rs`), not a finding or a reduced
 path/key object. The existing camel-case report representation is unchanged:
@@ -767,7 +767,7 @@ Custom server/container keys remain exact strings: a proven helper or launcher
 can establish ownership without an `airk` key prefix. The same Rust type emits
 the I2 schema and generated TypeScript; consumers add no handwritten mirror.
 
-The selected-removal handler must enforce these rules when it lands:
+The selected-removal handler and extension consumer enforce these rules:
 
 - `--entry` conflicts with `--connection-id`. Every supplied row must identify
   exactly one current recognized row in the files enumerated by the command's
@@ -794,11 +794,13 @@ The selected-removal handler must enforce these rules when it lands:
   a clear reason and no unrestricted fallback. Product-version comparison is
   not a capability check.
 
-This contract-only step adds the native schema and independent decoding cases
-in `fixtures/split/agents/entry_remove_cases.json`. It does not serve `--entry`,
-advertise its capability, change I1/MCP, change persisted state, or change
-existing list/removal output shapes. Actual selection/revalidation behavior and
-composed Reconnect regressions belong to the later handler/consumer step.
+The contract-only step added the native schema and independent decoding cases
+in `fixtures/split/agents/entry_remove_cases.json`; the following handler step
+serves `--entry` and advertises its capability. It preserves I1/MCP, persisted
+state and existing list/removal output shapes. Actual subprocess/session and
+configuration-edit regressions cover selected removal and source revalidation.
+Composed Reconnect preserves the pre-confirmation removal rows, rejects changed
+targets, and reports partial errors or unavailable evidence without success.
 
 ## 4. I3 — Admin HTTP contract
 

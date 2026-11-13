@@ -549,6 +549,65 @@ fn invoked_carries_the_three_channels_and_the_error_line() {
 }
 
 #[test]
+fn real_command_invoker_carries_exact_agent_entries_through_the_session() {
+    let project = tempfile::tempdir().unwrap();
+    let file = project.path().join(".mcp.json");
+    let source = "{\"mcpServers\":{\"airk-remove\":{\"command\":\"airk\"},\"airk-keep\":{ \"command\" : \"airk\" }}}\n";
+    std::fs::write(&file, source).unwrap();
+    let clock = Arc::new(ManualClock::default());
+    let mut actual = options(&clock, None, unused);
+    actual.invoker = None; // Run the real parser and agents handler, not Script.
+    let mut client = Client::start(actual);
+    client.ask(&hello());
+    let argv = |action: &str| {
+        vec![
+            "--output".to_string(),
+            "json".into(),
+            "agents".into(),
+            action.into(),
+            "--runtime-dir".into(),
+            project
+                .path()
+                .join("missing-control")
+                .to_string_lossy()
+                .into_owned(),
+            "--project".into(),
+            project.path().to_string_lossy().into_owned(),
+            "--no-user".into(),
+        ]
+    };
+    let listed = client.ask(&frame(
+        30,
+        json!({"invoke": {"argv": argv("list"), "deadline_ms": 1000}}),
+    ));
+    assert_eq!(listed["outcome"]["exit_code"], 0, "{listed}");
+    let report: Value =
+        serde_json::from_str(listed["outcome"]["stdout"].as_str().unwrap()).unwrap();
+    let entries = report["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    let selected = entries
+        .iter()
+        .find(|entry| entry["serverKey"] == "airk-remove")
+        .unwrap();
+    let mut remove = argv("remove");
+    remove.extend(["--entry".into(), selected.to_string()]);
+    let removed = client.ask(&frame(
+        31,
+        json!({"invoke": {"argv": remove, "deadline_ms": 1000}}),
+    ));
+    assert_eq!(removed["outcome"]["exit_code"], 0, "{removed}");
+    let result: Value =
+        serde_json::from_str(removed["outcome"]["stdout"].as_str().unwrap()).unwrap();
+    assert_eq!(result["actions"].as_array().unwrap().len(), 1);
+    assert_eq!(result["actions"][0]["changed"], true);
+    let after = std::fs::read_to_string(&file).unwrap();
+    assert!(!after.contains("airk-remove"));
+    assert!(after.contains("\"airk-keep\":{ \"command\" : \"airk\" }"));
+    assert!(!project.path().join("missing-control").exists());
+    assert_eq!(client.eof().1, 0);
+}
+
+#[test]
 fn a_response_over_the_budget_is_refused_never_truncated() {
     let clock = Arc::new(ManualClock::default());
     let mut client = Client::start(options(&clock, None, |_, io| {

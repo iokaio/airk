@@ -25,6 +25,7 @@ export const EXTENSION_REQUIREMENTS: ExtensionRequirements = Object.freeze({
         'assistance/1': 'Explorer Assistance drafts',
         'handoff/1': 'Explorer handoffs',
         'agents/1': 'Agent connection management',
+        'agents-entry-remove/1': 'Removing reviewed agent configuration entries',
         'admin-launch/1': 'Open AIRK Admin',
     }),
 });

@@ -40,6 +40,7 @@ const CAPABILITIES: &[&str] = &[
     "agents/1",
     "agents-launch/1",
     "agents-verify/1",
+    "agents-entry-remove/1",
     "admin-launch/1",
     "window-scope/1",
 ];
@@ -414,13 +415,16 @@ enum AgentsCommand {
         #[arg(long)]
         airkctl: Option<PathBuf>,
     },
-    /// Remove AIRK's entries (only those naming --connection-id, when given).
+    /// Remove AIRK entries, optionally selecting exact list rows or a connection.
     Remove {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
         #[arg(long)]
         connection_id: Option<airk_core::identity::Incarnation>,
+        /// Remove exactly this complete agents-list Entry JSON (repeatable); changed targets refuse.
+        #[arg(long = "entry", value_parser = parse_agent_entry, conflicts_with = "connection_id")]
+        entries: Vec<crate::agents::config::Entry>,
         /// A project folder to check (repeatable; default: the current directory).
         #[arg(long = "project")]
         projects: Vec<PathBuf>,
@@ -2100,6 +2104,13 @@ fn admin_command(cx: &mut Context, selection: Selection, action: AdminCommand) -
     }
 }
 
+fn parse_agent_entry(value: &str) -> Result<crate::agents::config::Entry, String> {
+    if value.len() > crate::contract::MAX_INVOKE_ARG_BYTES {
+        return Err("agent entry exceeds the 32 KiB argument limit".into());
+    }
+    serde_json::from_str(value).map_err(|error| format!("invalid agent Entry: {error}"))
+}
+
 /// `agents …` (split 3e).
 fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand) -> u8 {
     use crate::agents::manage;
@@ -2214,9 +2225,11 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
                     AgentsCommand::Repair { connection_id, .. } => {
                         manage::repair(&inputs, *connection_id)
                     }
-                    AgentsCommand::Remove { connection_id, .. } => {
-                        manage::remove(&inputs, *connection_id)
-                    }
+                    AgentsCommand::Remove {
+                        connection_id,
+                        entries,
+                        ..
+                    } => manage::remove(&inputs, *connection_id, entries),
                     _ => manage::list(&inputs),
                 }
             }

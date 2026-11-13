@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Airkctl } from '../index';
 import { AirkctlCommandError } from '../session';
+import type { Entry } from '../../generated/i2';
 import { PROJECT_FILES, removeAll, MAX_BYTES, type Agent, type Removal } from './recognizer';
 const INCARNATION = /^[0-9a-f]{32}$/;
 export type Client = 'claude' | 'codex' | 'vscode';
@@ -48,6 +49,76 @@ export function repairAgents(airkctl: AgentsRunner, projects: readonly string[],
 /** `agents remove`: deletes AIRK's entries (only those naming `connectionId`, when given). */
 export function removeAgents(airkctl: AgentsRunner, projects: readonly string[], connectionId?: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'remove', ...projectArgs(projects), '--no-user', ...(connectionId ? ['--connection-id', connectionId] : [])]);
+}
+
+export const ENTRY_REMOVE_CAPABILITY = 'agents-entry-remove/1';
+type EntryRemovalRunner = AgentsRunner & { readonly state: { readonly kind: string; readonly capabilities?: readonly string[] } };
+
+export function requireEntryRemoval(airkctl: EntryRemovalRunner): void {
+    if (airkctl.state.kind !== 'ready' || !airkctl.state.capabilities?.includes(ENTRY_REMOVE_CAPABILITY)) {
+        throw new Error('Selected agent removal requires verified CLI support; update AIRK Service and try again.');
+    }
+}
+
+/** Forward complete reviewed native rows; an empty selection never means remove all. */
+export function removeAgentEntries(airkctl: EntryRemovalRunner, projects: readonly string[], entries: readonly Entry[]): Promise<unknown> {
+    requireEntryRemoval(airkctl);
+    if (!entries.length) { throw new Error('No reviewed agent entries were selected for removal.'); }
+    return airkctl.session.json(['agents', 'remove', ...projectArgs(projects), '--no-user',
+        ...entries.flatMap(entry => ['--entry', JSON.stringify(entry)])]);
+}
+
+/** Retain native rows unchanged; Rust owns exact input validation. */
+export function agentEntries(report: unknown): Entry[] {
+    const object = report && typeof report === 'object' && !Array.isArray(report) ? report as Record<string, unknown> : undefined;
+    if (!object || !Array.isArray(object.entries) || !Array.isArray(object.findings) || !Array.isArray(object.blockers)) {
+        throw new Error('Agent configuration evidence is unavailable or malformed.');
+    }
+    for (const row of object.entries) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)
+            || typeof row.file !== 'string' || typeof row.agent !== 'string' || typeof row.scope !== 'string'
+            || typeof row.serverKey !== 'string' || !Array.isArray(row.containerPath)
+            || !row.containerPath.every((key: unknown) => typeof key === 'string')
+            || typeof row.transport !== 'string' || !(row.status === null || typeof row.status === 'string')) {
+            throw new Error('Agent configuration entry evidence is malformed.');
+        }
+    }
+    return object.entries as Entry[];
+}
+
+export function removableAgentEntry(entry: Entry): boolean {
+    return entry.status === 'https_unknown_connection' || entry.status === 'stdio_retired' || entry.status === 'stdio_missing_command';
+}
+
+/** Native Entry equality is order-independent for object keys; optional presence is retained. */
+export function sameAgentEntry(left: Entry, right: Entry): boolean {
+    const canonical = (value: unknown): string => {
+        if (Array.isArray(value)) { return `[${value.map(canonical).join(',')}]`; }
+        if (value && typeof value === 'object') {
+            return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
+        }
+        return JSON.stringify(value) ?? 'undefined';
+    };
+    return canonical(left) === canonical(right);
+}
+
+/** Keep complete action receipts in caller logs; errors/blockers prevent a success announcement. */
+export function agentActionErrors(result: unknown): string[] {
+    const object = result && typeof result === 'object' ? result as Record<string, unknown> : undefined;
+    if (!object || object.schema !== 1 || !Array.isArray(object.actions) || !Array.isArray(object.blockers)) {
+        throw new Error('Agent action evidence is unavailable or malformed.');
+    }
+    const errors = object.actions.flatMap((action: unknown) => {
+        if (!action || typeof action !== 'object') { throw new Error('Agent action receipt is malformed.'); }
+        const row = action as Record<string, unknown>;
+        if (typeof row.file !== 'string' || typeof row.serverKey !== 'string'
+            || !(row.changed === null || typeof row.changed === 'boolean')
+            || !(row.error === null || typeof row.error === 'string')
+            || (row.changed === null && row.error === null)) { throw new Error('Agent action receipt is malformed.'); }
+        return typeof row.error === 'string' ? [`${row.file} / ${row.serverKey}: ${row.error}`] : [];
+    });
+    return [...errors, ...object.blockers.map(blocker => `Agent configuration blocker: ${JSON.stringify(blocker)}`)];
 }
 /** `agents connect` reusing an existing connection; enrolling a new one is an admin action (U6). */
 export function connectAgent(airkctl: AgentsRunner, client: Client, connectionId: string, project: string): Promise<unknown> {

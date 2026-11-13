@@ -87,8 +87,7 @@ fn ownership(inputs: &Inputs<'_>, id: Incarnation) -> Ownership {
     }
 }
 
-/// Classify every recognized entry in the selected files.
-pub fn report(inputs: &Inputs<'_>) -> config::Report {
+fn observe<T>(inputs: &Inputs<'_>, read: impl FnOnce(&Observations<'_>) -> T) -> T {
     let url = endpoint_url(inputs);
     let cache = RefCell::new(BTreeMap::new());
     let owned = |id: Incarnation| -> Ownership {
@@ -108,14 +107,21 @@ pub fn report(inputs: &Inputs<'_>) -> config::Report {
         verified_launchers: &[],
         windows: cfg!(windows),
     };
-    let (user_files, mut blockers) = if inputs.user {
-        config::expand_user_files(&config::user_locations(Platform::host(), &user_env()))
-    } else {
-        (Vec::new(), Vec::new())
-    };
-    let mut report = config::list(&inputs.projects, &user_files, &observations);
-    report.blockers.append(&mut blockers);
-    report
+    read(&observations)
+}
+
+/// Classify every recognized entry in the selected files.
+pub fn report(inputs: &Inputs<'_>) -> config::Report {
+    observe(inputs, |observations| {
+        let (user_files, mut blockers) = if inputs.user {
+            config::expand_user_files(&config::user_locations(Platform::host(), &user_env()))
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let mut report = config::list(&inputs.projects, &user_files, observations);
+        report.blockers.append(&mut blockers);
+        report
+    })
 }
 
 /// `agents list`.
@@ -357,27 +363,31 @@ pub fn repair(inputs: &Inputs<'_>, replacement: Option<Incarnation>) -> Result<V
     Ok(json!({"schema": 1, "actions": actions, "blockers": report.blockers}))
 }
 
-/// `agents remove`: delete recognized AIRK entries, all or those naming
-/// `connection`; other servers, comments and policies stay.
-pub fn remove(inputs: &Inputs<'_>, connection: Option<Incarnation>) -> Result<Value, ErrorLine> {
+/// `agents remove`: delete exact selected rows, entries naming `connection`,
+/// or all recognized AIRK entries when neither selector is supplied.
+/// Other servers, comments and policies stay.
+pub fn remove(
+    inputs: &Inputs<'_>,
+    connection: Option<Incarnation>,
+    selected: &[config::Entry],
+) -> Result<Value, ErrorLine> {
     let report = report(inputs);
+    let entries = selected_entries(&report.entries, connection, selected)?;
     let mut actions = Vec::new();
-    for entry in &report.entries {
-        if connection.is_some() && entry.connection_id != connection {
-            continue;
-        }
+    for entry in entries {
         let target = Target {
             container_path: entry.container_path.clone(),
             server_key: entry.server_key.clone(),
         };
         let root = project_root_of(entry, inputs);
         let outcome = config::edit_file(Path::new(&entry.file), root.as_deref(), false, |source| {
-            config::remove(
-                entry.agent,
-                entry.scope,
-                source.ok_or("configuration file disappeared")?,
-                &target,
-            )
+            let source = source.ok_or("configuration file disappeared")?;
+            if !selected.is_empty() {
+                observe(inputs, |observations| {
+                    config::revalidate_entry(source, entry, observations)
+                })?;
+            }
+            config::remove(entry.agent, entry.scope, source, &target)
         });
         actions.push(json!({
             "file": entry.file,
@@ -388,4 +398,47 @@ pub fn remove(inputs: &Inputs<'_>, connection: Option<Incarnation>) -> Result<Va
         }));
     }
     Ok(json!({"schema": 1, "actions": actions, "blockers": report.blockers}))
+}
+
+fn same_target(left: &config::Entry, right: &config::Entry) -> bool {
+    left.agent == right.agent
+        && left.scope == right.scope
+        && left.file == right.file
+        && left.container_path == right.container_path
+        && left.server_key == right.server_key
+}
+
+fn selected_entries<'a>(
+    current: &'a [config::Entry],
+    connection: Option<Incarnation>,
+    selected: &'a [config::Entry],
+) -> Result<Vec<&'a config::Entry>, ErrorLine> {
+    if selected.is_empty() {
+        return Ok(current
+            .iter()
+            .filter(|entry| connection.is_none() || entry.connection_id == connection)
+            .collect());
+    }
+    if connection.is_some() {
+        return Err(refused("--entry conflicts with --connection-id"));
+    }
+    for (index, expected) in selected.iter().enumerate() {
+        if selected[..index]
+            .iter()
+            .any(|previous| same_target(previous, expected))
+        {
+            return Err(refused("duplicate selected agent entry"));
+        }
+        let matches: Vec<_> = current
+            .iter()
+            .filter(|entry| same_target(entry, expected))
+            .collect();
+        if matches.len() != 1 || matches[0] != expected {
+            return Err(refused(format!(
+                "selected agent entry changed, disappeared or is outside scope: {} / {}",
+                expected.file, expected.server_key
+            )));
+        }
+    }
+    Ok(selected.iter().collect())
 }

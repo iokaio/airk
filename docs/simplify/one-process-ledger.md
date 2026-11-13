@@ -2,6 +2,22 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- R01 correction reviewed and qualified on Windows: whole-batch native Entry
+  validation precedes writes; each selected edit reclassifies current source
+  using refreshed observations and preserves the existing concurrent-byte
+  check. Reconnect retains pre-confirmation rows, forwards full native selectors,
+  requires the optional verified capability and retains complete action errors.
+  `p1-r01-extension-after` selects 37/37 passing tests after one pinned
+  TypeScript compile. `p1-r01-handler-clippy` passes all airkctl targets without
+  default features (receipt 4.25 s); `p1-r01-handler-tests` selects 27/27 passing
+  config/parser/session/actual subprocess tests, 64 skipped (receipt 11.94 s).
+  Persistent P10 target, incremental on, unchanged native/fixture/harness seals
+  and Cargo timing evidence retained. CLI help/reference generation ran the
+  eleven CLI tests successfully (Cargo 33.46 s); generated help reflects only
+  selected removal. README, docs index, current release checkpoint and extension
+  description agree on source behavior and unchanged version 1.8.35. No broad
+  workspace, installed-editor, platform or release qualification is claimed.
+
 - R19a expanded seam is frozen and explicitly reviewed by the primary against
   the original source and relocation script. Capture `r19-baseline-r2.json`
   SHA-256 `1a5a2626eff06b3d6e5cca79c7fea1fc7be96a3226ec2fadd174d72b96fac633`
@@ -114,7 +130,26 @@
   control passes. These regression tests remain uncommitted until correction;
   the independently authored outcome fixture may land contract-first. Receipt
   lookup after the failed assertion is not yet a passing qualification result.
-  Source-reviewed generated-mutation recovery still awaits D8 approval.
+  At that checkpoint, source-reviewed generated-mutation recovery awaited D8
+  approval; the subsequent narrow approval is recorded below.
+- R04 receipt-only recovery contract: the user explicitly approved contracts
+  §4.4.1's narrow D8 exception on 13 November 2026. Contract-only ownership is
+  `airk-endpoint::admin_contract`, its independent envelope/applicability
+  fixtures and existing I3 generated schema/TypeScript. Add optional canonical
+  failure `review`, validated only for nonretryable unavailable unknown outcomes;
+  `admin_review_capacity` is 409/refused/nonretryable before effects. Only
+  policy-resume and split-recovery matching receipt reads are applicable.
+  Keep existing review capacity/lifetimes and ordinary preview eviction policy;
+  reserve/pin recovery custody before dispatch without evicting outstanding
+  recovery identities. No I1/MCP, digest or persisted-format change. The only
+  handler edits in this step are three mechanical `review: None` initializers;
+  actual classification, custody and frontend behavior remain unimplemented.
+  New independent fixture: `fixtures/split/i3/recovery_reviews.json`.
+  Primary owns generation, container input integration and validation. Intended
+  checks: generate independent envelopes; Rust-owned I3 schema emission; render
+  TypeScript; scoped endpoint Clippy and contract tests; fixture/schema/TS drift,
+  existing native-outcome decode and container-input checks. Keep the eight
+  already reproduced HTTPS regressions uncommitted until their correction.
 - Contract-first milestone committed/pushed as `688d7906`; configured human
   DCO verified. R01 handler/consumer work may now begin. Own only native
   CLI/manage/config and existing external tests/session/subprocess test target,

@@ -427,7 +427,7 @@ Commands:
   list        Classify AIRK's entries in agent configuration files; read-only
   connect     Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id), a new open connection (--open) or reusing an existing connection
   repair      Rewrite AIRK entries whose endpoint or helper is stale; --connection-id replaces an unknown connection
-  remove      Remove AIRK's entries (only those naming --connection-id, when given)
+  remove      Remove AIRK entries, optionally selecting exact list rows or a connection
   verify      Probe the service's own MCP endpoint with a connection's stored credential
   launch      Start Claude Code, Codex or VS Code on this connection in the foreground (U91)
   default     Set an open connection's default scope and agent choice; the agent's next call uses it
@@ -951,7 +951,7 @@ Options:
 ## airkctl agents remove
 
 ```text
-Remove AIRK's entries (only those naming --connection-id, when given)
+Remove AIRK entries, optionally selecting exact list rows or a connection
 
 Usage: airkctl agents remove [OPTIONS]
 
@@ -971,8 +971,8 @@ Options:
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
 
-      --project <PROJECTS>
-          A project folder to check (repeatable; default: the current directory)
+      --entry <ENTRIES>
+          Remove exactly this complete agents-list Entry JSON (repeatable); changed targets refuse
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -980,11 +980,14 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
-      --no-user
-          Leave this user's agent configuration files out
+      --project <PROJECTS>
+          A project folder to check (repeatable; default: the current directory)
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --no-user
+          Leave this user's agent configuration files out
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session

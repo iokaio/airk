@@ -9,6 +9,95 @@ use std::collections::HashMap;
 const CASES: &str = include_str!("../../../../../fixtures/split/agents/config_cases.json");
 const A: &str = "0123456789abcdef0123456789abcdef";
 
+#[test]
+fn exact_entry_revalidation_refuses_live_changes_and_keeps_concurrent_source_bytes() {
+    let ownership = |_: Incarnation| Ownership::Unavailable;
+    let exists = |_: &str| Some(true);
+    let observations = Observations {
+        endpoint_url: None,
+        trust_installed: None,
+        ownership: &ownership,
+        path_exists: &exists,
+        verified_launchers: &[],
+        windows: false,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join(".mcp.json");
+    let original = r#"{"mcpServers":{"airk":{"command":"airk"}}}"#;
+    let changed = r#"{"mcpServers":{"airk":{"command":"changed"}},"keep":"concurrent bytes"}"#;
+    let entries = Classifier::new(&observations)
+        .file(
+            Agent::Claude,
+            Scope::Project,
+            &file.to_string_lossy(),
+            original,
+        )
+        .entries;
+    assert_eq!(entries.len(), 1);
+    let expected = &entries[0];
+    let target = Target {
+        container_path: vec!["mcpServers".into()],
+        server_key: "airk".into(),
+    };
+    std::fs::write(&file, changed).unwrap();
+    let result = edit_file(&file, Some(directory.path()), false, |source| {
+        let source = source.unwrap();
+        revalidate_entry(source, expected, &observations)?;
+        remove(Agent::Claude, Scope::Project, source, &target)
+    });
+    assert!(result.unwrap_err().contains("changed before its edit"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), changed);
+
+    std::fs::write(&file, original).unwrap();
+    let result = edit_file(&file, Some(directory.path()), false, |source| {
+        let source = source.unwrap();
+        revalidate_entry(source, expected, &observations)?;
+        let prepared = remove(Agent::Claude, Scope::Project, source, &target)?;
+        std::fs::write(&file, changed).unwrap();
+        Ok(prepared)
+    });
+    assert!(result.unwrap_err().contains("changed while AIRK prepared"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), changed);
+}
+
+#[test]
+fn exact_entry_revalidation_uses_fresh_connection_observations() {
+    let source = r#"{"servers":{"airk":{"type":"http","url":"https://127.0.0.1:62133/mcp","headers":{"Authorization":"Bearer ${input:airkToken_11111111111111111111111111111111}"}}}}"#;
+    let exists = |_: &str| Some(true);
+    let missing = |_: Incarnation| Ownership::NotOwned;
+    let owned = |_: Incarnation| Ownership::Owned {
+        url: "https://127.0.0.1:62133/mcp".into(),
+    };
+    let before = Observations {
+        endpoint_url: None,
+        trust_installed: None,
+        ownership: &missing,
+        path_exists: &exists,
+        verified_launchers: &[],
+        windows: false,
+    };
+    let after = Observations {
+        ownership: &owned,
+        ..before
+    };
+    let entries = Classifier::new(&before)
+        .file(
+            Agent::Copilot,
+            Scope::Project,
+            "/fixture/.vscode/mcp.json",
+            source,
+        )
+        .entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].status, Some(Class::HttpsUnknownConnection));
+    assert!(revalidate_entry(source, &entries[0], &before).is_ok());
+    assert!(
+        revalidate_entry(source, &entries[0], &after)
+            .unwrap_err()
+            .contains("changed before its edit")
+    );
+}
+
 fn id(value: &str) -> Incarnation {
     value.parse().expect("connection id")
 }

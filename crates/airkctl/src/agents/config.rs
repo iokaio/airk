@@ -27,7 +27,7 @@ mod recognize;
 mod tests;
 mod toml;
 
-pub(crate) use classify::{Classifier, Entry, FileReport};
+pub(crate) use classify::{Classifier, Entry, FileReport, revalidate_entry};
 pub(crate) use edit::{Connection, Target, connect, remove, repair};
 pub(crate) use io::{edit_file, expand_user_files, path_exists};
 pub(crate) use locations::{PROJECT_FILES, Platform, UserEnv, user_locations};

@@ -172,7 +172,7 @@ test('version documents: every reviewed document parses; unknown fields are igno
 
 const base = (versions.documents[0].json as VersionDocument);
 const doc = (changes: Partial<VersionDocument>): VersionDocument => ({ ...structuredClone(base), ...changes });
-const superset = ['session/2', 'tools/1', 'events/1', 'window-scope/1', 'assistance/1', 'handoff/1', 'agents/1', 'admin-launch/1'];
+const superset = ['session/2', 'tools/1', 'events/1', 'window-scope/1', 'assistance/1', 'handoff/1', 'agents/1', 'agents-entry-remove/1', 'admin-launch/1'];
 test('compatibility matrix rows decide from the contract and capabilities, never product order', () => {
     // Row 1: product versions differ; same contract, superset of capabilities.
     assert.deepEqual(compatibility(doc({ version: '1.9.1', capabilities: superset })), { compatible: true, contract: 1, disabled: [] });

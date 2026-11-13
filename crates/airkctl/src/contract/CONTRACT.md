@@ -16,15 +16,15 @@ extension, scripts and users (split plan §4.2; draft in
 - **Version document** (`VersionDocument`, schema `airkctl-version/1`): local
   only, never contacts the service. Readers ignore unknown fields.
   `capabilities` lists only served operations of this exact pair.
-- **Exact agent-entry removal input (prepared, not served):** the existing
+- **Exact agent-entry removal input:** the existing
   native agent-config `Entry` is the I2 schema root for a repeatable
   `agents remove --entry <JSON>` argument. Its camel-case report representation
   stays unchanged. Unknown fields, missing identity fields/status, unknown enums
   and noncanonical connection IDs are refused. The explicit `status: null`
   observation remains valid. Native custom keys and container paths are carried
   unchanged, including keys recognized through a proven helper or launcher.
-  This contract step does not add the argument handler or advertise
-  `agents-entry-remove/1`; the handler and consumers land separately.
+  The contract landed before the handler. The served handler advertises
+  `agents-entry-remove/1`; consumers require it from the verified CLI.
 - **Session protocol 2** (`SessionRequest`/`SessionResponse`/`SessionEventFrame`):
   4-byte big-endian length then JSON (the shared codec). Replies keep the
   protocol 1 `{id, outcome}` shape; events are `{event:{kind,…}}`. Budgets are
@@ -62,7 +62,7 @@ extension, scripts and users (split plan §4.2; draft in
   (`fixtures/split/i3/admin_operations.json`) that list the `session`
   surface (contracts §3.8, U103); others are `session_command_refused`.
 - `airkctl` depends only on `airk-core`, `airk-process` and `airk-ipc` (U27).
-- When served, exact-entry removal requires `agents-entry-remove/1` from the
+- Exact-entry removal requires `agents-entry-remove/1` from the
   verified CLI. It conflicts with `--connection-id`, refuses missing, duplicate,
   changed or out-of-scope selected rows, and never falls back to all entries.
   Compare the complete observed `Entry` again against live source inside the
@@ -77,8 +77,9 @@ extension, scripts and users (split plan §4.2; draft in
 `fixtures/wire/airkctl_session_frames.json`, `fixtures/split/i2/exit_codes.json`,
 `fixtures/split/i2/error_lines.json`, `fixtures/split/i2/version.json`.
 `fixtures/split/agents/entry_remove_cases.json` pins the new input's exact
-shape, strict decoding and existing transport budgets, without claiming the
-future selected-removal behavior is implemented.
+shape, strict decoding and existing transport budgets. Actual subprocess,
+session and configuration-edit tests cover selector custody and revalidation;
+extension composition tests cover reviewed scope and complete action errors.
 The compatibility matrix and offline-operation fixtures land with their first
 consumer.
 
