@@ -15,10 +15,12 @@
 // - indexes.pause → `{status: "registered", project: RegisteredProject}`.
 // - catalog.page(indexes) names indexes (`backing.binding` is the project
 //   binding); indexes.list gives each registered project's `paused` flag.
+import { createIndexRequests, createJobRequests, type IndexInfo } from './activityRequests';
+export type { IndexInfo } from './activityRequests';
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CallResult } from './api';
-import { body, isDigest, MAX_INDEX_LIST_LIMIT, OPS } from './operations';
+import { body, isDigest, OPS } from './operations';
 import { Confirm, Field, Outcome, Panel, Text, useCall, type CallState } from './render';
 
 type Rec = Record<string, unknown>;
@@ -32,10 +34,6 @@ const okValue = (result: CallResult): Rec | null => (result.kind === 'ok' ? rec(
 
 /** EventRegistry::events accepts 1..=32. */
 const EVENT_WINDOW = 32;
-/** Catalog pages loaded for index names before stopping (disclosed when hit). */
-const MAX_NAME_PAGES = 16;
-/** `indexes.list` pages of 32 read for registration and pause state. */
-const MAX_PROJECT_PAGES = 16;
 
 // ---------------------------------------------------------------------------
 // Plain words for native codes.
@@ -179,15 +177,7 @@ function localTime(ms: unknown): string {
 // ---------------------------------------------------------------------------
 // Index names: binding → name, from the catalog and the registered projects.
 
-export type IndexInfo = {
-  binding: string;
-  name: string | null;
-  id: string | null;
-  paused: boolean | null;
-  retired: boolean;
-  /** Registered with the service (only those can be paused or filtered on). */
-  registered: boolean;
-};
+
 
 export function useIndexes(): {
   indexes: IndexInfo[];
@@ -203,66 +193,8 @@ export function useIndexes(): {
   const [indexes, setIndexes] = useState<IndexInfo[]>([]);
   const [partial, setPartial] = useState(false);
   const [registryKnown, setRegistryKnown] = useState(false);
-  const reload = async (): Promise<void> => {
-    const byBinding = new Map<string, IndexInfo>();
-    let after: unknown = null;
-    let pages = 0;
-    let more = false;
-    do {
-      const expected = after === null ? null : num(rec(after)?.revision);
-      const result = await runCatalog(OPS.catalogPage, body.catalogPage('indexes', {}, after, expected));
-      const page = rec(okValue(result)?.page);
-      if (page === null) break;
-      for (const item of arr(page.items)) {
-        const value = rec(rec(item)?.value);
-        const binding = str(rec(value?.backing)?.binding);
-        if (value === null || binding === null) continue;
-        byBinding.set(binding, {
-          binding,
-          name: str(value.name),
-          id: str(value.id),
-          paused: null,
-          retired: value.tombstone === true,
-          registered: false,
-        });
-      }
-      after = page.continuation ?? null;
-      pages++;
-      more = after !== null && pages >= MAX_NAME_PAGES;
-    } while (after !== null && pages < MAX_NAME_PAGES);
-    // Registered indexes in pages of 32 (the registry's bound), continuing
-    // with the first page's revision.
-    let projectAfter: string | null = null;
-    let revision: number | null = null;
-    let projectPages = 0;
-    let projectsIncomplete = false;
-    do {
-      const registered = await runProjects(
-        OPS.indexesList,
-        body.indexesList(projectAfter, MAX_INDEX_LIST_LIMIT, projectAfter === null ? null : revision),
-      );
-      const page = rec(okValue(registered)?.page);
-      if (page === null) {
-        projectsIncomplete = true;
-        break;
-      }
-      revision = num(page.revision);
-      for (const project of arr(page.projects)) {
-        const p = rec(project);
-        const binding = str(rec(p?.registration)?.binding);
-        if (p === null || binding === null) continue;
-        const known = byBinding.get(binding);
-        const paused = typeof p.paused === 'boolean' ? p.paused : null;
-        byBinding.set(binding, known ? { ...known, paused, registered: true } : { binding, name: null, id: null, paused, retired: false, registered: true });
-      }
-      projectAfter = str(page.after);
-      projectPages++;
-    } while (projectAfter !== null && projectPages < MAX_PROJECT_PAGES);
-    if (projectAfter !== null) projectsIncomplete = true;
-    setRegistryKnown(!projectsIncomplete);
-    setPartial(more || projectsIncomplete);
-    setIndexes([...byBinding.values()].sort((a, b) => (a.name ?? '~').localeCompare(b.name ?? '~')));
-  };
+  const indexRequests = createIndexRequests({ runCatalog, runProjects, setRegistryKnown, setPartial, setIndexes });
+  const reload = indexRequests.reload;
   const nameOf = (binding: string): string => {
     const found = indexes.find((i) => i.binding === binding);
     return found?.name ?? `index ${short(binding)}`;
@@ -371,21 +303,10 @@ export function Activity(): JSX.Element {
     );
   };
 
-  const openJob = async (id: string): Promise<void> => {
-    setJobId(id);
-    setJobRecord(null);
-    const value = okValue(await runJob(OPS.jobsGet, body.jobsGet(id)));
-    setJobRecord(rec(value?.job));
-  };
+  const jobRequests = createJobRequests({ runJob, runJobAction, setJobId, setJobRecord });
+  const openJob = jobRequests.openJob;
 
-  const jobChange = async (kind: 'retry' | 'cancel'): Promise<void> => {
-    const result = await runJobAction(
-      kind === 'retry' ? OPS.jobsRetry : OPS.jobsCancel,
-      kind === 'retry' ? body.jobsRetry(jobId) : body.jobsCancel(jobId),
-    );
-    const updated = rec(okValue(result)?.job);
-    if (updated !== null) setJobRecord(updated);
-  };
+  const jobChange = (kind: 'retry' | 'cancel'): Promise<void> => jobRequests.jobChange(jobId, kind);
 
   useEffect(() => {
     void names.reload();

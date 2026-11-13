@@ -2,6 +2,23 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- R19a expanded seam is frozen and explicitly reviewed by the primary against
+  the original source and relocation script. Capture `r19-baseline-r2.json`
+  SHA-256 `1a5a2626eff06b3d6e5cca79c7fea1fc7be96a3226ec2fadd174d72b96fac633`
+  retains the original names-loader procedure too. Receipts
+  `p1-r19a-r2-before` and `p1-r19a-r2-after` select the same six serial cases,
+  all passing; `p1-r19-r2-before` selects thirteen failing delayed-state cases.
+  Those failing regressions remain outside the structural commit. Canonical
+  pinned Admin typecheck/bundle check passes; inventory
+  `8967e69269335d5a4ec015e2605d793666e526dbfe13ad17bde0aa19bf53f8fc`,
+  bundle `ee29f2bfedb7a61c5e54a42f692ff61bd70619d6fff9fe0c8b5a123c6e7be8b0`.
+  `p1-r19a-r2-embedded` passes its one selected native asset-route test,
+  72 filtered out, receipt 36.63 s, incremental on, persistent P10 target,
+  Cargo timings retained. All consumed input seals remain unchanged. This is
+  a behavior-preserving seam, not the R19 correction or installed qualification.
+  README, documentation index, release record and Marketplace description
+  still describe source candidate 1.8.35 and retain original installer receipts.
+
 - P1 authority milestone committed locally as `625c1766`, human DCO verified.
   Automatic approval rejected its push because prior explicit approval named
   only P0 commit `235d76be`. The user has been asked to approve the ready P1
@@ -155,6 +172,19 @@
   `p1-r01-native-before` and 99 for `p1-r02-before`. Original receipts and logs
   remain untouched; no native/extension test was rerun for this harness fix.
   Commit this reporting correction separately from R19's structural seam.
+- R19 final boundary review before its correction: native `retry_job` preserves
+  the terminal origin and creates/joins a pending successor, so a distinct
+  returned job ID is valid. Add that required sibling regression; do not guard
+  retry as if its returned ID must equal the origin. `useIndexes.reload` is
+  also a required stale-name/registration-state sibling used by pause controls.
+  Extend the unchanged-source seam/goldens for that existing procedure before
+  one coherent behavior correction. Retain first capture, checks and asset
+  identities above; use a new `r19-baseline-r2.json` and asset receipt for the
+  expanded seam, never relabel the earlier evidence. Timeline's final ticket
+  already blocks stale publication; its redundant stale follow-up read is a
+  follow-up cost issue outside this repair. Keyed detail owners must also reset
+  `useCall` metadata, not just data callbacks. Persistent owners bind context
+  synchronously before passive effects, and old closures cannot rebind it.
 
 - P0 milestone committed as `235d76be` with configured human DCO verified.
   Push was initially refused by automatic review because destination approval

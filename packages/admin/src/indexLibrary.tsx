@@ -8,6 +8,7 @@
 // operations, the target's display name typed by the user (contracts §4.3b).
 // Fragment routes (`#index-library?root=|index=|set=`) only prefill; they
 // never start a call that changes anything.
+import { createCatalogRequests, indexDetailValue, itemOf, type Item } from './catalogRequests';
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { reviewedCall, reviewOf } from './api';
@@ -128,14 +129,9 @@ function parseJsonArray(value: string): unknown[] | null {
 // ---------------------------------------------------------------------------
 // Catalog items (CatalogItem: adjacently tagged `{kind, value}`).
 
-type Item = { kind: string; value: Rec };
 
-function itemOf(value: unknown): Item | null {
-  const r = rec(value);
-  const kind = str(r?.kind);
-  const inner = rec(r?.value);
-  return kind !== null && inner !== null ? { kind, value: inner } : null;
-}
+
+
 
 type Described = { id: string; name: string; facts: string[]; retired: boolean };
 
@@ -269,24 +265,8 @@ function CatalogList(props: {
   const [cursor, setCursor] = useState<unknown>(null);
   const [header, setHeader] = useState<{ namespace: string; revision: number } | null>(null);
   const filter = { indexId: props.indexId ?? null, projectId: props.projectId ?? null };
-  const load = async (after: unknown): Promise<void> => {
-    const expected = after === null ? null : num(rec(after)?.revision);
-    const result = await run(OPS.catalogPage, body.catalogPage(props.kind, filter, after, expected));
-    const page = result.kind === 'ok' ? rec(rec(result.envelope.result)?.page) : null;
-    if (page === null) return;
-    const got = arr(page.items)
-      .map(itemOf)
-      .filter((item): item is Item => item !== null);
-    const merged = after === null ? got : [...items, ...got];
-    setItems(merged);
-    props.onItems?.(merged, (page.continuation ?? null) === null);
-    setCursor(page.continuation ?? null);
-    const revision = num(page.revision);
-    if (revision !== null) {
-      setHeader({ namespace: text(page.namespace), revision });
-      props.onRevision(revision);
-    }
-  };
+  const catalogRequests = createCatalogRequests({ run, setItems, setCursor, setHeader });
+  const load = (after: unknown): Promise<void> => catalogRequests.load(after, props, filter, items);
   useEffect(() => {
     void load(null);
   }, [props.kind, props.indexId, props.projectId, props.reload]);
@@ -1898,9 +1878,7 @@ function IndexDetail(props: {
   // shown, so the panels below (progress, running reviews) keep their state.
   const lastGood = useRef<{ id: string; detail: Rec } | null>(null);
   const loaded = rec(okResult(detail)?.detail);
-  if (loaded !== null) lastGood.current = { id: props.id, detail: loaded };
-  const d =
-    loaded ?? (detail.phase === 'pending' && lastGood.current?.id === props.id ? lastGood.current.detail : null);
+  const d = indexDetailValue(props, detail, loaded, lastGood);
   const item = itemOf(d?.item);
   const index = item !== null && item.kind === 'index' ? item.value : null;
   const revision = num(d?.revision);
