@@ -304,6 +304,8 @@ where
             explicit_root: control_root,
             invoker: invoker.unwrap_or_else(|| Arc::new(CommandLine)),
             epoch: AtomicU64::new(0),
+            scope_mutation: Mutex::new(()),
+            scope: Mutex::new(ScopeState::default()),
         }),
         owner_at: owner.as_ref().map(|_| now + timing.owner_poll_ms),
         owner,
@@ -316,7 +318,6 @@ where
         service: None,
         instance: None,
         window: None,
-        scope: None,
         delivered: 0,
         acked: None,
         resync_sent: false,
@@ -582,6 +583,7 @@ struct Snapshot {
     acked: Option<u64>,
     /// The held W4 grant's selection.
     scope: Option<WindowScopeSelection>,
+    scope_generation: u64,
 }
 
 /// What a worker observed, applied by the session loop. Everything except
@@ -595,9 +597,6 @@ struct Effects {
     reopened: Option<(Incarnation, Option<Window>)>,
     /// Renewal confirmed the held window.
     renewed: bool,
-    scoped: Option<bool>,
-    /// With `scoped: Some(true)`: the selection now granted.
-    granted: Option<WindowScopeSelection>,
     acked: Option<u64>,
     drafts: Vec<AssistanceDraft>,
     subscribed: Option<(Vec<EventTopic>, EventCursor)>,
@@ -859,6 +858,47 @@ struct Shared {
     invoker: Arc<dyn Invoker>,
     /// The plane epoch, readable by workers to tell a restart happened.
     epoch: AtomicU64,
+    /// Serializes only native W4/W4b mutations, never reads or catalog lookup.
+    scope_mutation: Mutex<()>,
+    /// Committed scope, published before the worker's completion event.
+    scope: Mutex<ScopeState>,
+}
+
+#[derive(Default)]
+struct ScopeState {
+    generation: u64,
+    held: Option<WindowScopeSelection>,
+    closing: bool,
+}
+
+impl Shared {
+    fn scope(&self) -> MutexGuard<'_, ScopeState> {
+        self.scope.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn scope_current(&self, epoch: u64, generation: u64) -> bool {
+        let scope = self.scope();
+        !scope.closing
+            && self.epoch.load(Ordering::SeqCst) == epoch
+            && scope.generation == generation
+    }
+
+    fn scope_open(&self, epoch: u64) -> bool {
+        let scope = self.scope();
+        !scope.closing && self.epoch.load(Ordering::SeqCst) == epoch
+    }
+
+    /// Called under scope_mutation after native success. A plane reset/close
+    /// invalidates an in-flight commit without waiting for its pipe call.
+    fn commit_scope(&self, epoch: u64, held: Option<WindowScopeSelection>) -> Option<u64> {
+        let mut scope = self.scope();
+        if scope.closing || self.epoch.load(Ordering::SeqCst) != epoch {
+            return None;
+        }
+        scope.generation = scope.generation.wrapping_add(1);
+        scope.held = held;
+        Some(scope.generation)
+    }
 }
 
 /// What one worker thread owns.
@@ -909,34 +949,57 @@ impl Worker {
             Work::Subscribe { topics, native } => {
                 self.subscribe(snapshot, topics, native, &mut effects)
             }
-            Work::Scope(selection) => match self.plane(snapshot, &mut effects, |window| {
-                ControlMethod::WindowScopeGrant {
-                    window_id: window.id,
-                    lease: window.lease.clone(),
-                    selection: selection.clone(),
+            Work::Scope(selection) => {
+                let Ok(_mutation) = self.shared.scope_mutation.lock() else {
+                    return (failed(SessionFailure::SessionBusy), effects);
+                };
+                if !self.shared.scope_open(snapshot.epoch) {
+                    return (failed(SessionFailure::ServiceRestarted), effects);
                 }
-            }) {
-                Ok(ControlResponse::WindowScopeGranted {
-                    scope_identity,
-                    catalog_revision,
-                    expires_at_ms,
-                }) => {
-                    effects.scoped = Some(true);
-                    effects.granted = Some(selection);
-                    SessionOutcome::Scope {
-                        scope_identity: scope_identity.to_string(),
-                        catalog_revision: catalog_revision.get(),
-                        expires_at_ms,
+                match self.plane(snapshot, &mut effects, |window| {
+                    ControlMethod::WindowScopeGrant {
+                        window_id: window.id,
+                        lease: window.lease.clone(),
+                        selection: selection.clone(),
                     }
+                }) {
+                    Ok(ControlResponse::WindowScopeGranted {
+                        scope_identity,
+                        catalog_revision,
+                        expires_at_ms,
+                    }) => {
+                        if self
+                            .shared
+                            .commit_scope(snapshot.epoch, Some(selection))
+                            .is_some()
+                        {
+                            SessionOutcome::Scope {
+                                scope_identity: scope_identity.to_string(),
+                                catalog_revision: catalog_revision.get(),
+                                expires_at_ms,
+                            }
+                        } else {
+                            failed(SessionFailure::ServiceRestarted)
+                        }
+                    }
+                    Ok(_) => unexpected(),
+                    Err(refusal) => refusal.outcome(),
                 }
-                Ok(_) => unexpected(),
-                Err(refusal) => refusal.outcome(),
-            },
+            }
             Work::ScopeRelease => {
+                let Ok(_mutation) = self.shared.scope_mutation.lock() else {
+                    return (failed(SessionFailure::SessionBusy), effects);
+                };
+                if !self.shared.scope_open(snapshot.epoch) {
+                    return (failed(SessionFailure::ServiceRestarted), effects);
+                }
                 if snapshot.window.is_none() {
                     // Nothing is granted without a window; release is idempotent.
-                    effects.scoped = Some(false);
-                    SessionOutcome::ScopeReleased
+                    if self.shared.commit_scope(snapshot.epoch, None).is_some() {
+                        SessionOutcome::ScopeReleased
+                    } else {
+                        failed(SessionFailure::ServiceRestarted)
+                    }
                 } else {
                     match self.plane(snapshot, &mut effects, |window| {
                         ControlMethod::WindowScopeRelease {
@@ -945,8 +1008,11 @@ impl Worker {
                         }
                     }) {
                         Ok(ControlResponse::WindowScopeReleased {}) => {
-                            effects.scoped = Some(false);
-                            SessionOutcome::ScopeReleased
+                            if self.shared.commit_scope(snapshot.epoch, None).is_some() {
+                                SessionOutcome::ScopeReleased
+                            } else {
+                                failed(SessionFailure::ServiceRestarted)
+                            }
                         }
                         Ok(_) => unexpected(),
                         Err(refusal) => refusal.outcome(),
@@ -1170,10 +1236,14 @@ impl Worker {
         if route
             .as_ref()
             .is_some_and(|route| route.refused.as_deref() == Some(SCOPE_UNAVAILABLE))
-            && self.reselect(snapshot, effects)
+            && let Some(generation) = self.reselect(snapshot, effects)
+            && self.shared.scope_current(snapshot.epoch, generation)
         {
             let mut retry = window_route(snapshot);
-            ran = self.command(arguments, &stdin, retry.as_mut());
+            let retried = self.command(arguments, &stdin, retry.as_mut());
+            if self.shared.scope_current(snapshot.epoch, generation) {
+                ran = retried;
+            }
         }
         let (exit_code, stdout, stderr) = ran;
         if stdout.overflow {
@@ -1238,17 +1308,22 @@ impl Worker {
 
     /// U99 Q4: whether the held grant's catalog moved to another revision
     /// in the same namespace, and a re-select of the same indexes and
-    /// projects at the current revision was granted. Called at most once per
-    /// read; a refused re-select leaves the first outcome in place.
-    fn reselect(&self, snapshot: &Snapshot, effects: &mut Effects) -> bool {
+    /// projects at the current revision was granted. Returns that committed
+    /// generation. Called at most once per read; a refused or superseded
+    /// re-select leaves the first outcome in place.
+    fn reselect(&self, snapshot: &Snapshot, effects: &mut Effects) -> Option<u64> {
         let (Some(service), Some(instance), Some(held)) =
             (&self.service, snapshot.instance, &snapshot.scope)
         else {
-            return false;
+            return None;
         };
-        let Some(index) = held.index_ids.first() else {
-            return false;
-        };
+        if !self
+            .shared
+            .scope_current(snapshot.epoch, snapshot.scope_generation)
+        {
+            return None;
+        }
+        let index = held.index_ids.first()?;
         let observed = service.request(
             ControlMethod::CatalogDetail {
                 entity: airk_core::catalog_management::CatalogEntity::Index { id: *index },
@@ -1266,8 +1341,17 @@ impl Worker {
                     ..held.clone()
                 }
             }
-            _ => return false,
+            _ => return None,
         };
+        // Catalog lookup may have overlapped a newer choice. Check again while
+        // holding the same gate as every explicit grant/release, before W4.
+        let _mutation = self.shared.scope_mutation.lock().ok()?;
+        if !self
+            .shared
+            .scope_current(snapshot.epoch, snapshot.scope_generation)
+        {
+            return None;
+        }
         match self.plane(snapshot, effects, |window| {
             ControlMethod::WindowScopeGrant {
                 window_id: window.id,
@@ -1276,11 +1360,9 @@ impl Worker {
             }
         }) {
             Ok(ControlResponse::WindowScopeGranted { .. }) => {
-                effects.scoped = Some(true);
-                effects.granted = Some(current);
-                true
+                self.shared.commit_scope(snapshot.epoch, Some(current))
             }
-            _ => false,
+            _ => None,
         }
     }
 
@@ -1412,10 +1494,6 @@ struct Session {
     service: Option<Arc<dyn Service>>,
     instance: Option<Incarnation>,
     window: Option<Window>,
-    /// The selection of the held W4 grant: reads with no explicit selection
-    /// are routed to it, and it is re-selected once on revision drift (U99
-    /// Q4).
-    scope: Option<WindowScopeSelection>,
     /// Highest Assistance sequence emitted; repeats are suppressed.
     delivered: u64,
     acked: Option<u64>,
@@ -1569,12 +1647,14 @@ impl Session {
     }
 
     fn snapshot(&self) -> Snapshot {
+        let scope = self.shared.scope();
         Snapshot {
             epoch: self.shared.epoch.load(Ordering::SeqCst),
             instance: self.instance,
             window: self.window.clone(),
             acked: self.acked,
-            scope: self.scope.clone(),
+            scope: scope.held.clone(),
+            scope_generation: scope.generation,
         }
     }
 
@@ -1607,8 +1687,12 @@ impl Session {
 
     /// The window's grant and Assistance state end with its window or instance.
     fn reset_plane(&mut self) {
-        self.shared.epoch.fetch_add(1, Ordering::SeqCst);
-        self.scope = None;
+        {
+            let mut scope = self.shared.scope();
+            self.shared.epoch.fetch_add(1, Ordering::SeqCst);
+            scope.generation = scope.generation.wrapping_add(1);
+            scope.held = None;
+        }
         self.delivered = 0;
         self.acked = None;
         if let Some(subscription) = self.subscription.as_mut() {
@@ -1650,11 +1734,6 @@ impl Session {
         }
         if effects.renewed {
             self.resync_sent = false;
-        }
-        match effects.scoped {
-            Some(true) => self.scope = effects.granted,
-            Some(false) => self.scope = None,
-            None => {}
         }
         if let Some(acked) = effects.acked {
             self.acked = Some(self.acked.map_or(acked, |held| held.max(acked)));
@@ -1780,6 +1859,12 @@ impl Session {
             return;
         }
         self.closing = Some(self.now() + self.timing.drain_ms);
+        {
+            let mut scope = self.shared.scope();
+            scope.generation = scope.generation.wrapping_add(1);
+            scope.held = None;
+            scope.closing = true;
+        }
         if self.subscription.take().is_some() {
             self.emit(SessionEvent::Closing);
         }

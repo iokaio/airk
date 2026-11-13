@@ -419,8 +419,10 @@ revoke_selection(nonces)`, which does the following:
   `generation`, and write nothing to the registry.
 - Outside the gate lock: send `RevokeScope { identity, scope }` to each
   affected worker (the existing worker message, `project_protocol.rs:47-50`).
-  On its acknowledgement, prune the entry in both the gate and the worker
-  (§3.4).
+  Include both current and retained previous leases after an uncertain renewal.
+  Each acknowledgement settles only its exact lease; the gate retains the
+  entry until every retained generation is acknowledged or actually reaped
+  (§3.4). Repeated revocation requests omit already acknowledged leases.
 
 The exchange (N1): the existing `Expected::Revoke { ticket: FenceTicket,
 target }` (`project_supervisor/catalog.rs:638-659`) and `record_revoked`
@@ -430,8 +432,10 @@ and owner revocation has no fence. A new `Expected::RevokeSelection { worker,
 scope }` carries no `FenceTicket`, and its acknowledgement calls a new
 `NativeCatalogAdmission::record_selection_revoked(worker, scope)`. That
 function requires a `Selection` key and a `Revoked` entry for that worker,
-records the acknowledgement, prunes the entry and, if a pending fence lists
-the pair (below), marks it acknowledged there.
+records the exact acknowledgement and, if a pending fence lists the pair
+(below), marks only that pair acknowledged there. A current-lease ACK remains
+idempotent while a previous lease is outstanding. It never implies that an
+unacknowledged previous lease was absent or fenced at the worker.
 
 Sweeps and purges return their dropped nonces (N4). `WindowPlane::sweep`
 (`window_plane.rs:210`), `Sessions::purge` (`secrets.rs:274-276`) and the
@@ -533,9 +537,12 @@ These maps are in memory [V `:288-290`, built in `new` `:417-419`].
   `with_scope_issue` (`:817`) refuse a `Selection` key whose nonce is not
   live.
 - **Pruning.** Unlike catalog entries, a selection entry that is `Revoked`
-  and acknowledged is removed from `installed` and `highwater` in the gate.
-  In the worker's `Scopes` (`project_worker/scopes.rs:48-53`, tombstones kept
-  until exit) it is removed on the same acknowledgement. A nonce is never
+  is removed from `installed` only after ACKs for its current lease and any
+  retained previous lease, in either order. Its high-water is removed only
+  once no entry of that family remains. This tracking is private in-memory
+  state, never a new persisted or wire field. The worker's `Scopes`
+  (`project_worker/scopes.rs:48-53`, tombstones kept until exit) may prune its
+  current entry earlier; the gate still requires each exact ACK. A nonce is never
   reused and is no longer live, so the entry cannot be resurrected; a
   resurrection attempt fails the live check. Catalog-grant entries keep the
   never-evict rule unchanged. The existing test

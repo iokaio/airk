@@ -336,6 +336,9 @@ struct Installed {
     nonce: u64,
     phase: Phase,
     pending_previous: Option<ScopedReadRef>,
+    // A selection's current ACK settles only that exact lease. Retain the
+    // family while an uncertain renewal's previous lease still needs its ACK.
+    current_revocation_acknowledged: bool,
 }
 impl Installed {
     fn matches(&self, target: ScopeTarget) -> bool {
@@ -995,6 +998,7 @@ impl NativeCatalogAdmission {
                     nonce,
                     phase: Phase::Installing,
                     pending_previous: Some(existing.scope),
+                    current_revocation_acknowledged: false,
                 },
             );
             return Ok(InstallTicket {
@@ -1038,6 +1042,7 @@ impl NativeCatalogAdmission {
                 nonce,
                 phase: Phase::Installing,
                 pending_previous: None,
+                current_revocation_acknowledged: false,
             },
         );
         Ok(InstallTicket {
@@ -2070,19 +2075,20 @@ impl NativeCatalogAdmission {
                 && nonces.contains(nonce)
             {
                 entry.phase = Phase::Revoked;
-                pairs.extend(
-                    std::iter::once(entry.scope)
-                        .chain(entry.pending_previous)
-                        .map(|scope| (entry.worker, scope)),
-                );
+                if !entry.current_revocation_acknowledged {
+                    pairs.push((entry.worker, entry.scope));
+                }
+                if let Some(previous) = entry.pending_previous {
+                    pairs.push((entry.worker, previous));
+                }
             }
         }
         Ok(pairs)
     }
     /// Whether `RevokeScope` must still be sent for this selection pair: its
-    /// entry is present and `Revoked`. An absent entry was already pruned or
-    /// reaped. A present live entry is refused (never revoke a live scope
-    /// through this path).
+    /// entry is present and `Revoked`, and this exact lease is unacknowledged.
+    /// An absent entry was already pruned or reaped. A present live entry is
+    /// refused (never revoke a live scope through this path).
     pub fn selection_revocation_pending(
         &self,
         worker: WorkerIdentity,
@@ -2101,14 +2107,15 @@ impl NativeCatalogAdmission {
             None => Ok(false),
             Some(entry) => {
                 ensure!(entry.phase == Phase::Revoked, ScopeReadRefused);
-                Ok(true)
+                Ok(entry.scope != scope || !entry.current_revocation_acknowledged)
             }
         }
     }
     /// The worker acknowledged `RevokeScope` for a revoked selection scope
-    /// (N1): no `FenceTicket` is involved. Prunes the entry (and its
-    /// high-water once no entry of that family remains) and settles a pending
-    /// fence's matching local revocation.
+    /// (N1): no `FenceTicket` is involved. Settles only the exact lease and a
+    /// pending fence's matching local revocation. Prunes the entry once both
+    /// retained leases are acknowledged (and its high-water once the family
+    /// has no entries).
     pub fn record_selection_revoked(
         &self,
         worker: WorkerIdentity,
@@ -2126,11 +2133,14 @@ impl NativeCatalogAdmission {
                 ScopeReadRefused
             );
             if entry.scope == scope {
-                // The current lease is fenced; the entry and its tombstone go.
-                // The nonce is no longer live, so it cannot be resurrected.
-                state.installed.remove(&entry_key);
+                entry.current_revocation_acknowledged = true;
             } else {
                 entry.pending_previous = None;
+            }
+            if entry.current_revocation_acknowledged && entry.pending_previous.is_none() {
+                // Every retained generation is fenced. The nonce is no longer
+                // live, so removing the family cannot resurrect authority.
+                state.installed.remove(&entry_key);
             }
         } else {
             // Already pruned, or never acknowledged as installed by a gate
@@ -2239,6 +2249,35 @@ impl NativeCatalogAdmission {
                 entry.phase = Phase::Expired;
             }
         }
+        Ok(())
+    }
+    /// Deterministically expire one exact retained installation in cross-crate
+    /// component tests. Never available in a production build.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn expire_install_for_test(&self, ticket: InstallTicket) -> Result<()> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        state.check_issue(ticket.issue)?;
+        state.worker(ticket.worker)?;
+        let (key, _) = AuthorityKey::of(&ticket.scope)?;
+        let entry = state
+            .installed
+            .get_mut(&(
+                ticket.worker.worker,
+                key,
+                ticket.scope.index_id,
+                ticket.scope.fingerprint,
+            ))
+            .ok_or(ScopeReadRefused)?;
+        ensure!(
+            entry.worker == ticket.worker
+                && entry.scope == ticket.scope
+                && entry.nonce == ticket.nonce
+                && entry.expires == ticket.expires
+                && matches!(entry.phase, Phase::Installing | Phase::Installed),
+            ScopeReadRefused
+        );
+        entry.expires = Instant::now();
+        entry.phase = Phase::Expired;
         Ok(())
     }
     pub fn observe_catalog_commit(
@@ -2454,6 +2493,7 @@ impl NativeCatalogAdmission {
                         nonce: 0,
                         phase: Phase::Expired,
                         pending_previous: None,
+                        current_revocation_acknowledged: false,
                     },
                 );
             }

@@ -2,6 +2,120 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- P0 milestone committed as `235d76be` with configured human DCO verified.
+  Push was initially refused by automatic review because destination approval
+  was absent from visible user messages; the user explicitly approved pushing
+  this commit to `https://github.com/iokaio/airk.git`, branch
+  `feat/advanced-split`, and push succeeded. No PR or publication requested.
+- P1 bounded investigations (15-minute initial checkpoint): independent R02
+  extension, R03 native session and R11 catalog/supervisor lease reviews; primary
+  R01 target-removal contract review. R01 existing unrestricted removal cannot
+  represent a selected retired stdio file/container/key; an exact native I2
+  target contract must land before its extension consumer. No R01 production
+  edits yet. R03 snapshot epoch does not fence scope mutation; R11 currently
+  prunes outstanding previous-lease obligations on current acknowledgment.
+- First P1 repair boundary is R02: `windowScope.ts`, `airkctl/tools.ts`,
+  `serviceExtension.ts`, `explorerController.ts` and their existing tests only.
+  Root cause: switching the backing binding does not suspend the previous
+  automatic scope, failed resolution leaves it active, and checks before
+  `members()`/`scopeSelect()` do not fence delayed completions. Making active
+  false alone falls back to binding reads; the per-call adapter must reject
+  checking/failed automatic routes. Invariants: no automatic A read admitted
+  while B is checking/failed; stale completions never publish A as B; an
+  explicitly applied multi-index scope survives backing-binding changes.
+  No wire, persisted format or read-result shape change is intended. Agent
+  owns only assigned source/tests; primary owns the ledger and all execution.
+  Prepare sibling regressions together before production changes. T0: one
+  pinned Node 24.15.0 compilation, then `node --test` over windowScope,
+  windowScopeUnion, windowScopeAgents, workbenchOpenSelection and explorerShell
+  compiled test files. Retain failure evidence, review combined correction,
+  freeze inputs and rerun that selection only. No installer/native rebuild.
+- R03 tests-only boundary: `airkctl/src/cli/session/tests.rs`, followed by the
+  owning `session.rs` and I2 component contract if reproduced. Root cause:
+  automatic Q4 reselect observes the catalog outside any selection-mutation
+  fence and later grants its captured A even after B/clear; same-plane epoch
+  checks do not notice successful selection changes. Invariants: serialize
+  native W4/W4b mutation, check captured committed generation before auto W4,
+  update committed shared scope immediately on native success, and never let
+  delayed effects restore older state. Failed selection retains the previous
+  successful selection; no state lock held across RPC. Add event/barrier tests
+  for select and release while A is paused before/during catalog observation.
+  T0: `cargo test -p airkctl --lib cli::session::tests --locked --timings`,
+  P10 target and incremental on, primary execution after source freeze.
+- R11 tests-only boundary: catalog-admission tests and supervisor
+  `catalog/install_recovery_tests.rs`; minimal exact-ticket expiry helper under
+  the existing test-support gate is permitted to avoid wall-clock sleeps.
+  Root cause: current revoke acknowledgment deletes an installation that still
+  owes the previous-generation revoke; supervisor then skips that pair. Worker
+  acknowledgment of an unknown generation does not prove the previous lease
+  was removed. Correction will privately track current acknowledgment and prune
+  only after both exact obligations settle. Preserve worker/generation checks,
+  duplicate ACK idempotence, fence closure and all wire/state bytes. Test both
+  acknowledgment orders, duplicate current ACK, owner-only revocation and the
+  actual supervisor `Pending::accept` path. T0 primary-owned serial commands:
+  `cargo test -p airk-catalog-control --no-default-features --lib catalog_admission --locked --timings`
+  and `cargo test -p airk-supervisor --no-default-features --lib project_supervisor::catalog::install_recovery_tests --locked --timings`.
+  No component contract exists; clarify selection-authority spec obligations
+  with production correction. Agent edits no other components. No T2/T3.
+- Reproductions collected before correction: `p1-r02-before` pinned TypeScript
+  compile passes; named Node batch selects 99 tests, 87 pass and all 12 failures
+  are new R02 scope/admission regressions. Existing successful-switch/explicit
+  preservation case passes. Spec-reporter count verified in the log because
+  the receipt helper does not parse that reporter; subsequent runs use TAP.
+  `p1-r03-before` compiles in 5.56 s, selects 4 tests, all 4 fail by observing
+  a real late A grant after B or clear. Both receipt input groups are unchanged.
+  Logs/timings: `artifacts/advanced-split/receipts/`. Agents are now implementing
+  the complete R02/R03 source correction; no assertion relaxation or broad
+  campaign is authorized. R11 regressions await the serialized Cargo slot.
+- R02 reviewed correction: pinned TypeScript compilation passes;
+  `p1-r02-after` selects 99/99 passing tests, TAP reporter, input identities
+  unchanged. R03 production correction is reviewed/frozen: native mutation
+  gate covers W4/W4b only, never the potentially long tool retry; captured
+  committed generation is checked before reselection and before/after retry
+  delivery. Shared committed state prevents delayed completion effects from
+  restoring an older selection; reset/close invalidate it.
+- R11 complete reproduction: `p1-r11-before` compiles in 1m 49s (receipt
+  110.05 s), gate 3 selected, 1 pass/2 fail. Cargo stopped after that failed
+  binary, so `p1-r11-supervisor-before` collected the previously skipped
+  supervisor case against unchanged compiled inputs (Cargo 0.65 s): 1 selected,
+  1 fail at the second exact revocation's dispatch predicate. No source edits
+  intervened. Timings/receipts retained in the same directory. The production
+  correction is now authorized within the recorded boundary; final combined
+  Cargo batches use `--no-fail-fast` to collect both test binaries.
+- Next P1 boundaries remain read-only until this authority correction is
+  committed: R01 exact-target additive I2 selector (native Entry input,
+  contract/schema/fixtures landed before consumers, existing result shapes
+  unchanged); R04 typed Admin outcome classification and generated/restored
+  request-identity redaction; R19 Admin asynchronous detail/list/action identity.
+  Separate bounded component investigations identify their regression seams.
+  R01 Entry projection equality must never be claimed as arbitrary target-byte
+  equality. R04 uses existing error/progress variants; any additional envelope
+  shape would require its own contract decision. No such shape is planned.
+- First P1 correction final checks: `p1-authority-clippy` passes for `airkctl`,
+  `airk-catalog-control` and `airk-supervisor`, no default features, all targets,
+  incremental on, persistent P10 target; Cargo 1m 09s, receipt 70.48 s.
+  `p1-authority-tests` uses pinned Nextest CI profile, two test threads and the
+  recorded session/admission/supervisor-recovery expression: 58 selected,
+  58 pass, 216 skipped by selection; all eight new native regressions and the
+  existing one-reselection/one-retry case are explicitly present. Cargo 16.88 s,
+  receipt 20.66 s, actual tests 0.757 s. Input groups unchanged; timing/JUnit
+  evidence retained with receipts. Primary reviewed the complete delegated
+  production/tests/contracts against recorded invariants. Combined with
+  R02's 99/99 this confirms the scoped correction, not installed or full
+  workspace/platform qualification. No installer/VSIX rebuild or publication.
+  README, documentation index and candidate record identify this as later
+  source work; native/extension/lockfile candidate stays 1.8.35 and Marketplace
+  description remains applicable. Other P1 findings remain open.
+- Final repository check passes for 2,764 public files; version agreement
+  1.8.35 and whitespace pass. Follow-up, unconfirmed impact: a later catalog
+  fence deliberately captures only non-revoked scopes, so a prior owner
+  revocation still awaiting worker ACK is not newly captured. This is the
+  existing §3.3 contract even for a single lease; live-nonce checks already
+  refuse new gate-admitted reads. Whether an already-running worker read must
+  delay that later mutation needs a separate ordering observation. No worker
+  drain claim follows from nonce removal, and this did not enlarge R11's
+  reproduced captured-obligation correction.
+
 - Resume after host reload: built-in AIRK discovery and `status` succeed for
   collection `airk`, version 1.8.35, the same project binding, publication
   `airk-r1:4b9af3a7b2d5a72432e93246a61e03e2:688:6616e52e9ac02e6ad02cd726c84d8b2e8c48fb1fb927b3a200cd0d39bed9cc2f`.

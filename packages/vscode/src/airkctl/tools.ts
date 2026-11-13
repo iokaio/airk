@@ -10,6 +10,7 @@
 import type { AirkctlSession, InvokeResult } from './session';
 import { MAX_INVOKE_ARG_BYTES, SessionError } from './session';
 import type { LaunchSpec } from '../model';
+import type { ReadRouteView } from '../explorerContracts';
 
 /** The subset of the former MCP session the evidence client uses. */
 export interface ToolTransport {
@@ -47,8 +48,11 @@ export function selectionArguments(selection: ToolSelection): string[] {
  * index sets reads them explicitly (U105, `--index`/`--set`); the Workbench's window-scope entry always
  * reads under the window scope; the Explorer reads under it while one is granted, and otherwise names
  * its selected project or reviewed session (U77, §3.7). */
-export function evidenceSelection(spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', windowActive: boolean): ToolSelection {
+export function evidenceSelection(spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', windowActive: boolean, route?: ReadRouteView): ToolSelection {
     if (spec.openSelection) { return { open: { indexes: [...spec.openSelection.indexes], sets: [...spec.openSelection.sets] } }; }
+    if ((spec.windowScope || client === 'airk-explorer') && route && ['checking', 'failed', 'not_readable'].includes(route.state)) {
+        throw new ToolCallError('unavailable', route.message ?? 'The requested index scope is being checked or could not be resolved.');
+    }
     if (spec.windowScope || (client === 'airk-explorer' && windowActive)) { return { window: true }; }
     return {
         ...(spec.service?.project ? { project: spec.service.project } : {}),

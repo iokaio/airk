@@ -340,3 +340,122 @@ test('an index in no index set is not readable: nothing is granted and the route
     await none.ensureDefault(workspace);
     assert.equal(none.readRoute(), undefined, 'without window-scope/1 nothing is resolved');
 });
+
+type AutomaticStage = 'indexes' | 'index_sets' | 'set_members' | 'grant';
+function automaticGate() {
+    let resolve!: () => void, reject!: (error: Error) => void;
+    const work = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    return { work, resolve, reject };
+}
+/** A/B/C catalog with an observed asynchronous boundary, never a timed pause. */
+function switchingAutomatic(stage: AutomaticStage) {
+    const entered = automaticGate(), resume = automaticGate();
+    const binding = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
+    let requested = 1, held = false, failThird = false;
+    const selects: any[] = [], agentChanges: any[] = [];
+    const pause = async (at: AutomaticStage, n: number) => {
+        if (!held && n === 2 && at === stage) { held = true; entered.resolve(); await resume.work; }
+    };
+    const fake: ScopeSession = {
+        control: async (method: any) => {
+            const request = method.catalog_page.request;
+            if (request.kind === 'indexes') {
+                const target = requested;
+                await pause('indexes', target);
+                if (target === 3 && failThird) { throw new Error('C catalog unavailable'); }
+                return page(7, [1, 2, 3].map(n => ({ ...index(n), value: { ...index(n).value, backing: { binding: binding(n) } } })));
+            }
+            if (request.kind === 'projects') { return page(7, [project(1), project(2), project(3)]); }
+            if (request.kind === 'memberships') {
+                const byIndex = request.index_id !== null;
+                const n = [1, 2, 3].find(value => (byIndex ? idx(value) : prj(value)) === (byIndex ? request.index_id : request.project_id))!;
+                await pause(byIndex ? 'index_sets' : 'set_members', n);
+                return page(7, [membership(n, n)]);
+            }
+            throw new Error('unexpected automatic catalog request');
+        },
+        scopeSelect: async selection => {
+            selects.push(structuredClone(selection));
+            await pause('grant', selection.index_ids.includes(idx(2)) ? 2 : 1);
+            return { status: 'scope', scope_identity: 'cd'.repeat(32), catalog_revision: 7, expires_at_ms: 99 };
+        },
+        scopeRelease: async () => ({ status: 'scope_released' }),
+    };
+    const scope = new WindowScope(fake, ready, memento(), base);
+    scope.onDidChangeAgentScope(change => agentChanges.push(structuredClone(change)));
+    return { scope, selects, agentChanges, entered, resume,
+        follow: (n: number, fail = false) => { requested = n; failThird = fail; return scope.ensureDefault(binding(n)); } };
+}
+
+for (const stage of ['indexes', 'index_sets', 'set_members', 'grant'] as const) {
+    test(`R02 switching automatic A to B suspends reads while ${stage} is pending and after failure`, async () => {
+        const f = switchingAutomatic(stage);
+        await f.follow(1);
+        assert.equal(f.scope.active, true);
+        const switching = f.follow(2);
+        await f.entered.work;
+        try {
+            assert.equal(f.scope.readRoute()?.state, 'checking');
+            assert.equal(f.scope.active, false, 'B context must not admit the held A grant');
+            assert.equal(f.scope.identity(), undefined);
+            assert.equal(f.scope.spec(), undefined);
+            assert.equal(f.scope.searchScopeSummary().active, false);
+            assert.equal(f.scope.agentDefaultScope(), undefined);
+        } finally { f.resume.reject(new Error(`B ${stage} unavailable`)); await switching; }
+        assert.equal(f.scope.readRoute()?.state, 'failed');
+        assert.equal(f.scope.active, false, 'a failed B lookup never restores A admission');
+        assert.equal(f.scope.identity(), undefined);
+        assert.equal(f.scope.searchScopeSummary().scopeIdentity, undefined);
+    });
+}
+
+for (const stage of ['indexes', 'index_sets', 'set_members', 'grant'] as const) {
+    test(`R02 superseding B at ${stage} cannot publish B after C resolution fails`, async () => {
+        const f = switchingAutomatic(stage);
+        await f.follow(1);
+        const older = f.follow(2);
+        await f.entered.work;
+        const latest = f.follow(3, true);
+        f.resume.resolve();
+        await Promise.all([older, latest]);
+        assert.equal(f.scope.readRoute()?.state, 'failed');
+        assert.equal(f.scope.active, false);
+        assert.equal(f.scope.identity(), undefined);
+        assert.deepEqual(f.agentChanges, [{ scope: { index_ids: [idx(1)], project_ids: [] }, user: false }], 'superseded B never updates following agents');
+        if (stage !== 'grant') {
+            assert.deepEqual(f.selects.map(selection => selection.index_ids), [[idx(1)]], 'obsolete work stops before native grant');
+        }
+    });
+}
+
+test('R02 session loss invalidates an automatic grant acknowledgment still in flight', async () => {
+    const f = switchingAutomatic('grant');
+    await f.follow(1);
+    const pending = f.follow(2);
+    await f.entered.work;
+    f.scope.lost();
+    f.resume.resolve();
+    await pending;
+    assert.equal(f.scope.active, false);
+    assert.equal(f.scope.identity(), undefined);
+    assert.deepEqual(f.agentChanges, [{ scope: { index_ids: [idx(1)], project_ids: [] }, user: false }]);
+});
+
+test('R02 successful automatic switch grants B and explicit multi-index scope survives backing changes', async () => {
+    const f = switchingAutomatic('indexes');
+    await f.follow(1);
+    const pending = f.follow(2);
+    await f.entered.work;
+    f.resume.resolve();
+    await pending;
+    assert.equal(f.scope.active, true);
+    assert.deepEqual(f.scope.searchScopeSelection().index_ids, [idx(2)]);
+    await f.scope.readSearchScope();
+    await f.scope.applySearchScope({ project_ids: [prj(1), prj(2)], index_ids: [] });
+    const explicit = f.scope.identity(), calls = f.selects.length;
+    await f.follow(3, true);
+    assert.equal(f.scope.active, true);
+    assert.equal(f.scope.identity(), explicit);
+    assert.equal(f.selects.length, calls, 'a selected multi-index scope does not resolve or grant the new backing index');
+    assert.deepEqual(f.scope.readRoute(), { state: 'scope', automatic: false });
+});

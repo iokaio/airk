@@ -572,16 +572,17 @@ export class ExplorerController implements vscode.Disposable {
         if(native&&this.host.nativeExecutionEnabled?.()===false)throw new NativeExecutionDisabled();
     }
 
-    /** An index in no index set is not read through the refused binding route (U103). */
+    /** An unresolved automatic target never falls back to another read route. */
     private notReadable(): ReadRouteView | undefined {
         const route = this.host.readRoute?.();
-        return route?.state === 'not_readable' && !this.host.windowScope?.identity() ? route : undefined;
+        return route && ['not_readable', 'checking', 'failed'].includes(route.state) && !this.host.windowScope?.identity() ? route : undefined;
     }
     /** The evidence session for the selected project, created lazily. */
     protected session(): EvidenceClient {
         this.requireAuthorization(true);
         const unreadable = this.notReadable();
-        if (unreadable) { throw new EvidenceFailure(explorerError('index_read_unavailable', unreadable.message ?? 'This index is in no index set. Make it readable in AIRK Admin.')); }
+        if (unreadable) { throw new EvidenceFailure(explorerError('index_read_unavailable', unreadable.message ?? (unreadable.state === 'not_readable'
+            ? 'This index is in no index set. Make it readable in AIRK Admin.' : 'The requested index scope is being checked or could not be resolved.'))); }
         const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
         if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
         if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version,{resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)}); }
@@ -617,7 +618,7 @@ export class ExplorerController implements vscode.Disposable {
         const epoch = this.selectionEpoch;
         const spec = this.host.specs().find(entry => entry.service?.project === project);
         if (!project || !this.host.trusted() || !spec) { return Promise.resolve(); }
-        // Not readable (no index set): the Overview names the cause; no refused read is sent.
+        // Unresolved or unreadable target: the Overview names the cause; no read is sent.
         if (this.notReadable()) { return Promise.resolve(); }
         const binding = JSON.stringify(spec), generation = this.panel.generation;
         const identity = this.control.observationIdentity;

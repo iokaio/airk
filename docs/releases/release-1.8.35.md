@@ -2,7 +2,9 @@
 
 **Advanced split source checkpoint (13 November 2026).** Subsequent P0 source
 work restores extracted component test ownership and the one-shot `airkctl`
-command thread used by the pre-split CLI and session requests. Targeted Windows
+command thread used by the pre-split CLI and session requests. The first P1
+correction fences automatic scope switching/reselection and retains both
+revocation obligations of an uncertain lease renewal. Targeted Windows
 checks are recorded in the [execution ledger](../simplify/one-process-ledger.md).
 No installer or VSIX was rebuilt for this checkpoint; retained artifact receipts
 continue to identify their original sources. The candidate version stays 1.8.35.

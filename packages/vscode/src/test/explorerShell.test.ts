@@ -1188,3 +1188,17 @@ test('U103 an index in no index set is never read through the binding route; the
         assert.equal(f.statusBar.at(-1), 'AIRK: not readable: no index set');
     } finally { plain.dispose(); }
 });
+
+for (const state of ['checking', 'failed'] as const) {
+    test(`R02 Explorer blocks ${state} automatic scope before search and status admission`, async () => {
+        const f = controller(); f.explorer.dispose();
+        const host = { ...f.host, readRoute: () => ({ state, message: 'Requested index scope unavailable.' }), windowScope: undefined };
+        const plain = new ExplorerController(host as any);
+        try {
+            await assert.rejects((plain as any).dispatch({ type: 'search.run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false }),
+                (error: any) => error.error?.code === 'index_read_unavailable');
+            await (plain as any).loadStatus();
+            assert.equal(plain.snapshot().status, undefined, 'no status read is sent while the target scope is unresolved');
+        } finally { plain.dispose(); }
+    });
+}

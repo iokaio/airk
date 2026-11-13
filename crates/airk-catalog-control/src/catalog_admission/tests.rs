@@ -1286,6 +1286,121 @@ fn index_fence_revokes_selection_locally_and_persists_only_catalog_targets() -> 
 }
 
 #[test]
+fn selection_uncertain_renewal_current_ack_retains_the_previous_revocation() -> Result<()> {
+    selection_uncertain_renewal_fence(false)
+}
+
+#[test]
+fn selection_uncertain_renewal_previous_ack_retains_the_current_revocation() -> Result<()> {
+    selection_uncertain_renewal_fence(true)
+}
+
+fn uncertain_selection_renewal(
+    gate: &NativeCatalogAdmission,
+    worker: WorkerIdentity,
+    catalog: &ScopedReadAuthority,
+    namespace: Incarnation,
+) -> Result<(SelectionReadAuthority, InstallTicket, InstallTicket)> {
+    let selection = selection_ref(worker.service, 0x5c);
+    let authority = selection_authority(catalog, selection);
+    gate.register_selection(&selection)?;
+    let (issue, initial) = install_selection(gate, worker, &authority, namespace)?;
+    gate.expire_install_for_test(initial)?;
+    let renewal = gate.reserve_selection_scope(issue, worker, &authority, expiry())?;
+    assert_eq!(renewal.previous(), Some(initial.scope));
+    assert_ne!(
+        renewal.scope.lease_generation,
+        initial.scope.lease_generation
+    );
+    // No private installation ACK: either generation may still be at the worker.
+    Ok((authority, initial, renewal))
+}
+
+fn selection_uncertain_renewal_fence(previous_first: bool) -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+    let (_, initial, renewal) = uncertain_selection_renewal(&gate, worker, &catalog, namespace)?;
+    let plan = gate.close_admission(
+        FenceKey::new(&request(namespace, &catalog))?,
+        ScopeTarget::Index(catalog.index_id),
+    )?;
+    assert!(plan.targets.is_empty());
+    assert!(
+        plan.durable.targets.is_empty(),
+        "selection leases stay in memory"
+    );
+    assert_eq!(
+        gate.unsettled_selection_revocations(&plan.ticket)?,
+        vec![(worker, renewal.scope), (worker, initial.scope)]
+    );
+    let [first, second] = if previous_first {
+        [initial.scope, renewal.scope]
+    } else {
+        [renewal.scope, initial.scope]
+    };
+    gate.record_selection_revoked(worker, first)?;
+    assert!(!gate.selection_revocation_pending(worker, first)?);
+    assert!(gate.selection_revocation_pending(worker, second)?);
+    assert!(gate.require_commit_ready(&plan.ticket).is_err());
+    assert_eq!(
+        gate.unsettled_selection_revocations(&plan.ticket)?,
+        vec![(worker, second)]
+    );
+    if !previous_first {
+        // A duplicate current ACK must neither fail nor settle its sibling.
+        gate.record_selection_revoked(worker, first)?;
+        assert!(gate.selection_revocation_pending(worker, second)?);
+        assert!(gate.require_commit_ready(&plan.ticket).is_err());
+    }
+    gate.record_selection_revoked(worker, second)?;
+    assert!(gate.require_commit_ready(&plan.ticket)?.is_empty());
+    assert!(
+        gate.unsettled_selection_revocations(&plan.ticket)?
+            .is_empty()
+    );
+    assert!(!gate.selection_revocation_pending(worker, first)?);
+    assert!(!gate.selection_revocation_pending(worker, second)?);
+    let state = gate.0.lock().unwrap();
+    assert!(state.installed.is_empty());
+    assert!(state.highwater.is_empty());
+    Ok(())
+}
+
+#[test]
+fn selection_uncertain_renewal_owner_revocation_retains_both_exact_acks() -> Result<()> {
+    for previous_first in [false, true] {
+        let root = tempfile::tempdir()?;
+        let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());
+        let (authority, initial, renewal) =
+            uncertain_selection_renewal(&gate, worker, &catalog, namespace)?;
+        assert_eq!(
+            gate.revoke_selection(&[authority.selection.grant_nonce])?,
+            vec![(worker, renewal.scope), (worker, initial.scope)]
+        );
+        let [first, second] = if previous_first {
+            [initial.scope, renewal.scope]
+        } else {
+            [renewal.scope, initial.scope]
+        };
+        gate.record_selection_revoked(worker, first)?;
+        if !previous_first {
+            gate.record_selection_revoked(worker, first)?;
+        }
+        assert!(!gate.selection_revocation_pending(worker, first)?);
+        assert!(gate.selection_revocation_pending(worker, second)?);
+        assert_eq!(
+            gate.revoke_selection(&[authority.selection.grant_nonce])?,
+            vec![(worker, second)]
+        );
+        assert_eq!(gate.0.lock().unwrap().installed.len(), 1);
+        gate.record_selection_revoked(worker, second)?;
+        assert!(gate.0.lock().unwrap().installed.is_empty());
+        assert!(gate.0.lock().unwrap().highwater.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn worker_reap_settles_local_selection_revocations() -> Result<()> {
     let root = tempfile::tempdir()?;
     let (gate, worker, catalog, namespace) = fixture(root.path().to_str().unwrap());

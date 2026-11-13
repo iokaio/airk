@@ -1032,6 +1032,145 @@ fn a_stale_window_read_reselects_once_and_retries_once() {
     service.finished(&script);
 }
 
+/// A window-plane service that accepts every valid test grant, retaining the
+/// authority actually installed by the session rather than only its UI effects.
+struct ScopeRaceService {
+    held: Mutex<Option<Value>>,
+    grants: Mutex<Vec<Value>>,
+    detail_pause: Option<(Sender<()>, Gate)>,
+}
+
+impl Service for ScopeRaceService {
+    fn instance(&self) -> Result<Incarnation, ErrorLine> {
+        Ok(E1.parse().unwrap())
+    }
+
+    fn request(
+        &self,
+        method: ControlMethod,
+        expected: Incarnation,
+    ) -> Result<ControlResponse, ErrorLine> {
+        assert_eq!(expected.to_string(), E1);
+        let reply = match method {
+            ControlMethod::WindowOpen { .. } => {
+                pipe("open_lease_held_by_session", &["window_open"], 1)[0]
+                    .1
+                    .clone()
+            }
+            ControlMethod::WindowScopeGrant { selection, .. } => {
+                let value = serde_json::to_value(&selection).unwrap();
+                self.grants.lock().unwrap().push(value.clone());
+                *self.held.lock().unwrap() = Some(value);
+                json!({"status": "window_scope_granted", "scope_identity": "5c".repeat(32),
+                    "catalog_revision": selection.expected_catalog_revision.get(), "expires_at_ms": 30001})
+            }
+            ControlMethod::WindowScopeRelease { .. } => {
+                *self.held.lock().unwrap() = None;
+                json!({"status": "window_scope_released"})
+            }
+            ControlMethod::CatalogDetail { .. } => {
+                if let Some((entered, resume)) = &self.detail_pause {
+                    entered.send(()).unwrap();
+                    resume.pass();
+                }
+                catalog_detail_at(13).1
+            }
+            ControlMethod::WindowClose { .. } => close_a0()[0].1.clone(),
+            _ => panic!("unexpected scope-race service operation"),
+        };
+        Ok(serde_json::from_value(reply).unwrap())
+    }
+}
+
+fn stale_reselection_after_a_new_scope_choice(release: bool, during_detail: bool) {
+    let clock = Arc::new(ManualClock::default());
+    let resume = Gate::default();
+    resume.set(true);
+    let (entered, observed) = channel();
+    let service = Arc::new(ScopeRaceService {
+        held: Mutex::new(None),
+        grants: Mutex::new(Vec::new()),
+        detail_pause: during_detail.then(|| (entered.clone(), resume.clone())),
+    });
+    let runs = Arc::new(AtomicU64::new(0));
+    let counted = runs.clone();
+    let read_resume = resume.clone();
+    let mut setup = options(&clock, None, move |_, io| {
+        let first = counted.fetch_add(1, Ordering::SeqCst) == 0;
+        if first && !during_detail {
+            entered.send(()).unwrap();
+            read_resume.pass();
+        }
+        io.window
+            .as_deref_mut()
+            .expect("the captured A route")
+            .refused = Some("scoped_read_unavailable".into());
+        ExitClass::Refused.code()
+    });
+    let connected = service.clone();
+    setup.connect = Some(Arc::new(
+        move || Some(connected.clone() as Arc<dyn Service>),
+    ));
+    let mut client = Client::start(setup);
+    client.ask(&hello());
+    let select = session_steps("scope_select_in_memory_grant", "send");
+    assert_eq!(client.ask(&select[0])["outcome"]["status"], "scope");
+    let a = select[0]["request"]["scope_select"]["selection"].clone();
+    client.send(&select[1]);
+    observed.recv_timeout(OBSERVE).expect("old A read paused");
+
+    let mut expected_grants = vec![a];
+    let expected_authority = if release {
+        let request = frame(0x23, json!({"scope_release": {}}));
+        assert_eq!(client.ask(&request)["outcome"]["status"], "scope_released");
+        None
+    } else {
+        let mut b = select[0].clone();
+        b["id"] = json!(id(0x22));
+        b["request"]["scope_select"]["selection"]["index_ids"] =
+            json!(["idx_02020202020202020202020202020202"]);
+        assert_eq!(client.ask(&b)["outcome"]["status"], "scope");
+        let authority = b["request"]["scope_select"]["selection"].clone();
+        expected_grants.push(authority.clone());
+        Some(authority)
+    };
+    assert_eq!(*service.held.lock().unwrap(), expected_authority);
+    resume.set(false);
+    let old = client.next();
+    assert_eq!(old["id"], select[1]["id"]);
+    assert_eq!(old["outcome"]["exit_code"], ExitClass::Refused.code());
+    assert_eq!(
+        *service.grants.lock().unwrap(),
+        expected_grants,
+        "an older read must not send another native A grant after B/release completed"
+    );
+    assert_eq!(*service.held.lock().unwrap(), expected_authority);
+    assert_eq!(runs.load(Ordering::SeqCst), 1, "no stale read retry");
+    let (rest, code, _) = client.eof();
+    assert!(rest.is_empty());
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn a_paused_read_cannot_restore_a_scope_replaced_by_b() {
+    stale_reselection_after_a_new_scope_choice(false, false);
+}
+
+#[test]
+fn a_paused_read_cannot_restore_a_released_scope() {
+    stale_reselection_after_a_new_scope_choice(true, false);
+}
+
+#[test]
+fn a_catalog_observation_cannot_restore_a_scope_replaced_by_b() {
+    stale_reselection_after_a_new_scope_choice(false, true);
+}
+
+#[test]
+fn a_catalog_observation_cannot_restore_a_released_scope() {
+    stale_reselection_after_a_new_scope_choice(true, true);
+}
+
 /// U103 (contracts §3.8): the `control` relay forwards exactly the reviewed
 /// operation-table rows that list `session`, plus W5; everything else is
 /// refused before the pipe.

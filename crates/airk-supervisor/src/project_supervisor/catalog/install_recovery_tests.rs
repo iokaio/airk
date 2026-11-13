@@ -242,3 +242,182 @@ fn expired_uncertain_renewal_requires_reap_before_a_new_worker_can_install() -> 
     );
     f.recover_after_verified_reap(renewal.scope())
 }
+
+#[test]
+fn selection_uncertain_renewal_fence_settles_both_actual_private_acks() -> Result<()> {
+    use airk_core::{
+        catalog_management::CatalogRequest,
+        catalog_source_change::{SourceChangePlan, SourceConfigurationSnapshot, source_job_id},
+        scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
+        service::{ProjectRegistration, RequestKey},
+        service_configuration::{ConfigurationRequest, ProjectConfiguration},
+        source_policy::SourceRoot,
+    };
+    use airk_kernel::scoped_reads::SelectionReadAuthority;
+    use std::collections::BTreeMap;
+
+    for previous_first in [false, true] {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().to_string_lossy().into_owned();
+        let registration = ProjectRegistration::new(
+            root.clone(),
+            directory.path().join("data").to_string_lossy().into_owned(),
+            "selection-renewal".into(),
+        )?;
+        let f = Fixture::new()?;
+        let worker = WorkerIdentity {
+            worker: Incarnation::from_bytes([70; 16]),
+            project: registration.binding,
+            ..f.affected
+        };
+        f.gate.register_worker(worker)?;
+        let catalog = authority(worker, 60);
+        let member = &catalog.grant.memberships[0].membership;
+        let selection = SelectionScopeRef {
+            owner: SelectionOwnerKind::Window,
+            grant_nonce: Incarnation::from_bytes([71; 16]),
+            service_instance: worker.service,
+            scope_identity: Sha256Digest::from_bytes([72; 32]),
+            catalog_revision: CatalogRevision::INITIAL,
+        };
+        let selected = SelectionReadAuthority {
+            schema: 1,
+            backing: worker.project,
+            index_id: catalog.index_id,
+            project_ids: catalog.project_ids.clone(),
+            selection,
+            atoms: member
+                .scope
+                .iter()
+                .map(|atom| (member.project_id, atom.clone()))
+                .collect(),
+            sources: vec![SourceDescriptor {
+                source_root_id: catalog.sources[0].source_root_id,
+                original_root: root.clone(),
+            }],
+            membership_revisions: vec![(member.project_id, member.revision)],
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        };
+        f.gate.register_selection(&selection)?;
+        let initial = f.gate.reserve_selection_scope(
+            f.issue,
+            worker,
+            &selected,
+            Instant::now() + Duration::from_secs(60),
+        )?;
+        assert!(matches!(
+            f.pending(initial).accept(Reply::SelectionScopeInstalled {
+                identity: worker,
+                lease: protocol::SelectionLease::of(&initial.scope()).context("selection lease")?,
+            })??,
+            Exchange::Installed
+        ));
+        f.gate.expire_install_for_test(initial)?;
+        let renewal = f.gate.reserve_selection_scope(
+            f.issue,
+            worker,
+            &selected,
+            Instant::now() + Duration::from_secs(60),
+        )?;
+        assert_eq!(renewal.previous(), Some(initial.scope()));
+        // The private renewal exchange has not acknowledged installation.
+        let caller = Incarnation::from_bytes([73; 16]);
+        let key = RequestKey {
+            namespace: f.namespace,
+            epoch: 1,
+            nonce: Incarnation::from_bytes([74; 16]),
+        };
+        let job = source_job_id(registration.binding, caller, &key)?;
+        let request = CatalogRequest {
+            caller,
+            key,
+            expected_catalog_revision: CatalogRevision::INITIAL,
+            operation: CatalogOperation::BeginIndexSourceChange {
+                id: selected.index_id,
+                expected_source_revision: CatalogRevision::INITIAL,
+                plan: Box::new(SourceChangePlan {
+                    job,
+                    registration,
+                    engine_identity: Sha256Digest::from_bytes([75; 32]),
+                    configuration: ConfigurationRequest {
+                        prepare: false,
+                        incarnation: Incarnation::from_bytes([76; 16]),
+                        settings: Sha256Digest::from_bytes([77; 32]),
+                        configuration: ProjectConfiguration::RemoveRoot {
+                            alias: "obsolete".into(),
+                        },
+                    },
+                    before: SourceConfigurationSnapshot {
+                        primary_root: root.clone(),
+                        aliases: BTreeMap::from([(
+                            "obsolete".into(),
+                            directory
+                                .path()
+                                .join("obsolete")
+                                .to_string_lossy()
+                                .into_owned(),
+                        )]),
+                    },
+                    after: SourceConfigurationSnapshot {
+                        primary_root: root.clone(),
+                        aliases: BTreeMap::new(),
+                    },
+                    sources: vec![SourceRoot {
+                        id: selected.sources[0].source_root_id,
+                        canonical_path: root,
+                        aliases: vec![],
+                        owner: true,
+                    }],
+                }),
+            },
+        };
+        request.validate()?;
+        let fence = f.gate.close_request_admission(&request)?;
+        assert!(fence.targets.is_empty());
+        assert!(fence.durable.targets.is_empty());
+        assert_eq!(
+            f.gate.unsettled_selection_revocations(&fence.ticket)?,
+            vec![(worker, renewal.scope()), (worker, initial.scope())]
+        );
+        let [first, second] = if previous_first {
+            [initial.scope(), renewal.scope()]
+        } else {
+            [renewal.scope(), initial.scope()]
+        };
+        for (position, scope) in [first, second].into_iter().enumerate() {
+            // The supervisor checks this before dispatch. An early false here
+            // skips the real ACK and strands the fence's previous obligation.
+            assert!(f.gate.selection_revocation_pending(worker, scope)?);
+            assert!(matches!(
+                (Pending {
+                    gate: f.gate.clone(),
+                    expected: Expected::RevokeSelection { worker, scope }
+                })
+                .accept(Reply::SelectionScopeRevoked {
+                    identity: worker,
+                    lease: protocol::SelectionLease::of(&scope)
+                        .context("revoked selection lease")?
+                })??,
+                Exchange::Revoked
+            ));
+            assert!(!f.gate.selection_revocation_pending(worker, scope)?);
+            if position == 0 {
+                assert!(f.gate.require_commit_ready(&fence.ticket).is_err());
+                assert_eq!(
+                    f.gate.unsettled_selection_revocations(&fence.ticket)?,
+                    vec![(worker, second)]
+                );
+            }
+        }
+        assert!(f.gate.require_commit_ready(&fence.ticket)?.is_empty());
+        assert!(
+            f.gate
+                .unsettled_selection_revocations(&fence.ticket)?
+                .is_empty()
+        );
+        assert!(!f.gate.worker_was_reaped(worker)?);
+    }
+    Ok(())
+}

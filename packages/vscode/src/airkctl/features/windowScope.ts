@@ -133,7 +133,7 @@ export interface AgentScopeChange { readonly scope: AgentDefaultScope | null; re
 interface Remembered { namespace: string; project_ids: string[]; index_ids: string[]; explicit: boolean; resolved?: boolean; union?: boolean }
 interface GrantOptions { readonly chosenProjectIds: readonly string[]; readonly chosenIndexIds: readonly string[]; readonly label: string;
     readonly remember?: Omit<Remembered, 'namespace'>; readonly auto?: { readonly binding: string };
-    readonly agent: AgentDefaultScope; readonly user: boolean }
+    readonly agent: AgentDefaultScope; readonly user: boolean; readonly check?: () => void }
 type Mode = 'union' | 'exact';
 const sameSet = (left: readonly string[], right: readonly string[]) => left.length === right.length && left.every(item => right.includes(item));
 
@@ -223,13 +223,16 @@ export class WindowScope {
         if (!this.available()) { throw new WindowScopeError('window_scope_unavailable', 'The window search scope is not available from this AIRK Service (window-scope/1).'); }
     }
 
-    /** True while a granted scope is held: unselected reads run under it. */
-    get active(): boolean { return this.current !== undefined && this.available(); }
+    /** A held automatic grant admits reads only for its resolved backing binding. */
+    get active(): boolean {
+        return this.available() && !!this.current && (!this.current.auto ||
+            this.current.auto.binding === this.routeBinding && this.route?.state === 'scope');
+    }
     /** Identity of the granted scope (changes reset evidence); undefined without one. */
     identity(): string | undefined { return this.active ? JSON.stringify([this.current!.scopeIdentity, this.current!.selection]) : undefined; }
     /** The user's checked choice (not the members or sets the grant added). */
     searchScopeSelection(): { index_ids: string[]; project_ids: string[]; active: boolean } {
-        const current = this.current;
+        const current = this.active ? this.current : undefined;
         return { index_ids: [...current?.chosenIndexIds ?? []], project_ids: [...current?.chosenProjectIds ?? []], active: this.active };
     }
     /** How this window's index is read when no scope was chosen (U103); undefined until resolved. */
@@ -241,7 +244,7 @@ export class WindowScope {
             ...(selection.active && this.current?.auto ? { automatic: true } : {}) };
     }
     searchScopeSummary(): SearchScopeSummary {
-        const available = this.available(), current = available ? this.current : undefined;
+        const available = this.available(), current = this.active ? this.current : undefined;
         const route = this.readRoute();
         return {
             available, active: !!current, outOfDate: available && this.stale, remembered: !!remembered(this.store.get(WINDOW_SCOPE_KEY)),
@@ -395,11 +398,13 @@ export class WindowScope {
     }
 
     /** Release the scope. `user` (the default): the user cleared it, so no automatic scope replaces it. */
-    async clearSearchScope(user = true): Promise<void> {
+    async clearSearchScope(user = true, check?: () => void): Promise<void> {
         // A user's change waits for an automatic resolution in flight, so that grant cannot land after it.
         if (user) { await this.settled(); }
+        check?.();
         if (this.available()) {
             const outcome = await this.session.scopeRelease();
+            check?.();
             if (outcome.status === 'refused') { throw new WindowScopeError(outcome.code, refusalMessage(outcome.code)); }
             if (outcome.status !== 'scope_released') { throw new WindowScopeError('session_invalid_response', 'The AIRK session answered the release unexpectedly.'); }
         }
@@ -486,7 +491,12 @@ export class WindowScope {
         if (this.resolving?.binding === binding) { return this.resolving.work; }
         // Resolutions run one at a time; a newer binding supersedes an older one before it grants.
         const ticket = ++this.defaultTicket, previous = this.resolving?.work;
-        if (this.routeBinding !== binding) { this.routeBinding = binding; if (this.route) { this.setRoute({ state: 'checking' }); } }
+        if (this.routeBinding !== binding) {
+            this.routeBinding = binding;
+            // Suspend A synchronously, before any awaited work resolving B. A
+            // user's explicit scope remains independent of the backing binding.
+            if (!this.current || this.current.auto) { this.setRoute({ state: 'checking' }); }
+        }
         const work: Promise<void> = (async () => {
             await previous?.catch(() => undefined);
             if (ticket === this.defaultTicket) { await this.resolveDefault(binding, ticket); }
@@ -504,26 +514,34 @@ export class WindowScope {
         this.route = route; this.changed();
     }
     private async resolveDefault(binding: string, ticket: number): Promise<void> {
+        const live = () => ticket === this.defaultTicket && binding === this.routeBinding && this.available();
+        const check = () => { if (!live()) { throw new WindowScopeError('request_superseded', 'A newer window scope replaced this resolution.'); } };
+        if (!live()) { return; }
         if (this.current && !this.current.auto) { this.setRoute({ state: 'scope', automatic: false }); return; }
         if (this.store.get(WINDOW_SCOPE_CLEARED_KEY) === true) { this.setRoute({ state: 'cleared' }); return; }
         if (!this.current && remembered(this.store.get(WINDOW_SCOPE_KEY))) {
             await this.restore();
+            if (!live()) { return; }
             if (this.current) { this.setRoute({ state: 'scope', automatic: false }); return; }
             // The remembered choice could not be applied: it stays out of date for the user to reselect.
             return;
         }
         if (!this.route || this.route.state === 'failed') { this.setRoute({ state: 'checking' }); }
         try {
-            const found = await this.findIndex(binding);
+            const found = await this.findIndex(binding, check);
+            check();
             if (!found.index) {
-                if (this.current?.auto) { await this.clearSearchScope(false); }
+                if (this.current?.auto) { await this.clearSearchScope(false, check); }
+                check();
                 this.setRoute({ state: 'binding' });
                 return;
             }
             const indexId = catalogId(found.index.id, 'idx_'), indexName = typeof found.index.name === 'string' && found.index.name ? found.index.name : indexId;
-            const sets = (await this.setsOf([indexId], found.revision, found.namespace)).get(indexId) ?? [];
+            const sets = (await this.setsOf([indexId], found.revision, found.namespace, check)).get(indexId) ?? [];
+            check();
             if (!sets.length) {
-                if (this.current?.auto) { await this.clearSearchScope(false); }
+                if (this.current?.auto) { await this.clearSearchScope(false, check); }
+                check();
                 this.setRoute({ state: 'not_readable', indexId, indexName, code: 'index_read_unavailable',
                     message: `${indexName} is in no index set, so it is not readable yet. Check it in Indexing › Search scope and apply to create an index set named after it, or make it readable in AIRK Admin (Index library).` });
                 return;
@@ -538,14 +556,17 @@ export class WindowScope {
             // A user choice made while the catalog was read wins.
             if (this.current && !this.current.auto) { this.setRoute({ state: 'scope', automatic: false }); return; }
             if (this.store.get(WINDOW_SCOPE_CLEARED_KEY) === true) { this.setRoute({ state: 'cleared' }); return; }
-            if (ticket !== this.defaultTicket) { return; }
+            check();
             // The index is a member of every set that holds it (the same memberships, read by set).
-            const members = await this.members(sets, found.revision, found.namespace);
+            const members = await this.members(sets, found.revision, found.namespace, check);
+            check();
             if (!members.includes(indexId)) { throw new WindowScopeError('window_scope_index_outside_sets', `Choose indexes that belong to the chosen index sets (${indexId} does not).`); }
             await this.grant(found.namespace, found.revision, sets, [indexId], { chosenProjectIds: [], chosenIndexIds: [indexId], label: indexName, auto: { binding },
-                agent: { index_ids: [indexId], project_ids: [] }, user: false });
+                agent: { index_ids: [indexId], project_ids: [] }, user: false, check });
+            check();
             this.setRoute({ state: 'scope', automatic: true, indexId, indexName });
         } catch (error) {
+            if (!live()) { return; }
             const code = error instanceof WindowScopeError ? error.code : typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'catalog_read_failed';
             const message = error instanceof Error ? error.message : String(error);
             this.log(`AIRK: the window's index could not be resolved (${code}): ${message}`);
@@ -553,10 +574,11 @@ export class WindowScope {
         }
     }
     /** The live catalog index backed by `binding`, read page by page at one revision. */
-    private async findIndex(binding: string): Promise<{ namespace: string; revision: number; index?: CatalogObject }> {
+    private async findIndex(binding: string, check: () => void): Promise<{ namespace: string; revision: number; index?: CatalogObject }> {
         let after: CatalogObject | null = null, namespace: string | undefined, revision: number | undefined;
         for (let page = 0; page < INDEX_PAGES; page++) {
             const response = await this.page({ kind: 'indexes', index_id: null, project_id: null, after, expected_catalog_revision: revision ?? null });
+            check();
             const body = catalogObject(response.page), pageNamespace = catalogHex(body.namespace), pageRevision = catalogRevision(body.revision);
             if (namespace !== undefined && (pageNamespace !== namespace || pageRevision !== revision)) {
                 throw new WindowScopeError('catalog_revision_changed_refresh', 'The index library changed while loading. Refresh the choices.');
@@ -572,7 +594,7 @@ export class WindowScope {
         throw new WindowScopeError('search_scope_display_limit', `The index library has more than ${INDEX_PAGES * SCOPE_PAGE_LIMIT} indexes; choose a search scope in Indexing › Search scope.`);
     }
     /** For each index, the index sets whose membership grants read authority (a non-empty scope). */
-    private async setsOf(index_ids: readonly string[], revision: number, namespace: string): Promise<Map<string, string[]>> {
+    private async setsOf(index_ids: readonly string[], revision: number, namespace: string, check?: () => void): Promise<Map<string, string[]>> {
         const found = new Map<string, string[]>();
         for (const index of index_ids) {
             const sets: string[] = [], seen = new Set<string>();
@@ -580,6 +602,7 @@ export class WindowScope {
             for (let page = 0; ; page++) {
                 if (page >= MEMBERSHIP_PAGES) { throw new WindowScopeError('index_set_membership_limit', 'An index belongs to more index sets than a search scope can hold.'); }
                 const response = await this.page({ kind: 'memberships', index_id: index, project_id: null, after, expected_catalog_revision: revision });
+                check?.();
                 const body = catalogObject(response.page);
                 if (catalogHex(body.namespace) !== namespace || catalogRevision(body.revision) !== revision) {
                     throw new WindowScopeError('catalog_revision_changed_refresh', 'The index library changed while loading. Refresh the choices.');
@@ -605,12 +628,15 @@ export class WindowScope {
         this.stale = true; this.log(`AIRK: the window search scope is out of date (${code}).`); this.changed();
         // An automatic scope follows the catalog by itself: read it again and grant at its current revision.
         const auto = this.current.auto;
-        if (auto) { void this.ensureDefault(auto.binding); }
+        if (auto && auto.binding === this.routeBinding) { void this.ensureDefault(auto.binding); }
     }
     /** The grant is gone (session ended or service restarted); the remembered choice stays for `restore`. */
     lost(): void {
-        if (!this.current && !this.stale) { return; }
-        this.current = undefined; this.stale = false; this.changed();
+        this.defaultTicket++;
+        const observed = !!this.current || this.stale || !!this.resolving;
+        this.resolving = undefined; this.routeBinding = undefined;
+        this.current = undefined; this.stale = false;
+        if (observed) { this.route = { state: 'checking' }; this.changed(); }
     }
 
     /** Apply the remembered choice again after reading the catalog at its current revision. */
@@ -640,7 +666,9 @@ export class WindowScope {
         if (!index_ids.length) { throw new WindowScopeError('window_scope_empty', 'The chosen index sets contain no index. Add indexes to them in AIRK Admin.'); }
         if (index_ids.length > SCOPE_MAX_SELECTION) { throw new WindowScopeError('window_scope_selection_invalid', `A search scope holds at most ${SCOPE_MAX_SELECTION} indexes; this selection has ${index_ids.length}.`); }
         const selection: WindowSelection = { namespace, expected_catalog_revision: revision, index_ids, project_ids };
+        options.check?.();
         const outcome = await this.session.scopeSelect(selection);
+        options.check?.();
         if (outcome.status === 'refused') {
             if (outcome.code === 'scoped_read_unavailable' && this.current) { this.stale = true; this.changed(); }
             throw new WindowScopeError(outcome.code, refusalMessage(outcome.code), { ...outcome });
@@ -657,12 +685,13 @@ export class WindowScope {
             if (this.route) { this.route = { state: 'scope', automatic: false }; }
         }
         this.changed();
+        options.check?.();
         this.agentScopeChanged({ scope: { index_ids: [...options.agent.index_ids], project_ids: [...options.agent.project_ids] }, user: options.user });
         return { ...outcome };
     }
     /** Member indexes of the chosen index sets at `revision` (memberships pages, bounded). A membership
      * with an empty scope grants no read authority (selection-authority spec §3.5) and is left out. */
-    private async members(project_ids: readonly string[], revision: number, namespace: string): Promise<string[]> {
+    private async members(project_ids: readonly string[], revision: number, namespace: string, check?: () => void): Promise<string[]> {
         const found: string[] = [];
         for (const project of project_ids) {
             let after: CatalogObject | null = null;
@@ -670,6 +699,7 @@ export class WindowScope {
             for (let page = 0; ; page++) {
                 if (page >= MEMBERSHIP_PAGES) { throw new WindowScopeError('index_set_membership_limit', 'An index set has more members than a search scope can hold.'); }
                 const response = await this.page({ kind: 'memberships', index_id: null, project_id: project, after, expected_catalog_revision: revision });
+                check?.();
                 const body = catalogObject(response.page);
                 if (catalogHex(body.namespace) !== namespace || catalogRevision(body.revision) !== revision) {
                     throw new WindowScopeError('catalog_revision_changed_refresh', 'The index library changed while loading. Refresh the choices.');

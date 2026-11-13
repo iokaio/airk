@@ -75,6 +75,33 @@ test('explicit selections are validated before they are sent', () => {
     assert.match(openSelectionKey({ indexes: ['a'], sets: [] }), /^[0-9a-f]{64}$/);
 });
 
+test('R02 per-call admission refuses checking and failed automatic routes without sending a fallback read', async () => {
+    const project: LaunchSpec = { command: base.command, root: base.root, dataDir: '/data', collection: 'app', name: 'app', service: { installDir: base.installDir, project: 'ab'.repeat(32) } };
+    const window: LaunchSpec = { ...project, windowScope: { key: 'ef'.repeat(32), label: 'A' } };
+    const named = openSelectionSpec(base, { indexes: [idx(1)], sets: [prj(2)] }, 'Selected');
+    const sent: string[][] = [];
+    const fake = { closed: false, invoke: async (argv: string[]) => { sent.push(argv); return success({}); } };
+    // The route is a per-call observation; accepting an extra optional input
+    // lets the old implementation run and reproduce its missing admission check.
+    const select: (spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', active: boolean, route: { state: 'checking' | 'failed' | 'scope'; automatic?: boolean; message?: string }) => ReturnType<typeof evidenceSelection> = evidenceSelection;
+    for (const state of ['checking', 'failed'] as const) {
+        const route = { state, message: 'The requested index scope is unavailable.' };
+        for (const [spec, client] of [[project, 'airk-explorer'], [window, 'airk-workbench']] as const) {
+            for (const heldA of [true, false]) {
+                const tools = new AirkctlToolSession(fake as never, () => select(spec, client, heldA, route));
+                await assert.rejects(tools.request('tools/call', { name: 'search', arguments: { query: 'B' } }, 60000), { code: 'unavailable' });
+            }
+        }
+        assert.deepEqual(sent, [], 'neither an old W4 grant nor project binding is sent');
+        const explicit = new AirkctlToolSession(fake as never, () => select(named, 'airk-workbench', false, route));
+        await explicit.request('tools/call', { name: 'search', arguments: { query: 'selected' } }, 60000);
+        assert.deepEqual(sent.splice(0), [['tools', 'call', 'search', '--args', '{"query":"selected"}', '--index', idx(1), '--set', prj(2), '--output', 'json']], 'explicit named selections remain usable');
+    }
+    const chosen = new AirkctlToolSession(fake as never, () => select(project, 'airk-explorer', true, { state: 'scope', automatic: false }));
+    await chosen.request('tools/call', { name: 'search', arguments: { query: 'chosen' } }, 60000);
+    assert.deepEqual(sent, [['tools', 'call', 'search', '--args', '{"query":"chosen"}', '--output', 'json']]);
+});
+
 const searchSchema = { properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 }, max_bytes: { type: 'integer' } }, required: ['query'] };
 const declared = { limit_per_index: { type: 'integer', minimum: 1, maximum: 100, with: 'limit' } };
 
