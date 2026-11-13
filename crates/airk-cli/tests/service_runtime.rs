@@ -4529,6 +4529,78 @@ fn airkctl_service_start_runs_the_private_role_until_healthy() -> Result<()> {
     Ok(())
 }
 
+/// The installed product's first start (the admitted `service-detached` role
+/// on a fresh control root) runs fresh catalog Genesis: the index library
+/// answers and AIRK Admin's listener serves a launch code. Before 1.8.32 a
+/// split install had no catalog, so both failed (`invalid_registry_request`,
+/// `admin_listener_unavailable`).
+#[test]
+fn an_installed_first_start_creates_the_index_catalog_and_serves_admin() -> Result<()> {
+    use airk_core::{
+        catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
+        index_catalog::MAX_SELECTION,
+        service::{ControlMethod, ControlResponse},
+    };
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let airk = Path::new(env!("CARGO_BIN_EXE_airk"));
+    let version = env!("CARGO_PKG_VERSION");
+    let _guard = ShutdownOnDrop(dir.clone());
+    airkctl::start::start(airk, &root, version)
+        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+    let catalog = airk_store::service::registry::ServiceRegistry::open_saved(&root)?
+        .catalog_state()?
+        .context("the first start created no index catalog")?;
+    ensure!(catalog.authority_contract == 1 && catalog.activated);
+    let page = airkctl::service::request(
+        &root,
+        ControlMethod::CatalogPage {
+            request: CatalogPageRequest {
+                kind: CatalogKind::Indexes,
+                index_id: None,
+                project_id: None,
+                after: None,
+                expected_catalog_revision: None,
+                limit: MAX_SELECTION,
+                max_bytes: MAX_PAGE_BYTES,
+            },
+        },
+        version,
+    )
+    .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+    let ControlResponse::CatalogPage { page, .. } = page else {
+        anyhow::bail!(
+            "the index library did not answer: {}",
+            serde_json::to_string(&page)?
+        );
+    };
+    ensure!(page.items.is_empty(), "a fresh library has no indexes");
+    // The listener binds after Ready; wait for it under a deadline.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let launch = airkctl::service::request(&root, ControlMethod::AdminLaunchCode {}, version)
+            .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+        match launch {
+            ControlResponse::AdminLaunchCode { .. } => break,
+            ControlResponse::Failure { code } if code == "admin_listener_unavailable" => {
+                ensure!(
+                    Instant::now() < deadline,
+                    "AIRK Admin's listener never started"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => anyhow::bail!(
+                "unexpected admin launch answer: {}",
+                serde_json::to_string(&other)?
+            ),
+        }
+    }
+    let (code, _, stderr) = airkctl(&["service", "shutdown", "--runtime-dir", &dir]);
+    ensure!(code == 0, "shutdown failed: {stderr}");
+    Ok(())
+}
+
 /// M19 stop and restart through `airkctl`'s lifecycle and start logic on a
 /// live service, with the ledger observed directly (split U85, 3b.1e).
 #[test]

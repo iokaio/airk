@@ -16,6 +16,8 @@ is committed but untested. No installer was rebuilt for that fix. Installer
 repair, builds and qualification are stopped at the user's direction; retained
 artifact receipts describe their original inputs.
 
+**1.8.32 split candidate (13 November 2026).** Manifests and lockfiles are synchronized at 1.8.32 for the local Windows AIRK Service installer and VSIX. 1.8.31 never created its index catalog: the service now creates it on its first start, so the Index library, AIRK Admin and index creation work on a new installation; `airkctl` commands also find the installed service without `--service-runtime-dir`. See the [1.8.32 record](releases/release-1.8.32.md). The 1.8.31, 1.8.30, 1.8.29, 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
+
 **1.8.31 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.31 for the local Windows AIRK Service installer and VSIX that complete index creation: the admin Index library and Usage pages, `airkctl library` and service management commands, typed confirmation for destructive steps, Storage cleanup and Windows sign-in startup, window search scopes, and a read-only Explorer Indexing view with **Open AIRK Admin**; see the [1.8.31 record](releases/release-1.8.31.md). The 1.8.30, 1.8.29, 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.
 
 **1.8.30 split candidate (12 November 2026).** Manifests and lockfiles are synchronized at 1.8.30 for the rebuilt local Windows AIRK Service installer and VSIX (upgrades with VS Code open, setup's process scan, stdio agent-entry cleanup, downloads link); see the [1.8.30 record](releases/release-1.8.30.md). The 1.8.29, 1.8.27, 1.8.26, 1.8.25 and 1.8.24 text below is dated history.

@@ -19,6 +19,7 @@ mod agents;
 pub(crate) mod checkpoint;
 mod configuration;
 mod explorer;
+mod first_start;
 mod http;
 mod journal;
 mod lifecycle;
@@ -1031,9 +1032,9 @@ async fn serve_with_admission(
     airk_host::install_layout::validate_control_root(root)?;
     airk_installer::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
-    let _ownership = Arc::new(acquire_single_instance(root)?);
+    let lease = acquire_single_instance(root)?;
     airk_endpoint::http_endpoint::rotation::require_start_allowed(root)?;
-    airk_host::install_layout::record_control_root(&_ownership)?;
+    airk_host::install_layout::record_control_root(&lease)?;
     if let Some(mode) = admission {
         lifecycle::admit_start(root, mode)?;
     }
@@ -1053,6 +1054,15 @@ async fn serve_with_admission(
             Err(_) => {}
         }
     }
+    // An installed (admitted) start gives a control root without a catalog its
+    // fresh Genesis before any supervisor, log or registry actor starts.
+    // Development `serve` roots keep running without one.
+    let lease = if admission.is_some() {
+        first_start::ensure_catalog(lease)?
+    } else {
+        lease
+    };
+    let _ownership = Arc::new(lease);
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(_ownership.root())?;
     let instance = new_instance_id()?;

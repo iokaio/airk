@@ -95,7 +95,7 @@ and searches through the same canonical handlers as `airkctl` and VS Code.
 **Not yet served** (the API answers `not_yet_served`): the live event
 stream. Indexed evidence is always shown as text.
 
-**Not in 1.8.31** (U102; planned for 1.8.32):
+**Not in 1.8.31 or 1.8.32** (U102; planned for a later candidate):
 
 - the Overview's version, activity and leftovers;
 - plans on the Activity page;

@@ -31,7 +31,7 @@ shows that state with **Download AIRK Service**, **Start** or **Check again**;
 **AIRK: Open AIRK Admin** opens the service's management pages
 (`airkctl admin open`) for indexes, storage, agents, usage and logs.
 
-**1.8.31 split candidate (12 November 2026).** This extension works with a
+**1.8.32 split candidate (13 November 2026).** This extension works with a
 separately installed AIRK Service ([split plan](https://github.com/iokaio/airk/blob/main/docs/split/split-plan.md) §8).
 Indexes and index sets are created and changed in AIRK Admin. The Explorer's
 Indexing view is read-only and opens AIRK Admin in VS Code or in your browser

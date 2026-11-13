@@ -998,20 +998,10 @@ fn operation_failed(cx: &mut Context, message: String) -> u8 {
     fail(cx, &line)
 }
 
-/// The service's control directory: explicit until the install pointer (3b).
+/// The service's control directory: the flag's, else the verified
+/// installation's (the install pointer, as for window reads and `library`).
 fn control(cx: &mut Context, selection: &Selection) -> Result<PathBuf, u8> {
-    match &selection.control {
-        Some(control) => Ok(control.clone()),
-        None => Err(fail(
-            cx,
-            &ErrorLine::new(
-                ExitClass::ServiceMissing,
-                "installation_not_found",
-                false,
-                "No AIRK installation was found; pass --service-runtime-dir <service control directory>.",
-            ),
-        )),
-    }
+    window_control(cx, selection)
 }
 
 fn version(cx: &mut Context) -> u8 {
