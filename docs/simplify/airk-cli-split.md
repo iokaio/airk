@@ -7,6 +7,11 @@ structural changes" rules). Every step preserves behavior and is checked
 against the same tests and golden outputs as the step before. The ledger
 records each step.
 
+The work that remains after the 1.8.31 installers are tested is listed in
+[airk-cli-split-followups.md](airk-cli-split-followups.md): installation lookups
+out of `airk-installer`, `runtime_metadata` below the supervisor, component
+contracts, and the admin bundle location.
+
 ## Why
 
 `airk-cli` is one crate with 81 top-level modules and about 86,600
@@ -386,3 +391,25 @@ platform files (`runtime_macos_login.rs`, `service_manager_{linux,macos}.rs`) an
 - Clippy, default and `local-inference`: pass.
 - Library tests are identical by identity: default 1070, `local-inference` 1109
   (`artifacts/split-frontend-lib{,-li}.log` against step 2b).
+
+## Step 3h: `airk-https` extracted (12 November 2026)
+
+4 modules (17 files) moved into `crates/airk-https`: `admin_plane`, `http_backend`, `http_gateway` and
+`runtime_http_commands`. `widen_visibility.py` widened 34 definitions.
+
+- **Admin bundle.** `airk-cli`'s `build.rs` (only the admin-asset seal by this point) moved to
+  `crates/airk-https/build.rs`. Its `serde_json`/`sha2` build dependencies moved with it. The sealed
+  bundle stays at `crates/airk-cli/admin-assets/`, read through `../airk-cli/admin-assets`. The
+  admin tests' `include_str!` of the manifest was adjusted the same way by hand, because
+  `extract_crate.py` moves only siblings inside the source tree. Scripts, CI path selection and
+  docs that name the bundle path are unchanged. Moving the bundle is follow-up F4
+  ([airk-cli-split-followups.md](airk-cli-split-followups.md)).
+- **Deleted.** Two `pub(crate) use` re-exports in `airk-cli` had no user left (a clean compile is the
+  evidence): `service_resource_policy`, and the test-only `inference_engine` re-export used by the
+  gateway's inference-owner tests, which now name `airk_inference::inference_engine` directly.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical by identity: default 1070, `local-inference` 1109
+  (`artifacts/split-https-lib{,-li}.log` against step 2b).

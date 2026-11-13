@@ -2,7 +2,7 @@
 //! The reviewed operation table (contracts §4.3): read from the checked-in
 //! fixture, never hand-copied, and validated once with
 //! `admin_contract::validate_table` before any row is served.
-use crate::admin_contract::{NeverOverHttp, OperationRow, Surface, validate_table};
+use airk_endpoint::admin_contract::{NeverOverHttp, OperationRow, Surface, validate_table};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::OnceLock;

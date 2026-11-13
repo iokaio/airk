@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded HTTPS ingress. Credentials and native grants are checked for every request.
-use crate::catalog_admission::{IssueTicket, NativeCatalogAdmission};
-use crate::http_endpoint::{AuthenticatedCredential, BoundEndpoint, CredentialStore};
+use airk_catalog_control::catalog_admission::{IssueTicket, NativeCatalogAdmission};
 use airk_core::{identity::Incarnation, service_http::EndpointDescriptor};
+use airk_endpoint::http_endpoint::{AuthenticatedCredential, BoundEndpoint, CredentialStore};
 use airk_mcp::{
     read_attempt::ReadAttemptContext,
     remote::{
@@ -139,7 +139,7 @@ impl Gateway {
     }
     /// Serve `/admin` through `plane`. Without it every admin-plane target
     /// answers `not_yet_served`; other targets are unaffected.
-    pub(crate) fn set_admin(&self, plane: Arc<crate::admin_plane::AdminPlane>) {
+    pub fn set_admin(&self, plane: Arc<crate::admin_plane::AdminPlane>) {
         let _ = self.0.admin.set(plane);
     }
     /// Called after native credential revocation/rotation commits. Authentication
@@ -339,12 +339,12 @@ impl Gateway {
                         .handle(request, peer, self.0.port, self.0.closed.is_cancelled())
                         .await
                 }
-                (Ok(()), None) => {
-                    crate::admin_plane::refusal(crate::admin_contract::AdminCode::NotYetServed)
-                }
-                (Err(_), _) => {
-                    crate::admin_plane::refusal(crate::admin_contract::AdminCode::AdminInternal)
-                }
+                (Ok(()), None) => crate::admin_plane::refusal(
+                    airk_endpoint::admin_contract::AdminCode::NotYetServed,
+                ),
+                (Err(_), _) => crate::admin_plane::refusal(
+                    airk_endpoint::admin_contract::AdminCode::AdminInternal,
+                ),
             };
             cleanup.armed = false;
             let (parts, body) = response.into_parts();
@@ -425,7 +425,7 @@ impl Gateway {
             .iter()
             .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
             .collect();
-        if crate::admin_contract::bearer_plane_cookie(&cookies).is_some() {
+        if airk_endpoint::admin_contract::bearer_plane_cookie(&cookies).is_some() {
             return Err(error(StatusCode::FORBIDDEN, "cookie_on_bearer_plane"));
         }
         if request
@@ -618,8 +618,10 @@ impl Gateway {
                 // must not replace the initialized SDK sessions or their bound
                 // factory. Native generation turnover still takes the replacement
                 // path below and fences all old buffered delivery.
-                if !crate::http_endpoint::same_authority(&entry.selection, &authenticated.selection)
-                {
+                if !airk_endpoint::http_endpoint::same_authority(
+                    &entry.selection,
+                    &authenticated.selection,
+                ) {
                     return Err(error(
                         StatusCode::SERVICE_UNAVAILABLE,
                         "native_read_context_changed",
@@ -1244,12 +1246,12 @@ fn is_admin_target<B>(request: &Request<B>) -> bool {
     uri.scheme().is_none()
         && uri.authority().is_none()
         && !matches!(
-            crate::admin_contract::route(
+            airk_endpoint::admin_contract::route(
                 uri.path_and_query()
                     .map_or("", |target| target.as_str())
                     .as_bytes()
             ),
-            crate::admin_contract::PathMatch::NotAdmin
+            airk_endpoint::admin_contract::PathMatch::NotAdmin
         )
 }
 fn now_ms() -> u64 {

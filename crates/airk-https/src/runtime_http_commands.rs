@@ -2,13 +2,13 @@
 //! Setup-only HTTP discovery and enrollment through the verified native service.
 //! Moved from `runtime_install::http_commands` (split step 2b): it validates
 //! selections through `http_backend`, above the installer.
-use crate::runtime_install::*;
 use crate::{control_client, local_ipc, runtime_pair};
 use airk_core::service::{ControlMethod, ControlResponse, ServiceHealth};
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::{EndpointDescriptor, HttpSelection},
 };
+use airk_installer::runtime_install::*;
 use anyhow::{Context, Result, bail, ensure};
 use std::{
     path::{Path, PathBuf},
@@ -22,12 +22,12 @@ mod tests;
 /// owner-private credential of an existing, unrevoked connection against the
 /// saved installation binding. It needs no running service and never starts
 /// one, enrolls, rotates or writes; error messages never contain the token.
-pub(crate) fn credential_header(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
-    let control = crate::install_layout::saved_control(install)?;
-    let (binding, _) = crate::http_endpoint::trust::saved_identity(&control)?;
+pub fn credential_header(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
+    let control = airk_host::install_layout::saved_control(install)?;
+    let (binding, _) = airk_endpoint::http_endpoint::trust::saved_identity(&control)?;
     let private = control.join("http-1");
-    let token = crate::http_endpoint::read_client_token(&private, id)?;
-    let store = crate::http_endpoint::CredentialStore::read_existing(&private, binding)?;
+    let token = airk_endpoint::http_endpoint::read_client_token(&private, id)?;
+    let store = airk_endpoint::http_endpoint::CredentialStore::read_existing(&private, binding)?;
     let now: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis()
@@ -70,7 +70,7 @@ fn check_endpoint(
     health: &ServiceHealth,
 ) -> Result<()> {
     endpoint.validate()?;
-    let binding = crate::http_endpoint::installation_binding(control, endpoint.namespace)?;
+    let binding = airk_endpoint::http_endpoint::installation_binding(control, endpoint.namespace)?;
     ensure!(
         endpoint.installation == binding.installation && endpoint.user == binding.user,
         "native HTTP installation binding changed"
@@ -153,7 +153,7 @@ pub async fn endpoint(install: &Path) -> Result<serde_json::Value> {
     checked_endpoint(control, health).await
 }
 /// M15a (split step 3e.2): the same read for the service's own control root.
-pub(crate) async fn endpoint_at(control: PathBuf) -> Result<serde_json::Value> {
+pub async fn endpoint_at(control: PathBuf) -> Result<serde_json::Value> {
     let (control, health) = healthy(control).await?;
     checked_endpoint(control, health).await
 }
@@ -178,7 +178,7 @@ pub async fn existing_connection(install: &Path, id: Incarnation) -> Result<serd
     checked_connection(control, health, id).await
 }
 /// M15 (split step 3e.2): the same read for the service's own control root.
-pub(crate) async fn existing_connection_at(
+pub async fn existing_connection_at(
     control: PathBuf,
     id: Incarnation,
 ) -> Result<serde_json::Value> {
@@ -211,12 +211,13 @@ async fn resolved_existing_connection(
     id: Incarnation,
 ) -> Result<serde_json::Value> {
     check_endpoint(&control, &endpoint, &health)?;
-    let binding = crate::http_endpoint::installation_binding(&control, endpoint.namespace)?;
+    let binding = airk_endpoint::http_endpoint::installation_binding(&control, endpoint.namespace)?;
     let private = control.join("http-1");
     let token_root = private.clone();
     let authenticated = tokio::task::spawn_blocking(move || -> Result<_> {
-        let token = crate::http_endpoint::read_client_token(&token_root, id)?;
-        let store = crate::http_endpoint::CredentialStore::read_existing(&token_root, binding)?;
+        let token = airk_endpoint::http_endpoint::read_client_token(&token_root, id)?;
+        let store =
+            airk_endpoint::http_endpoint::CredentialStore::read_existing(&token_root, binding)?;
         let now: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis()
@@ -267,7 +268,7 @@ pub async fn lookup_connection(
         "HTTP lookup selected runtime changed"
     );
     let (main, approval) = verify_runtime(install, expected)?;
-    let control = crate::install_layout::saved_control(install)?;
+    let control = airk_host::install_layout::saved_control(install)?;
     local_ipc::require_existing_root(&control)?;
     let ControlResponse::Health {
         observation: health,
@@ -288,10 +289,7 @@ pub async fn lookup_connection(
 }
 /// M16 (split step 3e.4): the same ownership read at the service's own
 /// control root, without the selected-runtime and staged-selection checks.
-pub(crate) async fn lookup_connection_at(
-    control: PathBuf,
-    id: Incarnation,
-) -> Result<serde_json::Value> {
+pub async fn lookup_connection_at(control: PathBuf, id: Incarnation) -> Result<serde_json::Value> {
     let (control, health) = healthy(control).await?;
     ownership(control, health, id).await
 }
@@ -300,7 +298,7 @@ async fn ownership(
     health: ServiceHealth,
     id: Incarnation,
 ) -> Result<serde_json::Value> {
-    use crate::http_endpoint::{ConnectionOwnership, CredentialStore};
+    use airk_endpoint::http_endpoint::{ConnectionOwnership, CredentialStore};
     let response = control_client::request_for_instance(
         &control,
         ControlMethod::HttpEndpoint,
@@ -312,7 +310,7 @@ async fn ownership(
     };
     let endpoint = endpoint.context("HTTP lookup endpoint unavailable")?;
     check_endpoint(&control, &endpoint, &health)?;
-    let binding = crate::http_endpoint::installation_binding(&control, endpoint.namespace)?;
+    let binding = airk_endpoint::http_endpoint::installation_binding(&control, endpoint.namespace)?;
     let private = control.join("http-1");
     let (ownership, attachment_retirement) = tokio::task::spawn_blocking(move || -> Result<_> {
         let store = CredentialStore::read_existing(&private, binding)?;
@@ -368,10 +366,7 @@ async fn ownership(
 /// credential of an existing connection. The probe initializes one MCP
 /// session and deletes it. The token stays in this process and is never part
 /// of the result or an error.
-pub(crate) async fn verify_connection_at(
-    control: PathBuf,
-    id: Incarnation,
-) -> Result<serde_json::Value> {
+pub async fn verify_connection_at(control: PathBuf, id: Incarnation) -> Result<serde_json::Value> {
     let (control, health) = healthy(control).await?;
     let response = control_client::request_for_instance(
         &control,
@@ -384,12 +379,13 @@ pub(crate) async fn verify_connection_at(
     };
     let endpoint = endpoint.context("native HTTPS endpoint is not available")?;
     check_endpoint(&control, &endpoint, &health)?;
-    let binding = crate::http_endpoint::installation_binding(&control, endpoint.namespace)?;
+    let binding = airk_endpoint::http_endpoint::installation_binding(&control, endpoint.namespace)?;
     let private = control.join("http-1");
     let ca_sha256 = endpoint.ca_sha256;
     let (token, ca) = tokio::task::spawn_blocking(move || -> Result<_> {
-        let token = crate::http_endpoint::read_client_token(&private, id)?;
-        let store = crate::http_endpoint::CredentialStore::read_existing(&private, binding)?;
+        let token = airk_endpoint::http_endpoint::read_client_token(&private, id)?;
+        let store =
+            airk_endpoint::http_endpoint::CredentialStore::read_existing(&private, binding)?;
         let now: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis()
@@ -401,7 +397,7 @@ pub(crate) async fn verify_connection_at(
         );
         Ok((
             token,
-            crate::http_endpoint::trust::public_ca(&private, ca_sha256)?,
+            airk_endpoint::http_endpoint::trust::public_ca(&private, ca_sha256)?,
         ))
     })
     .await??;
@@ -622,7 +618,7 @@ pub async fn enroll(
     label: &str,
     explorer_descriptor: Option<&Path>,
 ) -> Result<serde_json::Value> {
-    let selection = crate::http_endpoint::read_selection_file(file)?;
+    let selection = airk_endpoint::http_endpoint::read_selection_file(file)?;
     let client = client(label)?;
     let (control, health) = control(install).await?;
     enroll_at(
@@ -648,7 +644,7 @@ pub async fn setup(
     let client = client(label)?;
     let (control, health) = if let Some(saved) = runtime_control {
         let saved = saved.canonicalize()?;
-        crate::install_layout::validate_control_root(&saved)?;
+        airk_host::install_layout::validate_control_root(&saved)?;
         let response = control_client::request(&saved, ControlMethod::Health).await?;
         let ControlResponse::Health { observation } = response else {
             return refused(response);
@@ -700,7 +696,7 @@ pub async fn enroll_legacy(
     origin_sha256: Option<Sha256Digest>,
     reattach_connection_id: Option<Incarnation>,
 ) -> Result<serde_json::Value> {
-    let registration = crate::http_endpoint::read_registration_file(file)?;
+    let registration = airk_endpoint::http_endpoint::read_registration_file(file)?;
     let client = client(label)?;
     let (control, health) = control(install).await?;
     let resolution = {
@@ -746,16 +742,17 @@ pub async fn trust(
     let control = installed_metadata_control(install)?;
     if action != HttpTrustAction::Install {
         let status = tokio::task::spawn_blocking(move || {
-            let (binding, endpoint) = crate::http_endpoint::trust::saved_identity(&control)?;
+            let (binding, endpoint) =
+                airk_endpoint::http_endpoint::trust::saved_identity(&control)?;
             check_reviewed_ca(action, expected_ca, endpoint.ca_sha256)?;
-            crate::http_endpoint::trust::manage(
+            airk_endpoint::http_endpoint::trust::manage(
                 &control.join("http-1"),
                 binding,
                 endpoint.ca_sha256,
                 if action == HttpTrustAction::Remove {
-                    crate::http_endpoint::trust::Action::Remove
+                    airk_endpoint::http_endpoint::trust::Action::Remove
                 } else {
-                    crate::http_endpoint::trust::Action::Inspect
+                    airk_endpoint::http_endpoint::trust::Action::Inspect
                 },
             )
         })
@@ -785,15 +782,15 @@ pub async fn trust(
     )?;
     check_endpoint(&control, &endpoint, &observation)?;
     check_reviewed_ca(action, expected_ca, endpoint.ca_sha256)?;
-    let binding = crate::http_endpoint::installation_binding(&control, endpoint.namespace)?;
+    let binding = airk_endpoint::http_endpoint::installation_binding(&control, endpoint.namespace)?;
     let action = match action {
-        HttpTrustAction::Inspect => crate::http_endpoint::trust::Action::Inspect,
-        HttpTrustAction::Install => crate::http_endpoint::trust::Action::Install,
-        HttpTrustAction::Remove => crate::http_endpoint::trust::Action::Remove,
+        HttpTrustAction::Inspect => airk_endpoint::http_endpoint::trust::Action::Inspect,
+        HttpTrustAction::Install => airk_endpoint::http_endpoint::trust::Action::Install,
+        HttpTrustAction::Remove => airk_endpoint::http_endpoint::trust::Action::Remove,
     };
     let root = control.join("http-1");
     let status = tokio::task::spawn_blocking(move || {
-        crate::http_endpoint::trust::manage(&root, binding, endpoint.ca_sha256, action)
+        airk_endpoint::http_endpoint::trust::manage(&root, binding, endpoint.ca_sha256, action)
     })
     .await??;
     Ok(serde_json::to_value(status)?)
@@ -821,7 +818,7 @@ pub async fn enroll_legacy_union(
     label: &str,
     explorer_descriptor: Option<&Path>,
 ) -> Result<serde_json::Value> {
-    let input = crate::http_endpoint::read_registrations_file(file)?;
+    let input = airk_endpoint::http_endpoint::read_registrations_file(file)?;
     let client = client(label)?;
     let (control, health) = control(install).await?;
     let outcomes = {

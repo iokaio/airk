@@ -26,7 +26,7 @@ fn live(context: &ReadAttemptContext) -> Result<()> {
 
 /// Refresh only the catalog clock. Frozen grant IDs/revisions/projects, native
 /// context and imported lineage retain their original meaning.
-pub(crate) async fn validate(
+pub async fn validate(
     control: &Path,
     selection: &HttpSelection,
     context: &ReadAttemptContext,
@@ -50,7 +50,7 @@ async fn validate_details(
     let guard = context.lifetime_guard();
     let task = tokio::task::spawn_blocking(move || -> Result<(HttpSelection, Option<airk_core::service::ProjectRegistration>)> {
         let _guard = guard;
-        crate::install_layout::validate_control_root(&control)?;
+        airk_host::install_layout::validate_control_root(&control)?;
         let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(
             &control,
             Some(deadline),
@@ -69,23 +69,23 @@ async fn validate_details(
                 );
                 selection.expected_catalog_revision = state.revision;
                 let native =
-                    crate::catalog_coordinator::native_scoped_selection(&mut registry, &selection)?;
-                crate::catalog_authority::build_catalog_read_authority(&mut registry, &native)?;
+                    airk_catalog_control::catalog_coordinator::native_scoped_selection(&mut registry, &selection)?;
+                airk_catalog_control::catalog_authority::build_catalog_read_authority(&mut registry, &native)?;
                 let registration = registry.get(native.backing)?.registration;
                 Ok((HttpSelection::Scoped { selection }, Some(registration)))
             }
             HttpSelection::Combined { selection } => Ok((HttpSelection::Combined {
-                selection: crate::combined_frontend::validate_http_selection(&control, &selection)?,
+                selection: airk_frontend::combined_frontend::validate_http_selection(&control, &selection)?,
             }, None)),
             HttpSelection::ImportedLegacy { selection } => {
-                crate::runtime_install::http_legacy::validate(&control, &selection)?;
+                airk_installer::runtime_install::http_legacy::validate(&control, &selection)?;
                 let registration = selection.registration.clone();
                 Ok((HttpSelection::ImportedLegacy { selection }, Some(registration)))
             }
             HttpSelection::ImportedLegacyUnion { mut selection } => {
                 for member in &mut selection.selections {
                     ensure!(Instant::now()<deadline, airk_mcp::remote::PreparationExpired);
-                    crate::runtime_install::http_legacy::validate_registry(&mut registry,member)?;
+                    airk_installer::runtime_install::http_legacy::validate_registry(&mut registry,member)?;
                     member.expected_catalog_revision=state.revision;
                 }
                 ensure!(registry.catalog_state()? == Some(state),ScopeReadRefused);
@@ -111,7 +111,7 @@ pub(crate) async fn factory(
     factory_attached(control, selection, None, context).await
 }
 
-pub(crate) async fn factory_attached(
+pub async fn factory_attached(
     control: PathBuf,
     selection: HttpSelection,
     explorer_descriptor: Option<PathBuf>,
@@ -136,7 +136,7 @@ pub(crate) async fn factory_attached(
                     (member.registration.clone(), backend)
                 })
                 .collect();
-            return crate::unified_mcp::http_project_attachments(
+            return airk_frontend::unified_mcp::http_project_attachments(
                 control.clone(),
                 projects,
                 None,
@@ -150,7 +150,7 @@ pub(crate) async fn factory_attached(
             client: Mutex::new(airk_core::usage::ClientFamily::Unknown),
             closed: AtomicBool::new(false),
         }) as Arc<dyn RemoteTools>;
-        crate::unified_mcp::http_attachment(
+        airk_frontend::unified_mcp::http_attachment(
             backend,
             control.clone(),
             registration.clone(),
@@ -161,9 +161,9 @@ pub(crate) async fn factory_attached(
 
 /// Admission reads a live service-owned scalar; nested canonical adapters use
 /// the same reader for the lifetime of this future, without disk I/O on Tokio.
-pub(crate) fn with_query_capacity(
+pub fn with_query_capacity(
     factory: AuthenticatedBackendFactory,
-    reader: crate::service_resource_policy::QueryCapacityReader,
+    reader: airk_host::service_resource_policy::QueryCapacityReader,
 ) -> AuthenticatedBackendFactory {
     Arc::new(move || {
         Ok(Arc::new(CapacityBackend {
@@ -174,7 +174,7 @@ pub(crate) fn with_query_capacity(
 }
 struct CapacityBackend {
     backend: Arc<dyn RemoteTools>,
-    reader: crate::service_resource_policy::QueryCapacityReader,
+    reader: airk_host::service_resource_policy::QueryCapacityReader,
 }
 impl RemoteTools for CapacityBackend {
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
@@ -205,13 +205,13 @@ impl RemoteTools for CapacityBackend {
         self.backend.close();
     }
     fn prepare(&self) -> ReadyFuture<'_> {
-        Box::pin(crate::service_resource_policy::with_query_capacity(
+        Box::pin(airk_host::service_resource_policy::with_query_capacity(
             self.reader.clone(),
             async move { self.backend.prepare().await },
         ))
     }
     fn shutdown(&self) -> ReadyFuture<'_> {
-        Box::pin(crate::service_resource_policy::with_query_capacity(
+        Box::pin(airk_host::service_resource_policy::with_query_capacity(
             self.reader.clone(),
             async move { self.backend.shutdown().await },
         ))
@@ -221,7 +221,7 @@ impl RemoteTools for CapacityBackend {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> RemoteFuture<'_> {
-        Box::pin(crate::service_resource_policy::with_query_capacity(
+        Box::pin(airk_host::service_resource_policy::with_query_capacity(
             self.reader.clone(),
             async move { self.backend.call(tool, arguments).await },
         ))
@@ -232,7 +232,7 @@ impl RemoteTools for CapacityBackend {
         arguments: serde_json::Map<String, serde_json::Value>,
         limit: usize,
     ) -> RemoteFuture<'_> {
-        Box::pin(crate::service_resource_policy::with_query_capacity(
+        Box::pin(airk_host::service_resource_policy::with_query_capacity(
             self.reader.clone(),
             async move {
                 self.backend
@@ -248,7 +248,7 @@ impl RemoteTools for CapacityBackend {
         limit: usize,
         context: ReadAttemptContext,
     ) -> RemoteFuture<'_> {
-        Box::pin(crate::service_resource_policy::with_query_capacity(
+        Box::pin(airk_host::service_resource_policy::with_query_capacity(
             self.reader.clone(),
             async move {
                 self.backend
@@ -273,20 +273,21 @@ impl LazyBackend {
         let initialized = self.backend.get_or_try_init(|| async {
             let backend = match &self.selection {
                 HttpSelection::Scoped { selection } => {
-                    let resolved = crate::service_frontend::resolve_scoped(
+                    let resolved = airk_frontend::service_frontend::resolve_scoped(
                         None,
                         Some(&self.control),
                         selection,
                     )
                     .await?;
-                    crate::project_client::scoped_tools(
+                    airk_frontend::project_client::scoped_tools(
                         resolved.project.control,
                         resolved.project.registration.binding,
                         resolved.selection,
                     )?
                 }
                 HttpSelection::Combined { selection } => {
-                    crate::combined_frontend::resolve(None, Some(&self.control), selection).await?
+                    airk_frontend::combined_frontend::resolve(None, Some(&self.control), selection)
+                        .await?
                 }
                 HttpSelection::ImportedLegacy { selection } => {
                     imported_legacy::create_imported_backend(
@@ -339,7 +340,7 @@ impl RemoteTools for LazyBackend {
         }
     }
     fn query_concurrency(&self) -> usize {
-        crate::service_resource_policy::query_concurrency(&self.control)
+        airk_host::service_resource_policy::query_concurrency(&self.control)
     }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         *self.client.lock().unwrap_or_else(|e| e.into_inner()) = client;

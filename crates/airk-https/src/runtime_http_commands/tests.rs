@@ -41,7 +41,7 @@ fn setup(control: &Path) -> Result<(ServiceHealth, HttpConnectionInfo)> {
         connection_id: id,
         endpoint: EndpointDescriptor {
             schema: 1,
-            installation: crate::http_endpoint::installation_binding(control, namespace)?
+            installation: airk_endpoint::http_endpoint::installation_binding(control, namespace)?
                 .installation,
             user: health.user.clone(),
             namespace,
@@ -439,7 +439,7 @@ fn legacy_union_inputs_are_private_bounded_unique_and_have_no_default_project() 
     };
     save(&input)?;
     assert_eq!(
-        crate::http_endpoint::read_registrations_file(&file)?
+        airk_endpoint::http_endpoint::read_registrations_file(&file)?
             .registrations
             .len(),
         2
@@ -453,9 +453,11 @@ fn legacy_union_inputs_are_private_bounded_unique_and_have_no_default_project() 
             _ => bad["extra"] = "x".repeat(49_152).into(),
         };
         save(&bad)?;
-        assert!(crate::http_endpoint::read_registrations_file(&file).is_err());
+        assert!(airk_endpoint::http_endpoint::read_registrations_file(&file).is_err());
     }
-    assert!(crate::http_endpoint::read_registrations_file(Path::new("relative.json")).is_err());
+    assert!(
+        airk_endpoint::http_endpoint::read_registrations_file(Path::new("relative.json")).is_err()
+    );
     Ok(())
 }
 #[test]

@@ -5,15 +5,15 @@
 //! random bytes from its caller. Only SHA-256 digests of the secrets are
 //! kept; the secret text exists only in the reply that issues it. Nothing
 //! here implements `Debug`, so no secret or digest can reach a log.
-use crate::admin_contract::{
-    LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_REVIEWS_PER_SESSION, MAX_SESSIONS,
-    SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SessionFacts,
-};
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     index_catalog::CatalogRevision,
     scoped_reads::SelectionScopeRef,
     service::WindowScopeSelection,
+};
+use airk_endpoint::admin_contract::{
+    LAUNCH_CODE_TTL_MS, LaunchCodeFacts, MAX_REVIEWS_PER_SESSION, MAX_SESSIONS,
+    SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SessionFacts,
 };
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;

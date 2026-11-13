@@ -2,7 +2,7 @@
 //! Admin plane state and handler rules with a manual clock and fixed random
 //! bytes; no listener, no sleeps.
 use super::*;
-use crate::admin_contract::{COOKIE_NAME, MAX_SESSIONS, session_cookie};
+use airk_endpoint::admin_contract::{COOKIE_NAME, MAX_SESSIONS, session_cookie};
 use http_body_util::Full;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -13,7 +13,7 @@ use std::{
 
 const PORT: u16 = 41234;
 const ADMIN_LAUNCH: &str = include_str!("../../../../fixtures/split/i1/admin_launch_code.json");
-const MANIFEST: &str = include_str!("../../admin-assets/manifest.json");
+const MANIFEST: &str = include_str!("../../../airk-cli/admin-assets/manifest.json");
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -299,7 +299,7 @@ fn table_parsers_find_the_peer_end_of_the_connection() {
 
 #[test]
 fn macos_own_socket_scan_proves_only_the_client_end() {
-    use crate::admin_contract::{PeerObservation, PeerProof, peer_proof};
+    use airk_endpoint::admin_contract::{PeerObservation, PeerProof, peer_proof};
     let client: std::net::SocketAddrV4 = "127.0.0.1:50000".parse().unwrap();
     let server: std::net::SocketAddrV4 = "127.0.0.1:57421".parse().unwrap();
     let other: std::net::SocketAddrV4 = "127.0.0.1:50001".parse().unwrap();

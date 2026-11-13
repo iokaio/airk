@@ -18,15 +18,9 @@ mod secrets;
 mod tests;
 
 /// The embedded admin bundle's I4 digests `(inventory, bundle)` (split Phase 7).
-pub(crate) use assets::digests as embedded_asset_digests;
+pub use assets::digests as embedded_asset_digests;
 pub(crate) use peer::ConnectionPeer;
 
-use crate::admin_contract::{
-    self as contract, AdminCode, Admission, CLEAR_SESSION_COOKIE, CSRF_HEADER, Effect, ErrorBody,
-    ErrorClass, ExchangeResponse, FailureEnvelope, KeyMode, MAX_EXCHANGE_BODY_BYTES,
-    MAX_REQUEST_BODY_BYTES, PathMatch, PeerProof, RequestFacts, RequestKeyRule, RequestProgress,
-    ResponseKind, ReviewedCall, Route, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SuccessEnvelope,
-};
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     index_catalog::CatalogRevision,
@@ -34,6 +28,12 @@ use airk_core::{
     service::{
         AdminLaunchSecret, ControlMethod, ControlResponse, ToolSelection, WindowScopeSelection,
     },
+};
+use airk_endpoint::admin_contract::{
+    self as contract, AdminCode, Admission, CLEAR_SESSION_COOKIE, CSRF_HEADER, Effect, ErrorBody,
+    ErrorClass, ExchangeResponse, FailureEnvelope, KeyMode, MAX_EXCHANGE_BODY_BYTES,
+    MAX_REQUEST_BODY_BYTES, PathMatch, PeerProof, RequestFacts, RequestKeyRule, RequestProgress,
+    ResponseKind, ReviewedCall, Route, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, SuccessEnvelope,
 };
 use airk_mcp::remote::http::HttpResponse;
 use bytes::Bytes;
@@ -57,7 +57,7 @@ pub(crate) type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 pub(crate) type Random = Arc<dyn Fn() -> Option<[u8; 32]> + Send + Sync>;
 /// Sends one control method to this service instance's canonical handlers
 /// (the service supplies its own control endpoint).
-pub(crate) type Dispatch = Arc<
+pub type Dispatch = Arc<
     dyn Fn(ControlMethod) -> Pin<Box<dyn Future<Output = anyhow::Result<ControlResponse>> + Send>>
         + Send
         + Sync,
@@ -65,7 +65,7 @@ pub(crate) type Dispatch = Arc<
 
 /// The A2 catalog check (the one W4 uses; `service_runtime::scope_grant`):
 /// the selection's scope identity and catalog revision, or the refusal code.
-pub(crate) type ScopeCheck = Arc<
+pub type ScopeCheck = Arc<
     dyn Fn(
             WindowScopeSelection,
         )
@@ -74,7 +74,7 @@ pub(crate) type ScopeCheck = Arc<
         + Sync,
 >;
 /// `https.trust_status`: the read-only trust inspection, run in the service.
-pub(crate) type TrustInspect =
+pub type TrustInspect =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>> + Send + Sync>;
 
 /// The scoped-read admission gate's side of an A2 grant's in-memory read
@@ -84,27 +84,27 @@ pub(crate) type TrustInspect =
 /// answers whether the gate accepted it. `revoke` revokes dropped nonces and
 /// is called only after the plane's lock is released.
 #[derive(Clone)]
-pub(crate) struct SelectionAuthority {
-    pub(crate) register: Arc<dyn Fn(&SelectionScopeRef) -> bool + Send + Sync>,
-    pub(crate) revoke: Arc<dyn Fn(Vec<Incarnation>) + Send + Sync>,
+pub struct SelectionAuthority {
+    pub register: Arc<dyn Fn(&SelectionScopeRef) -> bool + Send + Sync>,
+    pub revoke: Arc<dyn Fn(Vec<Incarnation>) + Send + Sync>,
 }
 
 /// One A2 read (selection authority S2): the session's checked grant and
 /// the browser's tools call. The nonce inside `selection_ref` reaches only
 /// the in-process admission; the answer never carries it (N3).
-pub(crate) struct SelectedRead {
-    pub(crate) selection: WindowScopeSelection,
-    pub(crate) scope_identity: Sha256Digest,
-    pub(crate) selection_ref: SelectionScopeRef,
-    pub(crate) tool: String,
-    pub(crate) arguments: serde_json::Map<String, Value>,
-    pub(crate) mode: airk_core::service::ToolResponseMode,
-    pub(crate) client: airk_core::usage::ClientFamily,
+pub struct SelectedRead {
+    pub selection: WindowScopeSelection,
+    pub scope_identity: Sha256Digest,
+    pub selection_ref: SelectionScopeRef,
+    pub tool: String,
+    pub arguments: serde_json::Map<String, Value>,
+    pub mode: airk_core::service::ToolResponseMode,
+    pub client: airk_core::usage::ClientFamily,
 }
 
 /// The A2 read itself, run in process by `service_runtime` through the same
 /// selection read path as W4 (one index, or the combined facade).
-pub(crate) type SelectionReader = Arc<
+pub type SelectionReader = Arc<
     dyn Fn(SelectedRead) -> Pin<Box<dyn Future<Output = ControlResponse> + Send>> + Send + Sync,
 >;
 
@@ -122,7 +122,7 @@ struct Secrets {
 
 /// The admin plane of one service instance. Codes and sessions live only
 /// in memory, so a restart ends all of them (§4.5 step 5).
-pub(crate) struct AdminPlane {
+pub struct AdminPlane {
     dispatch: Dispatch,
     instance: Incarnation,
     clock: Clock,
@@ -193,7 +193,7 @@ fn system_random() -> Random {
 impl AdminPlane {
     /// The plane of service `instance`, whose calls go to `dispatch`, with
     /// the system clock and the OS random source.
-    pub(crate) fn new(dispatch: Dispatch, instance: Incarnation) -> Self {
+    pub fn new(dispatch: Dispatch, instance: Incarnation) -> Self {
         Self::with_sources(dispatch, instance, Arc::new(system_clock), system_random())
     }
 
@@ -220,32 +220,32 @@ impl AdminPlane {
     }
 
     /// Serve searches under A2 grants (selection authority S2).
-    pub(crate) fn with_selection_reader(mut self, reader: SelectionReader) -> Self {
+    pub fn with_selection_reader(mut self, reader: SelectionReader) -> Self {
         self.selection_reader = Some(reader);
         self
     }
 
     /// Give each A2 grant an in-memory read authority whose nonce is live
     /// with the scoped-read admission gate while the grant is stored.
-    pub(crate) fn with_selection_authority(mut self, selection: SelectionAuthority) -> Self {
+    pub fn with_selection_authority(mut self, selection: SelectionAuthority) -> Self {
         self.selection = Some(selection);
         self
     }
 
     /// Service end (§3.3): every session ends and every grant's nonce is
     /// revoked once the lock is released.
-    pub(crate) fn end(&self) {
+    pub fn end(&self) {
         self.secrets().sessions.end();
     }
 
     /// Serve A2 grants with the shared catalog check.
-    pub(crate) fn with_scope_check(mut self, check: ScopeCheck) -> Self {
+    pub fn with_scope_check(mut self, check: ScopeCheck) -> Self {
         self.scope_check = Some(check);
         self
     }
 
     /// Serve `https.trust_status` with the service's trust inspection.
-    pub(crate) fn with_trust_inspect(mut self, inspect: TrustInspect) -> Self {
+    pub fn with_trust_inspect(mut self, inspect: TrustInspect) -> Self {
         self.trust_inspect = Some(inspect);
         self
     }
@@ -263,7 +263,7 @@ impl AdminPlane {
 
     /// A1 (contracts §2.7): issue one launch code for the listener on `port`.
     /// The reply is the only place the code text exists.
-    pub(crate) fn launch_code(&self, port: u16) -> ControlResponse {
+    pub fn launch_code(&self, port: u16) -> ControlResponse {
         let unavailable = || ControlResponse::Failure {
             code: "admin_launch_unavailable".into(),
         };

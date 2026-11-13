@@ -11,7 +11,7 @@
 //! sockets of processes whose effective uid is the service's (`peer/macos.rs`
 //! enumerates them; `macos_found_among` decides). Other platforms make no
 //! observation, so the proof is `Unavailable` and the API is refused.
-use crate::admin_contract::{PeerObservation, PeerProof, peer_proof};
+use airk_endpoint::admin_contract::{PeerObservation, PeerProof, peer_proof};
 use std::{
     net::{SocketAddr, SocketAddrV4},
     sync::{Arc, OnceLock},

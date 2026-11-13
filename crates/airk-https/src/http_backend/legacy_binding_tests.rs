@@ -2,7 +2,7 @@
 //! Imported legacy HTTP backend tests. Moved from
 //! `catalog_host_context::legacy_binding_tests` (split step 2b): they build
 //! the backend, which sits above the catalog.
-use crate::catalog_host_context::legacy_binding_tests::{
+use airk_catalog_control::catalog_host_context::legacy_binding_tests::{
     imported_fixture, insert_imported_fixture,
 };
 use airk_core::identity::{Incarnation, Sha256Digest};
@@ -11,11 +11,11 @@ use anyhow::Result;
 
 #[tokio::test]
 async fn imported_http_union_preserves_all_bindings_and_requires_explicit_project() -> Result<()> {
-    use crate::runtime_install::http_legacy::{LegacyMigrationResolution, resolve};
     use airk_core::{
         grant_provenance::GrantProvenance,
         service_http::{HttpSelection, NativeImportedHttpUnion},
     };
+    use airk_installer::runtime_install::http_legacy::{LegacyMigrationResolution, resolve};
     use airk_mcp::read_attempt::ReadAttemptContext;
     use std::time::{Duration, Instant};
     let (owner, mut registry, first, grant) = imported_fixture(false)?;
@@ -127,8 +127,8 @@ async fn imported_http_union_preserves_all_bindings_and_requires_explicit_projec
 
 #[tokio::test]
 async fn imported_http_factory_is_lazy_and_revalidates_revocation() -> Result<()> {
-    use crate::runtime_install::http_legacy::{LegacyMigrationResolution, resolve};
     use airk_core::service_http::HttpSelection;
+    use airk_installer::runtime_install::http_legacy::{LegacyMigrationResolution, resolve};
     use airk_mcp::read_attempt::ReadAttemptContext;
     use std::time::{Duration, Instant};
     let (owner, mut registry, registration, _) = imported_fixture(false)?;

@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native adapter primitives shared by service/client executable modes.
 extern crate self as airk_cli;
-/// I3 admin HTTP contract (split C5): leaf types, pure admission decisions and
-/// the generated-schema owner. `admin_plane` is its handler (Phase 5).
-pub use airk_endpoint::admin_contract;
-/// The service's `/admin` plane (split Phase 5): launch codes, sessions,
-/// embedded assets and admin dispatch.
-pub(crate) mod admin_plane;
 pub(crate) use airk_catalog_control::catalog_admission;
 pub(crate) use airk_catalog_control::catalog_authority;
 pub(crate) use airk_catalog_control::catalog_coordinator;
@@ -15,19 +9,22 @@ pub(crate) use airk_catalog_control::catalog_host_context;
 pub(crate) use airk_catalog_control::catalog_index_setup_control;
 pub(crate) use airk_catalog_control::catalog_source_change_control;
 pub(crate) use airk_catalog_control::catalog_split_control;
+/// I3 admin HTTP contract (split C5): leaf types, pure admission decisions and
+/// the generated-schema owner. `admin_plane` is its handler (Phase 5).
+pub use airk_endpoint::admin_contract;
+pub use airk_endpoint::http_endpoint;
 pub use airk_frontend::combined_frontend;
 #[cfg(test)]
 pub(crate) use airk_host::catalog_test_fixture;
 pub use airk_host::embedding_pool_protocol;
+/// The service's `/admin` plane (split Phase 5): launch codes, sessions,
+/// embedded assets and admin dispatch.
+pub(crate) use airk_https::admin_plane;
+pub(crate) use airk_https::http_backend;
+pub(crate) use airk_https::http_gateway;
 pub use airk_inference::embedding_client;
 pub use airk_inference::embedding_pool_bootstrap;
 pub use airk_inference::embedding_pool_client;
-mod http_backend;
-pub use airk_endpoint::http_endpoint;
-mod http_gateway;
-// Only the gateway's inference-owner tests use the engine through this path.
-#[cfg(all(test, feature = "local-inference"))]
-pub(crate) use airk_inference::inference_engine;
 /// The local transport lives in `airk-ipc` (split G6); `ipc` keeps the old path.
 pub use airk_ipc as ipc;
 /// Compatibility path (split G1): the transport moved to `ipc::endpoint`.
@@ -64,8 +61,6 @@ pub use airk_supervisor::derived_worker;
 pub(crate) use airk_supervisor::project_supervisor;
 pub use airk_supervisor::project_worker;
 
-pub(crate) use airk_host::service_resource_policy;
-
 pub use airk_host::install_files;
 pub(crate) use airk_host::install_layout;
 pub(crate) use airk_installer::legacy_processes;
@@ -74,7 +69,7 @@ pub use airk_installer::manual_start;
 /// The `airk runtime` dispatcher (split step 2b): above the service it serves.
 pub mod runtime_commands;
 /// Setup-only HTTP discovery and enrollment handlers (split step 2b).
-mod runtime_http_commands;
+pub(crate) use airk_https::runtime_http_commands;
 pub use airk_installer::runtime_install;
 pub use airk_installer::service_manager;
 

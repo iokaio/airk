@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The HTTP backend of a migrated imported legacy selection (moved from
 //! `runtime_install::http_legacy`): revalidated before every read.
-use crate::runtime_install::http_legacy::validate;
 use airk_core::service_http::NativeImportedHttpSelection;
+use airk_installer::runtime_install::http_legacy::validate;
 use anyhow::{Result, ensure};
 use std::{
     path::PathBuf,
@@ -33,7 +33,7 @@ impl airk_mcp::remote::RemoteTools for ImportedBackend {
         false
     }
     fn query_concurrency(&self) -> usize {
-        crate::service_resource_policy::query_concurrency(&self.control)
+        airk_host::service_resource_policy::query_concurrency(&self.control)
     }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         *self.client.lock().unwrap_or_else(|e| e.into_inner()) = client;
@@ -71,7 +71,7 @@ impl airk_mcp::remote::RemoteTools for ImportedBackend {
                 _ = context.cancellation().cancelled() => anyhow::bail!("imported connection setup canceled"),
                 _ = tokio::time::sleep_until(tokio::time::Instant::from_std(context.deadline())) =>
                     return Err(airk_mcp::remote::PreparationExpired.into()),
-                connection = crate::project_client::Connection::connect_as(
+                connection = airk_frontend::project_client::Connection::connect_as(
                     &self.control, self.selection.registration.binding, client,
                 ) => connection?,
             };

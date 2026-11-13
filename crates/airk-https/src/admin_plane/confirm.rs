@@ -8,12 +8,12 @@
 //! browser's text must equal it exactly before anything is sent. The native
 //! digest check still decides whether the reviewed draft is current.
 use super::Dispatch;
-use crate::admin_contract::{AdminCode, Confirmation, MAX_CONFIRM_TEXT_BYTES};
 use airk_core::{
     catalog_management::{CatalogEntity, CatalogItem, ConfirmationTarget, plan_confirmation_text},
     index_catalog::CatalogRevision,
     service::{ControlMethod, ControlResponse},
 };
+use airk_endpoint::admin_contract::{AdminCode, Confirmation, MAX_CONFIRM_TEXT_BYTES};
 
 /// The current display name of a catalog entity at `revision`.
 async fn entity_name(

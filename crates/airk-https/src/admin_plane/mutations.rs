@@ -14,11 +14,11 @@
 //! their key. A lost reply is resent with the same key or nonce, never a
 //! new one; a second loss is an unknown outcome.
 use super::{Dispatch, Random, secrets::Review};
-use crate::admin_contract::{AdminCode, RequestKeyRule, RequestProgress, RequestState};
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse, RequestKey},
 };
+use airk_endpoint::admin_contract::{AdminCode, RequestKeyRule, RequestProgress, RequestState};
 use serde_json::{Value, json};
 
 /// The keyed variants the request journal (M5) accepts
@@ -73,7 +73,7 @@ fn generate_rule(body: &Value) -> Option<&'static RequestKeyRule> {
         .find_map(|row| {
             row.request_key
                 .as_ref()
-                .filter(|rule| rule.mode == crate::admin_contract::KeyMode::Generate)
+                .filter(|rule| rule.mode == airk_endpoint::admin_contract::KeyMode::Generate)
         })
 }
 

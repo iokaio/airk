@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Embed only explicitly prepared, pinned assets. Never fetch from a build script.
+//! The sealed bundle stays at `crates/airk-cli/admin-assets/` (docs/simplify/airk-cli-split.md, step 3h).
 use sha2::{Digest, Sha256};
 use std::{env, fs, path::PathBuf};
 
@@ -31,7 +32,8 @@ fn admin_asset_name(name: &str) -> bool {
 /// lists must exist with its recorded SHA-256, or the build fails. Verified
 /// bytes are snapshotted into `OUT_DIR` and embedded from there.
 fn admin_assets(output: &std::path::Path) {
-    let source = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("admin-assets");
+    let source =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../airk-cli/admin-assets");
     let manifest_path = source.join("manifest.json");
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", manifest_path.display());

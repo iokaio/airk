@@ -29,7 +29,7 @@ pub(super) fn find(name: &str) -> Option<Asset> {
 /// `inventory_sha256` its name, SHA-256 and content type; `bundle_sha256` its
 /// name and bytes. `scripts/build-local-service-installer.py` computes the
 /// same values from `crates/airk-cli/admin-assets/` for the payload inventory.
-pub(crate) fn digests() -> (
+pub fn digests() -> (
     airk_core::identity::Sha256Digest,
     airk_core::identity::Sha256Digest,
 ) {

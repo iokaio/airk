@@ -2,12 +2,12 @@
 //! Native inference owner status over the actual HTTPS gateway. Moved from
 //! `inference_engine::pool::owner::tests` (split step 2b): it drives the
 //! gateway, which sits above inference.
-use crate::embedding_pool_protocol as protocol;
-use crate::inference_engine::pool::{InferenceOwner, Work, accounting};
 use crate::local_ipc;
 use airk_core::{
     identity::Incarnation, inference_provider::CompletionState, service::WorkerIdentity,
 };
+use airk_host::embedding_pool_protocol as protocol;
+use airk_inference::inference_engine::pool::{InferenceOwner, Work, accounting};
 use airk_retrieval::embedding_worker::{Request, Response};
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -76,8 +76,11 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
     let namespace = registry.incarnation()?;
     let lease = Arc::new(airk_store::service::ServiceLease::acquire(&root)?);
     let owner = InferenceOwner::start(lease.clone(), service, 1)?;
-    let (mut grant, location, identity) =
-        crate::inference_engine::pool::tests::fixture(fixture.path(), "held", "held model")?;
+    let (mut grant, location, identity) = airk_inference::inference_engine::pool::tests::fixture(
+        fixture.path(),
+        "held",
+        "held model",
+    )?;
     grant.service = service;
     grant.pool = owner.generation();
     let worker = WorkerIdentity {
@@ -116,7 +119,7 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
         worker,
         session,
         &alive,
-        crate::inference_engine::pool::tests::open(location, identity),
+        airk_inference::inference_engine::pool::tests::open(location, identity),
     )?;
     let opened = opened.blocking_recv()?;
     assert!(

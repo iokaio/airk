@@ -11,7 +11,7 @@ publish.workspace = true
 
 [features]
 default = []
-local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model", "airk-host/local-inference", "airk-endpoint/local-inference", "airk-inference/local-inference", "airk-catalog-control/local-inference", "airk-installer/local-inference", "airk-supervisor/local-inference", "airk-frontend/local-inference"]
+local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model", "airk-host/local-inference", "airk-endpoint/local-inference", "airk-inference/local-inference", "airk-catalog-control/local-inference", "airk-installer/local-inference", "airk-supervisor/local-inference", "airk-frontend/local-inference", "airk-https/local-inference"]
 bundled-model = []
 parser-training = []
 
@@ -20,6 +20,7 @@ name = "airk"
 path = "src/main.rs"
 
 [dependencies]
+airk-https.workspace = true
 airk-frontend.workspace = true
 airk-supervisor.workspace = true
 airk-installer.workspace = true
@@ -59,6 +60,7 @@ hyper-util.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+airk-https = { workspace = true, features = ["test-support"] }
 airk-frontend = { workspace = true, features = ["test-support"] }
 airk-supervisor = { workspace = true, features = ["test-support"] }
 airk-installer = { workspace = true, features = ["test-support"] }
@@ -79,7 +81,3 @@ libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_System_IO", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_RemoteDesktop", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_SystemServices", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Console"] }
-
-[build-dependencies]
-serde_json.workspace = true
-sha2.workspace = true

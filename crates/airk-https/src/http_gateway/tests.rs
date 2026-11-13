@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::http_endpoint::{InstallationBinding, TlsIdentity, read_client_token};
 use airk_core::{
     identity::Sha256Digest,
     index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId},
     service::ScopedConnectRequest,
     service_http::{EndpointState, HttpSelection, LoopbackMcpUrl},
 };
+use airk_endpoint::http_endpoint::{InstallationBinding, TlsIdentity, read_client_token};
 use airk_mcp::remote::{RemoteFuture, RemoteTools};
 use anyhow::Context as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
