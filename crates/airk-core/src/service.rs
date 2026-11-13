@@ -436,6 +436,15 @@ pub enum ControlMethod {
             deserialize_with = "combined_present"
         )]
         combined: Option<Box<CombinedConnectRequest>>,
+        /// U105: the open connection whose agent choice selects the open
+        /// catalog (`airkctl tools list --connection`). Absent for every
+        /// other catalog; never with `combined`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        connection_id: Option<Incarnation>,
     },
     /// M3: run one unified tool for a selected project and return its complete
     /// envelope. The service runs the pre-split CLI call path unchanged.
@@ -485,8 +494,7 @@ pub enum ControlMethod {
     AgentConnectionVerify {
         connection_id: Incarnation,
     },
-    /// U105 (contract step; not served yet, `not_yet_served`): set an open
-    /// connection's default scope and agent choice. An absent field keeps
+    /// U105: set an open connection's default scope and agent choice. An absent field keeps
     /// its value; `expected_defaults_revision` fences concurrent edits. The
     /// credential generation never changes.
     AgentConnectionDefaults {
@@ -1043,8 +1051,7 @@ pub enum ToolSelection {
         )]
         member_availability: Option<crate::combined_reads::MemberAvailability>,
     },
-    /// U105 (contract step; not served yet, `not_yet_served`): an open
-    /// agent read. `index_ids`/`index_set_ids` are ids or exact names
+    /// U105: an open agent read. `index_ids`/`index_set_ids` are ids or exact names
     /// (union, at most [`crate::index_catalog::MAX_SELECTION`] each); both
     /// empty reads the connection's default scope. `connection_id` names the
     /// open connection whose defaults and agent choice apply.

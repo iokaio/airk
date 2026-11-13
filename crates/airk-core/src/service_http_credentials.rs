@@ -156,6 +156,9 @@ pub struct AuthenticatedCredential {
     pub selection: HttpSelection,
     pub expires_unix_ms: u64,
     pub explorer_descriptor: Option<PathBuf>,
+    /// U105: the record's open state as stored when the token authenticated
+    /// (present exactly for an `Open` selection).
+    pub open: Option<OpenConnectionState>,
 }
 
 /// The token file of connection `id`.
@@ -270,6 +273,7 @@ impl Ledger {
             selection: record.selection.clone(),
             expires_unix_ms: record.expires_unix_ms,
             explorer_descriptor: record.explorer_descriptor.clone(),
+            open: record.open.clone(),
         })
     }
 }

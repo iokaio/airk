@@ -1976,6 +1976,26 @@
     "P3",
     "P5"
    ]
+  },
+  {
+   "operation": "agents.connection_defaults",
+   "method": "AgentConnectionDefaults",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session"
+   ],
+   "authorization": [
+    "owner_pipe"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
   }
  ],
  "never_over_http": [

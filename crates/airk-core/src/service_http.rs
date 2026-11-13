@@ -159,16 +159,11 @@ pub enum HttpSelection {
     /// U105/U106(b): an open agent connection. The bearer admits the agent
     /// to the MCP endpoint without a reviewed grant; the record's `open`
     /// state (default scope, agent choice) decides what each call reads.
-    /// Contract only: consumers refuse it with [`OPEN_NOT_SERVED`] until the
-    /// open read path lands.
+    /// Served by enrollment, connection info and the HTTPS open backend.
     Open {
         selection: OpenHttpSelection,
     },
 }
-
-/// Refusal of a consumer that does not serve open connections yet (U105
-/// step 1, contract only).
-pub const OPEN_NOT_SERVED: &str = "open connections are not served yet";
 
 /// Open-read refusal codes (U105). Stable machine codes, no detail.
 pub mod open_refusal {
@@ -180,6 +175,15 @@ pub mod open_refusal {
     pub const SCOPE_NAME_AMBIGUOUS: &str = "scope_name_ambiguous";
     /// A named index or set matches no id and no exact name.
     pub const SCOPE_NAME_UNKNOWN: &str = "scope_name_unknown";
+    /// The resolved scope (sets expanded) names more than 32 indexes.
+    pub const AGENT_SCOPE_TOO_LARGE: &str = "agent_scope_too_large";
+    /// The connection is not an open connection of this installation, or it
+    /// is revoked or expired.
+    pub const AGENT_CONNECTION_NOT_OPEN: &str = "agent_connection_not_open";
+    /// `expected_defaults_revision` is not the stored defaults revision.
+    pub const AGENT_DEFAULTS_CONFLICT: &str = "agent_defaults_conflict";
+    /// A `list_indexes` cursor of another catalog revision.
+    pub const LIST_CURSOR_EXPIRED: &str = "list_cursor_expired";
 }
 
 /// U105: the open connection's namespace only. It names no index, grant or
@@ -296,6 +300,11 @@ pub struct HttpConnectionInfo {
     pub selection: HttpSelection,
     pub ca_certificate_file: String,
     pub credential_file: String,
+    /// U105: an open connection's stored default scope and agent choice,
+    /// present exactly when `selection` is `Open`. Absent, the encoding is
+    /// the pre-U105 one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<crate::service_http_credentials::OpenConnectionState>,
 }
 
 impl HttpConnectionInfo {
@@ -309,6 +318,13 @@ impl HttpConnectionInfo {
         ensure!(
             self.selection.namespace() == self.endpoint.namespace,
             "crossed HTTP connection namespace"
+        );
+        if let Some(open) = &self.open {
+            open.validate()?;
+        }
+        ensure!(
+            matches!(self.selection, HttpSelection::Open { .. }) == self.open.is_some(),
+            "open connection state does not match its selection"
         );
         for reference in [&self.ca_certificate_file, &self.credential_file] {
             ensure!(

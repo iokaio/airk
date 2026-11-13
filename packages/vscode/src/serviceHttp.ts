@@ -70,7 +70,8 @@ export interface EndpointDescriptor {
     executable_sha256:string;url:string;ca_sha256:string;certificate_sha256:string;
     state:'recovering'|'ready'|'stopping';predecessor_digest:string|null;
 }
-export interface HttpConnectionInfo {schema:1;connection_id:string;endpoint:EndpointDescriptor;selection:HttpSelection;ca_certificate_file:string;credential_file:string}
+export interface HttpConnectionInfo {schema:1;connection_id:string;endpoint:EndpointDescriptor;selection:HttpSelection;ca_certificate_file:string;credential_file:string;
+    open?:{defaults_revision:number;default_index_ids:string[];default_index_set_ids:string[];agent_choice:'off'|'on'}}
 export interface AttachmentRetirementProof {
     schema:1;connection_id:string;installation:string;namespace:string;client:string;
     expires_unix_ms:number;explorer_descriptor_sha256:string;authority_sha256:string;
@@ -178,10 +179,17 @@ export function validateEndpoint(input:unknown):EndpointDescriptor{
 }
 export function validateHttpConnection(input:unknown,expected?:HttpSelection,directory?:string):HttpConnectionInfo{
     if(Buffer.byteLength(JSON.stringify(input))>61440)throw Error('http_connection_bound');
-    const value=object(input);keys(value,['schema','connection_id','endpoint','selection','ca_certificate_file','credential_file']);
+    const value=object(input);
+    // (U105) `open` is present exactly for an open connection: its stored default scope and agent choice.
+    keys(value,['schema','connection_id','endpoint','selection','ca_certificate_file','credential_file',...(Object.hasOwn(value,'open')?['open']:[])]);
     if(value.schema!==1)throw Error('unsupported_http_connection');hex(value.connection_id,32);
     const endpoint=validateEndpoint(value.endpoint);
     const selection=validateHttpSelection(value.selection);if(selection.selection.namespace!==endpoint.namespace||expected&&!sameHttpAuthority(selection,expected))throw Error('crossed_http_selection');
+    if((selection.kind==='open')!==Object.hasOwn(value,'open'))throw Error('invalid_http_connection_fields');
+    if(Object.hasOwn(value,'open')){const open=object(value.open);keys(open,['defaults_revision','default_index_ids','default_index_set_ids','agent_choice']);
+        if(!Number.isSafeInteger(open.defaults_revision)||open.defaults_revision<1||open.agent_choice!=='off'&&open.agent_choice!=='on')throw Error('invalid_http_open_state');
+        for(const [field,prefix] of [['default_index_ids','idx_'],['default_index_set_ids','prj_']] as const){const items=open[field];
+            if(!Array.isArray(items)||items.length>32||new Set(items).size!==items.length||!items.every(item=>typeof item==='string'&&new RegExp(`^${prefix}[0-9a-f]{32}$`).test(item)))throw Error('invalid_http_open_state');}}
     for(const field of ['ca_certificate_file','credential_file'])if(typeof value[field]!=='string'||value[field].length>4096||!path.isAbsolute(value[field])||/[\x00-\x1f]/.test(value[field]))throw Error('invalid_http_private_reference');
     const parent=directory??path.dirname(value.ca_certificate_file);
     if(!sameFile(value.ca_certificate_file,path.join(parent,'ca.pem'))||!sameFile(value.credential_file,path.join(parent,`credential-${value.connection_id}.token`)))throw Error('crossed_http_private_reference');

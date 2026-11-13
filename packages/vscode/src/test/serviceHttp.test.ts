@@ -66,6 +66,15 @@ test('attachment retirement proof binds exact native connection, installation, c
     ]){const crossed=structuredClone(proof);mutate(crossed);assert.throws(()=>validateAttachmentRetirement(crossed,connection,'claude',100));}
     assert.throws(()=>validateAttachmentRetirement(proof,connection,'unknown',100));
 });
+test('(U105) an open connection carries exactly its open state; other connections never do',()=>{
+    const scoped=info(path.resolve('fixture'));
+    const open:any={...structuredClone(scoped),selection:{kind:'open',selection:{namespace:scoped.endpoint.namespace}},
+        open:{defaults_revision:3,default_index_ids:['idx_'+'1'.repeat(32)],default_index_set_ids:['prj_'+'2'.repeat(32)],agent_choice:'off'}};
+    assert.deepEqual(validateHttpConnection(open),open);
+    for(const change of [(v:any)=>{delete v.open;},(v:any)=>v.open.agent_choice='all',(v:any)=>v.open.defaults_revision=0,(v:any)=>v.open.default_index_ids=['prj_'+'2'.repeat(32)],
+        (v:any)=>v.open.default_index_set_ids=['prj_'+'2'.repeat(32),'prj_'+'2'.repeat(32)],(v:any)=>v.open.extra=1]){const candidate=structuredClone(open);change(candidate);assert.throws(()=>validateHttpConnection(candidate));}
+    assert.throws(()=>validateHttpConnection({...structuredClone(scoped),open:open.open}));
+});
 test('HTTP DTO preserves exact authority and permits only a monotonic catalog clock refresh',()=>{
     const value=info(path.resolve('fixture'));assert.deepEqual(validateHttpConnection(value,selection()),value);
     const next=structuredClone(value);(next.selection.selection as any).expected_catalog_revision++;assert.equal((validateHttpConnection(next,selection()).selection.selection as any).expected_catalog_revision,8);

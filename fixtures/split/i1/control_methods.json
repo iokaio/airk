@@ -35,9 +35,19 @@
           "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"combined\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"index_ids\":[\"idx_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]}}}",
           "request_frame_budget": 65536,
           "response_frame_budget": 1048576
+        },
+        {
+          "name": "list_for_an_open_connection",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 1048576
         }
       ],
       "rejected_methods": [
+        {
+          "name": "connection_id_null",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"connection_id\":null}}"
+        },
         {
           "name": "unknown_detail",
           "bytes": "{\"tools_catalog\":{\"detail\":{\"call\":{\"tool\":\"x\"}}}}"

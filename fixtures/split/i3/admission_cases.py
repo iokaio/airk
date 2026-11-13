@@ -670,6 +670,10 @@ def operations():
         ("service.login_startup_uninstall", "LoginStartup.Uninstall", MGMT, "mutation", "natural", natural),
         ("service.record_client_error", "RecordClientError", ALL4, "mutation", "natural", natural),
         ("agents.revoke", "HttpRevoke", MGMT, "mutation", "natural", natural),
+        # U105: an open connection's default scope and agent choice; the Explorer's
+        # applied search scope relays it (session). Fenced by its defaults revision.
+        ("agents.connection_defaults", "AgentConnectionDefaults", LOCAL + ["session"], "mutation", "natural",
+         natural),
     ]
     for operation, method, surfaces, effect, idempotency, conformance in mutations:
         yield row(operation, method, "management", surfaces, effect, idempotency, conformance)

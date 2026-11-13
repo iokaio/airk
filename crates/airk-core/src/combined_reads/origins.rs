@@ -22,10 +22,16 @@ pub struct QualifiedOrigin {
     pub publication: RevisionEnvelope,
 }
 impl QualifiedOrigin {
+    /// A Project-scoped origin (catalog, window or admin selection).
     pub fn validate(&self) -> Result<()> {
+        self.validate_for(false)
+    }
+    /// `open`: an open agent read's origin (U106(d)) names no Project;
+    /// every other origin names at least one.
+    pub fn validate_for(&self, open: bool) -> Result<()> {
         unique_bounded(&self.project_ids, MAX_SELECTION)?;
         ensure!(
-            !self.project_ids.is_empty(),
+            self.project_ids.is_empty() == open,
             "qualified origin has no selected Project"
         );
         relative_path(&self.source_relative_path, false)?;
@@ -52,7 +58,9 @@ impl RankedOrigin {
         member: usize,
         members: &[MemberPublication],
     ) -> Result<Self> {
-        origin.validate()?;
+        // The composer qualified it against its member: no Project exactly
+        // for an open member (no memberships).
+        origin.validate_for(origin.project_ids.is_empty())?;
         ensure!(
             member < MAX_SELECTION
                 && members
@@ -140,7 +148,11 @@ pub fn materialize_ranked_origin(combined: &Value, rank: &Value) -> Result<Quali
         serde_json::from_value::<QualifiedOrigin>(raw.clone())
             .context("invalid retained inline origin")?
     };
-    origin.validate()?;
+    // Only a result of an agent-owned (open) selection carries Project-free
+    // origins.
+    let open = combined.pointer("/selection/selection/owner")
+        == Some(&serde_json::Value::String("agent".into()));
+    origin.validate_for(open)?;
     ensure!(
         rank.get("index_id") == Some(&serde_json::to_value(origin.index_id)?),
         "ranked origin index mismatch"
