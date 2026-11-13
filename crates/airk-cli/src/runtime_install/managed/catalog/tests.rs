@@ -672,7 +672,7 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
             fs::create_dir(&primary)?;
             let original = b"export function ManagedFirstEvidence() { return 17; }\n";
             fs::write(primary.join("fixture.ts"), original)?;
-            let epoch = service_runtime::request_for_version(
+            let epoch = control_client::request_for_version(
                 &origin.control,
                 ControlMethod::RequestEpoch,
                 env!("CARGO_PKG_VERSION"),
@@ -702,7 +702,7 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
                 additional_roots: vec![],
                 setup_watch: false,
             };
-            let draft = service_runtime::request_for_version(
+            let draft = control_client::request_for_version(
                 &origin.control,
                 ControlMethod::CatalogIndexSetupDraft { selection },
                 env!("CARGO_PKG_VERSION"),
@@ -711,7 +711,7 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
             let ControlResponse::CatalogIndexSetupDraft { draft, .. } = draft else {
                 anyhow::bail!("actual managed native setup review missing");
             };
-            let applied = service_runtime::request_for_version(
+            let applied = control_client::request_for_version(
                 &origin.control,
                 ControlMethod::CatalogIndexSetupApply { draft },
                 env!("CARGO_PKG_VERSION"),
@@ -725,7 +725,7 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
             };
             assert_eq!(setup.stage, airk_core::catalog_setup::SetupStage::Ready);
             assert_eq!(fs::read(primary.join("fixture.ts"))?, original);
-            let eligibility = service_runtime::request_for_version(
+            let eligibility = control_client::request_for_version(
                 &origin.control,
                 ControlMethod::CatalogLegacyBinding {
                     project: setup.request.registration.binding,
@@ -748,7 +748,7 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
         }
         .await;
         let control = state.join("control");
-        let _ = service_runtime::request_for_version(
+        let _ = control_client::request_for_version(
             &control,
             ControlMethod::Shutdown,
             env!("CARGO_PKG_VERSION"),

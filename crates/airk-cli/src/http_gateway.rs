@@ -37,6 +37,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[cfg(all(test, feature = "local-inference"))]
+mod inference_owner_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 

@@ -5,7 +5,7 @@
 use crate::install_files::{
     MAC_LAUNCHER_IMAGE, launcher_path, main_name, read_bounded, safe_file, sync_directory,
 };
-use crate::{control_client, local_ipc, runtime_pair, service_runtime};
+use crate::{control_client, local_ipc, runtime_pair};
 use airk_core::service::{ControlMethod, ControlResponse, ServiceHealth};
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Subcommand, ValueEnum};
@@ -31,34 +31,34 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 
-mod activation;
+pub(crate) mod activation;
 pub(crate) use activation::verify_admission_release;
 mod setup;
 pub(crate) use setup::{SetupAdmission, SetupCancellation, installed_control_cooperative};
 pub(crate) mod clean_break_background;
 mod clean_break_cleanup;
 mod data_migration;
-mod http_cleanup;
-mod inventory;
-mod launcher_repair;
-mod layout;
-mod managed;
-mod state_contract;
+pub(crate) mod http_cleanup;
+pub(crate) mod inventory;
+pub(crate) mod launcher_repair;
+pub(crate) mod layout;
+pub(crate) mod managed;
+pub(crate) mod state_contract;
 pub(crate) use state_contract::InitializedProbe;
-mod upgrade_stop;
+pub(crate) mod upgrade_stop;
 pub use managed::ManagedLifecycle;
-mod http_rotation;
+pub(crate) mod http_rotation;
 mod issuer_lifecycle;
-mod legacy_caches;
-mod legacy_launchers;
-mod legacy_maintenance;
-mod lifecycle;
+pub(crate) mod legacy_caches;
+pub(crate) mod legacy_launchers;
+pub(crate) mod legacy_maintenance;
+pub(crate) mod lifecycle;
 #[cfg(any(target_os = "macos", test))]
 #[path = "runtime_macos_login.rs"]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod macos_login;
-mod payload_repair;
-mod replacement;
+pub(crate) mod payload_repair;
+pub(crate) mod replacement;
 /// The pre-1.9.0 replacement boundary shared by `runtime replace-installation`
 /// and standalone `airk setup`: the complete plan, including its client
 /// references, and whether this candidate requires replacing the installation.
@@ -85,20 +85,20 @@ pub(crate) fn pending_replacement_operation(
 ) -> Result<Option<String>> {
     replacement::pending_operation(install, candidate)
 }
-mod retirement;
+pub(crate) mod retirement;
 pub(crate) use retirement::uninstall as uninstall_receipt;
-mod snapshot;
-mod staging;
+pub(crate) mod snapshot;
+pub(crate) mod staging;
 
 const MAX_MANIFEST: u64 = 512 * 1024;
 /// Typed refusal for `adopt-legacy-index(es)`: the 1.8.16 clean-break baseline
 /// rebuilds from original sources and never adopts standalone saved indexes.
 /// An interrupted adoption is settled, never resumed (`legacy_maintenance`).
-const STANDALONE_ADOPTION_UNSUPPORTED: &str = "standalone_adoption_unsupported: AIRK no longer adopts standalone saved indexes; set up a new index from the original sources in Indexing";
+pub(crate) const STANDALONE_ADOPTION_UNSUPPORTED: &str = "standalone_adoption_unsupported: AIRK no longer adopts standalone saved indexes; set up a new index from the original sources in Indexing";
 /// Typed refusal for every in-place P5 catalog upgrade entry point: a raw
 /// registry is never migrated in place; the 1.8.16 clean break creates fresh
 /// state with Genesis instead.
-const CATALOG_UPGRADE_UNSUPPORTED: &str =
+pub(crate) const CATALOG_UPGRADE_UNSUPPORTED: &str =
     "catalog_upgrade_unsupported: AIRK no longer upgrades a registry in place; run the clean break";
 const MAX_FILES: usize = 2048;
 const MAX_PAYLOAD: u64 = 4 * 1024 * 1024 * 1024;
@@ -773,7 +773,7 @@ async fn installed_control_legacy(root: &Path, approval: Approval) -> Result<Pat
     layout::control(root)
 }
 
-fn require_matching_health(approval: &Approval, health: &ServiceHealth) -> Result<()> {
+pub(crate) fn require_matching_health(approval: &Approval, health: &ServiceHealth) -> Result<()> {
     ensure!(
         health.version == approval.version
             && health.runtime_sha256.as_deref() == Some(approval.manifest_sha256.as_str()),
@@ -873,7 +873,7 @@ pub struct Approval {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Selection {
-    schema: u32,
+    pub(crate) schema: u32,
     pub active: String,
     pub previous: Option<String>,
 }
@@ -887,13 +887,13 @@ struct LauncherReceipt {
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StartupAttempts {
+pub(crate) struct StartupAttempts {
     attempts_unix_ms: Vec<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BootstrapObservation {
+pub(crate) struct BootstrapObservation {
     state: String,
     observed_unix_ms: u64,
     process_id: Option<u32>,
@@ -943,7 +943,7 @@ pub(crate) fn login_opted_out(root: &Path) -> Result<bool> {
     }
 }
 
-fn record_login_opt_out(root: &Path) -> Result<()> {
+pub(crate) fn record_login_opt_out(root: &Path) -> Result<()> {
     replace_json(
         root,
         LOGIN_OPT_OUT,
@@ -954,7 +954,7 @@ fn record_login_opt_out(root: &Path) -> Result<()> {
     )
 }
 
-fn clear_login_opt_out(root: &Path) -> Result<()> {
+pub(crate) fn clear_login_opt_out(root: &Path) -> Result<()> {
     let path = root.join(LOGIN_OPT_OUT);
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -968,7 +968,7 @@ fn clear_login_opt_out(root: &Path) -> Result<()> {
 }
 
 /// The opt-out as reported by `runtime inspect` and `runtime snapshot`.
-fn login_opt_out_report(root: &Path) -> serde_json::Value {
+pub(crate) fn login_opt_out_report(root: &Path) -> serde_json::Value {
     match login_opted_out(root) {
         Ok(opted_out) => serde_json::Value::Bool(opted_out),
         Err(_) => serde_json::Value::Null,
@@ -1263,7 +1263,7 @@ fn open_install_lock(root: &Path) -> Result<File> {
     Ok(file)
 }
 
-fn install_lock(root: &Path) -> Result<File> {
+pub(crate) fn install_lock(root: &Path) -> Result<File> {
     let file = open_install_lock(root)?;
     file.try_lock()
         .context("another AIRK installer/launcher is active; retry after it finishes")?;
@@ -1279,7 +1279,7 @@ const EXISTING_INSTALL_LOCK_WAIT: Duration = Duration::from_secs(15);
 /// Read-only observations may lock an existing installation, never initialize it.
 /// The lock stays exclusive, because some observations settle interrupted
 /// work, but a held lock is waited for, within a bound, instead of refused.
-fn existing_install_lock(root: &Path) -> Result<File> {
+pub(crate) fn existing_install_lock(root: &Path) -> Result<File> {
     existing_install_lock_within(root, EXISTING_INSTALL_LOCK_WAIT, std::thread::sleep)
 }
 
@@ -1414,7 +1414,7 @@ mod connection_lock_tests {
     }
 }
 
-fn replace_json<T: Serialize>(root: &Path, name: &str, value: &T) -> Result<()> {
+pub(crate) fn replace_json<T: Serialize>(root: &Path, name: &str, value: &T) -> Result<()> {
     let path = root.join(name);
     if path.try_exists()? {
         safe_file(&path)?;
@@ -1714,7 +1714,7 @@ fn prepare_launcher(root: &Path, main: &Path, inventory: &InstallManifest) -> Re
     )
 }
 
-fn prepare_client_launcher(
+pub(crate) fn prepare_client_launcher(
     root: &Path,
     main: &Path,
     approval: &Approval,
@@ -1830,7 +1830,9 @@ fn guarded_selection(root: &Path) -> Result<Selection> {
     Ok(selection)
 }
 
-fn selected_inventory(root: &Path) -> Result<(Selection, PathBuf, Approval, InstallManifest)> {
+pub(crate) fn selected_inventory(
+    root: &Path,
+) -> Result<(Selection, PathBuf, Approval, InstallManifest)> {
     let selection = guarded_selection(root)?;
     let (main, approval, inventory) = verify_runtime_inventory(root, &selection.active)?;
     Ok((selection, main, approval, inventory))
@@ -1838,7 +1840,7 @@ fn selected_inventory(root: &Path) -> Result<(Selection, PathBuf, Approval, Inst
 
 /// A private selection record protects active/rollback identities during cleanup;
 /// execution additionally requires complete inventory and topology verification.
-fn selection_record(root: &Path) -> Result<Selection> {
+pub(crate) fn selection_record(root: &Path) -> Result<Selection> {
     let selection: Selection =
         serde_json::from_slice(&read_bounded(&root.join("selected.json"), 4096)?)?;
     ensure!(selection.schema == 1, "unsupported runtime selection");
@@ -2325,10 +2327,10 @@ struct VerifiedSelection<'a> {
 }
 // This is metadata, NOT a proof/capability and never authorizes process start.
 // It is deliberately private, non-Clone and cannot be supplied over a protocol.
-struct SelectedPreflight {
+pub(crate) struct SelectedPreflight {
     root: PathBuf,
     control: PathBuf,
-    approval: Approval,
+    pub(crate) approval: Approval,
 }
 /// Bounded authenticated delivery metadata only; never an execution capability.
 fn approved_inventory_metadata(directory: &Path, approval: &Approval) -> Result<InstallManifest> {
@@ -2361,7 +2363,7 @@ fn approved_inventory_metadata(directory: &Path, approval: &Approval) -> Result<
     Ok(inventory)
 }
 
-fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
+pub(crate) fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
     let selection = guarded_selection(root)?;
     ensure!(
         managed::read(root)?.is_none(),
@@ -2551,7 +2553,7 @@ pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
     Ok((main, approval))
 }
 
-async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
+pub(crate) async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
     let expected_sha256 = runtime_pair::digest_file(main)?;
     drain_identity(root, approval, &expected_sha256).await
 }
@@ -2611,7 +2613,7 @@ async fn wait_quiescent(root: &Path) -> Result<()> {
     }
 }
 
-async fn stop_login(
+pub(crate) async fn stop_login(
     root: &Path,
     manager: &crate::service_manager::ServiceManager,
     uninstall: bool,
@@ -2677,7 +2679,7 @@ fn ownership_contention(error: &anyhow::Error) -> bool {
         || airk_store::service::registry::is_read_contention(error)
 }
 
-struct Quiescence {
+pub(crate) struct Quiescence {
     catalog: Option<airk_store::service::registry::catalog::CatalogState>,
     _service: airk_store::service::ServiceLease,
     _projects: Vec<airk_store::service::ProjectLease>,
@@ -2712,7 +2714,7 @@ fn require_catalog_capabilities(
     .context("selected runtime cannot enforce the saved index catalog contracts; restore the qualified snapshot before new writes or use forward repair afterwards")
 }
 
-fn quiescent(root: &Path) -> Result<Quiescence> {
+pub(crate) fn quiescent(root: &Path) -> Result<Quiescence> {
     let control = layout::control(root)?;
     local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
@@ -2750,7 +2752,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 
 /// Call under the installer lock before accepting any competing installer
 /// transaction. Ordinary Start and the issuer operation itself do not use it.
-fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
+pub(crate) fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
     if let Some(control) = crate::install_layout::issuer_rotation_control(root)?
         && let Some(record) = crate::http_endpoint::rotation::read(&control)?
     {
@@ -2769,7 +2771,7 @@ fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
 /// Public manager registration/policy mutations must not invalidate a native
 /// operation's captured supervisor. Stop and exact internal recovery retain
 /// their separate ownership checks and do not call this admission gate.
-fn require_manager_change_settled(root: &Path) -> Result<()> {
+pub(crate) fn require_manager_change_settled(root: &Path) -> Result<()> {
     require_issuer_rotation_settled(root)?;
     legacy_maintenance::require_settled(root)
 }
@@ -2834,7 +2836,7 @@ pub(crate) fn clean_break_continuation_pending(root: &Path, control: &Path) -> R
     activation::rebuild::continuation_pending(root, control)
 }
 
-pub(super) fn rebuild_report(
+pub(crate) fn rebuild_report(
     root: &Path,
 ) -> (
     Option<airk_core::rebuild::RebuildObservation>,
@@ -2885,17 +2887,15 @@ async fn activate_with_expected(
     activation::begin(root, identity).await
 }
 
-mod commands;
-pub(crate) mod http_commands;
-pub use http_commands::existing_connection as existing_http_connection;
-pub use http_commands::setup as setup_http_connection;
+// The `airk runtime` dispatcher and its HTTP setup handlers moved to
+// `runtime_commands` and `runtime_http_commands` (split step 2b).
 pub(crate) mod http_legacy;
-mod managed_service;
-pub(crate) use commands::install_login_startup;
-pub use commands::{run, run_with};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 mod native_connection_tests;
+
+#[cfg(test)]
+mod user_paths_tests;

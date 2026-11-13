@@ -61,7 +61,7 @@ pub(super) fn identity(root: &Path) -> Result<SavedRuntime> {
     })
 }
 
-pub(super) fn read(
+pub(crate) fn read(
     root: &Path,
     after: Option<ProjectBinding>,
     revision: Option<u64>,

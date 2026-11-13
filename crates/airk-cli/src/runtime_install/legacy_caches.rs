@@ -108,7 +108,7 @@ struct Journal {
     withdrawal_operation: Option<String>,
 }
 
-pub(super) fn require_settled(root: &Path) -> Result<()> {
+pub(crate) fn require_settled(root: &Path) -> Result<()> {
     ensure!(
         !root.join(JOURNAL).try_exists()?,
         "legacy_cache_retirement_pending: complete migration and retire-legacy-caches before another activation"
@@ -310,7 +310,7 @@ fn save(root: &Path, journal: &Journal) -> Result<()> {
     );
     replace_json(root, JOURNAL, journal)
 }
-pub(super) fn inspect(
+pub(crate) fn inspect(
     root: &Path,
     expected: &str,
     context: &Path,
@@ -419,7 +419,7 @@ fn present(path: &Path) -> Result<bool> {
     }
 }
 
-pub(super) fn retire(
+pub(crate) fn retire(
     root: &Path,
     expected: &str,
     inspection_sha: &str,
@@ -525,4 +525,4 @@ pub(super) fn retire(
 mod tests;
 
 mod reprepare;
-pub(super) use reprepare::reprepare;
+pub(crate) use reprepare::reprepare;

@@ -1309,8 +1309,6 @@ async fn serve_with_admission(
 
 #[cfg(test)]
 use crate::control_client::prebaseline_metadata_method;
-#[cfg(test)]
-pub(crate) use crate::control_client::request_initialized_probe;
 pub use crate::control_client::{
     request, request_for_instance, request_for_version, request_for_version_and_instance,
 };

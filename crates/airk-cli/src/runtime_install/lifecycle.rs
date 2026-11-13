@@ -10,7 +10,7 @@ use airk_store::service::registry::ServiceRegistry;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Input {
+pub(crate) struct Input {
     caller: Incarnation,
     key: RequestKey,
     action: LifecycleAction,
@@ -51,7 +51,7 @@ fn owner(root: &Path) -> Result<bool> {
     }
     crate::service_manager::ServiceManager::for_runtime(root)?.owns_restart()
 }
-pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
+pub(crate) fn inspect(root: &Path) -> Result<serde_json::Value> {
     let control = layout::control(root)?;
     if !control.join("service-1.4.sqlite3").try_exists()? {
         ensure!(
@@ -83,7 +83,7 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     );
     Ok(())
 }
-pub(super) fn abandon(root: &Path, identity: Sha256Digest) -> Result<LifecycleRecord> {
+pub(crate) fn abandon(root: &Path, identity: Sha256Digest) -> Result<LifecycleRecord> {
     let lock = install_lock(root)?;
     let authority = InstallerAuthority { root, _lock: &lock };
     let record = registry(root)?
@@ -136,7 +136,7 @@ pub(super) async fn settle(authority: &InstallerAuthority<'_>) -> Result<()> {
     }
     require_start_allowed(root)
 }
-pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
+pub(crate) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
     let lock = install_lock(root)?;
     let authority = InstallerAuthority { root, _lock: &lock };
     payload_repair::require_settled(root)?;
@@ -177,7 +177,7 @@ pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
     let (_, main, approval) = selected(root)?;
     activation::start_selected(root, &approval, &main, None).await
 }
-pub(super) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
+pub(crate) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
     run_with_admission_budget(root, input, Duration::from_secs(60)).await
 }
 

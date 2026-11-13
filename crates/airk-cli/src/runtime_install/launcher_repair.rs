@@ -101,7 +101,7 @@ fn receipt(root: &Path) -> Result<Option<String>> {
     Ok(Some(known.sha256))
 }
 
-pub(super) fn require_settled(root: &Path) -> Result<()> {
+pub(crate) fn require_settled(root: &Path) -> Result<()> {
     ensure!(
         !exists(&root.join(INTENT))?,
         "launcher repair is pending; resume repair-launcher or inspect/abort it before launching or activating"
@@ -151,7 +151,7 @@ pub(super) fn replacement_guard(root: &Path, main: &Path) -> Result<Option<File>
     }
 }
 
-pub(super) fn pending(root: &Path) -> Result<Option<String>> {
+pub(crate) fn pending(root: &Path) -> Result<Option<String>> {
     if !exists(&root.join(INTENT))? {
         return Ok(None);
     }
@@ -283,7 +283,7 @@ fn finish(root: &Path, intent: &Intent) -> Result<()> {
 }
 
 /// Caller owns the installer lock, stopped-manager proof and all process leases.
-pub(super) fn repair(root: &Path, runtime: &str) -> Result<bool> {
+pub(crate) fn repair(root: &Path, runtime: &str) -> Result<bool> {
     // One complete payload verification belongs to this locked operation. A
     // resumed intent revalidates exactly as a fresh one does; do not hash every
     // embedding payload twice when creating the initial intent.
@@ -358,7 +358,7 @@ fn repair_verified(root: &Path, runtime: &str, main: &Path) -> Result<()> {
     finish(root, &intent)
 }
 
-pub(super) fn abort(root: &Path) -> Result<()> {
+pub(crate) fn abort(root: &Path) -> Result<()> {
     require_issuer_rotation_settled(root)?;
     if !exists(&root.join(INTENT))? {
         return Ok(());

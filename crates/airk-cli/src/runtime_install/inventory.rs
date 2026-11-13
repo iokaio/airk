@@ -107,7 +107,7 @@ fn projects(root: &Path) -> Result<(Vec<serde_json::Value>, bool)> {
     Ok((rows, true))
 }
 
-pub(super) fn inventory(root: &Path) -> Result<serde_json::Value> {
+pub(crate) fn inventory(root: &Path) -> Result<serde_json::Value> {
     let mut budget = MAX_ENTRIES;
     let mut locations = Vec::new();
     for channel in [
@@ -264,7 +264,7 @@ fn purge_contents(root: &Path, retained: &mut Vec<String>) -> Result<u64> {
 
 /// Without `confirm`, returns the exact plan and its digest. With the matching
 /// digest, purges while the service is quiescent; repeating is safe.
-pub(super) fn purge(
+pub(crate) fn purge(
     root: &Path,
     select: &[String],
     confirm: Option<&str>,

@@ -91,7 +91,7 @@ async fn restoration_restarts_current_selection_after_owned_fence_and_leases_are
     let f = Fixture::new()?;
     f.running_journal("quiescent", false)?;
     f.select()?;
-    service_runtime::checkpoint::arm_recovery(&f.control, operation(62), candidate()?)?;
+    crate::checkpoint_packet::arm_recovery(&f.control, operation(62), candidate()?)?;
     let mut calls = 0;
     let settled = settle_locked_with_start(&f.root, |root, approval, main| {
         calls += 1;
@@ -145,7 +145,7 @@ async fn restoration_eligibility_preserves_user_stop_restored_and_foreign_fence_
             f.journal(operation(61), operation(62), phase)?;
         }
         if foreign_fence {
-            service_runtime::checkpoint::arm_recovery(&f.control, operation(65), candidate()?)?;
+            crate::checkpoint_packet::arm_recovery(&f.control, operation(65), candidate()?)?;
         }
         let settled = settle_locked_with_start(
             &f.root,
@@ -170,7 +170,7 @@ async fn restoration_recovery_waits_for_native_owner_and_starter_refusal_is_repo
     let f = Fixture::new()?;
     f.running_journal("quiescent", false)?;
     f.select()?;
-    service_runtime::checkpoint::arm_recovery(&f.control, operation(62), candidate()?)?;
+    crate::checkpoint_packet::arm_recovery(&f.control, operation(62), candidate()?)?;
     let owner = airk_store::service::ServiceLease::acquire(&f.control)?;
     let retained = settle_locked_with_start(
         &f.root,
@@ -369,7 +369,7 @@ async fn private_adoption_directory_without_exact_owner_or_with_links_is_kept() 
 async fn foreign_fence_is_kept_and_own_fence_is_cleared_only_under_exclusion() -> Result<()> {
     let f = Fixture::new()?;
     let (op, own, other) = (operation(41), operation(42), operation(43));
-    service_runtime::checkpoint::arm_recovery(&f.control, other, candidate()?)?;
+    crate::checkpoint_packet::arm_recovery(&f.control, other, candidate()?)?;
     f.journal(op, own, "quiescent")?;
     let settled = settle_locked(&f.root).await?;
     assert_eq!(
@@ -380,11 +380,11 @@ async fn foreign_fence_is_kept_and_own_fence_is_cleared_only_under_exclusion() -
     assert!(!f.root.join(JOURNAL).exists());
     assert!(settled.restored.is_empty());
     assert_eq!(settled.left[0]["operation"], serde_json::json!(other));
-    service_runtime::checkpoint::settle(&f.control, other)?;
+    crate::checkpoint_packet::settle(&f.control, other)?;
 
     // The adoption's own fence while a native owner lease is still held: the
     // fence and journal are kept, and the manager-change gate refuses.
-    service_runtime::checkpoint::arm_recovery(&f.control, own, candidate()?)?;
+    crate::checkpoint_packet::arm_recovery(&f.control, own, candidate()?)?;
     f.journal(op, own, "quiescent")?;
     let owner = airk_store::service::ServiceLease::acquire(&f.control)?;
     let settled = settle_locked(&f.root).await?;
@@ -412,12 +412,12 @@ async fn foreign_fence_is_kept_and_own_fence_is_cleared_only_under_exclusion() -
 async fn unreadable_journal_is_removed_only_when_no_fence_remains() -> Result<()> {
     let f = Fixture::new()?;
     fs::write(f.root.join(JOURNAL), b"{unknown")?;
-    service_runtime::checkpoint::arm_recovery(&f.control, operation(51), candidate()?)?;
+    crate::checkpoint_packet::arm_recovery(&f.control, operation(51), candidate()?)?;
     settle_locked(&f.root).await?;
     assert_eq!(fs::read(f.root.join(JOURNAL))?, b"{unknown");
     assert!(require_settled(&f.root).is_err());
 
-    service_runtime::checkpoint::settle(&f.control, operation(51))?;
+    crate::checkpoint_packet::settle(&f.control, operation(51))?;
     let settled = settle_locked(&f.root).await?;
     assert!(!f.root.join(JOURNAL).exists());
     assert_eq!(settled.deleted.len(), 1);

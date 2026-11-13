@@ -15,7 +15,7 @@ fn refused(error: &anyhow::Error) -> ControlResponse {
 }
 
 pub(super) async fn endpoint(control: &Path) -> ControlResponse {
-    let read = crate::runtime_install::http_commands::endpoint_at(control.to_path_buf()).await;
+    let read = crate::runtime_http_commands::endpoint_at(control.to_path_buf()).await;
     match read.and_then(|value| Ok(serde_json::from_value(value)?)) {
         Ok(endpoint) => ControlResponse::AgentEndpoint {
             endpoint: Box::new(endpoint),
@@ -26,8 +26,7 @@ pub(super) async fn endpoint(control: &Path) -> ControlResponse {
 
 pub(super) async fn connection(control: &Path, id: Incarnation) -> ControlResponse {
     let read =
-        crate::runtime_install::http_commands::existing_connection_at(control.to_path_buf(), id)
-            .await;
+        crate::runtime_http_commands::existing_connection_at(control.to_path_buf(), id).await;
     match read.and_then(|value| Ok(serde_json::from_value(value)?)) {
         Ok(connection) => ControlResponse::AgentConnectionInfo {
             connection: Box::new(connection),
@@ -37,18 +36,14 @@ pub(super) async fn connection(control: &Path, id: Incarnation) -> ControlRespon
 }
 
 pub(super) async fn ownership(control: &Path, id: Incarnation) -> ControlResponse {
-    match crate::runtime_install::http_commands::lookup_connection_at(control.to_path_buf(), id)
-        .await
-    {
+    match crate::runtime_http_commands::lookup_connection_at(control.to_path_buf(), id).await {
         Ok(result) => ControlResponse::AgentConnectionOwnership { result },
         Err(error) => refused(&error),
     }
 }
 
 pub(super) async fn verify(control: &Path, id: Incarnation) -> ControlResponse {
-    match crate::runtime_install::http_commands::verify_connection_at(control.to_path_buf(), id)
-        .await
-    {
+    match crate::runtime_http_commands::verify_connection_at(control.to_path_buf(), id).await {
         Ok(result) => ControlResponse::AgentConnectionVerified { result },
         Err(error) => refused(&error),
     }

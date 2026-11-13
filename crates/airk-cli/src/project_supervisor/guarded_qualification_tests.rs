@@ -870,9 +870,9 @@ where
         max_source_bytes: 16_384,
     })
     .await?;
-    let result = crate::usage_client::require_native_success(result).map_err(|error| {
+    let result = crate::native_read_result::require_native_success(result).map_err(|error| {
         let body = error
-            .downcast_ref::<crate::usage_client::NativeReadFailure>()
+            .downcast_ref::<crate::native_read_result::NativeReadFailure>()
             .map(|failure| failure.body().to_string())
             .unwrap_or_default();
         error.context(format!("fixture native model preparation refused: {body}"))
@@ -942,7 +942,7 @@ fn fixture_model_preparation_retains_refusals_and_rejects_invalid_pins() -> Resu
         .unwrap_err();
     assert_eq!(
         error
-            .downcast_ref::<crate::usage_client::NativeReadFailure>()
+            .downcast_ref::<crate::native_read_result::NativeReadFailure>()
             .context("lost native refusal type")?
             .body(),
         &refusal

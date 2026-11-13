@@ -5,6 +5,7 @@ use airk_core::{
     service::{ControlRequest, ScopedConnectRequest},
     service_http::{EndpointState, HttpConnectionInfo, LoopbackMcpUrl},
 };
+use std::fs;
 
 fn setup(control: &Path) -> Result<(ServiceHealth, HttpConnectionInfo)> {
     let id = Incarnation::from_bytes([1; 16]);

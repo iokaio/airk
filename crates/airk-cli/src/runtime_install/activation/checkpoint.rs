@@ -587,7 +587,7 @@ pub(super) fn verify(root: &Path, intent: &Intent) -> Result<()> {
                 && native.operation_id.to_string() == saved.operation,
             "checkpoint native boundary crossed"
         );
-        let packet = service_runtime::checkpoint::read_packet(
+        let packet = crate::checkpoint_packet::read_packet(
             &intent.control,
             native.operation_id,
             native
@@ -674,11 +674,10 @@ pub(super) async fn prepare_graceful(root: &Path, intent: &Intent) -> Result<()>
     let operation_id = operation.parse()?;
     let packet_path = intent
         .control
-        .join(service_runtime::checkpoint::packet_name(operation_id));
+        .join(crate::checkpoint_packet::packet_name(operation_id));
     if exists(&packet_path)? {
-        let digest = service_runtime::checkpoint::packet_digest(&intent.control, operation_id)?;
-        let packet =
-            service_runtime::checkpoint::read_packet(&intent.control, operation_id, digest)?;
+        let digest = crate::checkpoint_packet::packet_digest(&intent.control, operation_id)?;
+        let packet = crate::checkpoint_packet::read_packet(&intent.control, operation_id, digest)?;
         let prior = intent
             .prior
             .as_ref()
@@ -889,7 +888,7 @@ fn capture_native(
         envelope.journal.stage == Stage::Quiescing,
         "native checkpoint journal phase changed"
     );
-    let packet = service_runtime::checkpoint::read_packet(
+    let packet = crate::checkpoint_packet::read_packet(
         &intent.control,
         observation.operation_id,
         observation
@@ -969,14 +968,14 @@ pub(super) async fn settle_admission(root: &Path, intent: &Intent) -> Result<()>
                     Err(error) => {
                         let exclusion = airk_store::service::ServiceLease::acquire(&intent.control)
                             .context(error)?;
-                        service_runtime::checkpoint::settle(&intent.control, operation)?;
+                        crate::checkpoint_packet::settle(&intent.control, operation)?;
                         drop(exclusion);
                         return Ok(());
                     }
                 }
             }
         }
-        service_runtime::checkpoint::settle(&intent.control, operation)?;
+        crate::checkpoint_packet::settle(&intent.control, operation)?;
     }
     Ok(())
 }
@@ -1037,7 +1036,7 @@ pub(super) fn require_target(control: &Path, main: &Path) -> Result<()> {
 pub(super) fn arm_recovery(root: &Path, intent: &Intent, _guard: &Quiescence) -> Result<()> {
     if let Some(operation) = &intent.checkpoint {
         let (main, _) = verify_runtime(root, &intent.candidate)?;
-        service_runtime::checkpoint::arm_recovery(
+        crate::checkpoint_packet::arm_recovery(
             &intent.control,
             operation.parse()?,
             runtime_pair::digest_file(&main)?.parse()?,

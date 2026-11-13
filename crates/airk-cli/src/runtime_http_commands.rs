@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Setup-only HTTP discovery and enrollment through the verified native service.
-use super::*;
+//! Moved from `runtime_install::http_commands` (split step 2b): it validates
+//! selections through `http_backend`, above the installer.
+use crate::runtime_install::*;
+use crate::{control_client, local_ipc, runtime_pair};
+use airk_core::service::{ControlMethod, ControlResponse, ServiceHealth};
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::{EndpointDescriptor, HttpSelection},
+};
+use anyhow::{Context, Result, bail, ensure};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 #[cfg(test)]
@@ -13,7 +22,7 @@ mod tests;
 /// owner-private credential of an existing, unrevoked connection against the
 /// saved installation binding. It needs no running service and never starts
 /// one, enrolls, rotates or writes; error messages never contain the token.
-pub(super) fn credential_header(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
+pub(crate) fn credential_header(install: &Path, id: Incarnation) -> Result<serde_json::Value> {
     let control = crate::install_layout::saved_control(install)?;
     let (binding, _) = crate::http_endpoint::trust::saved_identity(&control)?;
     let private = control.join("http-1");

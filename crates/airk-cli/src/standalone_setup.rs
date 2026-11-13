@@ -262,7 +262,7 @@ pub async fn install_payload(
             // A fresh installation starts at login and survives a reboot. A
             // refusal (OS policy, unqualified adapter) keeps the on-demand
             // service and is reported; it never fails the installation.
-            match crate::runtime_install::install_login_startup(install).await {
+            match crate::runtime_commands::install_login_startup(install).await {
                 Ok(_) => prompt.message("AIRK starts automatically when you sign in.")?,
                 Err(error) => prompt.message(&format!(
                     "AIRK could not register login startup, so the service starts on demand: {error:#}"
@@ -619,7 +619,7 @@ impl EnrollmentTransport for NativeEnrollment {
         client: &str,
         explorer_descriptor: Option<&Path>,
     ) -> Result<Value> {
-        crate::runtime_install::setup_http_connection(
+        crate::runtime_commands::setup_http_connection(
             None,
             Some(control),
             selection,

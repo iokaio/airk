@@ -94,7 +94,7 @@ pub(super) fn reserved(name: &str) -> bool {
 }
 
 /// Read-only inventory for independent bootstrap diagnostics.
-pub(super) fn pending(root: &Path) -> Result<Vec<String>> {
+pub(crate) fn pending(root: &Path) -> Result<Vec<String>> {
     let mut identities = Vec::new();
     for (count, entry) in fs::read_dir(root)?.enumerate() {
         ensure!(
@@ -238,7 +238,7 @@ fn validate(
     Ok(directories)
 }
 
-pub(super) fn abort(root: &Path, identity: &str) -> Result<()> {
+pub(crate) fn abort(root: &Path, identity: &str) -> Result<()> {
     require_issuer_rotation_settled(root)?;
     let (intent, inventory) = StageIntent::read(root, identity)?;
     let directory = intent.directory(root);
@@ -284,7 +284,7 @@ pub(super) fn stage(
     stage_with_layout(source, root, approved, basis, None, RuntimeChannel::Stable)
 }
 
-pub(super) fn stage_with_layout(
+pub(crate) fn stage_with_layout(
     source: &Path,
     root: &Path,
     approved: &str,

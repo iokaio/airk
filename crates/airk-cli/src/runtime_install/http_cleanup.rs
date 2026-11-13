@@ -131,7 +131,7 @@ fn current_namespace_ownership(
     }
 }
 
-pub(super) fn lookup(
+pub(crate) fn lookup(
     root: &Path,
     expected_active: &str,
     predecessor: &str,

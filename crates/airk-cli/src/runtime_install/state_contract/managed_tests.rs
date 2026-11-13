@@ -175,9 +175,9 @@ async fn clean_break_managed_epoch_read_and_probe_share_initialized_source_guard
         Ok::<_, anyhow::Error>(())
     });
     let result = async {
-        let ordinary = service_runtime::request_for_instance(&fixture.control, ControlMethod::RequestEpoch, instance).await?;
+        let ordinary = control_client::request_for_instance(&fixture.control, ControlMethod::RequestEpoch, instance).await?;
         ensure!(matches!(ordinary, ControlResponse::RequestEpoch { namespace, .. } if namespace == fixture.namespace), "managed ordinary read crossed namespace");
-        let probe = service_runtime::request_for_version_and_instance(&fixture.control, ControlMethod::RequestEpoch, &fixture.approval.version, instance).await?;
+        let probe = control_client::request_for_version_and_instance(&fixture.control, ControlMethod::RequestEpoch, &fixture.approval.version, instance).await?;
         ensure!(matches!(probe, ControlResponse::RequestEpoch { namespace, .. } if namespace == fixture.namespace), "managed readiness probe crossed namespace");
         Ok::<_, anyhow::Error>(())
     }.await;

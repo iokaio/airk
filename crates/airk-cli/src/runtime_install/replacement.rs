@@ -437,7 +437,7 @@ impl IndexLocations {
 }
 
 #[derive(Serialize)]
-pub(super) struct Plan {
+pub(crate) struct Plan {
     install: PathBuf,
     expected_predecessor: String,
     pub(super) required: bool,
@@ -540,7 +540,7 @@ fn client_references(install: &Path, locations: &[PathBuf]) -> Result<ClientRefe
     })
 }
 
-pub(super) fn plan(
+pub(crate) fn plan(
     install: &Path,
     candidate_sha256: &str,
     operation_id: Option<&str>,
@@ -790,7 +790,7 @@ pub(super) fn apply(
     apply_expected(install, candidate_sha256, operation_id, generation_id, None)
 }
 
-pub(super) fn apply_expected(
+pub(crate) fn apply_expected(
     install: &Path,
     candidate_sha256: &str,
     operation_id: Option<&str>,

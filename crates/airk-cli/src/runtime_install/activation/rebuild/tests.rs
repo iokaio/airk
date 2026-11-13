@@ -344,7 +344,7 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
     journal.intent().save(&root)?;
     assert!(state_contract::required(&root)?);
     let control = journal.control();
-    let error = service_runtime::request(&control, ControlMethod::RequestEpoch)
+    let error = control_client::request(&control, ControlMethod::RequestEpoch)
         .await
         .err()
         .context("ordinary epoch read bypassed baseline")?;
@@ -414,7 +414,7 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
         .await?;
         Ok::<_, anyhow::Error>(())
     });
-    let response = service_runtime::request_initialized_probe(&permit).await?;
+    let response = control_client::request_initialized_probe(&permit).await?;
     server.await??;
     assert!(
         matches!(response, ControlResponse::RequestEpoch { namespace, .. } if namespace == expected_namespace)
@@ -422,12 +422,12 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
     assert!(selection_record(&root)? == journal.prior);
     // No ordinary client is authorized by a valid native bootstrap receipt.
     assert!(
-        service_runtime::request(&control, ControlMethod::RequestEpoch)
+        control_client::request(&control, ControlMethod::RequestEpoch)
             .await
             .is_err()
     );
     assert!(
-        service_runtime::request(&control, ControlMethod::HttpEndpoint)
+        control_client::request(&control, ControlMethod::HttpEndpoint)
             .await
             .is_err()
     );
@@ -435,7 +435,7 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
     let marker_bytes = fs::read(&marker)?;
     fs::remove_file(&marker)?;
     assert!(
-        service_runtime::request_initialized_probe(&permit)
+        control_client::request_initialized_probe(&permit)
             .await
             .is_err()
     );
@@ -443,7 +443,7 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
     journal.phase = Phase::Complete;
     journal.save(&root)?;
     assert!(
-        service_runtime::request_initialized_probe(&permit)
+        control_client::request_initialized_probe(&permit)
             .await
             .is_err()
     );

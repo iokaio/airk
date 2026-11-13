@@ -159,3 +159,6 @@ pub(crate) fn validate(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod legacy_binding_tests;

@@ -349,7 +349,7 @@ fn finish_previous(root: &Path, intent: &PreviousRetirement) -> Result<()> {
     sync_directory(root)
 }
 
-pub(super) async fn retire_previous(root: &Path, expected: &str) -> Result<serde_json::Value> {
+pub(crate) async fn retire_previous(root: &Path, expected: &str) -> Result<serde_json::Value> {
     let canonical = root.canonicalize()?;
     let root = canonical.as_path();
     let _lock = install_lock(root)?;
@@ -476,7 +476,7 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
     Ok(inventory)
 }
 
-pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
+pub(crate) fn remove(root: &Path, identity: &str) -> Result<()> {
     ensure!(
         !activation::rebuild::preserved_runtime(root, identity)?,
         "rebuild predecessor is preserved as recovery evidence; use separately reviewed cleanup"

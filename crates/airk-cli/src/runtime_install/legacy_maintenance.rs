@@ -57,7 +57,7 @@ struct Journal {
 /// non-empty settlement is reported as one JSON line on standard error, so the
 /// command's own result shape is unchanged.
 #[derive(Default, Serialize)]
-pub(super) struct Settlement {
+pub(crate) struct Settlement {
     restored: Vec<serde_json::Value>,
     deleted: Vec<serde_json::Value>,
     left: Vec<serde_json::Value>,
@@ -123,7 +123,7 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
 /// Settle every leftover of an interrupted standalone adoption. The caller
 /// holds the installer lock. Without any leftover this reads only directory
 /// metadata and changes nothing.
-pub(super) async fn settle_locked(root: &Path) -> Result<Settlement> {
+pub(crate) async fn settle_locked(root: &Path) -> Result<Settlement> {
     settle_locked_with_start(root, |root, approval, main| async move {
         activation::start_selected(&root, &approval, &main, None)
             .await
@@ -204,7 +204,7 @@ where
                 if ours {
                     // Every native owner lease is held: no live admission
                     // state can depend on this fence.
-                    service_runtime::checkpoint::settle(&control, journal.checkpoint_operation)?;
+                    crate::checkpoint_packet::settle(&control, journal.checkpoint_operation)?;
                     settlement.restored(
                         &control.join("native-upgrade-checkpoint.json"),
                         "cleared the interrupted adoption's own native admission fence under installer exclusion",

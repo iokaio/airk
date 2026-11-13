@@ -133,6 +133,63 @@ above the service group (with `pub(crate)` widening of many private
 `service_runtime::checkpoint` to a lower module. That is a design choice for
 the next step, not a move.
 
+## Step 2b: dispatcher out of the installer, test edges (12 November, uncompiled until the primary's check)
+
+Behavior-preserving moves only; code and test bodies moved verbatim, with
+only paths, `use` lines and the visibility noted below changed. Result: 0
+back edges in `module_graph.py --groups` (was 3) and 0 in
+`module_graph.py --include-tests --groups` (was 14), 0 unassigned modules.
+
+| Item | From | To | Notes |
+|---|---|---|---|
+| `run`, `run_with`, `install_login_startup`, `connection_observation` (+ its tests) | `runtime_install::commands` | new `runtime_commands` (cli) | `require_login_registration_change` now private; `existing_http_connection` and `setup_http_connection` are re-exported here. Public paths `airk_cli::runtime_install::{run, run_with, existing_http_connection, setup_http_connection}` became `airk_cli::runtime_commands::…`; `main.rs` and `standalone_setup` updated |
+| `managed_service` (+ test) | `runtime_install` | `runtime_commands::managed_service` | only the dispatcher calls it |
+| `http_commands` (+ tests) | `runtime_install::http_commands` | new `runtime_http_commands` (https) | `service_runtime::agents` calls it, so it cannot sit in `cli`; `credential_header` `pub(super)` → `pub(crate)` |
+| `Packet`, `packet_name`, `packet_digest`, `read_packet`, `immutable`, `settle`, `arm_recovery`, `MAX_PACKET` | `service_runtime::checkpoint` | new `checkpoint_packet` (os) | re-exported from `service_runtime::checkpoint` (`MAX_PACKET`, `arm_recovery` under `cfg(test)`); installer callers use `crate::checkpoint_packet`; `immutable`, `MAX_PACKET` widened to `pub(crate)`; `checkpoint_fence/CONTRACT.md` updated |
+| `SourceCheckpointObservation`, `ExitBoundary`, `ReconcileReference` | `source_supervisor::checkpoint` | `checkpoint_packet` | the packet's persisted format; `source_supervisor::checkpoint` re-exports the observation |
+| `NativeReadFailure`, `require_native_success` | `usage_client` | new `native_read_result` (os) | `usage_client` re-exports both (public paths unchanged); the guarded supervisor fixture now names `native_read_result` |
+
+`runtime_install` widening for the moved dispatcher (`private`/`pub(super)` →
+`pub(crate)`): modules `activation` (and `activation::rebuild`),
+`http_cleanup`, `http_rotation`, `inventory`, `launcher_repair`, `layout`,
+`legacy_caches`, `legacy_launchers`, `legacy_maintenance`, `lifecycle`,
+`managed`, `payload_repair`, `replacement`, `retirement`, `snapshot`,
+`staging`, `state_contract`, `upgrade_stop`, `tests` (cfg(test)); the
+functions, structs, fields and consts they use, and the types in those
+signatures (`Intent`, `Receipt`, `Settlement`, `lifecycle::Input`, `Managed`,
+`Plan`, `http_rotation::Input`, `Quiescence`, `SelectedPreflight`,
+`StartupAttempts`, `BootstrapObservation`, `Selection::schema`). The
+installer no longer imports `service_runtime`; its tests call
+`control_client::request*` directly (the paths `service_runtime` re-exported).
+
+Test-only edges, each resolved by moving whole tests (bodies unchanged):
+
+| Tests | From | To |
+|---|---|---|
+| `fresh_layout_…`, `selected_new_layout_…`, `xdg_absolute_policy_…`, `native_user_home_child_fixture`, `native_home_ignores_…` | `user_paths::tests` | `runtime_install::user_paths_tests` (re-exec name updated to `runtime_install::user_paths_tests::native_user_home_child_fixture`); `Channel::leaf`, `UserPaths::select_layout`, `xdg`, `tests::fixture_paths` widened to `pub(crate)` |
+| `imported_http_union_…`, `imported_http_factory_is_lazy_…` | `catalog_host_context::legacy_binding_tests` | `http_backend::legacy_binding_tests` |
+| `http_migration_retains_…`, `legacy_eligibility_observes_…` | same | `runtime_install::http_legacy::legacy_binding_tests` (fixtures `imported_fixture`, `insert_imported_fixture` widened) |
+| `predecessor_exclusion_is_exact_…` | `service_inference::tests` | `catalog_admission::provider_exclusion_tests` |
+| `more_than_128_native_restarts_…` | `service_inference::tests` | `project_supervisor::provider_restart_tests` (local-inference); `service_inference::tests` is now mounted only with `local-inference`, since every remaining test there needs it |
+| `held_inference_keeps_native_status_…` | `inference_engine::pool::owner::tests` | `http_gateway::inference_owner_tests` (local-inference); widened `inference_engine::pool`, `pool::accounting`, `Work`, `State` (+ `sender`, `accounting`), `InferenceOwner::state`, `Accounting`, `ComputeCharge`, `DeliveryCharge`, `admit`, `pool::tests::{fixture, open}` |
+| `login_registration_changes_refuse_…`, `standalone_adoption_commands_refuse_…` | `runtime_install::tests` | `runtime_commands::dispatch_tests` (`issuer_gate_fixture`, `unselected_fixture` widened) |
+
+Group changes: `project_protocol`, `source_protocol`, `session_protocol`,
+`embedding_pool_protocol` (wire types with no upward references),
+`catalog_test_fixture` (a store-only fixture with no crate-module
+references; its lowest user is `embedding_pool_process`), `checkpoint_packet`
+and `native_read_result` joined `os`; `runtime_http_commands` joined
+`https`; `runtime_commands` joined `cli`.
+
+**Left for extraction.** The script counts text, so it accepts tests that
+call `#[cfg(test)]` helpers in a lower group (`catalog_test_fixture`,
+`user_paths::tests::fixture_paths`,
+`catalog_host_context::legacy_binding_tests`, `runtime_install::tests`,
+`inference_engine::pool::tests`). `cfg(test)` does not cross a crate
+boundary, so extraction needs those helpers behind a test-support feature.
+`docs/service-installation.md` still links to
+`runtime_install/http_commands.rs`.
+
 ## Order (one step at a time; each compiles and passes before the next)
 
 1. **Measurement script.** Commit the module-graph script

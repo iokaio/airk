@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trusted CLI actions for the offline runtime installer and launcher.
-use super::*;
+//! Moved from `runtime_install::commands` (split step 2b): the dispatcher
+//! serves the runtime and reaches the frontend and HTTPS setup, which sit above
+//! the installer.
+use crate::install_files::{launcher_path, main_name, read_bounded};
+use crate::runtime_http_commands as http_commands;
+use crate::runtime_install::*;
+use crate::{local_ipc, runtime_pair, service_runtime};
+use anyhow::{Context, Result, bail, ensure};
+use std::{fs, io::Read, path::Path, process::Command};
+
+mod managed_service;
+
+pub use crate::runtime_http_commands::existing_connection as existing_http_connection;
+pub use crate::runtime_http_commands::setup as setup_http_connection;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     run_with(command, &crate::cli_io::CliIo::process()).await
@@ -887,7 +900,7 @@ pub(crate) async fn install_login_startup(
     Ok(status)
 }
 
-pub(super) fn require_login_registration_change(root: &Path, action: &LoginCommand) -> Result<()> {
+fn require_login_registration_change(root: &Path, action: &LoginCommand) -> Result<()> {
     if matches!(action, LoginCommand::Install | LoginCommand::Uninstall) {
         require_manager_change_settled(root)?;
     }
@@ -909,6 +922,7 @@ fn connection_observation(root: &Path) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod connection_observation_tests {
     use super::*;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     fn inventory(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         let mut files = BTreeMap::new();
@@ -1005,7 +1019,7 @@ mod connection_observation_tests {
 
     async fn source_scope_authenticates_digest_control_and_missing_state_without_creation_body()
     -> Result<()> {
-        let (owner, root, digest) = super::super::tests::unselected_fixture()?;
+        let (owner, root, digest) = crate::runtime_install::tests::unselected_fixture()?;
         replace_json(
             &root,
             "selected.json",
@@ -1056,7 +1070,7 @@ mod connection_observation_tests {
         use airk_core::service::RequestKey;
         use airk_core::service_lifecycle::{LifecycleAction, LifecycleRequest};
         use airk_store::service::registry::ServiceRegistry;
-        let (owner, root, digest) = super::super::tests::unselected_fixture()?;
+        let (owner, root, digest) = crate::runtime_install::tests::unselected_fixture()?;
         replace_json(
             &root,
             "selected.json",
@@ -1114,7 +1128,7 @@ mod connection_observation_tests {
     async fn source_scope_managed_metadata_authenticates_both_modes_without_starting() -> Result<()>
     {
         for lifecycle in ["external", "user_on_demand"] {
-            let (owner, root, digest) = super::super::tests::unselected_fixture()?;
+            let (owner, root, digest) = crate::runtime_install::tests::unselected_fixture()?;
             drop(install_lock(&root)?);
             let control = crate::install_layout::saved_control(&root)?;
             local_ipc::prepare_root(&control)?;
@@ -1152,7 +1166,7 @@ mod connection_observation_tests {
     }
     #[test]
     fn current_pending_or_malformed_activation_cannot_report_settled() -> Result<()> {
-        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        let (_owner, root, identity) = crate::runtime_install::tests::unselected_fixture()?;
         assert_eq!(
             connection_observation(&root),
             Some(serde_json::json!({"schema":1,
@@ -1183,5 +1197,78 @@ mod connection_observation_tests {
             "malformed receipt is unknown, never settled"
         );
         Ok(())
+    }
+}
+
+/// Dispatcher tests moved from `runtime_install::tests` with the dispatcher
+/// (split step 2b); bodies unchanged.
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::runtime_commands as commands;
+    use crate::runtime_install::tests::issuer_gate_fixture;
+
+    #[test]
+    fn login_registration_changes_refuse_pending_issuer_but_preserve_stop_and_observation()
+    -> Result<()> {
+        let (_owner, root, control, _record) = issuer_gate_fixture()?;
+        let journal = control.join("http-1/issuer-rotation.json");
+        let original = fs::read(&journal)?;
+        for action in [LoginCommand::Install, LoginCommand::Uninstall] {
+            let error = commands::require_login_registration_change(&root, &action)
+                .expect_err("manager registration must preserve captured issuer owner");
+            assert!(
+                error
+                    .to_string()
+                    .contains("issuer_rotation_pending_before_runtime_mutation")
+            );
+        }
+        for action in [
+            LoginCommand::Plan,
+            LoginCommand::Status,
+            LoginCommand::Start,
+            LoginCommand::Stop,
+        ] {
+            commands::require_login_registration_change(&root, &action)?;
+        }
+        assert_eq!(fs::read(journal)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_adoption_commands_refuse_before_any_installation_access() {
+        // S2 decision Q1: both commands stay in the catalog and refuse a new
+        // operation with a typed code before any locator input is read.
+        let missing = std::env::temp_dir().join("airk-adoption-refusal-never-created");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        for command in [
+            RuntimeCommand::AdoptLegacyIndex {
+                install_dir: missing.clone(),
+                expected_active: "00".repeat(32),
+                operation_id: "11".repeat(16),
+                locator_file: missing.join("locator.json"),
+                expected_cache_inspection_sha256: "22".repeat(32),
+            },
+            RuntimeCommand::AdoptLegacyIndexes {
+                install_dir: missing.clone(),
+                expected_active: "00".repeat(32),
+                operation_id: "11".repeat(16),
+                locators_file: missing.join("locators.json"),
+                expected_cache_inspection_sha256: "22".repeat(32),
+            },
+        ] {
+            let error = runtime
+                .block_on(run(&command))
+                .expect_err("standalone adoption must be refused");
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("standalone_adoption_unsupported:"),
+                "{error:#}"
+            );
+        }
+        assert!(!missing.exists());
     }
 }

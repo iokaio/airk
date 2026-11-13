@@ -226,7 +226,7 @@ impl NativeGrantDraftContext for NativeHostContext {
 }
 
 #[cfg(test)]
-mod legacy_binding_tests;
+pub(crate) mod legacy_binding_tests;
 
 #[cfg(test)]
 mod tests {

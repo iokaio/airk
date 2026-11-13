@@ -157,7 +157,7 @@ pub(super) async fn recover_committed_successor(
     store::snapshot(&control)?.require_compatible(Some(engine), engine)?;
     // Existing foreign fences fail before any manager action. This recovery
     // anchor makes no historical Ready/service-incarnation assertion.
-    service_runtime::checkpoint::arm_recovery(
+    crate::checkpoint_packet::arm_recovery(
         &control,
         record.operation_id,
         record.old_endpoint.executable_sha256,
@@ -253,7 +253,7 @@ pub(super) async fn prepare_stop(
             // Bind/refuse the exact operation while native exclusion is held,
             // before unregistering any OS manager. A foreign saved fence is
             // never cleared or bypassed by interrupted-rotation recovery.
-            service_runtime::checkpoint::arm_recovery(&control, operation, expected_execution)?;
+            crate::checkpoint_packet::arm_recovery(&control, operation, expected_execution)?;
             drop(exclusion);
             None
         }
@@ -279,10 +279,10 @@ pub(super) async fn prepare_stop(
     let engine = runtime_pair::engine_identity_at_version(&main, &approval.version)?;
     snapshot.require_compatible(Some(engine), engine)?;
     let state_sha = snapshot.digest()?;
-    let packet_path = control.join(service_runtime::checkpoint::packet_name(operation));
+    let packet_path = control.join(crate::checkpoint_packet::packet_name(operation));
     if packet_path.try_exists()? {
-        let packet_sha = service_runtime::checkpoint::packet_digest(&control, operation)?;
-        let packet = service_runtime::checkpoint::read_packet(&control, operation, packet_sha)?;
+        let packet_sha = crate::checkpoint_packet::packet_digest(&control, operation)?;
+        let packet = crate::checkpoint_packet::read_packet(&control, operation, packet_sha)?;
         ensure!(
             packet.service_instance == expected_instance
                 && packet.execution_sha256 == expected_execution
@@ -321,7 +321,7 @@ pub(super) async fn prepare_stop(
             "issuer rotation native Ready packet disappeared"
         );
     }
-    service_runtime::checkpoint::arm_recovery(&control, operation, expected_execution)?;
+    crate::checkpoint_packet::arm_recovery(&control, operation, expected_execution)?;
     let proof = StopProof {
         schema: 1,
         operation,
@@ -384,7 +384,7 @@ pub(super) async fn start_after_commit(owner: StoppedOwner) -> Result<ServiceHea
         store::snapshot(&control)?.digest()? == proof.canonical_state_sha256,
         "issuer rotation changed canonical work while native ownership was excluded"
     );
-    service_runtime::checkpoint::settle(&control, proof.operation)?;
+    crate::checkpoint_packet::settle(&control, proof.operation)?;
     drop(exclusion);
     let observed =
         activation::start_selected(&root, &approval, &main, Some(proof.manager_owned)).await?;

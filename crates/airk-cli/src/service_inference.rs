@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Service inference ownership, independent of predecessor process recovery.
-#[cfg(test)]
+// Every remaining test here needs embedded inference (split step 2b moved the
+// two that drive the catalog Gate or the supervisor to those modules).
+#[cfg(all(test, feature = "local-inference"))]
 mod tests;
 /// Native lease exclusion for an earlier in-process provider. This is never a
 /// process-reap receipt and is valid only for a trusted InProcess obligation.

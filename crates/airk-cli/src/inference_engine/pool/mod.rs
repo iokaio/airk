@@ -23,7 +23,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-mod accounting;
+pub(crate) mod accounting;
 mod owner;
 mod retirement;
 pub(crate) use owner::{InferenceOwner, NativeCompletionWitness};
@@ -546,7 +546,7 @@ impl Engine {
     }
 }
 
-enum Work {
+pub(crate) enum Work {
     Sweep,
     #[cfg(test)]
     ComputeHook {
@@ -757,15 +757,15 @@ fn register_authorization(
     protocol::Observation::Registered
 }
 
-struct State {
+pub(crate) struct State {
     service: Incarnation,
     pool: Incarnation,
     role: String,
     grants: Mutex<BTreeMap<Sha256Digest, Authorization>>,
     retirement: Mutex<retirement::Retirements>,
-    sender: mpsc::Sender<Work>,
+    pub(crate) sender: mpsc::Sender<Work>,
     closing: Arc<AtomicBool>,
-    accounting: Option<Arc<accounting::Accounting>>,
+    pub(crate) accounting: Option<Arc<accounting::Accounting>>,
 }
 impl State {
     fn grant_live(&self, grant: &protocol::Grant) -> Result<bool> {
@@ -957,4 +957,4 @@ impl Engine {
     }
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

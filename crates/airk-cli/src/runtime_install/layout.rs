@@ -184,7 +184,7 @@ pub(super) fn prepare_managed_control(
     require_control(&origin.control)
 }
 
-pub(super) fn control(root: &Path) -> Result<PathBuf> {
+pub(crate) fn control(root: &Path) -> Result<PathBuf> {
     match Layout::read(root)? {
         None => anyhow::bail!(
             "service state layout is missing; repeat approved staging with its reviewed state location"

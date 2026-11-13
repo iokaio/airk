@@ -2646,3 +2646,6 @@ impl NativeCatalogAdmission {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod provider_exclusion_tests;

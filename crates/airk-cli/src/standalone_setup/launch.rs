@@ -281,7 +281,7 @@ pub async fn launch_client(
     );
     let install = installation(install)?;
     let fresh: HttpConnectionInfo = serde_json::from_value(
-        crate::runtime_install::existing_http_connection(&install, connection.connection_id)
+        crate::runtime_commands::existing_http_connection(&install, connection.connection_id)
             .await?,
     )?;
     ensure!(

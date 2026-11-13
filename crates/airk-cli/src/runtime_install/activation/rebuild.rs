@@ -320,7 +320,7 @@ fn read(root: &Path) -> Result<Option<Journal>> {
     Ok(Some(value.journal))
 }
 
-pub(in crate::runtime_install) fn pending(root: &Path) -> Result<bool> {
+pub(crate) fn pending(root: &Path) -> Result<bool> {
     Ok(read(root)?.is_some_and(|value| value.phase != Phase::Complete))
 }
 

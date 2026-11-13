@@ -8,7 +8,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos::{capture, terminate, wait};
 
-pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
+pub(crate) fn stop(root: &Path, identity: &str) -> Result<()> {
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         let (main, _) = verify_runtime(root, identity)?;

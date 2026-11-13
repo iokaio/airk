@@ -25,13 +25,13 @@ pub enum ManagedLifecycle {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Managed {
+pub(crate) struct Managed {
     schema: u32,
     install: PathBuf,
     source: PathBuf,
     pub(super) approval: Approval,
     executable_sha256: String,
-    pub(super) lifecycle: ManagedLifecycle,
+    pub(crate) lifecycle: ManagedLifecycle,
 }
 fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
@@ -41,7 +41,7 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 
-pub(super) fn read(root: &Path) -> Result<Option<Managed>> {
+pub(crate) fn read(root: &Path) -> Result<Option<Managed>> {
     if !exists(&root.join(POLICY))? {
         return Ok(None);
     }
@@ -66,7 +66,7 @@ pub(super) fn saved_policy_for_lifecycle(root: &Path) -> Result<Option<Managed>>
     catalog::saved_policy(root)
 }
 
-pub(super) fn require_unmanaged(root: &Path) -> Result<()> {
+pub(crate) fn require_unmanaged(root: &Path) -> Result<()> {
     ensure!(
         read(root)?.is_none()
             && !exists(&root.join(DETACH))?
@@ -81,7 +81,7 @@ pub(super) fn is_configured(root: &Path) -> Result<bool> {
         || crate::install_layout::managed_origin(root)?.is_some())
 }
 
-pub(super) fn detaching(root: &Path) -> Result<bool> {
+pub(crate) fn detaching(root: &Path) -> Result<bool> {
     exists(&root.join(DETACH))
 }
 
@@ -92,7 +92,7 @@ impl Managed {
     pub(super) fn saved_executable_sha256(&self) -> &str {
         &self.executable_sha256
     }
-    pub(super) fn metadata_approval(&self) -> Result<Approval> {
+    pub(crate) fn metadata_approval(&self) -> Result<Approval> {
         ensure!(
             self.source.canonicalize()? == self.source,
             "managed payload was redirected"
@@ -106,7 +106,7 @@ impl Managed {
         Ok(self.approval.clone())
     }
     #[cfg(test)]
-    pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
+    pub(crate) fn verify(&self) -> Result<(PathBuf, Approval)> {
         let (main, approval, _) = self.verify_inventory()?;
         Ok((main, approval))
     }
@@ -230,7 +230,7 @@ pub(super) fn verify_topology_checked(
 
 /// The caller supplies trusted machine/user policy, never workspace executable settings.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn configure(
+pub(crate) async fn configure(
     source: &Path,
     root: &Path,
     approved: &str,

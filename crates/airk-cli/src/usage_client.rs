@@ -6,28 +6,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, path::Path};
 
-#[derive(Debug)]
-pub struct NativeReadFailure(Value);
-impl std::fmt::Display for NativeReadFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("native project read failed; see the complete result")
-    }
-}
-impl std::error::Error for NativeReadFailure {}
-impl NativeReadFailure {
-    pub(crate) fn from_response(value: Value) -> Self {
-        Self(value)
-    }
-    pub fn body(&self) -> &Value {
-        &self.0
-    }
-}
-pub fn require_native_success(value: Value) -> Result<Value> {
-    if value["isError"] == true || value.get("error").is_some() {
-        return Err(NativeReadFailure(value).into());
-    }
-    Ok(value)
-}
+// The native read result classifier moved to `native_read_result` (split
+// step 2b) so supervisor tests use it below the frontend; the public paths stay.
+pub use crate::native_read_result::{NativeReadFailure, require_native_success};
 
 /// Administrative metadata transport. Credentials remain inside Runtime and
 /// the complete canonical native value/error is preserved for native clients.

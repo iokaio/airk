@@ -127,7 +127,7 @@ fn pending(root: &Path) -> Result<Option<Intent>> {
     digest(&intent.selection.active)?;
     Ok(Some(intent))
 }
-pub(super) fn require_settled(root: &Path) -> Result<()> {
+pub(crate) fn require_settled(root: &Path) -> Result<()> {
     ensure!(
         pending(root)?.is_none(),
         "resume the reviewed payload repair before launching or changing selection"
@@ -202,7 +202,7 @@ pub(super) fn preserved(root: &Path) -> Result<Option<PathBuf>> {
     );
     Ok(Some(directory))
 }
-pub(super) fn status(root: &Path) -> Result<serde_json::Value> {
+pub(crate) fn status(root: &Path) -> Result<serde_json::Value> {
     let intent = pending(root)?;
     let (phase, value) = if let Some(intent) = intent {
         ("pending", Some(intent))
@@ -222,7 +222,7 @@ pub(super) fn status(root: &Path) -> Result<serde_json::Value> {
         None => serde_json::json!({"phase":phase}),
     })
 }
-pub(super) fn preview(root: &Path, source: &Path, approved: &str) -> Result<serde_json::Value> {
+pub(crate) fn preview(root: &Path, source: &Path, approved: &str) -> Result<serde_json::Value> {
     managed::require_unmanaged(root)?;
     let root = root.canonicalize()?;
     let (_, inventory) = manifest(&source.canonicalize()?, approved)?;
@@ -257,7 +257,7 @@ pub(super) fn preview(root: &Path, source: &Path, approved: &str) -> Result<serd
         "preserved_bytes":captured.bytes,"preserved_files":captured.files.len(),"starts_service":false,"requires_stopped_owners":true}),
     )
 }
-pub(super) fn apply(
+pub(crate) fn apply(
     root: &Path,
     source: &Path,
     approved: &str,

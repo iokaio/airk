@@ -393,3 +393,6 @@ impl RemoteTools for LazyBackend {
         })
     }
 }
+
+#[cfg(test)]
+mod legacy_binding_tests;

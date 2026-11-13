@@ -2,7 +2,7 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
-pub(super) fn fixture(
+pub(crate) fn fixture(
     root: &Path,
     label: &str,
     name: &str,
@@ -40,7 +40,7 @@ pub(super) fn fixture(
     ))
 }
 
-pub(super) fn open(location: ModelLocation, identity: String) -> Request {
+pub(crate) fn open(location: ModelLocation, identity: String) -> Request {
     Request::Open {
         protocol: PROTOCOL,
         version: env!("CARGO_PKG_VERSION").into(),

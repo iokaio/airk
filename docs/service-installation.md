@@ -611,7 +611,7 @@ An internal AIRK HTTPS check does not qualify that external host. Client formats
 protected VS Code input resolution, remote/container limits and actual connection
 checks are documented in [agent integration](agent-integration.md).
 
-The source owners are [HTTP setup](../crates/airk-cli/src/runtime_install/http_commands.rs),
+The source owners are [HTTP setup](../crates/airk-cli/src/runtime_http_commands.rs),
 [private identity/credential storage](../crates/airk-cli/src/http_endpoint.rs) and
 [owned trust](../crates/airk-cli/src/http_endpoint/trust.rs).
 Issuer replacement uses an explicit receipt-backed prepare/trust/commit/finalize

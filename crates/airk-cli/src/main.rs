@@ -422,7 +422,7 @@ async fn dispatch(cli: Cli, explicit_root: bool, io: &CliIo) -> Result<()> {
                 .context("dump-vocab requires explicit --data-dir outside the source")?,
             output,
         ),
-        Command::Runtime { action } => airk_cli::runtime_install::run_with(action, io).await,
+        Command::Runtime { action } => airk_cli::runtime_commands::run_with(action, io).await,
         Command::Setup {
             client,
             connection_id,
@@ -454,9 +454,11 @@ async fn dispatch(cli: Cli, explicit_root: bool, io: &CliIo) -> Result<()> {
         Command::DerivedWorker => airk_cli::derived_worker::run(),
         Command::SourceWorker => airk_cli::source_worker::run(),
         Command::Host => {
-            airk_cli::runtime_install::run(&airk_cli::runtime_install::RuntimeCommand::Foreground {
-                install_dir: install_root(&cli)?,
-            })
+            airk_cli::runtime_commands::run(
+                &airk_cli::runtime_install::RuntimeCommand::Foreground {
+                    install_dir: install_root(&cli)?,
+                },
+            )
             .await
         }
         Command::Service {
@@ -557,7 +559,7 @@ async fn run_setup(
     let mut suggested_directory = explicit_root.then(|| cli.root.clone());
     let connection = if let Some(id) = existing_connection_id {
         serde_json::from_value(
-            airk_cli::runtime_install::existing_http_connection(&install, id).await?,
+            airk_cli::runtime_commands::existing_http_connection(&install, id).await?,
         )?
     } else if guided {
         let outcome=airk_cli::standalone_setup::enroll(airk_cli::standalone_setup::Options{

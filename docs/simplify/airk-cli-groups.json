@@ -17,15 +17,20 @@
  "groups": {
   "os": [
    "bundled_assets",
+   "catalog_test_fixture",
    "checkpoint_fence",
+   "checkpoint_packet",
    "child_job",
    "cli_io",
+   "embedding_pool_protocol",
    "install_files",
    "install_layout",
    "native_command",
    "native_process",
+   "native_read_result",
    "process_diagnostics",
    "process_roles",
+   "project_protocol",
    "read_attempt",
    "request_journal",
    "runtime_pair",
@@ -34,6 +39,8 @@
    "service_logs",
    "service_registration",
    "service_resource_policy",
+   "session_protocol",
+   "source_protocol",
    "user_paths"
   ],
   "endpoint": [
@@ -46,7 +53,6 @@
    "embedding_pool_bootstrap",
    "embedding_pool_client",
    "embedding_pool_process",
-   "embedding_pool_protocol",
    "inference_completion_ledger",
    "inference_engine",
    "service_inference",
@@ -62,7 +68,6 @@
    "catalog_index_setup_control",
    "catalog_source_change_control",
    "catalog_split_control",
-   "catalog_test_fixture",
    "reference_refresh_control",
    "registry_console"
   ],
@@ -78,12 +83,10 @@
   ],
   "supervisor": [
    "derived_worker",
-   "project_protocol",
    "project_supervisor",
    "project_worker",
    "project_worker_split",
    "runtime_metadata",
-   "source_protocol",
    "source_supervisor",
    "source_worker",
    "worker_host",
@@ -98,7 +101,6 @@
    "read_attempt_client",
    "service_frontend",
    "session",
-   "session_protocol",
    "tool_call",
    "tool_catalog",
    "unified_mcp",
@@ -107,7 +109,8 @@
   "https": [
    "admin_plane",
    "http_backend",
-   "http_gateway"
+   "http_gateway",
+   "runtime_http_commands"
   ],
   "service": [
    "native_admin_connections",
@@ -117,6 +120,7 @@
   ],
   "cli": [
    "role_admission",
+   "runtime_commands",
    "standalone_setup"
   ]
  }

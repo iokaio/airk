@@ -69,7 +69,7 @@ fn selected_https(root: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn inspect(root: &Path, expected: &str) -> Result<serde_json::Value> {
+pub(crate) fn inspect(root: &Path, expected: &str) -> Result<serde_json::Value> {
     let canonical = root.canonicalize()?;
     let root = canonical.as_path();
     let _lock = existing_install_lock(root)?;
@@ -77,7 +77,7 @@ pub(super) fn inspect(root: &Path, expected: &str) -> Result<serde_json::Value> 
     inspect_owned_locked(root, expected)
 }
 
-pub(super) fn inspect_predecessor_cleanup(
+pub(crate) fn inspect_predecessor_cleanup(
     root: &Path,
     expected: &str,
 ) -> Result<serde_json::Value> {
@@ -424,7 +424,7 @@ pub(super) fn image_exclusion(images: &[Image]) -> Result<ImageExclusion> {
     })
 }
 
-pub(super) async fn retire(root: &Path, expected: &str) -> Result<serde_json::Value> {
+pub(crate) async fn retire(root: &Path, expected: &str) -> Result<serde_json::Value> {
     let canonical = root.canonicalize()?;
     let root = canonical.as_path();
     let _lock = install_lock(root)?;

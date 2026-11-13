@@ -44,7 +44,7 @@ async fn current_endpoint(install: &Path, control: &Path) -> Result<EndpointDesc
     Ok(endpoint)
 }
 
-pub(super) struct Input {
+pub(crate) struct Input {
     pub action: HttpIssuerRotationAction,
     pub operation: Option<Incarnation>,
     pub expected_ca: Option<Sha256Digest>,
@@ -52,7 +52,7 @@ pub(super) struct Input {
     pub expected_receipt: Option<Sha256Digest>,
     pub overlap_seconds: u32,
 }
-pub(super) async fn run(install: &Path, input: Input) -> Result<serde_json::Value> {
+pub(crate) async fn run(install: &Path, input: Input) -> Result<serde_json::Value> {
     let control = installed_metadata_control(install)?;
     if input.action == HttpIssuerRotationAction::Status {
         return output(&control, None);

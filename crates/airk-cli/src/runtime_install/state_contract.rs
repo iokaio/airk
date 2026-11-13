@@ -4,7 +4,7 @@ use super::*;
 use airk_core::identity::Incarnation;
 
 pub(super) const BASELINE: &str = "1.8.16";
-pub(super) const CONTRACT: &str = "airk-state/1";
+pub(crate) const CONTRACT: &str = "airk-state/1";
 const MARKER: &str = "airk-state-contract.json";
 
 #[cfg(test)]
@@ -65,7 +65,7 @@ fn read(root: &Path, control: &Path) -> Result<Option<Marker>> {
 }
 
 /// This observation does not initialize or repair a missing marker.
-pub(super) fn required(root: &Path) -> Result<bool> {
+pub(crate) fn required(root: &Path) -> Result<bool> {
     // A public selection identifies the approved runtime; it does not change a
     // managed provider into an owned payload copied beneath this installation.
     let (main, approval) = if let Some(policy) = managed::read(root)? {
@@ -288,7 +288,7 @@ fn registrations(control: &Path) -> Result<Vec<airk_core::service::ProjectRegist
     Ok(registrations)
 }
 
-pub(super) fn report(root: &Path) -> Result<serde_json::Value> {
+pub(crate) fn report(root: &Path) -> Result<serde_json::Value> {
     let required = required(root)?;
     let control = crate::install_layout::saved_control(root)?;
     let installed = read(root, &control)?.map(|marker| marker.state_contract);

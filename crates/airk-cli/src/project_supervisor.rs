@@ -48,6 +48,8 @@ mod catalog;
 mod guarded_qualification_tests;
 #[cfg(test)]
 mod pool_tests;
+#[cfg(all(test, feature = "local-inference"))]
+mod provider_restart_tests;
 #[cfg(test)]
 mod worker_exit_capacity_tests;
 pub(crate) use catalog::{

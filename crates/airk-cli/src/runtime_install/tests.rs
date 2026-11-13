@@ -543,7 +543,7 @@ async fn startup_admission_healthy_observation_never_charges_or_interprets_circu
     Ok(())
 }
 
-pub(super) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
+pub(crate) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
     unselected_fixture_with_layout(false)
 }
 pub(super) fn unselected_historical_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
@@ -2046,7 +2046,7 @@ async fn lifecycle_install_admission_timeout_preserves_unaccepted_state() -> Res
     Ok(())
 }
 
-fn issuer_gate_fixture() -> Result<(
+pub(crate) fn issuer_gate_fixture() -> Result<(
     tempfile::TempDir,
     PathBuf,
     PathBuf,
@@ -2206,70 +2206,6 @@ fn issuer_installer_gate_preserves_fresh_staging_terminal_recovery_and_unknown_r
     require_issuer_rotation_settled(&root)?;
     rotation::require_start_allowed(&control)?;
     Ok(())
-}
-
-#[test]
-fn login_registration_changes_refuse_pending_issuer_but_preserve_stop_and_observation() -> Result<()>
-{
-    let (_owner, root, control, _record) = issuer_gate_fixture()?;
-    let journal = control.join("http-1/issuer-rotation.json");
-    let original = fs::read(&journal)?;
-    for action in [LoginCommand::Install, LoginCommand::Uninstall] {
-        let error = commands::require_login_registration_change(&root, &action)
-            .expect_err("manager registration must preserve captured issuer owner");
-        assert!(
-            error
-                .to_string()
-                .contains("issuer_rotation_pending_before_runtime_mutation")
-        );
-    }
-    for action in [
-        LoginCommand::Plan,
-        LoginCommand::Status,
-        LoginCommand::Start,
-        LoginCommand::Stop,
-    ] {
-        commands::require_login_registration_change(&root, &action)?;
-    }
-    assert_eq!(fs::read(journal)?, original);
-    Ok(())
-}
-
-#[test]
-fn standalone_adoption_commands_refuse_before_any_installation_access() {
-    // S2 decision Q1: both commands stay in the catalog and refuse a new
-    // operation with a typed code before any locator input is read.
-    let missing = std::env::temp_dir().join("airk-adoption-refusal-never-created");
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    for command in [
-        RuntimeCommand::AdoptLegacyIndex {
-            install_dir: missing.clone(),
-            expected_active: "00".repeat(32),
-            operation_id: "11".repeat(16),
-            locator_file: missing.join("locator.json"),
-            expected_cache_inspection_sha256: "22".repeat(32),
-        },
-        RuntimeCommand::AdoptLegacyIndexes {
-            install_dir: missing.clone(),
-            expected_active: "00".repeat(32),
-            operation_id: "11".repeat(16),
-            locators_file: missing.join("locators.json"),
-            expected_cache_inspection_sha256: "22".repeat(32),
-        },
-    ] {
-        let error = runtime
-            .block_on(run(&command))
-            .expect_err("standalone adoption must be refused");
-        assert!(
-            error
-                .to_string()
-                .starts_with("standalone_adoption_unsupported:"),
-            "{error:#}"
-        );
-    }
-    assert!(!missing.exists());
 }
 
 #[test]

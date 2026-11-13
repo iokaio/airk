@@ -1,76 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Actual watcher exit and retained canonical reconciliation cursors.
 use super::*;
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ReconcileReference {
-    pub project: ProjectBinding,
-    pub configuration_epoch: u64,
-    pub requested_revision: u64,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ExitBoundary {
-    GracefulChildExit,
-    NoActiveWatcherAfterNativeExclusion,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SourceCheckpointObservation {
-    pub schema: u32,
-    pub operation_id: Incarnation,
-    pub service: Incarnation,
-    pub worker: Option<Incarnation>,
-    pub process_id: Option<u32>,
-    pub exit_boundary: ExitBoundary,
-    pub source_lease_excluded: bool,
-    pub targets: Vec<protocol::CheckpointTarget>,
-    pub retained_reconciliations: Vec<ReconcileReference>,
-}
-impl SourceCheckpointObservation {
-    pub(crate) fn validate(&self) -> Result<()> {
-        ensure!(
-            self.schema == 1
-                && self.source_lease_excluded
-                && self.targets.len() <= 1024
-                && self.retained_reconciliations.len() <= 1024,
-            "source checkpoint barrier incomplete or oversized"
-        );
-        ensure!(
-            match self.exit_boundary {
-                ExitBoundary::GracefulChildExit =>
-                    self.worker.is_some() && self.process_id.is_some_and(|pid| pid > 0),
-                ExitBoundary::NoActiveWatcherAfterNativeExclusion =>
-                    self.worker.is_none() && self.process_id.is_none() && self.targets.is_empty(),
-            },
-            "source checkpoint exit identity changed"
-        );
-        let mut projects = BTreeSet::new();
-        for target in &self.targets {
-            ensure!(
-                target.sequence > 0
-                    && target.sequence <= i64::MAX as u64
-                    && projects.insert(target.project),
-                "source checkpoint target duplicated or invalid"
-            );
-        }
-        projects.clear();
-        for target in &self.retained_reconciliations {
-            ensure!(
-                projects.insert(target.project),
-                "source checkpoint reconciliation duplicated"
-            );
-        }
-        ensure!(
-            serde_json::to_vec(self)?.len() <= 256 * 1024,
-            "source checkpoint receipt capacity exceeded"
-        );
-        Ok(())
-    }
-}
+pub(crate) use crate::checkpoint_packet::SourceCheckpointObservation;
+use crate::checkpoint_packet::{ExitBoundary, ReconcileReference};
 
 #[derive(Clone)]
 pub(super) struct Barrier {

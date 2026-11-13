@@ -86,15 +86,23 @@ mod install_layout;
 mod legacy_processes;
 pub mod legacy_startup;
 pub mod manual_start;
+/// The `airk runtime` dispatcher (split step 2b): above the service it serves.
+pub mod runtime_commands;
+/// Setup-only HTTP discovery and enrollment handlers (split step 2b).
+mod runtime_http_commands;
 pub mod runtime_install;
 mod runtime_legacy_origin;
 pub mod service_manager;
 
 mod checkpoint_fence;
+/// The native upgrade checkpoint packet and fence writers (split step 2b).
+mod checkpoint_packet;
 mod child_job;
 
 mod native_command;
 mod native_process;
+/// Native read result classification shared by clients and tests (split step 2b).
+mod native_read_result;
 mod process_diagnostics;
 mod process_roles;
 

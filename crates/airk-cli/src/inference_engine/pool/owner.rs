@@ -29,7 +29,7 @@ impl NativeCompletionWitness {
 }
 
 pub(crate) struct InferenceOwner {
-    state: Arc<State>,
+    pub(crate) state: Arc<State>,
     provider: ProviderIdentity,
     threads: Arc<AtomicUsize>,
     observation: Arc<Mutex<(u64, u64, usize, Instant)>>,

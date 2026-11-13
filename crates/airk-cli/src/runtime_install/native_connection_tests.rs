@@ -70,7 +70,7 @@ impl NativeFixture {
         Ok(fixture)
     }
     async fn health(&self) -> Result<ServiceHealth> {
-        let ControlResponse::Health { observation } = service_runtime::request_for_version(
+        let ControlResponse::Health { observation } = control_client::request_for_version(
             &self.control,
             ControlMethod::Health,
             env!("CARGO_PKG_VERSION"),
@@ -104,7 +104,7 @@ impl NativeFixture {
     pub(super) async fn cleanup(&self) -> Result<()> {
         self.cleanup_confirmed.store(false, Ordering::Relaxed);
         // Version/namespace are the freshly owned fixture's, never installed defaults.
-        let _ = service_runtime::request_for_version(
+        let _ = control_client::request_for_version(
             &self.control,
             ControlMethod::Shutdown,
             env!("CARGO_PKG_VERSION"),
@@ -422,7 +422,7 @@ async fn native_mcp_eof_joins_installer_wait_without_late_startup() -> Result<()
             "eof-fixture".into(),
         )?;
         if mode != "unregistered_source" {
-            let registered = service_runtime::request_for_version(
+            let registered = control_client::request_for_version(
                 &fixture.control, ControlMethod::Register { project: registration.clone() },
                 env!("CARGO_PKG_VERSION"),
             ).await?;
@@ -652,7 +652,7 @@ async fn actual_copied_first_install_qualifies_genesis_before_first_service() ->
             Ok::<_, anyhow::Error>(())
         }
         .await;
-        let _ = service_runtime::request_for_version(
+        let _ = control_client::request_for_version(
             &control,
             ControlMethod::Shutdown,
             env!("CARGO_PKG_VERSION"),

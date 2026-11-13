@@ -5,7 +5,7 @@ use super::*;
 mod catalog_upgrade;
 mod checkpoint;
 pub(super) use checkpoint::prepare_native_checkpoint;
-pub(super) mod rebuild;
+pub(crate) mod rebuild;
 pub(super) use rebuild::SuccessorPermit;
 
 const INTENT: &str = "activation.json";
@@ -28,7 +28,7 @@ enum Outcome {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Receipt {
+pub(crate) struct Receipt {
     schema: u32,
     install: PathBuf,
     candidate: String,
@@ -37,7 +37,7 @@ pub(super) struct Receipt {
     observed_unix_ms: u64,
 }
 
-pub(super) fn result(root: &Path) -> Result<Option<Receipt>> {
+pub(crate) fn result(root: &Path) -> Result<Option<Receipt>> {
     let path = root.join("activation-result.json");
     if !exists(&path)? {
         return Ok(None);
@@ -53,7 +53,7 @@ pub(super) fn result(root: &Path) -> Result<Option<Receipt>> {
     }
     Ok(Some(receipt))
 }
-pub(super) fn checkpoint_status(root: &Path) -> Result<Option<serde_json::Value>> {
+pub(crate) fn checkpoint_status(root: &Path) -> Result<Option<serde_json::Value>> {
     checkpoint::status(root)
 }
 pub(super) fn checkpoint_retiring(root: &Path, candidate: &str) -> Result<()> {
@@ -96,7 +96,7 @@ enum Phase {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Intent {
+pub(crate) struct Intent {
     schema: u32,
     install: PathBuf,
     control: PathBuf,
@@ -199,7 +199,7 @@ impl Intent {
     }
 }
 
-pub(super) fn pending(root: &Path) -> Result<Option<Intent>> {
+pub(crate) fn pending(root: &Path) -> Result<Option<Intent>> {
     if !exists(&root.join(INTENT))? {
         return Ok(None);
     }
@@ -209,7 +209,7 @@ pub(super) fn pending(root: &Path) -> Result<Option<Intent>> {
     checkpoint::reattach_legacy_rollback(root, &mut intent)?;
     Ok(Some(intent))
 }
-pub(super) fn require_settled(root: &Path) -> Result<()> {
+pub(crate) fn require_settled(root: &Path) -> Result<()> {
     ensure!(
         pending(root)?.is_none(),
         "runtime activation is pending; resume ensure or explicitly abort-activation first"
@@ -910,7 +910,7 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
     Ok(selected)
 }
 
-pub(super) async fn abort(root: &Path) -> Result<()> {
+pub(crate) async fn abort(root: &Path) -> Result<()> {
     require_issuer_rotation_settled(root)?;
     let Some(mut intent) = pending(root)? else {
         return Ok(());
@@ -929,7 +929,7 @@ pub(super) async fn abort(root: &Path) -> Result<()> {
 
 /// A newer installer may cancel an exact older intent only before candidate probe.
 /// Keep the guard under the installer lock, including across competing windows.
-pub(super) fn require_superseded(root: &Path, candidate: &str, active: &str) -> Result<()> {
+pub(crate) fn require_superseded(root: &Path, candidate: &str, active: &str) -> Result<()> {
     let intent = pending(root)?.context("saved activation disappeared")?;
     ensure!(
         layout::control(root)? == intent.control,

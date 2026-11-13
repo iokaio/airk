@@ -16,9 +16,12 @@ project supervisor, the source supervisor, service management and the
 installer imported the whole service runtime just to ask whether admission
 was closed. They now depend on this leaf instead.
 
-These stay in `service_runtime::checkpoint`: the admission `Coordinator`, the
-fence writers (`prepare`, `arm_recovery`), `settle`, the immutable packet
-writer and the checkpoint packets.
+The admission `Coordinator` and its fence writer (`prepare`) stay in
+`service_runtime::checkpoint`. Since split step 2b (12 November 2026) the
+installer's fence writer (`arm_recovery`), `settle`, the immutable packet
+writer and the checkpoint packet format live in `checkpoint_packet`, a
+sibling leaf that writes; `service_runtime::checkpoint` re-exports them for
+its own callers and tests.
 
 ## Interface
 
@@ -39,8 +42,7 @@ writer and the checkpoint packets.
   written by earlier services, so the bytes are frozen. Changing them needs
   plan decision D8.
 - **Read only.** Nothing here writes or deletes. Only `settle` in
-  `service_runtime::checkpoint` removes a fence, and only for its own
-  operation.
+  `checkpoint_packet` removes a fence, and only for its own operation.
 - **Fail closed.** An unreadable, oversized, redirected or inconsistent fence
   is an error, never "admission open". Callers that must not block on an error
   choose `unwrap_or(true)` themselves.
