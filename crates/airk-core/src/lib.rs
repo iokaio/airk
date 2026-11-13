@@ -447,6 +447,7 @@ pub trait EmbeddingProvider: Send + Sync {
     fn embed(&self, text: &[String]) -> anyhow::Result<Vec<Vec<f32>>>;
 }
 
+pub mod folder_browse;
 pub mod service_console;
 pub mod service_lifecycle;
 pub mod storage_admin;

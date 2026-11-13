@@ -54,7 +54,12 @@ the grant lives only in the browser session.
 sets and grants, with their sources, memberships, policy and split state.
 
 - **Set up an index:** fill in the name, folder, data location, collection,
-  extra folders and watching. The service's full review is shown, then
+  extra folders and watching. **Browse…** beside each path opens a folder
+  dialog served by the service (`files.browse`, M24): drives, your home folder
+  and the AIRK data location to start from, folders only, links shown but
+  never entered, existing index folders marked. The data location defaults to
+  a folder named after the collection inside the installation's data
+  location; the setup creates it. The service's full review is shown, then
   **Create index** applies exactly that review.
 - **Index sets:** create, rename, add or remove member indexes, delete.
 - **Index changes:** rename, source changes, policy resume, split and retire.

@@ -51,6 +51,7 @@ export const OPS = {
   recoveryPlan: 'recovery.plan',
   recoveryPlanItems: 'recovery.plan_items',
   storageInventory: 'storage.inventory',
+  filesBrowse: 'files.browse',
   storagePurgePlan: 'storage.purge_plan',
   storagePurge: 'storage.purge',
   loginStatus: 'service.login_startup_status',
@@ -279,6 +280,14 @@ export const body = {
     plan_items: { id, after, limit },
   }),
   storageInventory: () => ({ storage_inventory: {} }),
+  /** M24: the folders in `path` (the starting list without one). */
+  folderBrowse: (path: string | null, showHidden: boolean, after: string | null) => {
+    const request: { path?: string; show_hidden?: boolean; after?: string } = {};
+    if (path !== null) request.path = path;
+    if (showHidden) request.show_hidden = true;
+    if (after !== null) request.after = after;
+    return { folder_browse: request };
+  },
   /** U100: only the cache and closed logs are purgeable. */
   storagePurgePlan: (kind: 'cache' | 'logs') => ({ storage_purge_plan: { kind } }),
   storagePurge: (kind: 'cache' | 'logs', planDigest: string) => ({

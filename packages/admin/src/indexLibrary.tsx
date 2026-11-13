@@ -24,6 +24,7 @@ import {
   type ScopeAtom,
   type SourceMutationSelection,
 } from './operations';
+import { browse, FolderPicker, joinPath } from './folderPicker';
 import { Confirm, Field, JsonBlock, list, Outcome, Panel, resultOf, Text, useCall, type CallState } from './render';
 
 // ---------------------------------------------------------------------------
@@ -471,7 +472,7 @@ function previewOf(revision: number | null, operation: CatalogRequestBody['opera
 // Set up an index: index_setup_draft → full draft → index_setup_apply → receipt.
 
 const DATA_ROOT_HINT =
-  'On Windows the service keeps index data under %LOCALAPPDATA%\\AIRK Service\\data\\indexes by default; type the folder this index should use.';
+  "Each index keeps its storage in its own folder. By default that is a folder named after the collection inside the installation's data location; the setup creates it, so it does not need to exist yet.";
 
 function DraftSummary(props: { draft: Rec }): JSX.Element {
   const d = props.draft;
@@ -604,6 +605,10 @@ function SetupIndex(props: {
   const [watch, setWatch] = useState(true);
   const [nameTouched, setNameTouched] = useState(false);
   const [collectionTouched, setCollectionTouched] = useState(false);
+  const [dataTouched, setDataTouched] = useState(false);
+  // The installation's data location (M24 starting list), the default parent.
+  const [dataBase, setDataBase] = useState<string | null>(null);
+  const [picking, setPicking] = useState<'primary' | 'data' | 'additional' | null>(null);
   const [draft, runDraft] = useCall();
 
   const applyRoot = (root: string, force: boolean): void => {
@@ -623,6 +628,19 @@ function SetupIndex(props: {
   const extra = parseAdditional(additional);
   const extraValid = extra.every((entry) => entry !== null);
   const collectionValid = /^[A-Za-z0-9._-]{1,128}$/.test(collection) && collection !== '.' && collection !== '..';
+  useEffect(() => {
+    void (async () => {
+      const starts = await browse(null, false, null);
+      if ('listing' in starts) {
+        const data = starts.listing.entries.find((entry) => entry.airk_location === 'data');
+        if (data !== undefined) setDataBase(data.path);
+      }
+    })();
+  }, []);
+  // Until the user types or picks one, the data root follows the collection.
+  useEffect(() => {
+    if (!dataTouched && dataBase !== null) setDataRoot(collectionValid ? joinPath(dataBase, collection) : '');
+  }, [dataBase, collection, dataTouched]);
   const ready =
     props.revision !== null &&
     name.trim() !== '' &&
@@ -663,6 +681,9 @@ function SetupIndex(props: {
             value={primary}
             onInput={(value) => applyRoot(value, false)}
           />
+          <button type="button" class="secondary" onClick={() => setPicking('primary')}>
+            Browse…
+          </button>
         </div>
         <div class="row">
           <Field
@@ -684,7 +705,18 @@ function SetupIndex(props: {
           />
         </div>
         <div class="row">
-          <Field label="Data root" wide value={dataRoot} onInput={setDataRoot} />
+          <Field
+            label="Data root"
+            wide
+            value={dataRoot}
+            onInput={(value) => {
+              setDataRoot(value);
+              setDataTouched(true);
+            }}
+          />
+          <button type="button" class="secondary" onClick={() => setPicking('data')}>
+            Browse…
+          </button>
         </div>
         <p class="muted">{DATA_ROOT_HINT}</p>
         <label class="field wide">
@@ -697,6 +729,11 @@ function SetupIndex(props: {
             onInput={(event) => setAdditional(event.currentTarget.value)}
           />
         </label>
+        <div class="row">
+          <button type="button" class="secondary" onClick={() => setPicking('additional')}>
+            Add a folder…
+          </button>
+        </div>
         <div class="row">
           <label class="check">
             <input type="checkbox" checked={watch} onChange={(event) => setWatch(event.currentTarget.checked)} />
@@ -712,6 +749,31 @@ function SetupIndex(props: {
           Review setup
         </button>
       </form>
+      {picking !== null ? (
+        <FolderPicker
+          title={
+            picking === 'primary'
+              ? 'Choose the folder to index'
+              : picking === 'data'
+                ? "Choose where this index's storage goes"
+                : 'Choose an additional folder to index'
+          }
+          initial={picking === 'primary' ? primary : picking === 'data' ? dataRoot || (dataBase ?? '') : ''}
+          allowNew={picking === 'data'}
+          onClose={() => setPicking(null)}
+          onPick={(chosen) => {
+            if (picking === 'primary') applyRoot(chosen, false);
+            else if (picking === 'data') {
+              setDataRoot(chosen);
+              setDataTouched(true);
+            } else {
+              const alias = collectionFrom(folderName(chosen)) || 'source';
+              setAdditional((current) => `${current.trim() === '' ? '' : `${current.trimEnd()}\n`}${alias}=${chosen}`);
+            }
+            setPicking(null);
+          }}
+        />
+      ) : null}
       {draftValue !== null ? <DraftSummary draft={draftValue} /> : null}
       <Outcome state={draft} />
       {result !== null && token === null ? (

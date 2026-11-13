@@ -758,6 +758,11 @@ impl Setup {
                 installed_unix_ms: (self.clock)(),
             },
         };
+        // The service keeps index storage under `locations.data` and its cache
+        // under `locations.cache`; an index setup review needs the data folder
+        // to exist. A fresh install, and a reinstall after "delete data", have
+        // neither. They are created owner-only, as the state folder is.
+        files::prepare_locations(&self.operation.locations)?;
         files::write_record(&self.program(), &record)?;
         self.record(
             SetupPhase::RecordWritten,

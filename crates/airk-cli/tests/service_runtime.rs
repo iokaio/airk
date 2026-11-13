@@ -4596,6 +4596,32 @@ fn an_installed_first_start_creates_the_index_catalog_and_serves_admin() -> Resu
             ),
         }
     }
+    // M24: the Browse dialog's starting list and a folder listing.
+    for path in [
+        None,
+        Some(owner.path().to_str().context("owner path")?.to_owned()),
+    ] {
+        let listed = airkctl::service::request(
+            &root,
+            ControlMethod::FolderBrowse {
+                path: path.clone(),
+                show_hidden: false,
+                after: None,
+            },
+            version,
+        )
+        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+        let ControlResponse::FolderListing { listing } = listed else {
+            anyhow::bail!("no folder listing: {}", serde_json::to_string(&listed)?);
+        };
+        match path {
+            None => ensure!(!listing.entries.is_empty(), "the starting list is empty"),
+            Some(_) => ensure!(
+                listing.entries.iter().any(|entry| entry.name == "runtime"),
+                "the control folder is not listed"
+            ),
+        }
+    }
     let (code, _, stderr) = airkctl(&["service", "shutdown", "--runtime-dir", &dir]);
     ensure!(code == 0, "shutdown failed: {stderr}");
     Ok(())

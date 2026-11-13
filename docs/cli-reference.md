@@ -37,6 +37,7 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl explorer validate-draft`](#airkctl-explorer-validate-draft)
 - [`airkctl facts`](#airkctl-facts)
 - [`airkctl files`](#airkctl-files)
+- [`airkctl folders`](#airkctl-folders)
 - [`airkctl imports`](#airkctl-imports)
 - [`airkctl index`](#airkctl-index)
 - [`airkctl info`](#airkctl-info)
@@ -138,6 +139,7 @@ Commands:
   resume         Resume work paused with `pause`
   watch          Turn native source watching on or off for the project (on keeps the index current after edits)
   library        The index library: list, show and set up indexes (the admin pages' Index library)
+  folders        List the folders in PATH (folders only, links never followed), or the starting list without one (M24: AIRK Admin's Browse dialog)
   projects       List the projects registered with the service (same fields as the MCP `projects` tool)
   service        The AIRK service: start, stop, status, logs, requests, trust and management
   parse          Plan, and with --execute run, a multi-step read-only evidence request
@@ -2230,6 +2232,71 @@ Options:
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl folders
+
+```text
+List the folders in PATH (folders only, links never followed), or the starting list without one (M24: AIRK Admin's Browse dialog)
+
+Usage: airkctl folders [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]
+          An absolute folder path; omit it for drives, your home folder and the AIRK data location
+
+Options:
+      --hidden
+          Include hidden folders
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --after <AFTER>
+          Continue after this folder name (the previous page's `continuation`)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
 
       --member-availability <MEMBER_AVAILABILITY>
           Report member failures or require every selected member to answer

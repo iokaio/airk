@@ -49,6 +49,32 @@ pub(super) fn inventory(
     run().unwrap_or_else(|code| code)
 }
 
+/// `folders [PATH] [--hidden] [--after NAME]` (M24): the listing AIRK
+/// Admin's Browse dialog shows, printed complete.
+pub(super) fn folders(
+    cx: &mut Context,
+    selection: &Selection,
+    runtime_dir: Option<PathBuf>,
+    path: Option<String>,
+    show_hidden: bool,
+    after: Option<String>,
+) -> u8 {
+    let run = || -> Result<u8, u8> {
+        let control = control(cx, selection, runtime_dir)?;
+        let response = send(
+            cx,
+            &control,
+            ControlMethod::FolderBrowse {
+                path,
+                show_hidden,
+                after,
+            },
+        )?;
+        Ok(print_control(cx, &response))
+    };
+    run().unwrap_or_else(|code| code)
+}
+
 /// `service purge-plan --kind cache|logs`.
 pub(super) fn purge_plan(
     cx: &mut Context,

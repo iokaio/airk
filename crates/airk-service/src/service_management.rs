@@ -1196,6 +1196,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::StoragePurgePlan { .. }
         | ControlMethod::StoragePurge { .. }
         | ControlMethod::LoginStartup { .. }
+        | ControlMethod::FolderBrowse { .. }
         | ControlMethod::AgentEndpoint {}
         | ControlMethod::AgentConnectionInfo { .. }
         | ControlMethod::AgentConnectionOwnership { .. }

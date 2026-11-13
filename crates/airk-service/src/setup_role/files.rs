@@ -348,6 +348,18 @@ pub(crate) fn write_owner_file(folder: &Path, name: &str, bytes: &[u8]) -> Resul
     Ok(())
 }
 
+/// The record's data and cache folders exist and are private to this user
+/// (created owner-only when missing, as the state folder is). The index setup
+/// review needs the data folder; a fresh install and a reinstall after
+/// "delete data" have neither.
+pub(crate) fn prepare_locations(locations: &airk_core::install_record::Locations) -> Result<()> {
+    for location in [&locations.data, &locations.cache] {
+        airk_ipc::endpoint::prepare_root(Path::new(location))
+            .with_context(|| format!("location_unavailable: {location}"))?;
+    }
+    Ok(())
+}
+
 /// No existing component of `path` is a link or reparse point (Unix: links
 /// owned by root, such as macOS `/var`, are host aliases and allowed).
 pub(crate) fn no_links(path: &Path) -> Result<()> {

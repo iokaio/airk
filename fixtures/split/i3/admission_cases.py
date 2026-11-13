@@ -614,6 +614,8 @@ def operations():
         ("requests.receipt", "RequestReceipt", MGMT), ("recovery.plan", "Plan", MGMT),
         ("recovery.plan_items", "PlanItems", MGMT), ("storage.inventory", "StorageInventory", MGMT),
         ("storage.purge_plan", "StoragePurgePlan", MGMT),
+        # M24: the Browse dialog of the path fields (folders only, never files).
+        ("files.browse", "FolderBrowse", MGMT),
         ("logs.recent", "Logs", MGMT), ("logs.export", "LogsExport", MGMT),
         ("agents.connection", "HttpConnectionInfo", MGMT), ("agents.ownership", "HttpConnectionOwnership", MGMT),
         ("agents.verify", "AgentConnectionVerify", MGMT), ("https.trust_status", "HttpTrust.Inspect", MGMT),

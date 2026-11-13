@@ -20,6 +20,7 @@ pub(crate) mod checkpoint;
 mod configuration;
 mod explorer;
 mod first_start;
+mod folders;
 mod http;
 mod journal;
 mod lifecycle;
@@ -850,6 +851,28 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                     Err(_) => ControlResponse::Failure {
                         code: login::UNAVAILABLE.into(),
+                    },
+                }
+            }
+            // M24: folders only, off the async workers; a failure carries its
+            // leading code (`folder_not_found`, `folder_link_not_followed`, …).
+            ControlMethod::FolderBrowse {
+                path,
+                show_hidden,
+                after,
+            } => {
+                let control = state.control_root.clone();
+                let answer = tokio::task::spawn_blocking(move || {
+                    folders::browse(&control, path.as_deref(), show_hidden, after.as_deref())
+                })
+                .await;
+                match answer {
+                    Ok(Ok(listing)) => ControlResponse::FolderListing { listing },
+                    Ok(Err(error)) => ControlResponse::Failure {
+                        code: storage::failure_code(&error, "folder_unavailable"),
+                    },
+                    Err(_) => ControlResponse::Failure {
+                        code: "folder_unavailable".into(),
                     },
                 }
             }

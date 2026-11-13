@@ -215,8 +215,15 @@ when their control root is the record's `locations.state`
 (`service_locations::adopt_for_control`). The log rings of that control root
 are then in `locations.logs`, and `airkctl service logs` reads them there
 (`airkctl::logs::locate`). State is the control root; data roots are chosen
-per registration by the client (`airkctl` defaults them to `locations.data`);
+per registration by the client (`airkctl` defaults them to `locations.data`;
+AIRK Admin to a folder named after the collection inside it);
 the service derives no cache folder. `service-foreground` adopts nothing.
+
+The record step (`WriteRecord`, every placing kind) first makes the record's
+`data` and `cache` folders exist, created owner-only like the state folder
+(`files::prepare_locations`). An index setup review needs the data folder;
+a fresh install, and a reinstall after "delete data", have neither (1.8.32
+installed without them, so every setup draft failed).
 
 ## Login startup from the service (U101)
 

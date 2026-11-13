@@ -215,6 +215,20 @@ enum Command {
         #[command(subcommand)]
         action: library::LibraryCommand,
     },
+    /// List the folders in PATH (folders only, links never followed), or the starting list without one (M24: AIRK Admin's Browse dialog).
+    Folders {
+        /// An absolute folder path; omit it for drives, your home folder and the AIRK data location.
+        path: Option<String>,
+        /// Include hidden folders.
+        #[arg(long)]
+        hidden: bool,
+        /// Continue after this folder name (the previous page's `continuation`).
+        #[arg(long, requires = "path")]
+        after: Option<String>,
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
     /// List the projects registered with the service (same fields as the MCP `projects` tool).
     Projects {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
@@ -3271,6 +3285,12 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             }
         }),
         Command::Projects { runtime_dir } => projects(cx, selection, runtime_dir),
+        Command::Folders {
+            path,
+            hidden,
+            after,
+            runtime_dir,
+        } => storage::folders(cx, &selection, runtime_dir, path, hidden, after),
         Command::Library { action } => library::run(cx, selection, action),
         Command::Tools {
             action:

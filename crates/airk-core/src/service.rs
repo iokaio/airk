@@ -518,6 +518,17 @@ pub enum ControlMethod {
     LoginStartup {
         action: crate::storage_admin::LoginStartupAction,
     },
+    /// M24: the folders in `path` (folders only, links never followed), or
+    /// the starting list without a path, for the admin pages' Browse dialog
+    /// and `airkctl folders`. Read-only.
+    FolderBrowse {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        show_hidden: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
+    },
     /// M14 (`service record-error`): append a bounded client error to the raw
     /// job-error ring, as `airk service record-error` did. `input` is the
     /// error's JSON text (`{code, detail}`), at most
@@ -719,6 +730,7 @@ impl ControlMethod {
             | Self::StoragePurgePlan { .. }
             | Self::StoragePurge { .. }
             | Self::LoginStartup { .. }
+            | Self::FolderBrowse { .. }
             | Self::AgentEndpoint {}
             | Self::AgentConnectionInfo { .. }
             | Self::AgentConnectionOwnership { .. }
@@ -1549,6 +1561,10 @@ pub enum ControlResponse {
     /// M21 status after the action.
     LoginStartup {
         login: crate::storage_admin::LoginStartupStatus,
+    },
+    /// M24.
+    FolderListing {
+        listing: crate::folder_browse::FolderListing,
     },
     /// M5: the request is journaled (`duplicate` when this exact request was
     /// already journaled under its nonce).

@@ -440,3 +440,26 @@ fn only_a_pre_split_extensions_native_airk_blocks_setup() {
         );
     }
 }
+
+/// The record step makes the data and cache locations exist (a fresh install,
+/// or a reinstall after "delete data", has neither); the index setup review
+/// needs the data folder. Repeating it is harmless.
+#[test]
+fn the_record_step_creates_missing_data_and_cache_locations() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let text = |path: PathBuf| path.to_str().unwrap().to_owned();
+    let locations = airk_core::install_record::Locations {
+        program: text(base.join("program")),
+        data: text(base.join("data").join("indexes")),
+        state: text(base.join("state").join("service")),
+        cache: text(base.join("cache").join("service")),
+        logs: text(base.join("logs").join("service")),
+    };
+    super::files::prepare_locations(&locations)?;
+    for location in [&locations.data, &locations.cache] {
+        assert!(std::path::Path::new(location).is_dir(), "{location}");
+    }
+    super::files::prepare_locations(&locations)?;
+    Ok(())
+}

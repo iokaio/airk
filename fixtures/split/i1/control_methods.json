@@ -1135,6 +1135,60 @@
           "bytes": "{\"status\":\"login_startup\"}"
         }
       ]
+    },
+    {
+      "variant": "folder_browse",
+      "method": "M24",
+      "methods": [
+        {
+          "name": "starting_list",
+          "bytes": "{\"folder_browse\":{}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "folder",
+          "bytes": "{\"folder_browse\":{\"path\":\"D:/code\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "next_page_with_hidden",
+          "bytes": "{\"folder_browse\":{\"path\":\"D:/code\",\"show_hidden\":true,\"after\":\"airk\"}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_field",
+          "bytes": "{\"folder_browse\":{\"recursive\":true}}"
+        },
+        {
+          "name": "path_not_text",
+          "bytes": "{\"folder_browse\":{\"path\":1}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "starting_list",
+          "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"breadcrumb\":[],\"entries\":[{\"name\":\"C:\",\"path\":\"C:/\",\"kind\":\"folder\",\"start\":\"drive\"},{\"name\":\"fictional\",\"path\":\"C:/Users/fictional\",\"kind\":\"folder\",\"start\":\"home\"},{\"name\":\"indexes\",\"path\":\"C:/AIRK Service/data/indexes\",\"kind\":\"folder\",\"start\":\"airk_location\",\"airk_location\":\"data\"}],\"truncated\":false,\"marks_complete\":true}}"
+        },
+        {
+          "name": "folder_page",
+          "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"path\":\"D:/code\",\"parent\":\"D:/\",\"breadcrumb\":[{\"name\":\"D:\",\"path\":\"D:/\"},{\"name\":\"code\",\"path\":\"D:/code\"}],\"entries\":[{\"name\":\".cache\",\"path\":\"D:/code/.cache\",\"kind\":\"folder\",\"hidden\":true},{\"name\":\"airk\",\"path\":\"D:/code/airk\",\"kind\":\"folder\",\"indexes\":[{\"index\":\"airk\",\"use\":\"indexed_root\"}]},{\"name\":\"shared\",\"path\":\"D:/code/shared\",\"kind\":\"link\"}],\"continuation\":\"shared\",\"truncated\":false,\"marks_complete\":true}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "without_listing",
+          "bytes": "{\"status\":\"folder_listing\"}"
+        },
+        {
+          "name": "unknown_use",
+          "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"path\":\"D:/code\",\"parent\":\"D:/\",\"breadcrumb\":[{\"name\":\"D:\",\"path\":\"D:/\"},{\"name\":\"code\",\"path\":\"D:/code\"}],\"entries\":[{\"name\":\".cache\",\"path\":\"D:/code/.cache\",\"kind\":\"folder\",\"hidden\":true},{\"name\":\"airk\",\"path\":\"D:/code/airk\",\"kind\":\"folder\",\"indexes\":[{\"index\":\"airk\",\"use\":\"watched\"}]},{\"name\":\"shared\",\"path\":\"D:/code/shared\",\"kind\":\"link\"}],\"continuation\":\"shared\",\"truncated\":false,\"marks_complete\":true}}"
+        }
+      ]
     }
   ]
 }
