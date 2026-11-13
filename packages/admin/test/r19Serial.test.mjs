@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Independent serial callback traces for R19a. Set AIRK_R19_CAPTURE to run
-// the captured original procedure bodies instead of the relocated owners.
+// Independent callback traces. The before/captured-source runner is retained
+// in seam commit a94b806c; these fixtures use the corrected context-owner API.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -41,7 +41,7 @@ test('serial Activity open/retry/cancel preserves exact calls and UI callback or
   ]);
 });
 
-test('serial failed Activity detail clears record; failed action leaves it alone', async () => {
+test('serial failed Activity detail clears record and admits no action without an accepted job', async () => {
   const trace = [];
   const run = async (operation, body) => { trace.push(['call', operation, body]); return failed; };
   const requests = createJobRequests({ runJob: run, runJobAction: run,
@@ -50,7 +50,6 @@ test('serial failed Activity detail clears record; failed action leaves it alone
   await requests.jobChange('job-A', 'cancel');
   assert.deepEqual(trace, [
     ['selected', 'job-A'], ['record', null], ['call', 'jobs.get', { job: { id: 'job-A' } }], ['record', null],
-    ['call', 'jobs.cancel', { cancel: { id: 'job-A' } }],
   ]);
 });
 
@@ -72,8 +71,9 @@ test('serial catalog first/continuation pages preserve calls, rows, cursor, head
   const props = { kind: 'indexes', onRevision: value => trace.push(['revision', value]),
     onItems: (value, complete) => trace.push(['items', value, complete]) };
   const filter = { indexId: null, projectId: null };
-  await requests.load(null, props, filter, []);
-  await requests.load(cursor, props, filter, [a]);
+  const context = requests.bind({ kind: 'indexes', ...filter, reload: 0, session: undefined });
+  await requests.load(null, props, context);
+  await requests.load(cursor, props, context);
   assert.deepEqual(trace, [
     ['call', 'catalog.page', { catalog_page: { request: { kind: 'indexes', index_id: null, project_id: null,
       after: null, expected_catalog_revision: null, limit: 32, max_bytes: 49152 } } }],
@@ -88,8 +88,8 @@ test('serial failed catalog page publishes no derived state', async () => {
   const trace = [];
   const requests = createCatalogRequests({ run: async () => failed,
     setItems: value => trace.push(value), setCursor: value => trace.push(value), setHeader: value => trace.push(value) });
-  await requests.load(null, { kind: 'indexes', onRevision: value => trace.push(value), onItems: value => trace.push(value) },
-    { indexId: null, projectId: null }, []);
+  const context = requests.bind({ kind: 'indexes', indexId: null, projectId: null, reload: 0, session: undefined });
+  await requests.load(null, { kind: 'indexes', onRevision: value => trace.push(value), onItems: value => trace.push(value) }, context);
   assert.deepEqual(trace, []);
 });
 
@@ -126,4 +126,19 @@ test('serial index-name loader preserves catalog/registry calls and callback ord
     ['known', true], ['partial', false],
     ['indexes', [{ binding: 'binding-A', name: 'Index A', id: 'index-A', paused: true, retired: false, registered: true }]],
   ]);
+});
+
+test('serial failed action retains the already accepted job and its full record', async () => {
+  const record = { id: 'job-A', state: 'failed', project: 'binding-A', attempts: 4, outcome: { state: 'failed', code: 'fixture' } };
+  const sent = [], records = [];
+  const requests = createJobRequests({
+    runJob: async (operation, body) => { sent.push([operation, body]); return ok({ status: 'job', job: record }); },
+    runJobAction: async (operation, body) => { sent.push([operation, body]); return failed; },
+    setJobId: () => {}, setJobRecord: value => records.push(value),
+  });
+  await requests.openJob('job-A');
+  await requests.jobChange('job-A', 'cancel');
+  assert.deepEqual(sent, [['jobs.get', { job: { id: 'job-A' } }], ['jobs.cancel', { cancel: { id: 'job-A' } }]]);
+  assert.deepEqual(records, [null, record]);
+  assert.equal(requests.snapshot().record, record);
 });

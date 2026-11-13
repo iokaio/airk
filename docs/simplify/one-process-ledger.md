@@ -2,6 +2,140 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- Frozen R19 correction passes `p1-r19-after`: seven serial and twenty-four
+  race/ownership cases, 31/31 selected passing after pinned Admin TypeScript
+  compilation, receipt 0.62 s with unchanged frontend/harness seals. Original
+  thirteen race assertions and three reproduced review-boundary cases remain
+  unchanged. Actual parent/child callbacks prove B admission before unmount and
+  positive A-to-successor handoff with the full result/receipt. Source-derived
+  key checks and injected owners are not DOM qualification. Canonical Admin
+  build/check passes; `admin-assets-r19.json` inventory
+  `23da37180f14faa43c7a2f46261f8f3fb2b49a6d97e22d26ce6c9393169f5d24`,
+  bundle `8a3495275624a15bda4d41a914b4f2d1ae68c7cf74cd178a32cf30a43b6772ad`.
+- Native R04 complete source was reviewed by the primary across dispatch,
+  redaction, pending/ordinary/receipt-only custody, cancellation, expiry and
+  all typed outcomes. Shared known/missing/unknown receipt fixtures now validate
+  actual policy-work ownership and preserve complete native evidence. Their
+  split recovery outer request digest is emitted using the existing Core
+  framing primitive and native serialization; opaque original split lineage
+  inputs are not a persisted-state qualification claim. Generation receipt
+  `p1-r04-fixture-generate` passes one selected test (Cargo 10.53 s, receipt
+  11.47 s). Expected mutable fixture output is excluded from its unchanged
+  native/harness seal; final fixture SHA-256 is
+  `4933640b91a096d36ab17ec2d78887d34038e8a7d4973b6f8dab3a2589d0274c`.
+- First handler Clippy stopped on an existing helper's lint attribute displaced
+  by test insertion. Full diagnostics contained only that test-source issue;
+  primary restored the existing comment/attribute to its original helper,
+  without adding an exemption or changing assertions. `p1-r04-handler-clippy-r2`
+  passes all HTTPS targets/no default features (Cargo 3.70 s, receipt 4.39 s).
+  `p1-r04-r19-native-after` passes 47/47 Admin-plane tests, 38 filtered, including
+  all twenty R04 cases plus the actual embedded bytes/manifest/route checks
+  (Cargo 5.88 s, receipt 7.00 s). Both retain unchanged seals, persistent P10
+  target, incremental on and timings. Native production is confined to three
+  owned files; the larger test/fixture diff retains full setup and receipt
+  shapes rather than reducing evidence to fit a line-count target.
+- R04 frontend tests are frozen at fourteen. Original eleven-case baseline is
+  retained; `p1-r04-custody-before` selects three new cases, all failing as
+  analyzed, receipt 0.45 s and unchanged seals. Actual policy/split callbacks
+  dispatch twice without a rerender; Make readable permits fresh generation
+  while unknown. Later known/missing/expired/mismatched receipt controls remain
+  qualification expectations, not separately reproduced defects. UI production
+  follows the R19 ownership handoff; native passing results do not close it.
+
+- Validation scheduling refinement: native R04 implementation can proceed on
+  its owned files while R19 completes its frontend correction. Both diagnostic
+  native batches are collected. Primary will review and freeze both complete
+  source sets plus generated R19 assets, then run one shared HTTPS Clippy and
+  Admin-handler/embedded-asset batch. This supersedes waiting for a separate R19
+  asset compile before beginning R04 production work. Keep the behavior commits
+  separate and retain exact combined input identities; no installed runtime is
+  rebuilt or reused as fresh qualification. R04 frontend production still waits
+  for R19's ownership handoff.
+
+- After contract `2ddadaf5`, R04 native consumer boundary is the Admin handler,
+  mutations and session secrets with existing tests. Batch existing eight
+  regressions with real generated policy/split mutation, lost-reply receipt,
+  capacity/release, foreign/expired/misapplied token and ordinary-preview
+  pressure cases before one correction. Typed classification precedes redacted
+  serialization; restore caller/key custody on every outcome. Reserve issuance
+  capacity before effects, preserving ordinary eviction but never evicting
+  outstanding recovery or in-flight reservations. Only the two approved pairs
+  expose receipt-only handles. Frontend read-only investigation owns API,
+  envelope, Outcome and setup/Make-readable/recovery flow; R19 retains exclusive
+  IndexLibrary edit ownership until its complete correction freezes. Initial
+  checkpoint remains 15 minutes per component. No generic R20 transport repair,
+  persisted changes, new dependencies or broad qualification in this batch.
+- R04 frontend source review finds required siblings: existing receipt controls
+  recognize only the generic transport-unknown code; policy/split discard
+  failure handles; their expired-receipt hint can rerun the original mutation.
+  Keep ordinary `reviewOf` success-only. Add dedicated unknown/recovery semantics
+  tested against shared Rust-validated cases, keep original reviewed tokens for
+  applies, and expose only matching receipt reads for generated unknowns. Expired
+  recovery must not replay. New tests execute actual API/envelope/Outcome and
+  source-exported workflow callbacks with injected host hooks/fetch, preserving
+  evidence and accepted/completed controls; they make no DOM qualification claim.
+  Tests-only owner may write one R04 test file; production waits for R19 to
+  release IndexLibrary. Native and frontend corrections may land separately.
+- R19 behavior-step test decision: after a failed job lookup no accepted record
+  exists, so cancel must not dispatch. The primary approved changing that one
+  serial expectation in the correction, with a separate accepted-record plus
+  failed-action case retaining the original failure-preservation invariant.
+  Original six serial goldens remain in structural commit `a94b806c`; the
+  thirteen delayed-state assertions stay unchanged.
+- Remaining P1 concurrent-agent-file follow-up starts with a bounded read-only
+  review of the existing file edit owner and platform replacement semantics.
+  The acceptance question is the unobserved interval after the final old-byte
+  comparison and before replacement; R01's passing earlier-write check does not
+  prove atomic compare-and-swap. Initial checkpoint is 15 minutes. Identify the
+  smallest deterministic observation seam and surviving-source invariant before
+  any implementation or tests. No editor campaign, state contract or speculative
+  platform update protocol is authorized by this investigation alone.
+- R04 expanded native baseline `p1-r04-recovery-before`: 18 selected, three
+  pass/fifteen fail, receipt 27.05 s, unchanged input seals. Full diagnostics
+  match typed outcome, restored-key leakage and missing custody hypotheses;
+  the paused pressure test directly observes zero reserved slots instead of32.
+  Several later capacity/lifetime assertions are gated by the missing initial
+  handle and are not independently reproduced yet. Primary caught a new policy
+  success expectation before compiling: current progress semantics say completed
+  for that response; the reservation test preserves it. Nested-job progress is
+  a follow-up, not part of this contract change.
+- R04 frontend baseline `p1-r04-frontend-before`: eleven selected, two pass/nine
+  fail through actual API/workflow callbacks, input seals unchanged. Missing
+  accessor, hidden typed-unknown receipt controls and expired-receipt mutation
+  callbacks reproduce the reviewed class. Initial module loading failed because
+  the observation stub lacked R19's newly imported `useLayoutEffect`; the primary
+  added that host stub before the eleven-case diagnostic. This was a harness
+  failure, not product evidence. No product assertions changed. Setup-native
+  identity and read-versus-mutation cancellation observations are being added
+  before production correction; retain/reuse the unchanged eighteen-case baseline.
+- R04 two added boundary observations `p1-r04-boundaries-before` select two,
+  both fail as analyzed (Cargo 8.81 s, receipt 12.37 s, unchanged seals).
+  Validated setup draft/apply returns 200/completed and exposes its native c1
+  caller at top and nested receipt request; that caller differs from the unused
+  generated draw and must be retained privately for subsequent restoration.
+  Cancellation observes no reservation in either mode, rather than one held
+  before dispatch with read-only release versus uncertain-mutation retention.
+  Twenty native cases are now frozen; reuse eighteen plus two diagnostic
+  receipts. Correction waits for R19's matching asset boundary.
+- R19 primary source review caught namespace reset on reload, unnecessary detail
+  rekey on initial namespace discovery, and the interval between the parent's
+  selection callback and keyed child unmount. These are source findings pending
+  focused reproduction, not passing evidence. Preserve draft bytes in
+  `artifacts/advanced-split/r19-review-boundary-before.json`, SHA-256
+  `8443a7cebdd4f95b95923ee757d9bf6e7ee845c255f947a3dc4b6e14600448cb`.
+  Add focused namespace/key/actual parent-child callback observations before
+  one correction; include positive successor-result handoff. No DOM claim.
+- Concurrent-config review confirms the final comparison in `config/io.rs`
+  precedes staging/sync and unconditional tempfile replacement. Locked tempfile
+  uses replace-existing on Windows and rename on Unix; neither takes expected
+  target bytes. Connect/repair/remove share this interval. No runtime observation
+  yet. Smallest next observation is a private injected callback after temp sync,
+  covering in-place write, atomic editor replacement and deletion, plus existing
+  no-clobber creation control. Moving the comparison only narrows the gap;
+  AIRK-only locks do not exclude editors. Any retained conflict/backup protocol
+  needs reviewed interruption, cleanup and source-preservation semantics before
+  implementation; do not silently introduce a new editing workflow.
+
 - Approved R04 contract-only milestone: primary reviewed optional failure
   handle, exact unknown-code validation, two receipt-only operation pairs and
   409/nonretryable capacity refusal. Existing absent-handle failure bytes are

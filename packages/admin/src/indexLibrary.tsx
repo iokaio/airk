@@ -8,10 +8,11 @@
 // operations, the target's display name typed by the user (contracts §4.3b).
 // Fragment routes (`#index-library?root=|index=|set=`) only prefill; they
 // never start a call that changes anything.
-import { createCatalogRequests, indexDetailValue, itemOf, type Item } from './catalogRequests';
+import { createCatalogRequests, indexDetailValue, setDetailValue, itemOf, type Item, type CatalogHeader } from './catalogRequests';
 import type { ComponentChildren, JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { reviewedCall, reviewOf } from './api';
+import { currentSession } from './session';
 import {
   body,
   isCatalogId,
@@ -254,23 +255,31 @@ function CatalogList(props: {
   indexId?: string | null;
   projectId?: string | null;
   reload: number;
-  onRevision: (revision: number) => void;
+  onRevision: (revision: number, namespace?: string) => void;
   /** Every row read so far; `complete` once no continuation remains. */
-  onItems?: (items: Item[], complete: boolean) => void;
+  onItems?: (items: Item[], complete: boolean, header?: CatalogHeader) => void;
   actions?: (item: Item) => ComponentChildren;
   empty: string;
 }): JSX.Element {
   const [state, run] = useCall();
-  const [items, setItems] = useState<Item[]>([]);
-  const [cursor, setCursor] = useState<unknown>(null);
-  const [header, setHeader] = useState<{ namespace: string; revision: number } | null>(null);
+  const [, setItems] = useState<Item[]>([]);
+  const [, setCursor] = useState<unknown>(null);
+  const [, setHeader] = useState<{ namespace: string; revision: number } | null>(null);
+  const [, changed] = useState(0);
   const filter = { indexId: props.indexId ?? null, projectId: props.projectId ?? null };
-  const catalogRequests = createCatalogRequests({ run, setItems, setCursor, setHeader });
-  const load = (after: unknown): Promise<void> => catalogRequests.load(after, props, filter, items);
+  const model = useRef<ReturnType<typeof createCatalogRequests> | null>(null);
+  model.current ??= createCatalogRequests({ run, setItems, setCursor, setHeader, currentContext: currentSession,
+    changed: () => changed(value => value + 1) });
+  const catalogRequests = model.current;
+  const context = catalogRequests.bind({ kind: props.kind, ...filter, reload: props.reload, session: currentSession() });
+  const { items, cursor, header, problem, callCurrent } = catalogRequests.view(context);
+  const visibleState: CallState = callCurrent ? state : { phase: 'idle' };
+  const load = (after: unknown): Promise<void> => catalogRequests.load(after, props, context);
+  useLayoutEffect(() => () => catalogRequests.dispose(), [catalogRequests]);
   useEffect(() => {
     void load(null);
-  }, [props.kind, props.indexId, props.projectId, props.reload]);
-  const failed = state.phase === 'done' && state.result.kind !== 'ok';
+  }, [context]);
+  const failed = visibleState.phase === 'done' && visibleState.result.kind !== 'ok';
   return (
     <div class="catalog-list">
       <div class="row">
@@ -285,7 +294,8 @@ function CatalogList(props: {
           {header !== null ? ` · catalog revision ${header.revision} · namespace ${header.namespace}` : ''}
         </span>
       </div>
-      {items.length === 0 && state.phase === 'done' && !failed ? <p class="muted">{props.empty}</p> : null}
+      {problem !== null ? <p class="error" role="alert"><Text value={problem} /></p> : null}
+      {items.length === 0 && visibleState.phase === 'done' && !failed && problem === null ? <p class="muted">{props.empty}</p> : null}
       <ul class="items">
         {items.map((item) => (
           <ItemView key={`${item.kind}:${describe(item).id}`} item={item}>
@@ -295,7 +305,7 @@ function CatalogList(props: {
       </ul>
       <details open={failed}>
         <summary>Last page (complete result)</summary>
-        <Outcome state={state} />
+        <Outcome state={visibleState} />
       </details>
       {items.length > 0 ? (
         <details>
@@ -928,11 +938,12 @@ function AddMember(props: {
 
 function SetDetail(props: {
   id: string;
+  namespace?: string | null;
   reload: number;
   revision: number | null;
   indexes: Item[];
   concurrency: number | null;
-  onRevision: (revision: number) => void;
+  onRevision: (revision: number, namespace?: string) => void;
   onChanged: () => void;
   onOpenIndex: (id: string) => void;
 }): JSX.Element {
@@ -942,13 +953,14 @@ function SetDetail(props: {
   useEffect(() => setMembers(null), [props.id]);
   const load = (): void => void runDetail(OPS.catalogDetail, body.catalogDetail({ kind: 'project', id: props.id }, null));
   useEffect(load, [props.id, props.reload]);
-  const d = rec(okResult(detail)?.detail);
+  const retained = useRef<{ id: string; detail: Rec } | null>(null);
+  const d = setDetailValue(props, detail, rec(okResult(detail)?.detail), retained);
   const item = itemOf(d?.item);
   const project = item !== null && item.kind === 'project' ? item.value : null;
   const revision = num(d?.revision);
   useEffect(() => {
-    if (revision !== null) props.onRevision(revision);
-  }, [revision]);
+    if (revision !== null) props.onRevision(revision, str(d?.namespace) ?? undefined);
+  }, [revision, d?.namespace]);
   const name = project !== null ? text(project.name) : null;
   return (
     <Panel title={`Index set ${name ?? props.id}`}>
@@ -1864,8 +1876,9 @@ function SplitStatus(): JSX.Element {
 
 function IndexDetail(props: {
   id: string;
+  namespace?: string | null;
   reload: number;
-  onRevision: (revision: number) => void;
+  onRevision: (revision: number, namespace?: string) => void;
   onChanged: () => void;
 }): JSX.Element {
   const [detail, runDetail] = useCall();
@@ -1883,8 +1896,8 @@ function IndexDetail(props: {
   const index = item !== null && item.kind === 'index' ? item.value : null;
   const revision = num(d?.revision);
   useEffect(() => {
-    if (revision !== null) props.onRevision(revision);
-  }, [revision]);
+    if (revision !== null) props.onRevision(revision, str(d?.namespace) ?? undefined);
+  }, [revision, d?.namespace]);
   const name = index !== null ? text(index.name) : null;
   return (
     <Panel title={`Index ${name ?? props.id}`}>
@@ -2049,9 +2062,15 @@ function Grants(props: { revision: number | null; reload: number; onRevision: (r
 // The page.
 
 export function IndexLibrary(props: { params: URLSearchParams; seq: number; onActivity: () => void }): JSX.Element {
-  const [revision, setRevision] = useState<number | null>(null);
+  const session = currentSession();
+  const sessionScope = useRef({ session, generation: 0 });
+  if (sessionScope.current.session !== session) sessionScope.current = { session, generation: sessionScope.current.generation + 1 };
+  const [observation, setObservation] = useState<{ session: unknown; revision: number; namespace: string | null } | null>(null);
+  const accepted = observation?.session === session ? observation : null;
+  const revision = accepted?.revision ?? null, namespace = accepted?.namespace ?? null;
   const [reload, setReload] = useState(0);
-  const [indexItems, setIndexItems] = useState<Item[]>([]);
+  const [indexRows, setIndexRows] = useState<{ session: unknown; namespace: string | null; items: Item[] } | null>(null);
+  const indexItems = indexRows?.session === session && indexRows.namespace === namespace ? indexRows.items : [];
   const [openIndex, setOpenIndex] = useState<string | null>(null);
   const [openSet, setOpenSet] = useState<string | null>(null);
   const concurrency = useQueryConcurrency();
@@ -2065,7 +2084,14 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
 
   const refresh = (): void => setReload((n) => n + 1);
   // The revision of the latest catalog read; drafts and previews are reviewed against it.
-  const onRevision = (next: number): void => setRevision(next);
+  const onRevision = (next: number, named?: string): void => {
+    if (session !== currentSession()) return;
+    setObservation(previous => {
+      if (previous === null || previous.session !== session) return { session, revision: next, namespace: named ?? null };
+      if (named !== undefined && previous.namespace !== null && previous.namespace !== named) return previous;
+      return { session, revision: Math.max(previous.revision, next), namespace: previous.namespace ?? named ?? null };
+    });
+  };
 
   return (
     <>
@@ -2074,7 +2100,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
           kind="indexes"
           reload={reload}
           onRevision={onRevision}
-          onItems={setIndexItems}
+          onItems={(items, _complete, header) => setIndexRows({ session, namespace: header?.namespace ?? null, items })}
           empty="No indexes yet. Set one up below."
           actions={(item) => (
             <button type="button" class="small" onClick={() => setOpenIndex(text(item.value.id))}>
@@ -2090,7 +2116,8 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
               Close index details
             </button>
           </div>
-          <IndexDetail id={openIndex} reload={reload} onRevision={onRevision} onChanged={refresh} />
+          <IndexDetail key={`${sessionScope.current.generation}:${openIndex}`} id={openIndex} namespace={namespace}
+            reload={reload} onRevision={onRevision} onChanged={refresh} />
         </>
       ) : null}
       <Panel title="Set up an index">
@@ -2125,7 +2152,9 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
             </button>
           </div>
           <SetDetail
+            key={`${sessionScope.current.generation}:${openSet}`}
             id={openSet}
+            namespace={namespace}
             reload={reload}
             revision={revision}
             indexes={indexItems}

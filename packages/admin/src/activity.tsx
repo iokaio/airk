@@ -15,13 +15,14 @@
 // - indexes.pause → `{status: "registered", project: RegisteredProject}`.
 // - catalog.page(indexes) names indexes (`backing.binding` is the project
 //   binding); indexes.list gives each registered project's `paused` flag.
-import { createIndexRequests, createJobRequests, type IndexInfo } from './activityRequests';
+import { createIndexRequests, createJobRequests, type IndexInfo, type JobTransition } from './activityRequests';
 export type { IndexInfo } from './activityRequests';
 import type { ComponentChildren, JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { CallResult } from './api';
 import { body, isDigest, OPS } from './operations';
 import { Confirm, Field, Outcome, Panel, Text, useCall, type CallState } from './render';
+import { currentSession } from './session';
 
 type Rec = Record<string, unknown>;
 const rec = (value: unknown): Rec | null =>
@@ -187,19 +188,28 @@ export function useIndexes(): {
   projects: CallState;
   partial: boolean;
   registryKnown: boolean;
+  problem: string | null;
 } {
   const [catalog, runCatalog] = useCall();
   const [projects, runProjects] = useCall();
-  const [indexes, setIndexes] = useState<IndexInfo[]>([]);
-  const [partial, setPartial] = useState(false);
-  const [registryKnown, setRegistryKnown] = useState(false);
-  const indexRequests = createIndexRequests({ runCatalog, runProjects, setRegistryKnown, setPartial, setIndexes });
-  const reload = indexRequests.reload;
+  const [, setIndexes] = useState<IndexInfo[]>([]);
+  const [, setPartial] = useState(false);
+  const [, setRegistryKnown] = useState(false);
+  const [, changed] = useState(0);
+  const model = useRef<ReturnType<typeof createIndexRequests> | null>(null);
+  model.current ??= createIndexRequests({ runCatalog, runProjects, setRegistryKnown, setPartial, setIndexes,
+    currentContext: currentSession, changed: () => changed(value => value + 1) });
+  const indexRequests = model.current;
+  const context = indexRequests.bind(currentSession());
+  useLayoutEffect(() => () => indexRequests.dispose(), [indexRequests]);
+  const reload = (): Promise<void> => indexRequests.reload(context);
+  const { indexes, partial, registryKnown, problem, catalogCurrent, projectsCurrent } = indexRequests.snapshot();
   const nameOf = (binding: string): string => {
     const found = indexes.find((i) => i.binding === binding);
     return found?.name ?? `index ${short(binding)}`;
   };
-  return { indexes, nameOf, reload, catalog, projects, partial, registryKnown };
+  return { indexes, nameOf, reload, catalog: catalogCurrent ? catalog : { phase: 'idle' },
+    projects: projectsCurrent ? projects : { phase: 'idle' }, partial, registryKnown, problem };
 }
 
 export function IndexSelect(props: {
@@ -245,15 +255,19 @@ export function Activity(): JSX.Element {
   const usable = names.indexes.filter((index) => index.registered && !index.retired);
   const [events, runEvents] = useCall();
   const [requests, runRequests] = useCall();
-  const [job, runJob] = useCall();
-  const [jobAction, runJobAction] = useCall();
   const [pause, runPause] = useCall();
   const [eventIndex, setEventIndex] = useState('');
   const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [jobId, setJobId] = useState('');
+  const [jobSelection, setJobSelection] = useState<{ id: string; seed?: JobTransition; token: number }>({ id: '', token: 0 });
+  // Selection admission changes in the user's callback, before a keyed child
+  // can be rerendered or unmounted by Preact.
+  const selectedJob = useRef(jobSelection);
+  const jobId = jobSelection.id;
+  const session = currentSession();
+  const jobContext = useRef({ session, generation: 0 });
+  if (jobContext.current.session !== session) jobContext.current = { session, generation: jobContext.current.generation + 1 };
   const [typedJob, setTypedJob] = useState('');
   const [pauseIndex, setPauseIndex] = useState('');
-  const [jobRecord, setJobRecord] = useState<Rec | null>(null);
 
   /** Reads `(after, through]` for the filter; null on failure. */
   const readWindow = async (namespace: string, project: string | null, after: number, through: number) => {
@@ -303,10 +317,11 @@ export function Activity(): JSX.Element {
     );
   };
 
-  const jobRequests = createJobRequests({ runJob, runJobAction, setJobId, setJobRecord });
-  const openJob = jobRequests.openJob;
-
-  const jobChange = (kind: 'retry' | 'cancel'): Promise<void> => jobRequests.jobChange(jobId, kind);
+  const openJob = (id: string): void => {
+    if (session !== currentSession()) return;
+    const next = { id, token: selectedJob.current.token + 1 };
+    selectedJob.current = next; setJobSelection(next);
+  };
 
   useEffect(() => {
     void names.reload();
@@ -375,15 +390,18 @@ export function Activity(): JSX.Element {
 
       {jobId !== '' ? (
         <Panel title="Job">
-          <JobCard
+          <JobDetail
+            key={`${jobContext.current.generation}:${jobSelection.token}:${jobId}`}
             id={jobId}
-            record={jobRecord}
-            state={job}
-            action={jobAction}
+            seed={jobSelection.seed?.context === session ? jobSelection.seed : undefined}
             timeline={timeline}
             nameOf={names.nameOf}
-            onReload={() => void openJob(jobId)}
-            onChange={(kind) => void jobChange(kind)}
+            currentSelection={() => selectedJob.current.token}
+            onSelect={(id, seed) => {
+              if (session !== currentSession() || selectedJob.current.token !== jobSelection.token) return;
+              const next = { id, seed, token: selectedJob.current.token + 1 };
+              selectedJob.current = next; setJobSelection(next);
+            }}
           />
         </Panel>
       ) : null}
@@ -428,6 +446,7 @@ export function Activity(): JSX.Element {
         ) : null}
         <ProblemLine state={names.catalog} />
         <ProblemLine state={names.projects} />
+        {names.problem !== null ? <p class="error" role="alert"><Text value={names.problem} /></p> : null}
         {pauseIndex !== '' ? (
           <>
             <p>
@@ -610,11 +629,49 @@ function RequestTable(props: { state: CallState; nameOf: (binding: string) => st
   );
 }
 
+/** A keyed selection owns both readable job data and its complete call metadata. */
+function JobDetail(props: {
+  id: string;
+  seed?: JobTransition;
+  timeline: Timeline | null;
+  nameOf: (binding: string) => string;
+  currentSelection: () => unknown;
+  onSelect: (id: string, seed?: JobTransition) => void;
+}): JSX.Element {
+  const [job, runJob] = useCall();
+  const [action, runJobAction] = useCall();
+  const [, setJobRecord] = useState<Rec | null>(null);
+  const transition = useRef<JobTransition | undefined>(undefined);
+  const model = useRef<ReturnType<typeof createJobRequests> | null>(null);
+  const seed = props.seed?.context === currentSession() && str(props.seed?.job.id) === props.id ? props.seed : undefined;
+  model.current ??= createJobRequests({ runJob, runJobAction, setJobRecord, currentContext: currentSession,
+    seed, currentSelection: props.currentSelection, observedAt: Date.now, transition: value => { transition.current = value; },
+    setJobId: id => { if (id !== props.id) props.onSelect(id, transition.current); },
+  });
+  const requests = model.current;
+  const context = requests.bind(currentSession());
+  useLayoutEffect(() => () => requests.dispose(), [requests]);
+  useEffect(() => { if (seed === undefined) void requests.openJob(props.id, context); }, [requests, context]);
+  const view = requests.snapshot();
+  const id = str(view.record?.id) ?? props.id;
+  const acceptedTransition = view.transition;
+  let actionState: CallState = view.actionCurrent ? action : { phase: 'idle' };
+  if (actionState.phase === 'idle' && acceptedTransition !== undefined && acceptedTransition.context === currentSession()
+    && str(acceptedTransition.job.id) === id) {
+    actionState = { phase: 'done', operation: OPS.jobsRetry, result: acceptedTransition.result, at: acceptedTransition.at };
+  }
+  return <JobCard id={id} record={view.record} state={view.detailCurrent ? job : { phase: 'idle' }} action={actionState}
+    actionOrigin={acceptedTransition?.origin} timeline={props.timeline} nameOf={props.nameOf}
+    onReload={() => void requests.openJob(id, context)}
+    onChange={kind => { const acceptedId = str(requests.snapshot().record?.id); if (acceptedId !== null) void requests.jobChange(acceptedId, kind, context); }} />;
+}
+
 function JobCard(props: {
   id: string;
   record: Rec | null;
   state: CallState;
   action: CallState;
+  actionOrigin?: string;
   timeline: Timeline | null;
   nameOf: (binding: string) => string;
   onReload: () => void;
@@ -721,6 +778,9 @@ function JobCard(props: {
         </p>
       ) : null}
       <ProblemLine state={props.action} />
+      {props.actionOrigin !== undefined && props.actionOrigin !== props.id ? (
+        <p class="muted">Retry of <code><Text value={props.actionOrigin} /></code> returned job <code><Text value={props.id} /></code>. Its complete result is retained below.</p>
+      ) : null}
       <Complete state={props.state} label="Job: complete result (JSON)" />
       <Complete state={props.action} label="Last retry or cancel: complete result (JSON)" />
     </div>

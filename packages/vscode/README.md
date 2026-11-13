@@ -36,7 +36,8 @@ and the service.
 separately installed AIRK Service ([split plan](https://github.com/iokaio/airk/blob/main/docs/split/split-plan.md) §8).
 The advanced split source keeps Reconnect's reviewed removal entries across
 confirmation and repair, requires verified exact-entry CLI support, and reports
-partial action errors. Existing VSIX/installer receipts retain their original
+partial action errors. Admin job details and catalog pages fence stale replies
+and retain retry successor receipts. Existing VSIX/installer receipts retain their original
 source identities; this source checkpoint does not rebuild those artifacts.
 Indexes are created and changed in AIRK Admin, which opens in VS Code or in
 your browser (setting `airk.admin.openIn`). The Explorer shows live indexing
