@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { catalogObject } from '../indexingCatalog';
+import { catalogObject, concurrencyNote, scopeIndexCount } from '../indexingCatalog';
 import type { ScreenProps } from './workspaces';
 import { request } from './api';
 import { AdminButton } from './adminLinks';
@@ -71,6 +71,11 @@ export function IndexingScreen(props: ScreenProps) {
     useEffect(()=>{setScopeIndexes(scope?.selectedIndexIds??[]);setScopeProjects(scope?.selectedProjectIds??[]);},[scopeSelection]);
     const apply=scopeApplyState({indexes:scopeIndexes,projects:scopeProjects,appliedIndexes:scope?.selectedIndexIds??[],appliedProjects:scope?.selectedProjectIds??[],automatic:scope?.automatic===true,indexSets:scope?.indexSets,indexSetsComplete:scope?.indexSetsComplete});
     const scopeDirty=apply.changed;
+    // (U108) An informational note, never a limit: the pending union against the service's query concurrency.
+    const covered=scopeIndexCount({indexes:scopeIndexes,projects:scopeProjects,indexSets:scope?.indexSets,indexSetsComplete:scope?.indexSetsComplete});
+    const concurrency=props.state.status?.queryConcurrency;
+    const scopeNote=apply.limit?undefined:concurrencyNote({indexes:covered.count,atLeast:!covered.exact,concurrency,subject:'scope'});
+    const saveNote=setName.trim()?concurrencyNote({indexes:covered.count,atLeast:!covered.exact,concurrency,subject:'set'}):undefined;
     const indexName=(id:string)=>{const row=scope?.indexes.find(item=>String(item.id)===id);return String(row?.name??id);};
     const route=props.state.searchScope?.route;
     const toggle=(items:string[],id:string,checked:boolean)=>checked?[...items.filter(item=>item!==id),id]:items.filter(item=>item!==id);
@@ -133,6 +138,7 @@ export function IndexingScreen(props: ScreenProps) {
                 <p>{scopeIndexes.length} {scopeIndexes.length===1?'index':'indexes'} and {scopeProjects.length} {scopeProjects.length===1?'index set':'index sets'} selected. The search scope is everything in the checked index sets plus every checked index; each index is read through the index sets that hold it. Uncheck everything to stop searching indexes in this window.</p>
                 {apply.newSets.map(id=><p key={id} class="callout" role="status">{indexName(id)} is in no index set. Apply creates an index set named “{indexName(id)}” for it, then applies your selection.</p>)}
                 {apply.limit&&<p class="callout" role="alert">{apply.limit}</p>}
+                {scopeNote&&<p class="callout scope-concurrency" role="status">{scopeNote}</p>}
                 <p role="status">{scopeDirty?'Changes not applied.':scope.automatic?'This folder\'s index is read automatically. Apply to make it this window\'s chosen scope.':scope.active?'Selection active in this window.':'Apply your selection to use it in this window.'}</p>
                 <button disabled={disabled||!apply.enabled}>Apply selection</button>
                 {scope.active&&<button type="button" class="ghost" disabled={disabled} onClick={()=>void run(async()=>{await request('indexing.scope.apply',CLEAR_SCOPE);await request('indexing.scope.read',{});},true)}>Clear search scope</button>}
@@ -140,6 +146,7 @@ export function IndexingScreen(props: ScreenProps) {
                     <label>New index set name <input type="text" value={setName} maxLength={128} disabled={disabled} onInput={event=>setSetName(event.currentTarget.value)}/></label>
                     <button type="button" disabled={disabled||!setName.trim()||!scopeIndexes.length&&!scopeProjects.length} onClick={()=>{const name=setName.trim();if(!name){setError('Enter a name for the new index set.');return;}void run(async()=>{await request('indexing.scope.saveSet',{name,selection:{index_ids:scopeIndexes,project_ids:scopeProjects}});setSetName('');await request('indexing.scope.read',{});},true);}}>Save as index set</button>
                 </div>
+                {saveNote&&<p class="callout scope-concurrency" role="status">{saveNote}</p>}
                 <p class="muted">Save as index set creates a new index set holding the checked indexes and the indexes of the checked sets.</p>
                 <p class="muted">Coding agents connected in Management › Agents follow this window's search scope unless you turn following off there. <button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'agents'})}>Connect an agent</button></p>
             </form>}

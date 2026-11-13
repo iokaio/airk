@@ -275,6 +275,11 @@ pre {
   color: var(--airk-danger);
 }
 
+/* U108: informational, never a limit. */
+.concurrency-note {
+  color: var(--airk-warn);
+}
+
 .request-completed,
 .request-accepted {
   color: var(--airk-ok);

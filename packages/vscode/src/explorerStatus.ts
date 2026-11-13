@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ConnectionState, FreshnessState, IndexState, ProjectSummary, ProjectWorkView, ReadRouteView, SemanticState, StatusSummary } from './explorerContracts';
 import { comparePublicationVector } from './publications';
+import { observedConcurrency } from './indexingCatalog';
 
 type Value = Record<string, unknown>;
 const obj = (value: unknown): Value => value && typeof value === 'object' && !Array.isArray(value) ? value as Value : {};
@@ -109,6 +110,7 @@ export function statusSummary(payload: Value, observedAt = Date.now(), rawPayloa
         ...(count(progress.committed_changes) !== undefined ? { workCommitted: count(progress.committed_changes) } : {}),
         ...(count(progress.captured_files) !== undefined ? { workCaptured: count(progress.captured_files) } : {}),
         ...(Object.keys(work).length ? { work: structuredClone(work) } : {}),
+        ...(observedConcurrency(payload.query_concurrency) !== undefined ? { queryConcurrency: observedConcurrency(payload.query_concurrency) } : {}),
     };
     return summary;
 }
@@ -157,6 +159,7 @@ function combinedStatusSummary(payload: Value, observedAt: number, rawPayload: V
         ...(sum('semanticCompleted') !== undefined ? { semanticCompleted: sum('semanticCompleted') } : {}),
         ...(sum('semanticSelected') !== undefined ? { semanticSelected: sum('semanticSelected') } : {}),
         ...(vectorsEnabled !== undefined ? { vectorsEnabled } : {}), ...(localModelReady !== undefined ? { localModelReady } : {}),
+        ...(observedConcurrency(payload.query_concurrency) !== undefined ? { queryConcurrency: observedConcurrency(payload.query_concurrency) } : {}),
         combined: { available: usable.length, total: rows.length, partial,
             countsQualifier: `Counts sum ${usable.length} available member index(es), not unique sources.${partial ? ' Unavailable or unqueried members are omitted; their outcomes remain below.' : ''}`,
             members, ...(Object.keys(obj(payload.publication_vector)).length ? { publicationVector: obj(payload.publication_vector) } : {}), nativeResult: rawPayload },

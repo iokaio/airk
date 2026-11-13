@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.json && node build.mjs",
-    "check": "tsc -p tsconfig.json && node build.mjs --check"
+    "check": "tsc -p tsconfig.json && node build.mjs --check",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "preact": "10.29.8"

@@ -19,6 +19,8 @@ import {
   useCall,
 } from './render';
 import { ProgressPanel } from './progress';
+import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
+import { concurrencyNote, typedScopeCount } from './scopeConcurrency';
 
 /** U103: live progress of one registered index, chosen from the catalog names. */
 function OverviewProgress(): JSX.Element {
@@ -346,6 +348,10 @@ export function Search(): JSX.Element {
   const revisionNumber = /^\d+$/.test(revision) ? Number.parseInt(revision, 10) : null;
   const scopeValid =
     isIncarnation(namespace) && revisionNumber !== null && list(indexIds).length + list(projectIds).length > 0;
+  // (U108) Informational only: the selection can be used whatever the note says.
+  const concurrency = useQueryConcurrency();
+  const typed = typedScopeCount(list(indexIds), list(projectIds));
+  const scopeNote = concurrencyNote({ indexes: typed.count, atLeast: !typed.exact, concurrency, subject: 'scope' });
   let extraArgs: Record<string, unknown> | null = {};
   if (extra.trim() !== '') {
     try {
@@ -404,6 +410,7 @@ export function Search(): JSX.Element {
         >
           Use this selection
         </button>
+        <ConcurrencyNote text={scopeNote} />
         <Outcome state={scope} />
       </Panel>
       <Panel title="2. Search">

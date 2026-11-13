@@ -26,6 +26,8 @@ import {
 } from './operations';
 import { browse, FolderPicker, joinPath } from './folderPicker';
 import { ProgressPanel } from './progress';
+import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
+import { concurrencyNote, setSizeAfterAdd } from './scopeConcurrency';
 import { Confirm, Field, JsonBlock, list, Outcome, Panel, resultOf, Text, useCall, type CallState } from './render';
 
 // ---------------------------------------------------------------------------
@@ -257,7 +259,8 @@ function CatalogList(props: {
   projectId?: string | null;
   reload: number;
   onRevision: (revision: number) => void;
-  onItems?: (items: Item[]) => void;
+  /** Every row read so far; `complete` once no continuation remains. */
+  onItems?: (items: Item[], complete: boolean) => void;
   actions?: (item: Item) => ComponentChildren;
   empty: string;
 }): JSX.Element {
@@ -276,7 +279,7 @@ function CatalogList(props: {
       .filter((item): item is Item => item !== null);
     const merged = after === null ? got : [...items, ...got];
     setItems(merged);
-    props.onItems?.(merged);
+    props.onItems?.(merged, (page.continuation ?? null) === null);
     setCursor(page.continuation ?? null);
     const revision = num(page.revision);
     if (revision !== null) {
@@ -857,6 +860,9 @@ function AddMember(props: {
   project: Rec;
   revision: number | null;
   indexes: Item[];
+  /** (U108) The set's member index ids read so far, and whether every page was read. */
+  members: { ids: string[]; complete: boolean } | null;
+  concurrency: number | null;
   onApplied: () => void;
 }): JSX.Element {
   const [indexId, setIndexId] = useState('');
@@ -873,6 +879,12 @@ function AddMember(props: {
   const scopeRevision = num(props.project.scope_revision);
   const pageRevision = num(page?.revision);
   const truncated = page !== null && page.continuation !== null && page.continuation !== undefined;
+  // (U108) Informational only: adding stays available whatever the note says.
+  const after = valid && props.members !== null ? setSizeAfterAdd(props.members.ids, props.members.complete, indexId) : null;
+  const note =
+    after === null
+      ? null
+      : concurrencyNote({ indexes: after.count, atLeast: !after.exact, concurrency: props.concurrency, subject: 'set' });
   return (
     <>
       <div class="row">
@@ -910,6 +922,7 @@ function AddMember(props: {
       </p>
       <Outcome state={sources} />
       {truncated ? <p class="error">The index has more sources than one page; add it with airkctl.</p> : null}
+      <ConcurrencyNote text={note} />
       <ReviewedChange
         reviewLabel="Review adding this index"
         disabled={!valid || scope.length === 0 || truncated || scopeRevision === null || pageRevision === null}
@@ -938,12 +951,15 @@ function SetDetail(props: {
   reload: number;
   revision: number | null;
   indexes: Item[];
+  concurrency: number | null;
   onRevision: (revision: number) => void;
   onChanged: () => void;
   onOpenIndex: (id: string) => void;
 }): JSX.Element {
   const [detail, runDetail] = useCall();
   const [newName, setNewName] = useState('');
+  const [members, setMembers] = useState<{ ids: string[]; complete: boolean } | null>(null);
+  useEffect(() => setMembers(null), [props.id]);
   const load = (): void => void runDetail(OPS.catalogDetail, body.catalogDetail({ kind: 'project', id: props.id }, null));
   useEffect(load, [props.id, props.reload]);
   const d = rec(okResult(detail)?.detail);
@@ -976,6 +992,12 @@ function SetDetail(props: {
             projectId={props.id}
             reload={props.reload}
             onRevision={props.onRevision}
+            onItems={(items, complete) =>
+              setMembers({
+                ids: items.flatMap((item) => (item.kind === 'membership' ? [text(item.value.index_id)] : [])),
+                complete,
+              })
+            }
             empty="No member indexes."
             actions={(member) => (
               <>
@@ -1006,7 +1028,14 @@ function SetDetail(props: {
             )}
           />
           <h3>Add an index</h3>
-          <AddMember project={project} revision={revision} indexes={props.indexes} onApplied={props.onChanged} />
+          <AddMember
+            project={project}
+            revision={revision}
+            indexes={props.indexes}
+            members={members}
+            concurrency={props.concurrency}
+            onApplied={props.onChanged}
+          />
           <h3>Rename</h3>
           <div class="row">
             <Field label="New name" wide value={newName} onInput={setNewName} />
@@ -2047,6 +2076,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
   const [indexItems, setIndexItems] = useState<Item[]>([]);
   const [openIndex, setOpenIndex] = useState<string | null>(null);
   const [openSet, setOpenSet] = useState<string | null>(null);
+  const concurrency = useQueryConcurrency();
 
   useEffect(() => {
     const index = props.params.get('index');
@@ -2121,6 +2151,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
             reload={reload}
             revision={revision}
             indexes={indexItems}
+            concurrency={concurrency}
             onRevision={onRevision}
             onChanged={refresh}
             onOpenIndex={setOpenIndex}

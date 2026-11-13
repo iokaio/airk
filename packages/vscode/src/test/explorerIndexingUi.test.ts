@@ -520,3 +520,34 @@ test('Management › Usage reads the usage report of the selected index and rend
     const workspace=webview('workspaces.tsx',{},exports=>exports).exports.SCREENS;
     assert.equal(workspace['manage/usage'].name,'UsageScreen');assert.equal(workspace['manage/activity'].name,'ActivityScreen');assert.equal(workspace['manage/storage'].name,'AdminHandoffScreen');
 });
+
+test('U108 the search scope notes when the pending union exceeds the reported query concurrency; Apply and Save as index set still work', async () => {
+    const ids=Array.from({length:6},(_,n)=>'idx_'+(n+16).toString(16).repeat(16));
+    const values=ids.map((id,n)=>({id,name:`Index ${n}`,tombstone:false,definition_revision:1,source_revision:1,backing:{root:`/r${n}`}}));
+    const sets=Object.fromEntries(ids.slice(0,5).map(id=>[id,[projectId]]));
+    const f=screen('window',{searchScope:{indexes:values,projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],active:false,indexSets:sets,indexSetsComplete:true,responses:[]}},{status:{indexState:'available',semantic:'unknown',freshness:'unknown',observedAt:1,queryConcurrency:4}});
+    let tree=f.render();await f.flush();tree=f.render();
+    assert.doesNotMatch(text(tree),/at a time/,'nothing checked: no note');
+    const box=(label:string)=>nodes(nodes(f.render()).find(node=>node.type==='label'&&text(node).includes(label))).find(node=>node.type==='input');
+    box('Application Project').props.onChange({currentTarget:{checked:true}});
+    tree=f.render();
+    assert.match(text(tree),/This scope searches 5 indexes; this machine searches 4 at a time, so searches take about twice as long\./,'the five members of the checked set');
+    box('Index 5').props.onChange({currentTarget:{checked:true}});box('Index 0').props.onChange({currentTarget:{checked:true}});
+    tree=f.render();
+    assert.match(text(tree),/This scope searches 6 indexes; this machine searches 4 at a time/,'a member checked again is counted once');
+    assert.equal(button(tree,/^Apply selection$/).props.disabled,false,'the note never blocks Apply');
+    assert.doesNotMatch(text(tree),/This index set will hold/,'no save note before a name is entered');
+    nodes(f.render()).find(node=>node.type==='input'&&node.props.type==='text').props.onInput({currentTarget:{value:'Wide set'}});
+    tree=f.render();
+    assert.match(text(tree),/This index set will hold 6 indexes; this machine searches 4 at a time, so searching it takes about twice as long\./);
+    assert.equal(button(tree,/^Save as index set$/).props.disabled,false,'the note never blocks saving');
+    f.props.state.status={...f.props.state.status,queryConcurrency:8};tree=f.render();
+    assert.doesNotMatch(text(tree),/at a time/,'6 indexes at concurrency 8: no note');
+    f.props.state.status={...f.props.state.status,queryConcurrency:undefined};tree=f.render();
+    assert.doesNotMatch(text(tree),/at a time/,'unknown concurrency: no note, never a guess');
+    f.props.state.status={...f.props.state.status,queryConcurrency:4};
+    f.props.state.indexing.searchScope={...f.props.state.indexing.searchScope,indexSetsComplete:false};tree=f.render();
+    assert.match(text(tree),/This scope searches at least 6 indexes; this machine searches 4 at a time, so searches take at least twice as long\./,'incomplete memberships give a lower bound');
+    nodes(tree).find(node=>node.type==='form').props.onSubmit({preventDefault(){}});await f.flush();
+    assert.deepEqual(plain(f.sent.find(message=>message.type==='indexing.scope.apply').selection),{index_ids:[ids[5],ids[0]],project_ids:[projectId]},'Apply sends the selection unchanged');
+});

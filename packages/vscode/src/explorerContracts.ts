@@ -182,6 +182,8 @@ export interface StatusSummary {
     readonly workCaptured?: number;
     /** The complete native `work` observation (for example with `index_read_unavailable`). */
     readonly work?: Record<string, unknown>;
+    /** (U108) The service's configured query concurrency (airk_status `query_concurrency`): index reads run at once. */
+    readonly queryConcurrency?: number;
     readonly observedAt: number;
     /** Independent time for retained runtime/configuration details; not scalar cache age. */
     readonly detailsObservedAt?: number;

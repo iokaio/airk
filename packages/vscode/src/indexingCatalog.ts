@@ -644,3 +644,51 @@ export function policyStatusLabels(response: CatalogObject): string[] {
     if (snapshot.last_error !== null) labels.push(exclusions?'Native operation needs attention; exclusions remain active.':'Native operation needs attention; no permanent exclusions are active.');
     return labels;
 }
+
+// ---------------------------------------------------------------------------
+// (U108) An informational note when a search scope or an index set covers more
+// indexes than the service reads at once (`query_concurrency`, reported by
+// airk_status). Not a limit: applying and saving work unchanged. Without an
+// observed concurrency there is no note; it is never guessed.
+
+/** A reported query concurrency: a positive safe integer, otherwise unknown. */
+export function observedConcurrency(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/** Reading rounds for `indexes` at `concurrency` reads at a time; undefined when no note applies. */
+export function concurrencyRounds(indexes: number, concurrency: number | undefined): number | undefined {
+    const limit = observedConcurrency(concurrency);
+    if (limit === undefined || !Number.isSafeInteger(indexes) || indexes <= limit) { return undefined; }
+    return Math.ceil(indexes / limit);
+}
+
+function times(rounds: number): string { return rounds === 2 ? 'twice' : rounds === 3 ? 'three times' : `${rounds} times`; }
+
+/**
+ * The note's sentence, or undefined (n ≤ concurrency, or concurrency unknown).
+ * `atLeast` marks a lower bound (index-set memberships not completely read).
+ */
+export function concurrencyNote(input: { indexes: number; concurrency: number | undefined; atLeast?: boolean; subject: 'scope' | 'set' }): string | undefined {
+    const rounds = concurrencyRounds(input.indexes, input.concurrency);
+    if (rounds === undefined) { return undefined; }
+    const count = `${input.atLeast ? 'at least ' : ''}${input.indexes} indexes`, estimate = `${input.atLeast ? 'at least' : 'about'} ${times(rounds)} as long`;
+    const machine = `this machine searches ${input.concurrency} at a time`;
+    return input.subject === 'scope'
+        ? `This scope searches ${count}; ${machine}, so searches take ${estimate}.`
+        : `This index set will hold ${count}; ${machine}, so searching it takes ${estimate}.`;
+}
+
+/**
+ * The number of indexes a pending window selection reads (U104 union: the
+ * members of the checked index sets plus every checked index). Exact when no
+ * set is checked or the memberships are completely read; otherwise a lower bound.
+ */
+export function scopeIndexCount(input: { indexes: readonly string[]; projects: readonly string[];
+    indexSets?: Readonly<Record<string, readonly string[]>>; indexSetsComplete?: boolean }): { count: number; exact: boolean } {
+    const union = new Set(input.indexes);
+    for (const [index, sets] of Object.entries(input.indexSets ?? {})) {
+        if (sets.some(set => input.projects.includes(set))) { union.add(index); }
+    }
+    return { count: union.size, exact: input.projects.length === 0 || (input.indexSets !== undefined && input.indexSetsComplete === true) };
+}
