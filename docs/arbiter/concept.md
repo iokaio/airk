@@ -1,870 +1,474 @@
-# AIRK Arbiter: Technical Implementation Plan
+# AIRK Arbiter: Service Integration and Model Preparation Plan
 
-Nov 10, 2026 · @Tyler Jensen
+Original concept: 10 November 2026 · @Tyler Jensen
 
-AIRK Arbiter is an opt-in tier of AIRK for workstations with a 16 GB or larger local GPU. It adds a resident local decision runtime that scores retrieval routes, evidence relevance and next steps without generating tokens, and it leaves existing AIRK binaries, indexes and MCP contracts unchanged.
+Revised: 12 November 2026 · proposal only; no implementation or model qualification is claimed.
 
-## Name and scope
+AIRK keeps MiniLM INT8 built into its installer and service executable for semantic indexing and retrieval. The first model-improvement priority is better training of that embedded encoder, followed by export and qualification of the INT8 artifacts. Semantic indexing remains available independently of Arbiter and requires no optional model download.
 
-The proposed name is **AIRK Arbiter**, replacing the working title "AIRK Extended" and the internal term "Decision Kernel". An arbiter weighs supplied candidates and returns a bounded judgment or declines to rule, which is exactly the component's contract. It arbitrates among candidates; AIRK and the host keep authority over reads and actions.
+AIRK Arbiter is a separate, optional capability inside the same service, turned off by default. It scores bounded retrieval choices and evidence relevance, returning typed advice or abstaining. Its target catalog contains four additional models: two smaller choices and two larger choices. Users explicitly choose the indexes that may use it and a model that passes both system-requirement qualification and current resource-availability checks. The service downloads only the selected model's missing data assets and runs it inside its existing process.
 
-| Name | Identifier prefix | Why it fits | Why not chosen |
+There is no Arbiter add-on, separate installer, additional executable, model server or required Python environment. AIRK's existing `airk` service and `airkctl` client remain the executable inventory. Model preparation, training where needed, native export, calibration and evaluation happen before a model becomes a selectable product option.
+
+## 1. Decisions and review boundary
+
+### Fixed product requirements
+
+- Arbiter ships as part of AIRK, disabled by default. Enabling it is an explicit management action, never a consequence of an ordinary read.
+- MiniLM INT8 remains bundled in every installer and embedded in the service executable. It is the semantic-indexing foundation, not one of the four optional Arbiter choices; Arbiter disablement or unavailability never disables ordinary semantic indexing.
+- Improve the MiniLM encoder's retrieval training first. Training only decision heads over frozen embeddings does not satisfy that objective. A changed encoder requires its own model identity, INT8 qualification and supported index-regeneration plan before shipment.
+- Enablement is per index. A service-wide switch permits or suspends the capability; it never implicitly enrolls every index. New or recreated indexes start with Arbiter off.
+- Offer exactly two smaller and two larger Arbiter model choices, with backend/precision profiles under those four model identities. Only qualified compatible profiles with sufficient current resources can activate. The service owns downloads, verification, loading, switching, rollback and removal.
+- Inference code ships with AIRK. Downloaded bundles contain model data and declarative metadata only, not executables, scripts, native plugins or custom operators supplied by a model repository.
+- No agent reasoning loop, generator routing, edits, commands, test orchestration, cloud inference or external database is added. Arbiter advises on local, bounded retrieval; existing callers retain action authority.
+- Existing explicit reads, scope checks, publication identities, source locations, budgets, review requirements and failure reporting remain authoritative. Source workspaces remain read-only.
+- Training is a developer preparation workflow, outside the installed product. Enabling Arbiter neither trains a model nor authorizes collecting workspace content for training.
+
+These decisions replace the original sidecar, separate-install, host-controller and machine-wide shared-store proposals. The former `airk-arbiter` binary and `airk-embed` connector are not implementation options.
+
+### Review ledger for this document
+
+| Item | Boundary or evidence |
+| --- | --- |
+| Acceptance | Improve embedded MiniLM retrieval training while retaining bundled INT8 semantic indexing; exactly two smaller and two larger optional Arbiter models; global default off and per-index opt-in; system qualification plus live availability; no new executable; preparation before product inclusion |
+| Allowed change | Only `docs/arbiter/concept.md`; no code, other documentation, configuration, dependency or version edits |
+| Source baseline | Initial review at `02158a4c53aadffcac15196b3075bf7250dca98a`; narrowed model/training revision checked against live HEAD `d45dd144a0646427af857ea915c94e6c0c2b1bf4`, with unrelated working changes present. Source review, not a built or released baseline |
+| Required corrections found | Prior shortlist mixed the bundled encoder with optional choices and lacked two larger alternatives; frozen-head training alone would not improve semantic embeddings; static hardware fit did not fully specify runtime resource availability |
+| Unconfirmed hypotheses | MiniLM adaptation gains after INT8 export; each optional model's quality/native support; measured per-profile requirements and coexistence with normal service workloads |
+| Intended validation | Complete consistency review; local Markdown-link and whitespace checks; repository checks from CONTRIBUTING where runnable; confirm the edit boundary. No model downloads, training, native builds or runtime qualification for this prose change |
+| Prior review/checks | Previous revision passed independent reviews and local document checks; its repository check stopped on an existing broken link in `docs/history/airk-feature-review.md` to `packages/vscode/src/explorerWebview/manage.tsx`. These are retained prior observations, not validation of this revision. Native formatting, Clippy and workspace/runtime tests are outside this document-only edit |
+| Current revision checks | Independent model-catalog and embedded-training reviews passed. Local links, fenced blocks, whitespace and the independently specified two-smaller/two-larger catalog passed. Repository checks again stopped at the same unrelated historical link; no native/model qualification was run |
+| Investigation checkpoint | Initial review bounded to 15 minutes; extend only for a named acceptance blocker |
+
+The [architecture](../architecture.md), [process model](../process-model.md), [read parity](../read-interface-parity.md), [split contracts](../split/contracts.md) and [simplification plan](../simplify-plan.md) govern future implementation. This concept does not approve unresolved wire/state decisions, crate extraction, later simplification milestones or a restart of installed-editor repair. Arbiter is future feature work, not Track R stabilization; keep any structural preparation separate from behavior changes.
+
+## 2. Service and index configuration
+
+### Two levels of control
+
+The following names describe proposed contracts, not existing commands or settings.
+
+| Level | Proposed configuration | Meaning |
+| --- | --- | --- |
+| Service installation | `enabled`, `selected_profile`, approved asset source, resource ceilings | Permits Arbiter and selects one qualified profile; global off suspends scoring for every index |
+| Individual index | Stable index identity, `enabled`, allowed task set, configuration revision | Explicitly includes or excludes that index; absence means disabled |
+| Request | Authorized index scope, task, byte/token/deadline budgets | Narrows permission; cannot enable Arbiter or override an index's exclusion |
+
+Effective eligibility requires service enablement, that index's enablement, ordinary request authorization, an allowed task, a profile qualified for the current system, a verified loaded bundle, and current resource admission. Installation-time hardware fit does not guarantee availability later. Arbiter enablement grants no index access. A client cannot enable it through a tool-read argument, prompt, imported plan or repository text.
+
+Bind enrollment to installation/catalog identity and immutable index identity, never to a display name or path alone. Rename preserves the choice. Deletion, recreation, import into another installation or a clean-break reset does not silently transfer consent. Retain configuration through upgrades only under the existing supported state contract; do not invent a migration exception.
+
+The first implementation uses one selected Arbiter profile per service installation, shared by its explicitly enabled indexes. Per-index enablement is mandatory; different simultaneously resident models per index are outside the first release. Each index can use only tasks qualified for the profile and its evidence types. An unavailable task returns a reason rather than silently switching models.
+
+### User flow
+
+1. In AIRK management, choose **Enable Arbiter**, select indexes, and choose from two smaller and two larger model entries. Show unsupported, unqualified or temporarily constrained entries with reasons; only eligible entries can activate. Existing indexes remain unchecked unless explicitly selected. Bulk selection names current identities, never future indexes.
+2. Show supported tasks, license notices, download bytes, peak disk requirement, measured memory/latency limits and platform qualification beside current resource observations. Distinguish missing assets, unsupported systems and temporary resource pressure. MiniLM semantic indexing remains a separate bundled capability.
+3. The enable/apply action authorizes provisioning of that exact profile for the chosen indexes. With no indexes selected, report incomplete configuration and do not implicitly download a model.
+4. The service downloads missing assets, verifies them and rechecks available resources before warming. Report readiness only after qualification fixtures pass. While provisioning or resource-constrained, indexes continue ordinary lexical and MiniLM semantic behavior with Arbiter pending or unavailable.
+5. Expose progress, cancellation, retry, profile change, per-index disablement, global disablement and explicit asset removal. Closing the UI does not transfer ownership away from the service.
+
+The service is the configuration authority. CLI and Workbench/Admin submit the same authorized management operations; MCP exposes equivalent supported reads without turning the public read endpoint into a management interface. No client loads its own model. Exact commands and UI labels follow review of the owning native contracts.
+
+### Exclusion and mixed-index reads
+
+- An opted-out index contributes no content, features, candidates or cached decisions to Arbiter. Its retrieval, ordering, completeness and continuations use ordinary AIRK behavior. Sharing public weights does not share index state.
+- Partition a multi-index request by authorized index before assembling model input. Score eligible partitions independently; preserve native results for excluded partitions. Do not apply a learned global filter or rank to excluded results.
+- Report per-index application: applied, disabled, unavailable, unsupported or budget-limited, with selection/omission metadata where applicable. Do not label the whole response as Arbiter-processed or silently drop an index.
+- Preserve each partition's publication and continuation. A projection is not a complete cross-index answer. If the canonical operation cannot represent mixed processing faithfully, return its ordinary result and an explicit not-applied reason.
+- Cache keys include index identity, publication, authorization scope and configuration revision. Disabling an index cancels queued work, invalidates its advice cache and suppresses in-flight decision delivery. Recheck eligibility at dispatch and delivery.
+- Cancellation cannot erase content already admitted to native execution. Report draining until execution completes; keep model and resource ownership pinned. Once disablement is acknowledged as drained, no later decision may consume that index's content.
+- Disabling the last enabled index unloads Arbiter after safe drain. Public assets may remain cached. Disablement and removal are separate operations; neither deletes an index or changes original sources.
+
+Per-index inference opt-in is not training consent. Private adaptation would require a separate dataset authorization and isolation contract; it is outside initial product delivery.
+
+## 3. Compatibility and scope
+
+| Surface | Required behavior |
+| --- | --- |
+| Existing reads | Global off or an excluded index preserves existing input semantics and full results; exact bytes for digested formats, parsed equality elsewhere, normalizing only documented transport identities/timing |
+| Process inventory | One resident service per installation; no Arbiter process, model endpoint, Python subprocess or extra installer |
+| Indexes/publications | No re-index, replacement embedding representation or automatic schema migration for enabling Arbiter; DiskANN remains the selected vector engine |
+| Embedded MiniLM | Semantic indexing stays bundled and independent of Arbiter. Shipping retrained/requantized encoder weights is a separate versioned change requiring representation identity and supported regeneration; never mix old document vectors with new query embeddings |
+| Parse/plan contracts | Keep request/plan shapes, digests, bindings, confirmation policy and limits; advice has a separately reviewed versioned contract |
+| Explicit choices | Explicit commands, direct tool arguments, selected operations and reviewed plans bypass learned route selection |
+| Recoverable model failure | Loading, capacity, scoring and qualification failures expose unavailable reasons; ordinary permitted reads remain usable |
+| Budgets | Preserve native byte/read/fan-out limits; model tokens, inference time and selection work are separate bounded costs |
+| Usage reporting | Preserve the content-free ledger and experiment semantics; no invented provider-token savings |
+| Clients | Complete equivalent CLI, Workbench and MCP read data/inputs; projections are disclosed, never reduced replacements |
+
+New capabilities and persisted enrollment records still require the applicable decisions in [simplify-plan.md §9](../simplify-plan.md#9-decisions-for-the-user), especially D8. Before writing state, prove schema identity against retained `airk-state/1` fixtures or obtain approval for a new state contract. A separate asset directory is not an exemption.
+
+## 4. Architecture and ownership
+
+```mermaid
+flowchart TD
+    Clients[Existing CLI, Workbench and MCP clients] --> Reads[Canonical scoped reads]
+    Management[Authorized management clients] --> Control[Service configuration and asset lifecycle]
+    subgraph Service[Existing AIRK service process]
+        Reads --> Gate[Authorization and per-index eligibility]
+        Gate --> Native[Ordinary collection reads and plan validation]
+        Native --> Eligible[Eligible index partitions only]
+        Eligible --> Arbiter[Bounded in-process Arbiter inference]
+        Arbiter --> Projection[Typed advice and separate evidence projection]
+        Control --> Assets[Verified model data and activation receipt]
+        Assets --> Arbiter
+    end
+    Native --> Results[Complete native results]
+    Projection --> Results
+    Results --> Clients
+```
+
+### Owners and live integration seams
+
+No new crate is proposed. Add owned modules and narrow facades inside existing crates, respecting documented dependency edges.
+
+| Owner | Responsibility | Source to inspect before implementation |
+| --- | --- | --- |
+| `airk-core` | Cross-owner task, advice, profile/status and configuration contracts only | [Workbench](../../crates/airk-core/src/workbench.rs), [service](../../crates/airk-core/src/service.rs) |
+| `airk-retrieval` | Catalog, tokenization, native scoring, feature recipes and calibration primitives | [model catalog](../../crates/airk-retrieval/src/model_catalog.rs), [model assets](../../crates/airk-retrieval/src/model.rs), [compute scope](../../crates/airk-retrieval/src/native_inference.rs) |
+| `airk-kernel` | Collection eligibility, bounded reads, proposal preparation and selection | [Workbench](../../crates/airk-kernel/src/workbench.rs), including `parse_text` |
+| `airk-cli` | Service inference lifecycle, admission, provisioning, drain and management | [service inference](../../crates/airk-inference/src/service_inference.rs), [inference owner](../../crates/airk-inference/src/inference_engine/pool/owner.rs), [completion ledger](../../crates/airk-inference/src/inference_completion_ledger.rs) |
+| `airk-store` | Ownership-checked persistence, quotas and cleanup | [store filesystem contract](../../crates/airk-store/src/store_fs/CONTRACT.md); define state ownership before records |
+| `airk-mcp` | Canonical read schemas, handlers and full result conversion | [Workbench adapter](../../crates/airk-mcp/src/workbench.rs) |
+| `airkctl`, Workbench/Admin | Presentation and authorized service requests | [service tool path](../../crates/airk-service/src/service_runtime/tools_call.rs), [CLI contract](../../crates/airkctl/src/contract/CONTRACT.md) |
+
+Core gains no inference, filesystem or scheduler implementation. `airkctl` keeps its restricted dependencies. Evidence stays on the scoped worker/read path, outside the serialized metadata actor. Extend service inference ownership; do not add a second Workbench scheduler or recursive MCP calls.
+
+The embedding catalog validates specific MiniLM profiles. Reuse its principles and owner, not a relaxation allowing arbitrary models through its embedding contract. Arbiter has task-qualified descriptors and never silently replaces the embedding model or existing vector identities.
+
+### Request flow
+
+1. Validate authority, index identities, publication and budgets; capture relevant configuration revisions.
+2. Run explicit commands and deterministic grammar first. For remaining eligible bounded reads, build candidates from implemented catalogs and verified target inventories.
+3. Select a task supported by the chosen profile. Compile inputs from enabled partitions only; reject unsupported or over-budget inputs before admission.
+4. Score in-process, apply applicability/calibrated acceptance policy, and recheck scope/configuration before delivery.
+5. Prepare accepted recommendations through canonical handlers. Native code resolves targets and validates arguments; learned acceptance does not authorize execution.
+6. Optionally project evidence from the complete original result, preserving coverage, warnings and continuations for every index.
+
+### Native ownership and fault boundary
+
+Retain the actual exclusive service lease through synchronous native calls, as required by `ServiceComputeScope`. Timeout or disconnection suppresses delivery but does not establish completion. Admission charges, model pins, memory and completion obligations remain until native execution finishes.
+
+Switching, disablement, shutdown and removal wait for observed completion, not fixed sleeps. A stuck call opens the appropriate circuit and reports unresolved drain; it is not safely unloaded. Recovery follows existing service ownership rules, without spawning another inference executable.
+
+Threads do not isolate access violations, aborts or driver crashes. Embedded inference shares the service failure domain. Recoverable failures can disable Arbiter; a native crash can affect the whole service. Backend qualification and restart/recovery evidence are release gates. Omit a model that cannot meet this boundary; do not introduce a sidecar fallback.
+
+## 5. Model choices and embedded execution
+
+### Bundled foundation and four optional choices
+
+MiniLM INT8 remains the always-bundled semantic foundation, using the supported CPU exports embedded in AIRK. Improve its encoder training through section 8's preparation path. It is neither an optional download nor an entry in the Arbiter selector. See [AIRK's bundled profiles](../onnx-models.md) and the [MiniLM publisher card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2).
+
+The target Arbiter catalog is exactly the following two smaller and two larger models. IDs are proposed product identities. Publisher cards were checked on 12 November 2026; none of these models is yet AIRK-qualified. Pin complete upstream revisions, assets and notices before experiments.
+
+| Group / proposed ID | Model choice | Intended role and preparation | Qualification boundary |
 | --- | --- | --- | --- |
-| **AIRK Arbiter** (recommended) | `airk-arbiter`, `airk.arbiter.*` | Describes typed judgment over candidates with explicit abstention | "Arbiter" can imply final authority; the contract below says advice only |
-| AIRK Counsel | `airk-counsel` | States the advice-only role directly | Reads as a chat or legal feature |
-| AIRK Discern | `airk-discern` | Names evidence discrimination | Verb form is awkward as a product and binary name |
-| AIRK Vantage | `airk-vantage` | Signals a higher tier | Says nothing about what the tier does |
+| Smaller / `arbiter-small-intern-08b` | [Intern-Decision-0.8B](https://huggingface.co/internlm/Intern-Decision-0.8B) | Lowest nominal size in this catalog; evaluate bounded routing/relevance, then adapt on AIRK examples where needed | Apache-2.0 publisher metadata; preserve exact template, option order and symbol-logit positions in native execution |
+| Smaller / `arbiter-small-strands-2b` | [Strands Decider 2B](https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610) | Alternative compact decision model; evaluate and specialize its trained adapter/readout for AIRK tasks | Apache-2.0 publisher metadata; package the required Qwen base, adapter and head together; Python reference serving is not the product path |
+| Larger / `arbiter-large-intern-4b` | [Intern-Decision-4B](https://huggingface.co/internlm/Intern-Decision-4B) | Larger alternative in the Intern family for tasks where measured quality justifies its cost | Apache-2.0 publisher metadata; independently qualify its weights, scoring/export, calibration and hardware profile; the smaller sibling's receipt does not transfer |
+| Larger / `arbiter-large-kev-4b` | [Kev-4B](https://huggingface.co/jaredpalmer/kev-4b) | Alternative larger decision model with a pointer head; train/adapt only for measured task gaps | Apache-2.0 publisher metadata; complete base/adapter/head, faithful native pointer scoring and separate resource/quality evidence |
 
-Naming used in the rest of this plan:
+The two larger choices are alternatives at similar nominal scale, not successive performance or hardware tiers. Size is not proof of quality, speed or memory fit. Each larger choice must demonstrate useful task coverage or quality beyond the smaller options at an acceptable measured cost. Review actual model/base/data terms and notices, not only metadata labels.
 
-- **AIRK Arbiter**: the tier and the user-facing setting.
-- `airk-arbiter`: the proposed sidecar process that owns the GPU decision model.
-- `airk.arbiter.advice/1`, `airk.arbiter.packet/1`: the proposed versioned envelopes.
-- **Arbiter pack**: the provisioned model, tokenizer, runner and qualification assets.
+LiquidAI d1 is removed from the active plan; no fifth model or general-LLM catalog is proposed. Backend/precision variants remain profiles of these four choices and do not count as extra models. Frozen-MiniLM head experiments may serve as developer baselines, but are not another shipped Arbiter option.
 
-The figures are carried over unchanged from the three source documents, so their labels still say "Decision Kernel". Read that label as Arbiter.
+Prepare models sequentially, starting with the embedded MiniLM improvement and then the two smaller and two larger candidates. The four-choice feature is complete only when two models in each group pass their gates. A failed slot stays unavailable with its reason; it is not filled by an unqualified artifact or a silently substituted model. Any replacement requires a reviewed revision to this four-slot plan.
 
-### What the tier adds
+### Product profile contract
 
-1. Typed, non-generative decisions (Choice, Binary, Ordinal) over retrieval requests, evidence and next steps.
-2. A task-specific selected-evidence projection over native AIRK results.
-3. An optional host controller that substitutes local decisions for routine agent control turns.
-4. A local training and calibration loop that produces immutable task bundles.
+A selectable profile binds the complete immutable bundle: base weights, head/adapter, tokenizer, compiler/template, candidate mapping, masks, pooling/readout, precision, backend, service runtime build, calibration, policy, task versions and evidence recipe. A model name alone is insufficient.
 
-### What stays in AIRK and the host
+The catalog exposes:
 
-- AIRK resolves literal targets, validates plans and bindings, selects the exact publication and executes permitted reads.
-- The host decides when to call a generator, which model to use, and authorizes edits, commands and tests.
-- Arbiter never generates patches, prose, plans or JSON, and never invents a source hash, publication token, symbol id, file path or resolved relationship.
+- Stable profile ID, upstream revision, complete file hashes, notices and license decisions.
+- Supported tasks, languages, evidence types, candidate limits and context profiles.
+- Required AIRK contract/runtime versions and qualified OS, architecture, CPU features, backend/device and driver ranges.
+- Exact context/candidate/concurrency profile; download and peak installed bytes including staging/rollback; measured RAM/VRAM peaks, service/display reserves and latency evidence.
+- Qualification receipt and status: research, prepared, qualified or withdrawn. Only qualified compatible profiles are selectable.
+- Selected versus actually active profile, including failure or rollback reasons.
+- Separate release qualification, system fit, current availability and asset readiness, with observation time, reason and permitted recovery. MiniLM semantic readiness is reported independently.
 
-Source baseline: [iokaio/airk at b624b31](https://github.com/iokaio/airk/tree/b624b31c32c140d66c80f8daf3c62175e4719fcb), source versions 1.8.7. That snapshot was inspected, not built or benchmarked. Every interface, budget and target below is a proposal to validate.
+Recommend the smallest qualified profile that meets the user's task needs and current resource budget, using measured evidence rather than model size alone. Users can select any eligible choice. Pin that choice: no hidden substitution, automatic revision upgrade, cloud fallback or trying models until one is confident. Temporary pressure preserves the selection and falls back explicitly to ordinary AIRK reads, including existing MiniLM semantic capability.
 
-## Compatibility contract
+### Runtime strategy
 
-Arbiter is strictly additive: an AIRK install with Arbiter disabled, absent or failed behaves byte-for-byte like AIRK without it. These invariants are release gates.
+Prefer existing statically linked ONNX integration where it reproduces the complete computation. Decoder support, masks and readout must be demonstrated; an ONNX file does not prove compatibility with AIRK's shipped runtime version or operators.
 
-| Surface | Invariant | Mechanism |
-| --- | --- | --- |
-| `airk` service, client and worker binaries | No transformer runtime, no second scheduler, no new mandatory dependency | Core gains only inert contract types and a capability probe; inference lives in `airk-arbiter` |
-| `airk-embed` | Existing embedding protocol unchanged; `Request::Plan` keeps meaning token planning (`PlanningTokens`) | New scoring uses a separate connector or the sidecar, never an overloaded embed request |
-| Indexes and publications | No schema migration, no re-index, no new stored representation required | Arbiter reads through canonical handlers; its own state lives in a separate store |
-| `airk.parse.request/1`, `airk.parse.plan/1` | Unchanged; both deny unknown fields today | Decision provenance travels in the separate `airk.arbiter.advice/1` envelope |
-| MCP catalog | The 28 unified tools and 18 native tools keep names, arguments and response modes | Arbiter surfaces are new, capability-gated tools; none replaces an existing tool |
-| Byte budgets | `max_bytes` keeps its defined meaning | Generator-token budgets are a new, separately accounted field in the packet |
-| Intent parser | Slash commands and deterministic grammar run first; `intent-broader/5` keeps `automatic_execution: false` and `proposal_confirmation_required: true` | Arbiter is consulted only after grammar and only on the learned-fallback population |
-| Plan runner limits | 6 steps, 12 reads, 12 fan-out targets, 512 KiB materialized payload | Arbiter proposals compile into plans inside those limits or start an explicit new turn |
-| Studio | 3 Runnable templates, closed operator catalog, lexical search operator | Arbiter may suggest among Runnable strategies; it cannot make Preview templates executable or change operator semantics |
-| Usage ledger | Content-free; `provider_token_usage_observed` stays false, `estimated_bill_savings` stays null | Arbiter metrics go to a separate bounded aggregate; `paired_task` is not relabeled |
+For the Intern pair, reproduce the exact question compiler, placeholder positions and typed score extraction. For Strands and Kev, preserve each trained adapter/head computation; ordinary decoder logits do not replace a pointer or learned readout head. Test tokenization, masks, scores and policy outcomes against each model's reference implementation. Sharing a model family may reuse code but does not transfer qualification.
 
-### Version and capability negotiation
+A pinned embedded library/shim is an alternative only if the full decision path passes reference fixtures and packaging gates. Reference server support is not an embeddable API guarantee. AIRK never starts `llama-server`, Ollama, vLLM or Python serving for Arbiter. Native support is an unresolved gate for every optional choice.
 
-- `airk` advertises an `arbiter` capability only when the sidecar is provisioned, warmed and passing its fixtures. Clients that never ask for it see no difference.
-- The sidecar declares the AIRK contract versions it was qualified against. A mismatch disables Arbiter and returns `unavailable`; it never downgrades silently.
-- Arbiter outputs carry their own schema ids. Older AIRK clients ignore tools they do not list; newer clients must tolerate the capability being absent.
-- Explicit commands, direct tool arguments, user-selected operations and reviewed plans bypass Arbiter entirely.
+Runtime code belongs in the normal AIRK build and sealed dependency inventory. Model downloads cannot install backend DLLs, execute repository code, load unreviewed custom operators or install drivers. Unsupported backends remain unavailable until a qualified AIRK build supports them.
 
-### Failure behavior
+## 6. Provisioning, activation and storage
 
-- Sidecar missing, GPU saturated, model not loaded, deadline exceeded: return `unavailable` and use the existing AIRK path or review policy.
-- Lexical reads and status never wait on the Arbiter queue.
-- No model download during a read, and no automatic cloud fallback.
+### Asset manifest and trust
 
-## Hardware qualification and packaging
+Use a release-approved catalog authenticated by the distribution trust mechanism, with pinned digests and exact lengths. An untrusted download's hash is not authenticity proof. Define catalog signing and verification ownership before implementation.
 
-Arbiter enables only on a machine that passes a measured GPU probe; a marketed VRAM figure is not sufficient. The reference target is a 16 GB discrete GPU with 32 GB host RAM and an SSD.
+The manifest declares data roles, approved sources/mirrors, transfer/expanded sizes, tokenizer/head/base dependencies, notices, compatibility, fixtures and rollback disk requirements. Fetch only the selected precision and required text assets. Never clone whole repositories or fetch URLs from prompts, evidence or arbitrary model metadata.
 
-### Tiers
+Store assets in installation-owned, user-private content-addressed storage outside sources and index contents. Reuse public immutable weights across enabled indexes in that installation. Private examples, features, adapters and caches retain index/user isolation. Cross-user sharing is outside this plan.
 
-| Tier | Runs | Hardware | Ships as |
-| --- | --- | --- | --- |
-| T0 Baseline (today's AIRK) | Exact rules, deterministic grammar, the 852,116-byte sparse intent scorer | CPU | AIRK |
-| T1 Registered heads | Trained heads over frozen encoder features (MiniLM INT8, about 23 MB of weights) | CPU, via `airk-embed` features where recipes match | AIRK, opt-in task bundles |
-| T2 Arbiter compact | One resident 0.8B to 2B decision model, 2,048-token default profile | GPU with 16 GB VRAM | Arbiter pack |
-| T3 Arbiter extended | Same model at the 4,096-token profile, or a larger quantized model on 24 GB and up | GPU with 16 GB (profile) or 24 GB+ (model) | Arbiter pack, separately qualified profile |
+### Lifecycle state machine
 
-T1 is useful without a GPU and is the fallback when T2 is unavailable. T2 and T3 are what the Arbiter setting gates.
-
-### GPU probe
-
-The probe runs at enable time and after any driver, runtime or pack change. It records results in the pack's activation receipt.
-
-1. Enumerate adapters; reject integrated and shared-memory devices for T2 unless separately qualified.
-2. Identify backend: NVIDIA CUDA, AMD Vulkan or ROCm, each with its own qualification record.
-3. Check free VRAM against the profile ceiling (12 GiB process allocation for the 16 GB profile) with the user's normal desktop load.
-4. Load the pinned model, run the warmup fixtures, and compare typed outputs against reference scores within declared tolerances.
-5. Measure warm p50 and p95 on the fixture set; fail the profile if targets are missed by the configured margin.
-6. Write `qualified`, `qualified_reduced` (T2 only, no extended profile) or `not_qualified` with the failing step.
-
-A failed probe leaves AIRK at T0 or T1 and reports the reason in status. It never retries in the background.
-
-### Delivery options
-
-| Aspect | A. Separate install | B. Bundled, opt-in |
-| --- | --- | --- |
-| What ships in AIRK | Inert contracts and the capability probe only | Contracts, probe, the `airk-arbiter` adapter binary and the settings UI |
-| What the user installs | An Arbiter extension or installer carrying adapter, runner and assets | Nothing extra; enabling the setting triggers explicit provisioning of runner and model assets |
-| Base AIRK download | Unchanged | Grows by the adapter binary only; model and accelerator runtime stay out of the VSIX |
-| Release cadence | Independent; Arbiter must pin the AIRK contract versions it supports | Coupled; one version matrix, one qualification run |
-| Failure isolation | Strongest; a broken Arbiter cannot affect an AIRK update | Requires the adapter to be inert until activated |
-| Discoverability | Lower; power users find it | A disabled setting with a "check my GPU" action |
-| Accelerator runtimes (CUDA and similar) | Installer owns them | On-demand download, reported separately from model bytes |
-
-**Recommended: B with assets on demand.** Ship the small adapter and probe inside AIRK, off by default. The setting `airk.arbiter.enabled` stays unavailable until the probe returns `qualified`. Enabling it runs explicit provisioning of the Arbiter pack from the asset manifest. This keeps one compatibility matrix while keeping roughly 2 GB of model assets and any accelerator runtime out of the base install. If the adapter cannot be kept inert in practice, fall back to A; the contracts are identical in both.
-
-Size targets, subject to release measurement: under 150 MB for the CPU install, under 2 GB of additional model assets for the compact GPU pack, accelerator runtime reported separately.
-
-## Architecture
-
-Three components keep three responsibilities: AIRK supplies and validates evidence, Arbiter returns bounded advice over that evidence, and the agent host owns generation and actions.
-
-&#91;image: Integration: AIRK retrieves scoped evidence, the decision component returns bounded advice, the agent host retains action authority\]
-
-Figure 1. Integration: AIRK retrieves scoped evidence, Arbiter returns bounded advice and a smaller evidence set, the host retains action authority.
-
-| Component | Owns | Never does |
-| --- | --- | --- |
-| AIRK (`airk`, `airk-embed`) | Indexing, retrieval, target resolution, plan validation, publication identity, read execution | Reasoning, answer generation, model-call routing |
-| Arbiter (`airk-arbiter`) | Typed decisions, calibration, acceptance policy, evidence selection scores | Read execution, identity minting, generation, external calls |
-| Agent host | Generator calls, model choice, task budget, edits, commands, tests | Bypass AIRK plan validation |
-
-### Request path
-
-1. The adapter receives the information need, authorized scope, declared budget and current AIRK capabilities.
-2. Exact rules and deterministic parsing run first. If they resolve the request, Arbiter is not invoked.
-3. Otherwise the adapter invokes the smallest eligible Arbiter task and receives an advice envelope.
-4. Accepted advice is validated and compiled into existing AIRK operations. AIRK resolves targets, checks bindings and executes permitted reads.
-5. An optional selector scores the native result and assembles a packet of original records.
-6. The host receives the packet with citations, identities, coverage limits and explicit omissions, then continues locally, requests review or calls a generator.
-
-### Process model
-
-One process owns the GPU weights. `airk-arbiter` is a persistent same-host sidecar bound to loopback, sitting beside `airk-embed` in the existing process model. Source content travels directly between scoped workers and the inference helper, not through the metadata broker, as it does for embeddings today.
-
-&#91;image: Local runtime: applications, kernel adapter, CPU fast path, native runner, shared asset store and one resident GPU model\]
-
-Figure 2. Local runtime: clients share one kernel adapter, a CPU fast path, one resident GPU runner and a shared asset store.
-
-- **Adapter**: task registry, input budgets, compilation of questions and candidates, calibration and acceptance policy, status mapping.
-- **CPU fast path**: sparse scorer and encoder heads; no GPU dependency.
-- **Native runner**: pinned llama.cpp decision endpoint holding one resident model.
-- **Shared asset store**: content-addressed, machine-wide, reused across projects and task bundles.
-- **In-process option**: requires a qualified native shim or a complete ONNX pipeline; no Python inference dependency in either case.
-
-### Route cascade
-
-Policy selects an eligible route before execution. It does not try every installed model until one is confident.
-
-&#91;image: Decision flow: CPU registered route and GPU flexible route share calibration and policy, ending in a typed result for the host workflow\]
-
-Figure 3. Decision flow: registered (CPU) and flexible (GPU) routes share one calibration, applicability and acceptance contract; only qualified cases escalate.
-
-- **Registered route**: a task-specific view of state is encoded once and reused across compatible heads. Different feature recipes do not share an embedding.
-- **Flexible route**: a bounded input holds the question, explicit label descriptions or rubric, selected state and evidence references. The model scores candidates jointly with that context in one forward pass.
-- **Escalation** applies only to task versions whose full cascade has been evaluated. Missing evidence triggers retrieval or abstention, not a larger model.
-- **Exact decision cache**: hit only when task, policy, bundle, exact input, evidence revision and authorized scope match. No approximate semantic cache.
-- **One resident GPU model.** Task heads are cheap; a LoRA adapter still needs its base, and a merged adapter is another full set of weights unless the runtime shares the base correctly.
-
-## Local boundary
-
-Every stage that touches request content, evidence, labels or learned artifacts runs on the local machine, and the build is tested with outbound networking blocked.
-
-&#91;image: Boundary: sensitive context, local decisions, private learning and internal workflow inside the controlled environment, with no request path to an external model provider\]
-
-Figure 4. Boundary: context, decisions, learning and workflow stay inside the controlled environment; there is no request path to an external model provider.
-
-| Stage or artifact | Rule |
+| State or transition | Required behavior |
 | --- | --- |
-| Ingestion and preprocessing | Parse and extract locally; URLs inside evidence never trigger a fetch |
-| Retrieval and features | Text, embeddings, indexes and feature caches stay local with source permissions and revision identities |
-| Decision requests and results | In-process call or protected loopback; no external model fallback under load or failure |
-| Annotation and evaluation | Examples, labels, local-teacher outputs, test sets and experiment tracking stay local |
-| Model artifacts | Heads, adapters, checkpoints and rollback bundles are bound to the project and user that produced them |
-| Diagnostics | Bounded operational metadata by default; content-bearing traces need explicit local capture, including crash dumps and temp files |
-| Updates | Public assets arrive through explicit provisioning; nothing private is uploaded as part of an update |
+| Disabled | No scoring, automatic downloads or Arbiter model allocation; ordinary AIRK behavior |
+| Enable/apply | Validate management authority, explicit index roster, compatibility, notices and resources; capture operation/configuration identity |
+| Downloading | Service-owned bounded transaction with progress, cancellation and retry details; private staging, size limits and validated paths/redirects |
+| Verifying | Verify catalog trust, lengths/digests, complete inventory, tokenizer/head bindings and safe data formats before loading |
+| Warming/qualifying | Load under service ownership; run native reference fixtures, memory probe and first inference. Downloaded is not ready |
+| Ready | Atomically activate the bundle; receipt binds service build, profile, backend, hardware/driver, fixtures and configuration generation |
+| Qualified but resource-constrained | Preserve selection/enrollment and report the scarce resource; deny new Arbiter admissions while ordinary reads continue. Safely drain before unloading if needed; do not imply missing qualification or silently downgrade |
+| Switching/draining | Stop admissions, await actual native completion, unload safely, warm replacement and update active identity atomically |
+| Failed/unavailable | Preserve reason/recovery options; ordinary reads continue; partial assets never become active |
+| Disable/remove | Revoke eligibility, drain, unload; remove only explicitly selected owned assets without active/rollback references |
 
-### Limits of the boundary
+Interrupted downloads retain bounded resumable state only for the same authorized operation/manifest. On restart, reconcile cancellation and configuration generation; never resume canceled or superseded selections. Verify complete bytes before activation. No background polling for model revisions is required.
 
-- Arbiter being local does not make a hosted coding agent private. Evidence selected for a hosted generator still crosses the boundary; Arbiter only reduces how much.
-- Data-destination policy is enforced in host code before any learned routing. A relevance score is not an authorization decision and not a secret scan.
-- Reusing one runtime does not authorize sharing labels, adapters or cached features across projects or users.
-- Typed outputs, reason codes and input hashes can themselves be sensitive; the host controls where they go.
-- Retrieved text that contains instructions is evidence, never authority to change scope, run tools or alter the workflow.
+Keep the previous qualified bundle on disk during updates. With one resident model, switching may temporarily make Arbiter unavailable. Failed replacement may restore the verified prior bundle, disclosing selected versus active identities and rollback reason. Failed rollback remains unavailable. Disk-full, corruption, cancellation and restart recovery need independent fixtures.
 
-### Library controls
+Startup may warm verified assets for a previously enabled configuration. Missing assets require explicit reprovisioning; reads and ordinary startup do not authorize new downloads. Offline import uses the same authenticated bundle and verification through management.
 
-Set Hugging Face Hub offline and telemetry controls after provisioning, disable runner telemetry and background model updates, then verify the whole running pipeline under the network policy. An environment variable alone is not proof.
+### Qualification, system requirements and current availability
 
-## Decision tasks
+Use three separate gates. Passing one does not imply the others, and none enables Arbiter without user opt-in.
 
-Arbiter exposes eight independently versioned tasks, each with a typed answer and its own acceptance threshold. The ids are proposed; none exists in AIRK today.
-
-| Task id | Answer type | Decides | First route | Hard boundary |
-| --- | --- | --- | --- | --- |
-| `airk.request_supported.v1` | Binary + abstention | Whether a request is a supported bounded read task | T0/T1 | Rejects mutation ("change every use of X"), unsupported reasoning ("prove the queue is thread-safe") and ambiguous targets |
-| `airk.retrieval_route.v1` | Choice | Definition lookup, literal occurrence, document evidence, test mentions, or broader investigation; lexical vs semantic vs hybrid mode | T1, T2 on fallback | Cannot pick semantic search when that representation is absent; ANN similarity is not a correctness probability |
-| `airk.recipe_choice.v1` | Choice | Which implemented recipe, and which bounded next branch from verified intermediate results | T1/T2 | Candidates come only from the implemented catalog; plan limits apply |
-| `airk.evidence_relevance.v1` | Binary or Ordinal rubric | Query-to-record relevance for packet selection | T2 | Never filters an exhaustive exact lookup; contradictions are retained |
-| `airk.evidence_role.v1` | Choice (multilabel only if separately qualified) | Declaration, constraint, example, test, other defined roles | T1/T2 | Does not upgrade the evidentiary basis of a fact |
-| `airk.next_evidence_step.v1` | Choice | Expand a cited declaration, inspect a test candidate, clarify a target, or hand off to synthesis | T2 | "Ready for synthesis" means preparation is complete, not that behavior is proven |
-| `airk.claim_support.v1` | Choice | Support, contradiction or insufficient information for an explicitly supplied claim | T2 | Does not extract claims from prose; a test asserting X is not X being true; syntax facts are not runtime behavior |
-| `agent.generation_route.v1` | Choice (host-owned) | Which eligible generator handles the remaining work | Host | Code enforces provider and data-destination eligibility first |
-
-### Answer primitives
-
-- **Choice**: probabilities over registered label ids. The top option can lead while every option is inappropriate, so applicability is a separate check.
-- **Binary**: an accepted `false` is distinct from insufficient evidence and from abstention.
-- **Ordinal**: a distribution over rubric levels; the adapter recomputes expectation and modal level from that distribution.
-- Ranking is built from candidate scores or repeated relevance judgments. Extraction is out of scope.
-- When several labels can apply, use separate Binary tasks or an explicitly qualified multilabel head, never a forced single choice.
-
-### Task rules
-
-- A fixed head cannot be repurposed by a new prompt. A flexible task is qualified per question family, language, candidate count and context size.
-- Retrieval supplies current source facts; training supplies stable decision behavior. Weights never stand in for repository state.
-- Candidate count is a resource and quality parameter. Bound both original input and final model tokens.
-- A flexible-question mode is an explicit versioned capability extension, not extra instructions slipped into a registered v1 task.
-
-## Advice envelope
-
-Arbiter returns one envelope type, `airk.arbiter.advice/1`, kept separate from AIRK's parse contracts because those deny unknown fields. Accepted advice remains advice until AIRK and the host validate the resulting operation.
-
-Illustrative shape (field names are proposals):
-
-```json
-{
-  "schema": "airk.arbiter.advice/1",
-  "task": { "id": "airk.recipe_choice.v1", "version": "1.0.0" },
-  "bundle": {
-    "id": "sha256:...",
-    "base_model": "sha256:...",
-    "head_or_adapter": "sha256:...",
-    "tokenizer": "sha256:...",
-    "compiler": "question-compiler/3",
-    "quantization": "Q4_K_M",
-    "runtime": "llama.cpp@<pinned-commit>",
-    "backend": "cuda"
-  },
-  "policy": { "calibration": "sha256:...", "acceptance": "sha256:..." },
-  "scope": { "project": "...", "path_prefix": "src/", "publication": "..." },
-  "input": { "recipe": "feature-recipe/2", "digest": "sha256:...", "tokens": 1184 },
-  "evidence": [ { "source_hash": "...", "representation": "...", "location": "..." } ],
-  "status": "accepted",
-  "answer": {
-    "type": "choice",
-    "label": "definition",
-    "distribution": { "definition": 0.91, "occurrences": 0.06, "document": 0.03 }
-  },
-  "recommendation": {
-    "recipe": { "id": "definition", "parameters": { "name": "QueueClient" } }
-  },
-  "timing_ms": { "queue": 2, "compile": 1, "forward": 84, "policy": 0 }
-}
-```
-
-The `recommendation.recipe` block is compiled by the adapter into an ordinary `airk.parse.request/1` in `prepare` mode. Preparation is not execution, and AIRK's digest and execution checks still apply. Literal values such as `QueueClient` come from the request or an authorized verified inventory, never from the model.
-
-### Status values
-
-| Status | Meaning | Caller behavior |
+| Gate | Required observations | Failure behavior |
 | --- | --- | --- |
-| `accepted` | Applicable, evidence sufficient, calibrated score above the task threshold | Validate and compile; still subject to AIRK and host checks |
-| `abstained` | Applicable, but uncertainty or evidence falls short | No actionable answer; retrieve more, clarify, or use the existing path |
-| `unsupported` | Request is outside the task's qualified scope | Existing AIRK path or review |
-| `invalid_input` | Malformed, over budget, or unresolvable inputs | Fix the request; do not retry unchanged |
-| `unavailable` | Sidecar, model or capacity missing; deadline exceeded | Declared fallback; never an external call |
+| Release qualification | Exact model/task/export/runtime/backend passes quality, calibration, native parity and package/platform tests | Mark profile unqualified; no product activation |
+| System fit | Supported OS/architecture/CPU features, device/backend/driver, address space, measured RAM/VRAM limits and peak disk requirement | Show unsupported requirements; do not download/install drivers or new executable runtimes |
+| Current availability | Available RAM/VRAM after AIRK/OS/display reserves, current device health, disk space for provisioning, bounded queue/concurrency capacity and remaining deadline | Report temporary unavailability; preserve selected model and index choices; use ordinary AIRK behavior |
 
-These five never collapse into an empty evidence result.
+Publish a measured requirements row for every qualified profile of all four models. Include minimum and recommended system resources, exact token/candidate/concurrency limits, peak load/warm/inference memory, transfer/staging/rollback disk, and cold/warm p50/p95/p99. No RAM or VRAM minimum is established by this concept. Measure the exact exported artifact before publishing a requirement; model-card sizes or advertised installed VRAM are not acceptance thresholds.
 
-### Acceptance
+The qualification matrix covers CPU-only hosts as the bundled MiniLM baseline, smaller-model candidates on lower-memory systems, and both larger alternatives on higher-memory systems. Optional CPU, integrated/unified-memory and discrete-GPU execution each needs evidence; none inherits support from MiniLM. Windows, Linux, macOS and each backend require separate receipts. On unified-memory devices, budget against one shared pool rather than counting the same RAM as both host and GPU capacity.
 
-Acceptance requires four independent conditions: applicability, adequate evidence, a calibrated task threshold, and a qualified execution profile.
+Start model experiments at 2,048 total input tokens, one active optional-model request and a finite fair queue across enabled indexes. A 4,096-token or higher-concurrency profile needs separate qualification. Choose device test sizes from measured allocations; do not impose a universal 16 GB GPU floor or assume both 4B models have identical requirements.
 
-- The existing intent scorer emits integer scores and a margin, not probabilities. Its one-versus-rest training includes unsupported examples with all-zero targets, so a softmax over its scores would force a winner. The adapter preserves those semantics or qualifies a replacement separately.
-- A provider confidence field is input to policy, not an acceptance status.
-- Thresholds are per task and per relevant slice. A wrong route wastes turns; a wrong sufficiency judgment can induce an unsupported patch, so tolerances differ.
-- Any change to quantization, feature recipe, model, compiler or backend invalidates calibration until the held-out partition is rescored.
-- Learned proposal acceptance does not enable automatic execution. That is a separately qualified, explicitly enabled mode.
+Recheck resources before provisioning, before loading/warming and at inference admission. Reserve capacity when admitting work; an earlier free-memory observation is not a reservation. Include load-time peaks and the already resident MiniLM session. Revalidate qualification after relevant service/model/backend/driver/device changes. Cache static observations only against those exact identities, never treat an old machine probe as current free-memory evidence.
 
-### Bundle identity
+If another application consumes resources, stop new Arbiter admissions or use the already bounded queue within the original deadline. Do not terminate applications, silently reduce context/precision, offload to CPU, switch models or restart the service to manufacture capacity. Accepted native work retains its pins and charges until actual completion. When capacity returns, already enabled indexes may resume the same verified selected profile; no model download or enrollment occurs. An OOM, unhealthy device or failed warmup requires explicit recovery/probe evidence, not a retry loop.
 
-A task bundle is immutable and pins: base weights, head or adapter, tokenizer, prompt compiler and template, candidate ordering and token mapping, attention and masking strategy, quantization, runtime build, backend, calibration, policy and retrieval recipe. Provenance hashes and reason codes are separate fields from any explanation text.
+Lexical reads, health and metadata do not queue behind Arbiter. Reserve ordinary MiniLM embedding/indexing capacity and bound optional inference threads/memory. Separate queues do not prove zero contention. Measure latency and progress for ordinary semantic indexing under optional-model load, including a noisy enabled index beside an excluded index. Global or per-index Arbiter disablement releases only Arbiter resources; it never unloads a MiniLM session still needed by normal indexing.
 
-## Evidence packet
+## 7. Decision and evidence contracts
 
-The packet, `airk.arbiter.packet/1`, is a selected view of original AIRK records, never a model-written substitute and never a replacement for the native result.
+### Initial tasks
 
-| Field group | Contents |
+Each task has an independent version, applicability definition, qualified model set and acceptance threshold. IDs are proposed.
+
+| Task | Output | Boundary |
+| --- | --- | --- |
+| `airk.request_supported.v1` | Binary plus abstention | Supported bounded-read advice; authorization and mutation rejection remain deterministic |
+| `airk.retrieval_route.v1` | Choice | Existing definition, occurrence, document/test-evidence routes; semantic/hybrid only where representations exist |
+| `airk.recipe_choice.v1` | Choice | Implemented bounded recipes and verified targets; never invented plans/tools |
+| `airk.evidence_relevance.v1` | Binary or ordinal rubric | Relevance for a selected projection; never filter exhaustive exact results |
+| `airk.evidence_role.v1` | Choice or separately qualified multilabel | Declaration, constraint, example, test and defined roles; preserve evidentiary basis |
+
+Qualify only tasks that pass their gates; the whole task catalog is not a release prerequisite. Claim support, next-agent-action and generator routing are outside the initial capability. Future bounded evidence expansion needs its own contract/evaluation without becoming an agent controller.
+
+A fixed head cannot be repurposed by instructions. Flexible models are qualified per family, language, candidate count and context. Softmax is relative preference, not proof any option applies. Preserve sparse scorer integer/margin semantics rather than calling them probabilities.
+
+### Advice envelope
+
+Proposed `airk.arbiter.advice/1` stays separate from existing parse/plan formats.
+
+| Field group | Required information |
 | --- | --- |
-| Scope and identities | Project or collection, exact publication, source hashes, representation identities, source locations |
-| Task and selection identity | Task version, selection recipe, model bundle, acceptance policy |
-| Selected records | Complete original excerpts or facts, each with its evidence role and preserved syntax, imported or candidate basis |
-| Coverage and omissions | Native extraction and read limits, truncation, omitted-record counts, whether more can be requested |
-| Budget accounting | Serialized bytes, tokenizer identity when tokens are counted, selection work, remaining expansion allowance |
-| Continuation | A valid route to more evidence that does not pretend expired handles are current |
+| Execution identity | Task/version, immutable profile, runtime/backend, compiler, calibration and policy |
+| Scope | Installation/catalog/index identity, authorization scope, configuration revision and exact publication |
+| Evidence | Original hashes, representations and locations; no model-invented identities |
+| Input/budget | Exact recipe, bounded input digest, bytes/tokens, candidate limits and consumed work |
+| Outcome | Typed status, stable reason, registered answer/distribution where applicable, native-compiled recommendation |
+| Operational detail | Queue/compile/inference/policy time, readiness and error/retry detail; no fabricated observations |
 
-### Selection algorithm
-
-1. Retrieve a bounded candidate set through canonical handlers (initial tuning input: 20 candidates). Measure candidate recall here; the selector cannot recover what retrieval missed.
-2. Deduplicate exact overlaps in code.
-3. Reserve mandatory metadata and required facts before spending any context budget.
-4. Score each remaining record with `airk.evidence_relevance.v1` and assign a role with `airk.evidence_role.v1`.
-5. Greedy select by relevance per token under role-coverage and source-diversity constraints: at least one declaration, its controlling constraint, a representative use and a test where they exist.
-6. Force-retain contradicting records and policy exceptions regardless of score.
-7. Emit intact records only; never truncate inside a record to fit.
-8. Record omissions and the expansion route.
-
-Code enforces scope, budget, duplicates, required roles and intact records. The model supplies relevance estimates only.
-
-### Rules
-
-- The complete native result stays retrievable. The Workbench read adapter requests full responses and rich facts by default, so the packet is a separate projection, not a change to what the UI retains.
-- Keep required metadata even when that makes a very small packet impossible.
-- Token budgets are counted with the generator's tokenizer contract when available; otherwise the uncertainty is recorded.
-- A deterministic baseline (native ranking plus grouping and diversity) is implemented first. If it performs as well on task outcomes, it ships and the learned stage is dropped. This revisits AIRK's standing no-reranker guidance, so the learned selector must beat that baseline to exist.
-
-### Evidence manifest and reuse
-
-For long tasks the host keeps a manifest of what it possesses versus what the current model context contains.
-
-- AIRK's `changes`, representation validators and conditional reads stay authoritative. Arbiter assesses relevance of changed records only after exact validation.
-- `not_modified` helps only if the host still holds the matching evidence. After truncation or session transfer, content is supplied again.
-- A source hash alone does not establish live-file freshness.
-- Exact reuse, prompt-cache reuse, index caching and decision caching are four mechanisms with four cache keys. None justifies replacing a needed passage with an identifier the generator cannot resolve.
-
-## Source integration seams
-
-Six seams in the inspected source carry the change; the first three are in the native Workbench implementation. Locations are verified at b624b31; the changes are proposals, not patches.
-
-| Seam | Location | Change | Must preserve |
-| --- | --- | --- | --- |
-| Parse fallback | [`airk-kernel/src/workbench.rs`](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/crates/airk-kernel/src/workbench.rs) `parse_text` | Consult the Arbiter adapter after explicit commands and finite grammar | Deterministic behavior and learned-review defaults |
-| Recipe construction | `proposed_steps` and native recipe construction | Translate an accepted recommendation into existing operation candidates | Targets resolved and arguments validated in code; no model-authored instructions executed |
-| Plan provenance | `evidence_plan_with_reader` | Associate a separately versioned advice record with a prepared plan | Scope, publication, catalog, digest, binding, budget and execution checks |
-| Packet projection | Canonical result handlers plus a new adapter beside [`airk-mcp/src/workbench.rs`](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/crates/airk-mcp/src/workbench.rs) | Produce the selected-evidence view from preserved native results | Citations, completeness, warnings, raw-result access |
-| Intent scorer | [`airk-retrieval/src/intent.rs`](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/crates/airk-retrieval/src/intent.rs) | Expose scores and margin to the adapter unchanged; optional registered head as an alternative scorer | 13 fixed intents, integer score semantics, acceptance decision |
-| Core contracts | [`airk-core/src/workbench.rs`](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/crates/airk-core/src/workbench.rs) | Add inert advice and packet types in a new module | Existing request and plan structs untouched |
-
-### New components
-
-- **`airk-arbiter` adapter crate and binary**: task registry, compiler, calibration, policy, admission queue, status mapping, loopback server.
-- **Runner integration**: client for the pinned llama.cpp decision endpoint; optional ONNX Runtime path for in-process use.
-- **Arbiter store**: bundles, calibration tables, activation receipts, decision cache and bounded aggregate metrics, kept outside AIRK's index store.
-- **Feature connector**: an explicit connector to compatible frozen features from `airk-embed`.
-- **Host adapter** (separate package): the controller that substitutes decisions for agent control turns.
-- **Training tools** (Python, not shipped to end users): label tooling, head and adapter training, export, calibration, qualification harness.
-
-### Feature-sharing constraints
-
-The MiniLM pipeline is a starting point, not a universal feature contract.
-
-- Each head binds to an exact model, tokenizer, input construction, pooling, normalization, precision and runtime.
-- A cached document vector cannot stand in for a cross-encoder's joint query-document input.
-- Sharing is valid only where training and serving recipes agree; the connector checks recipe identity and returns `unavailable` on mismatch.
-
-### Scheduling
-
-Decision work gets its own bounded admission, cancellation, deadlines and resource accounting. Core keeps inert contracts and gains no scheduler. The plan runner's deadline checks do not terminate an already admitted synchronous read, so Arbiter deadlines are enforced in the adapter, before a read is admitted.
-
-## Host controller
-
-Removing agent reasoning turns requires the host to substitute a local decision for an LLM call; an MCP server cannot stop its client from asking the model what to do next. Arbiter therefore ships at two integration depths.
-
-| Depth | What changes | Works with | Effect |
-| --- | --- | --- | --- |
-| C1 Server-side | Better proposals and smaller, more useful tool results | Any standard MCP client, unchanged agent loop | Less input on later agent calls; call count unchanged |
-| C2 Host-side | A bounded controller replaces named orchestration turns | Cooperating host, agent adapter, or direct Workbench flow | Fewer generative invocations |
-
-Adding a `decide` tool and asking the same agent to call it adds a round trip instead of removing one. C2 exists to avoid that.
-
-&#91;image: Workflow: establish context, use current facts, assess the case, act with authority, with an exception path through evidence and review\]
-
-Figure 5. Controller loop: establish context, use current facts, assess the case with a qualified model, act with host authority; exceptions return through evidence and review.
-
-### Controller loop
-
-1. **Establish context.** Host code verifies scope and permissions and validates exact facts. No model.
-2. **Gather.** `airk.request_supported.v1`, then `airk.retrieval_route.v1` or `airk.recipe_choice.v1`. AIRK prepares and executes the plan.
-3. **Select.** Build the packet with relevance and role scoring.
-4. **Assess.** `airk.next_evidence_step.v1` returns expand, inspect, clarify or hand off. Exact gates check required categories and identities first.
-5. **Act.** On hand-off, the host calls its generator with the packet. On anything else it loops to step 2 within budget.
-6. **Exceptions.** `abstained`, `unsupported` or missing evidence routes to more retrieval, clarification, or the unmodified agent loop.
-
-### Controller rules
-
-- Code owns budgets, loop limits, retries, deadlines and termination. The model selects among permitted transitions only.
-- Candidate tools and workflows must already exist; the controller cannot invent capabilities.
-- Fall back before paid generative work on that branch where possible, and count every call when fallback happens late.
-- State can change between read and action. The host checks freshness or a version precondition at execution and re-prepares stale plans through the normal AIRK path.
-- Per-decision acceptance does not compound cleanly: four decisions at 90% each give 65.61% joint coverage under independence. Measure whole-trajectory coverage and success directly.
-- A test-workflow recommendation is not dependency analysis. Required tests and CI policy stay in force.
-
-### Replaceable agent patterns
-
-| Pattern | Replaced by Arbiter | Stays with host or generator |
-| --- | --- | --- |
-| Router or supervisor | Choice among existing tools, recipes or workflows | Inventing new capabilities |
-| Recurring planner | Registered workflow plus bounded semantic branches | New task decomposition |
-| Evaluator or critic | Fixed rubric; support of supplied claims | Broad critique; discovering omitted claims |
-| Tool loop | Interpreting qualified results, choosing the next permitted transition | Budgets, retries, termination |
-| Multi-step handoff | Structured facts and accepted outcomes in shared state | Novel synthesis |
-
-### Studio and Planner
-
-Arbiter can suggest one of the Runnable strategies, pick evidence roles, flag missing prerequisites and choose an approved prompt profile. Deterministic code compiles the handoff from the task, original excerpts, constraints and citations. A suggested draft stays inert, and evidence from another publication is never mixed into a saved plan.
-
-## Model candidates
-
-The first GPU experiment compares three purpose-built decision models against the existing sparse and MiniLM baseline; the compact deployment candidate is d1-2B Q4\_K\_M through a native runner, subject to its license. Model facts come from publisher cards inspected for the source documents; no model has been downloaded, trained or benchmarked.
-
-### Decision models
-
-| Candidate | Characteristics | License | Role | Main constraint |
-| --- | --- | --- | --- | --- |
-| [LiquidAI/d1-2B](https://huggingface.co/LiquidAI/d1-2B) | 1.92B parameters, LFM3 backbone, typed decisions with no generated tokens, 128K advertised context | Custom LFM license | Leading compact native candidate; text Choice, Binary, Ordinal only | Published latency is on H100 and MI325X, not consumer GPUs |
-| [Strands Decider 2B](https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610) | Qwen3.5-2B-Base plus LoRA and a learned option readout; Choice, Noul, Score | Apache-2.0 | Reference implementation for training and shared-state decisions | Adapter is not the full download; Python reference runner, Linux or WSL2 for GPU |
-| [Intern-Decision 0.8B](https://huggingface.co/internlm/Intern-Decision-0.8B) | Qwen3.5-derived; one forward pass scores answer symbols at decision positions | Apache-2.0 | Smallest decoder challenger | Exact question compiler, template, position selection and calibration must be preserved |
-| [tasksource-decider-nano](https://huggingface.co/tasksource/tasksource-decider-nano) | About 150M, ModernBERT-style cross-encoder, 8,192-token pair limit | Apache-2.0 | Sub-gigabyte encoder alternative | Tree attention and option pooling need a faithful runtime |
-| [kev-4b](https://huggingface.co/jaredpalmer/kev-4b) | Qwen3.5-4B-Base plus LoRA and pointer head | Apache-2.0 | T3 quality comparison | Published config targets 24 GB; a 16 GB quantized profile is extra work |
-
-Excluded for now: [sysone 0.4B](https://huggingface.co/forward-metric/sysone-typed-decisions-0.4B) is trained on the benchmark's own training split, and [Decima-small](https://huggingface.co/amyrmahdy/decima-small) flags non-commercial training data despite Apache weight metadata.
-
-### General small LLMs (baselines and local teachers)
-
-| Family | Option | Use |
-| --- | --- | --- |
-| Qwen3.5 | [2B](https://huggingface.co/Qwen/Qwen3.5-2B) as the general-LLM scoring baseline; 4B and 9B optional | Apache-2.0; full checkpoints are 1.75 GB (0.8B) and 4.55 GB (2B) safetensors |
-| LFM3 | [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B), 1.10 GB Q4\_K\_M | Card warns that disabling thinking is inconsistent |
-| MiniCPM5 | [MiniCPM5-2B](https://huggingface.co/openbmb/MiniCPM5-2B), 1.56 GB Q4\_K\_M | Text-only challenger; test prefill separately |
-| Gemma 4 | E2B (5.1B including embeddings), E4B (8B total) | Larger storage than the names suggest |
-| Granite 4.2, SmolLM3, Phi-4-mini | 3B to 3.8B | Controls with mature export support |
-
-### Selection rules
-
-- Do not pick a winner from unrelated benchmark rankings. Model-card calibration describes the authors' distributions, not AIRK traffic.
-- The LFM license sets additional commercial terms at $10 million or more in annual revenue. If that does not fit distribution, use the Apache candidates and budget their integration work.
-- Mixture-of-experts models are poor defaults: a small active-parameter count still stores every expert.
-- A 128K or 256K context claim says nothing about speed or fit on a 16 GB device.
-- T3 on 24 GB and larger GPUs opens kev-4b and Qwen3.5-4B or 9B at four bits (2 GB and 4.5 GB of ideal weight payload before overhead). Each is a separately qualified profile.
-
-## Runner and runtime
-
-The compact profile runs a pinned llama.cpp decision server on loopback, with the Arbiter adapter translating between AIRK's typed envelopes and the runner's protocol. One native execution implementation serves every client; Python owns training and reference evaluation only.
-
-### llama.cpp decision path
-
-- d1 GGUF decision support is documented for llama.cpp **b11960 / v0.8.0 and newer**, exposed by the server at `/v1/systemone`. Pin a tested commit; a newer version string does not guarantee the same implementation.
-- Type mapping: `noul` to Binary, choice probabilities to registered label ids, score-level probabilities to ordinal ids and scale.
-- Each compiled question with its state must fit both batch and microbatch. Set `-b` and `-ub` to cover the qualified profile including template tokens, and validate length before dispatch.
-- The server's decision implementation uses llama.cpp's staging extension header ([server-decision.cpp](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/server-decision.cpp), [llama-ext.h](https://github.com/ggml-org/llama.cpp/blob/master/src/llama-ext.h)). Embedding it in-process means owning a narrow versioned shim, porting the compiler and postprocessor, and running parity fixtures.
-- The inspected shared-prefix eligibility does not include LFM3 d1. Do not assume several questions in one call share state; record actual forward-pass count per request.
-
-### Runtime options
-
-| Runtime | Use in Arbiter | Boundary |
-| --- | --- | --- |
-| ONNX Runtime | Existing encoder and head path (T1); candidate in-process path for exported decision models | Export must preserve masks, pooling, positions, readout and quantization behavior |
-| llama.cpp / GGUF | T2 and T3 native runner | Verify architecture, decision protocol, backend and quantization together |
-| PyTorch, Transformers, PEFT | Reference evaluation, training, prototyping | Not in the end-user install when a qualified native artifact exists |
-| vLLM | Optional Linux service for measured concurrency needs | Generic generation API is insufficient for custom decision heads |
-| Ollama | Optional developer convenience | Explicit local model, cloud features disabled; never a required dependency |
-
-### d1 ONNX route
-
-Use this if strict in-process Rust integration matters more than the smallest download.
-
-- The export provides logits and final hidden states; the documented row construction and typed postprocessing must be reproduced natively.
-- At most 16 questions per packed row.
-- On CUDA use the `fp16`, `q4f16` or `q8f16` graphs. Plain `q4` and `q8` use FP32 activations and push sliding-attention layers to CPU.
-- The GPU `q4f16` package is about 1.95 GB including vision, a different artifact from the 1.10 GB GGUF text backbone.
-
-### Score semantics
-
-- Keep each model's trained scoring computation. A pointer head, a token-position classifier and a next-token decoder are different computations; swapping one for another invalidates calibration.
-- General-LLM baseline: map choices to canonical single-token symbols in the exact template, read raw logits before grammar filtering or sampling, normalize over allowed candidates. Multi-token candidates need a specified sequence-likelihood computation.
-- The resulting softmax is a relative distribution over candidates. It does not show that the top option is correct or that any option applies.
-- Test candidate-order and label-wording sensitivity. Fit calibration on held-out examples scored by the shipped artifact.
-- Answers are produced by code over validated scores. The model is never asked to print a confidence number.
-
-### Platform matrix
-
-NVIDIA CUDA, AMD Vulkan or ROCm, and integrated or shared-memory systems each need separate qualification. The Strands reference runner's GPU route is Linux or WSL2; a Rust client talking to that Python process is an experiment harness, not a native implementation.
-
-## Memory and context budgets
-
-The 16 GB profile caps the Arbiter process at 12 GiB of measured GPU allocation and 2,048 model-input tokens by default. Both are planning ceilings to tune, not measurements.
-
-&#91;image: Budgets: 1.10 GB model download, installed disk with rollback, and a 12 GiB GPU process ceiling split 5, 4, 2 and 1 GiB\]
-
-Figure 6. Budgets: a 1.10 GB download is one budget; serving memory, disk and training memory are separate.
-
-### Four budgets
-
-1. **Download**: the exact weight, tokenizer, runtime and accelerator files that travel.
-2. **Disk**: active assets, cached originals, updates and one retained rollback version.
-3. **Inference memory**: GPU weights, activations, cache or state, workspaces, concurrent requests. Host RAM is separate.
-4. **Training memory**: weights plus gradients, optimizer state, saved activations and buffers.
-
-### 16 GB serving allocation
-
-| Reservation | Ceiling |
+| Decision status | Meaning |
 | --- | --- |
-| Model and auxiliary weights | 5 GiB |
-| Activations and workspaces | 4 GiB |
-| Bounded cache or recurrent state | 2 GiB |
-| Allocator slack | 1 GiB |
-| **Process total** | **12 GiB** |
-| Left for display, other applications, variability | Remainder of the device |
+| `accepted` | Applicable and supported under calibrated policy/qualified profile; native validation and existing confirmation still apply |
+| `abstained` | Insufficient confidence/evidence; no actionable answer |
+| `unsupported` | Outside supported task/profile inputs |
+| `invalid_input` | Malformed, stale/unresolvable or over budget; unchanged retry cannot fix it |
+| `unavailable` | Missing model/backend/capacity, deadline or runtime failure; preserve reason and permitted recovery |
 
-Weight arithmetic starts at `parameters x bits_per_weight / 8`, which excludes quantization scales, mixed-precision tensors, embeddings outside the nominal count and runtime memory. For a conventional attention decoder:
+Decision outcomes, per-index not-applied reasons and provisioning states remain distinct. Disabled index, failure, accepted `false` and empty native result are different observations.
 
-```
-KV bytes ~= 2 x attention_layers x cached_tokens x KV_heads
-            x head_dimension x bytes_per_element x concurrent_sequences
-```
+Literal parameters come from authorized input or verified inventory. Code compiles advice into ordinary prepare operations. Preparation is not execution; publication, binding, digest, scope and budget checks still apply. Retrieval supplies current facts; weights never replace repository state.
 
-Sliding attention and hybrid recurrent architectures change this; add their state and use the runtime's actual allocation. A decision model may keep no generation cache but still needs prefill activations.
+### Evidence packet
 
-### Asset sizes
+`airk.arbiter.packet/1` is an optional selected view of original records, never model-written prose or a replacement for complete results. Retain index/publication, source identities, locations, coverage, warnings, omissions, token/byte accounting, selection provenance and valid expansion routes.
 
-| Artifact | Size | Note |
+Implement deterministic grouping/diversity first. Retrieve bounded candidates, measure recall, deduplicate overlaps, reserve mandatory metadata, then score optional records. Preserve intact excerpts and original basis. Retain identified contradictions/exceptions; if required evidence cannot fit, disclose the limit and expand through permitted reads or abstain. Do not assume the model identifies every contradiction.
+
+Never filter exhaustive exact lookups or hide ambiguity, staleness, extraction gaps or truncation. Full results remain accessible under normal authorization/lifetime rules; expired continuations are not permanent copies. Cross-index packets follow section 2's exclusions.
+
+If deterministic selection matches end-task quality, ship it and omit learned selection. Any exception to standing retrieval/ranking policy needs an evidence-backed review before implementation.
+
+### Full client parity
+
+Audit CLI `tools call`/shell and convenience reads, MCP tools/aliases, Workbench commands/forms/details, and JSON/Markdown copies/exports. Equivalent reads expose the same profile options, per-index configuration/application, readiness, provenance, coverage, continuations and error/retry data through the canonical owner. Summaries or selected subsets disclose scope.
+
+Compare independent checked-in input catalogs and complete results, excluding only documented transport identities/timing. Exercise actual CLI/MCP transports where they reshape results; renderer mocks are insufficient. Configuration mutations keep management authorization and are never replayed as read retries.
+
+## 8. Model preparation and training before product inclusion
+
+### First priority: improve the embedded MiniLM encoder
+
+The first deliverable is a better-qualified semantic encoder that still ships as MiniLM INT8 inside the normal AIRK installer and service executable. This work improves query-to-evidence retrieval across code, tests and documents. It does not depend on Arbiter being enabled, available or installed with optional assets.
+
+1. Freeze the current bundled encoder, both CPU exports and a held-out semantic-retrieval benchmark. Record query/candidate sets, repository revisions, language/document slices, recall/ranking metrics and resource baselines before training.
+2. Build adjudicated query-to-evidence pairs and triplets with relevant passages, hard negatives and no-relevant-evidence cases. Cover code identifiers, natural-language requests, tests and prose; retain general-document and language regression sets. Split by repository/family before augmentation, as below.
+3. Domain-adapt the encoder offline with a retrieval objective, such as contrastive query/passage training with validated negatives. Compare against unchanged MiniLM and deterministic retrieval. Preserve the initial 256-token WordPiece, 384-dimensional masked-mean/L2 output and batch-one execution contract unless a separate change is justified and approved. The current pipeline is documented in [ONNX models](../onnx-models.md).
+4. Export the trained checkpoint and requantize both supported signed/unsigned INT8 CPU profiles. Version weights, tokenizer/recipe, export tooling and calibration inputs; keep statically linked native inference and embedded asset delivery.
+5. Evaluate the actual native INT8 artifacts: recall at fixed candidate budgets, ranking quality, hard negatives, language/document regressions, repeatability, memory and latency. Compare native/reference scores for the new candidate within declared tolerances; do not require its deliberately improved embeddings to equal the old model's vectors. Float-checkpoint gains alone do not qualify a release.
+6. Promote only a candidate that improves the agreed retrieval outcomes while preserving regression/resource gates. Embed it in a versioned AIRK release and verify the built executable's asset inventory and real semantic-inference path. Otherwise retain the currently bundled model and record the failed training result.
+7. Publish a supported semantic-vector regeneration/upgrade plan before distributing changed weights. [EmbeddingDescriptor](../../crates/airk-core/src/embedding.rs) binds the pipeline identity: even the same vector dimension does not make old and new embeddings compatible. Invalidate affected model caches and rebuild/re-embed affected representations through approved mechanisms; never relabel vectors or query an old vector index with the new encoder. Preserve lexical availability and report semantic readiness honestly during transition.
+
+This is a distinct release step from Arbiter enablement. Enabling, disabling or switching Arbiter models never changes semantic representations or requires re-indexing. Shipping a trained MiniLM replacement can require semantic regeneration and must respect state-contract and upgrade decisions; this concept does not authorize a silent migration.
+
+Frozen-MiniLM decision-head training may measure a cheap Arbiter baseline, but cannot be reported as improving semantic embeddings and does not create a fifth product model. MiniLM model improvement can ship independently once its own gates pass; it need not wait for all four optional models.
+
+### Preparation artifacts
+
+Prepare a reproducible developer workflow before incorporating models into the product. Existing [parser training](../../tools/parser-train/README.md) supplies provenance/split patterns, but its labels and legacy commands are not automatically valid for the current split or new tasks.
+
+Each MiniLM or Arbiter experiment records a task card, dataset/split manifests, annotation rubric, baseline, training decision, configuration/seed/dependency lock, reference outputs, export report, calibration/policy report, untouched evaluation and artifact/notice inventory. Bind reports to source, data, model and runtime identities. Keep private data and raw index state out of commits, packages and published receipts. Semantic retrieval and typed-decision tasks have separate objectives, labels and acceptance criteria.
+
+After the MiniLM experiment, prepare the two smaller and then the two larger Arbiter models with the same independently defined task suite. Measure each unchanged decision model first, train task-specific adapters/heads only for demonstrated gaps, then export and calibrate its complete scoring path. A larger model must justify its resource cost with measured outcomes; a missing task must be disclosed, not excluded from comparisons to make a model appear qualified.
+
+| Stage | Work | Exit evidence |
 | --- | --- | --- |
-| MiniLM INT8 profile | About 23 MB of weights | Existing AIRK baseline; runtime and tokenizer are additional |
-| 150M encoder | About 150 MB INT8, 300 MB BF16 | Arithmetic estimate before overhead |
-| d1-2B GGUF Q4\_K\_M | 1.10 GB text backbone | Optional visual projector, 203 MB Q8 or 379 MB BF16, omitted for text-only |
-| LFM3-1.7B / MiniCPM5-2B GGUF Q4\_K\_M | 1.10 GB / 1.56 GB | General-LLM comparison sizes |
+| A. Define | Labels, allowed operations, unsupported/no-valid-choice cases, error costs and acceptance floors before comparison | Reviewed task card and independent expected cases |
+| B. Build data | Approved sources, adjudicated labels, deduplication and grouped splits before augmentation | Provenance/license manifest, annotation audit and leakage report |
+| C. Baselines | Current MiniLM semantic retrieval; separately, rules/sparse scorer, deterministic selection, frozen-head experiments and each unchanged Arbiter candidate | Comparable held-out results for each objective and model group |
+| D. Train | Domain-adapt MiniLM for retrieval; separately, train optional-model adapters/heads or distill for measured decision gaps | Reproducible checkpoints and resource/quality deltas; an optional model may qualify without further weight training, but not without AIRK evaluation/calibration |
+| E. Export | Complete inference assets; reference tokenization, masks, positions, raw scores and typed outputs | Native/reference fixtures with declared tolerances and quantization effects |
+| F. Calibrate/freeze | Rescore exact exported artifact; select thresholds on separate policy-selection partition | Per-task/slice calibration, precision-versus-coverage curves and frozen cascade policy |
+| G. Untouched evaluation | Final held-out tasks/repositories after all choices freeze | Quality, uncertainty, failures and contamination report; no tuning on final results |
+| H. Admit to integration | Review rights, full artifact inventory, quality, native compatibility and resources | Prepared immutable bundle; still not selectable until service/platform qualification passes |
 
-Publisher sizes are decimal GB; GPU tools report MiB or GiB. Record units explicitly.
+Training must not follow deployment as an assumed repair for weak results. A failed gate returns the model to research under a new experiment identity; retain failed receipts and preserve thresholds. The embedded encoder improvement requires an actual training experiment. Pretrained Arbiter models may need only AIRK calibration/evaluation if their unchanged artifacts meet the gates.
 
-### Serving rules
+### Data schema, labels and isolation
 
-- One active GPU request and a small finite queue to start. Raise concurrency only after measuring peak allocation and tail latency.
-- No CPU offload as a default. Prefer a smaller fully resident model that meets quality targets.
-- Token profiles: 2,048 default, 4,096 as an explicitly qualified extended profile.
+Each example identifies task/version, repository and observation revision, request family, authorized scope, candidate/source identities, evidence roles, language, label/abstention reason, annotation authority, license lineage and split/group IDs. Include no-valid-option, ambiguous/same-name targets, stale publications, partial extraction, contradictions, misleading tests, lexical distractors, negation and instructions inside evidence.
 
-### Context assembly
+Split by repository, fork/clone lineage, issue/request family, symbol family and paraphrase origin before mining/synthesis. Keep train, development, calibration, policy-selection and final evaluation disjoint. Hold out whole repositories and families; audit public-benchmark overlap. Expanded rows are not independent samples.
 
-&#91;image: Context assembly: authorized sources, local retrieval, evidence selection, a prioritized context budget, the qualified model, and a missing-evidence branch\]
+Teachers may propose labels/soft targets; humans adjudicate uncertain and consequential cases. Record teacher identity, license, prompt and output provenance. Training examples confer no operation authority; learned recommendations never replace native scope checks.
 
-Figure 7. Context assembly: authorized, versioned evidence is combined with the question, rubric and required facts inside a qualified token budget; missing evidence leads to more retrieval or abstention.
+Training traces need separate explicit permission, retention limits and local access controls. Arbiter enablement, including per-index enablement, is not that permission. Initial delivery has no online learning or automatic corpus collection.
 
-Budget order, highest priority first:
+### Public data and AIRK-specific examples
 
-1. Question, options and rubric.
-2. Indispensable structured facts.
-3. Required evidence and source ids.
-4. Optional examples if space remains.
-
-- Every token counts against the profile: templates, options, state and evidence.
-- Never silently cut an exception that changes the answer. If required evidence cannot fit, use a separately evaluated decomposition or abstain.
-- A model-written summary is another uncertain transformation and needs its own evaluation.
-- Shared-state processing applies only where the backend supports it. Cache keys include the exact compiled prefix, model and adapter identity, tokenizer, precision, scope and evidence version.
-- Question order and attention masks must not let one question change another's answer.
-
-## Provisioning and activation
-
-Assets are fetched once by an explicit action, verified, qualified on the target hardware and activated as a warmed snapshot; nothing downloads during a request.
-
-&#91;image: Provisioning lifecycle: select exact assets, verify and store, qualify and warm, then offline inference with typed outcomes\]
-
-Figure 8. Provisioning lifecycle: select exact assets, verify and store, qualify and warm, then serve offline with typed outcomes.
-
-### Pack manifest
-
-Each Arbiter pack manifest lists, per file: content hash, compressed transfer bytes, installed bytes, license, and role (weights, tokenizer, template, runner, accelerator runtime, fixtures). It also declares:
-
-- Supported AIRK contract versions.
-- Hardware profile: backend, minimum free VRAM, token profile, `-b` and `-ub` values.
-- Qualification fixtures with reference scores and tolerances.
-- Peak disk use during update with rollback retained.
-
-### Lifecycle
-
-1. **Select** exact files from the manifest. Never clone a repository holding every precision.
-2. **Fetch** through the installer or an internal artifact mirror into the machine-wide content-addressed store.
-3. **Verify** hashes and licenses.
-4. **Qualify** by running fixtures on this GPU, driver and backend.
-5. **Warm** the model and report readiness only after first inference completes.
-6. **Activate** the snapshot and write an activation receipt (pack id, probe result, fixture results, timings).
-
-### Update and rollback
-
-- One base model serves many tasks. A new head or calibration table does not re-download the transformer.
-- Keep one rollback version on disk and budget for it explicitly.
-- On a single GPU, old and new snapshots usually cannot coexist in VRAM. Drain requests, swap weights, report `unavailable` for GPU tasks during the swap, and keep T0 and T1 tasks serving.
-- Activation is atomic per snapshot: a failed warmup or fixture mismatch reverts to the previous snapshot.
-
-### Request-time rules
-
-- Missing model or failed warmup returns `unavailable`.
-- No implicit download, no background model update, no runner telemetry, no cloud fallback.
-- Cold start is reported separately from warm latency: page faults, weight load, kernel initialization, first inference.
-
-## Latency targets and admission control
-
-Warm, batch-one targets run from 2 ms p50 on the cached or sparse route to 750 ms p95 on the extended GPU profile. They include the adapter, exclude upstream ingestion, and are engineering goals rather than measurements.
-
-&#91;image: Latency targets: p50 and p95 for cached or sparse, encoder plus heads, compact GPU and extended GPU routes on a log scale\]
-
-Figure 9. Warm, batch-one p50 and p95 targets for the four routes, on a logarithmic scale.
-
-| Route | Tier | p50 / p95 target | Test input |
-| --- | --- | --- | --- |
-| Exact cached result or sparse head | T0 | 2 / 10 ms | Bounded short state; exact cache identity or registered lexical recipe |
-| Small encoder plus trained heads | T1 | 20 / 75 ms | Up to the encoder's qualified token limit; compatible heads share features |
-| Compact GPU decision model | T2 | 100 / 300 ms | At most 1,024 total model tokens, one active request, up to four small questions |
-| Extended GPU profile | T3 | 250 / 750 ms | At most 4,096 total model tokens, same question limits |
-
-### Decomposition
-
-```
-T_local = admission + queue + validation + retrieval + tokenization
-          + state/question forward pass + calibration/policy + transport
-
-T_generation = T_local + generated_tokens / measured_decode_rate
-```
-
-Removing generation removes the sequential output term, not the cost of reading input. Measure prefill latency, not advertised tokens per second. Transport is local IPC or loopback.
-
-### Tail behavior
-
-A cascade's mean can look good while its tail is poor. If 90% of requests finish in 20 ms and 10% take an additional 200 ms, the mean is 40 ms and p95 sits in the slow route. Report route frequencies with p50, p95 and p99.
-
-The same holds for the controller. With five 700 ms generative calls and 300 ms of other work, baseline is 3,800 ms. Replacing four calls with 100 ms decisions gives 1,400 ms. If 10% of cases run the four local decisions and then fall back to all four original calls, those cases take 4,200 ms and the mean is 1,680 ms, with the slow cases worse than baseline. These are illustrative figures.
-
-### Admission
-
-- Finite queue, per-request deadline, cancellation and explicit resource ownership in the adapter.
-- Validate token length against the profile before dispatch.
-- A saturated GPU returns `unavailable` or a qualified smaller route per policy.
-- AIRK lexical reads, status and indexing are never queued behind Arbiter work.
-- GPU serving pauses during local training unless isolation has been measured.
-- Never run Arbiter where a fast deterministic path already succeeds.
-
-## Training and calibration pipeline
-
-Training runs on the same class of machine as serving and always ends in a new immutable bundle; live weights never change during a decision.
-
-&#91;image: Training lifecycle: define the task, fit a baseline, improve if needed, compress and export, calibrate, test and activate\]
-
-Figure 10. Training lifecycle: define the task, fit a baseline, improve only if needed, compress and export, calibrate, then test and activate.
-
-| Stage | Method | Output |
+| Source | Appropriate use | Required caution |
 | --- | --- | --- |
-| 1. Define | Task card, rubric, missing-evidence rules, grouped splits | Versioned task definition and datasets |
-| 2. Cheap baseline | Sparse linear model; frozen MiniLM features with logistic or linear heads | T0 and T1 heads; no GPU needed |
-| 3. Flexible baseline | Existing decision model with versioned questions and context | Coverage delta against stage 2 |
-| 4. Specialize | Fine-tune a small encoder, or LoRA / QLoRA on a 0.8B to 2B model | Adapter or head |
-| 5. Compress | Distill adjudicated decisions into the smallest model that passes the task gate | Smaller specialist, ideally off the GPU |
-| 6. Export and qualify | Quantize, calibrate deployment scores, select policy, run untouched tests | Immutable bundle |
+| [CoRNStack](https://huggingface.co/datasets/nomic-ai/cornstack-java-v1) | Candidate MiniLM retrieval-training and Arbiter relevance data | Metadata lists Apache-2.0; preserve underlying source terms. Docstrings do not establish real-request or role-label quality |
+| [SweLoc / SweRank](https://arxiv.org/html/2505.07849v1) | Issue-to-code candidate methodology | Verify release terms before acquisition. Changed functions are weak positives; unchanged neighbors are unlabeled, not automatic negatives |
+| Local issue-to-evidence set | AIRK routes, recipes, relevance and roles from approved repositories | Mine at the pre-fix revision. Gold patches inform annotation only; exclude future code/comments from inputs. Adjudicate unchanged contracts, callers and tests |
+| [CoIR](https://arxiv.org/abs/2407.02883) and a frozen [SWE-bench](https://www.swebench.com/) slice | Independent evaluation with declared subsets | Audit lineage/overlap; exclude these cases from fitting/policy selection. Do not claim upstream pretraining is uncontaminated |
+| AIRK templates and approved examples | Operation, applicability and recipe labels | Use the actual input catalog, include refusals/ambiguity, then independently adjudicate. Never derive expected labels from code under test |
 
-### Four meanings of "learning"
+Public retrieval data does not establish AIRK's authorization or recipe labels; these need AIRK-specific annotation. Permissive repository licenses do not settle rights to issue prose, copied material or teacher outputs. Keep per-source provenance and exclusion decisions. Never publish private examples or source/index state.
 
-| Mechanism | What changes | Use |
+For feasibility, plan tens to hundreds of independently adjudicated examples per label, expanding for observed errors and confidence claims. This is not a release sample-size rule. Size accepted final populations per task/slice and disclose thin or correlated samples.
+
+### Training resources and reproducibility
+
+Start with a reproducible MiniLM encoder-training experiment, followed by sequential optional-model preparation. For adapter experiments, microbatch 1, short context, accumulation and checkpointing are measurement starting points, not proof of 16 GB feasibility. LoRA reduces trainable parameters; QLoRA does not remove activation memory. Serving INT8 or GGUF assets do not replace original trainable checkpoints. Training requirements are measured separately from the end-user inference requirements for each model.
+
+Reference training may use pinned Python/PyTorch/PEFT on a suitable development host. It is not an end-user dependency and need not fit every serving machine. Record peak memory, hardware, time, seed and reproducibility limits. Never compete with production inference during training. Export approved data assets including every required head/readout.
+
+### Quality gates
+
+- MiniLM must improve agreed semantic retrieval metrics against the current bundled baseline after both INT8 exports, with general-document/language regressions and native resource costs included. Representation compatibility and regeneration readiness are separate release gates.
+- All four optional models use the shared decision-task suite. The two larger models must justify their additional resources; no assumption that more parameters improves results. Report per-model supported tasks, quality/coverage and requirements side by side.
+- Measure accepted precision versus coverage, applicability rejection, candidate-order sensitivity, language/evidence slices and error costs. Publisher benchmarks are not AIRK qualification.
+- For selection, measure critical-evidence recall, contradiction/exception retention, packet reduction, follow-up reads and end-task quality against deterministic selection.
+- Report reliability curves, Brier score and log loss where applicable. Recalibrate after changes to model, adapter, tokenizer, compiler, quantization or backend.
+- Evaluate the complete route policy on the actual fallback population. Escalated cases are harder selected examples; component accuracy does not establish cascade quality.
+- Preserve learned-parser review requirements. Confidence does not authorize execution or prove targets, scope and arguments correct.
+- Freeze numeric floors before final evaluation; unresolved floors block qualification. Zero failures in 300 independent accepted cases supports only roughly a 1% upper error bound at 95% confidence, not 99.9% reliability.
+
+## 9. Implementation work packages and gates
+
+These dependency-ordered proposals are for later authorization. Finish each bounded package and review before the next; do not bypass simplification milestones or contract decisions. Preparation can establish evidence without enabling a product feature.
+
+P1a–P1c and P3–P6 may exercise prepared artifacts through a private development qualification harness with explicit fixture/index scope. That path does not make an optional bundle user-selectable or relax production eligibility. Arbiter selection stays disabled until P7 reviews task, service and platform evidence and promotes a profile. Four-choice delivery requires both smaller and both larger slots to qualify; an individual machine can activate only the subset fitting its hardware and current resources. The MiniLM replacement has its own release gate and is not delivered through this selector.
+
+| Package | Deliverable/owner boundary | Done when |
 | --- | --- | --- |
-| Retrieval | Evidence supplied to the next request | Current source facts and policy text |
-| In-context examples | Bounded examples in model input | Rapid rubric trials; costs prefill and is not weight training |
-| Head training | Small task parameters over a frozen representation | Frequent fixed-label decisions |
-| Adapter training or distillation | Model behavior, offline | Hard boundaries; compressing a flexible model into a specialist |
+| P0. Baseline | MiniLM retrieval benchmark plus Arbiter task suite, ordinary-result goldens, process inventory, test identities, per-index and resource-pressure cases | Quality and resource floors recorded separately for semantic indexing and optional decisions |
+| P1a. Embedded MiniLM first | Domain-adapt encoder, export both INT8 CPU profiles, compare native retrieval, prepare new pipeline identity and approved regeneration path | Measured post-INT8 improvement and regression/resource gates pass; candidate remains bundled; separate normal-release/package gate before shipment |
+| P1b. Two smaller models | Sequentially evaluate/train Intern 0.8B and Strands 2B; export complete scoring and calibrate; measure system requirements | Independent prepared bundles and receipts for both smaller slots; no product activation yet |
+| P1c. Two larger models | Sequentially evaluate/train Intern 4B and Kev-4B against the smaller models; export/calibrate and measure requirements | Both larger slots demonstrate useful quality/coverage at an acceptable cost; failures remain explicit |
+| P2. Contracts/state | Core-owned configuration/profile/status/advice/packet definitions, per-index semantics, authorization applicability and fixtures | Separate contract step reviewed/landed before consumers; D8/state approval resolved; no hand-written TS/Python mirror |
+| P3. Embedded owner | Retrieval scorer behind a facade; service admission/completion/lifetime, disabled pending qualification | Reference agreement and ownership/cancellation/error checks pass; no new crate, executable or model endpoint |
+| P4. Assets/index lifecycle | Provisioning, enrollment, revocation, switch, rollback, restart, cleanup and dynamic resource admission | Interrupted and resource-pressure cases pass; MiniLM retains capacity; excluded indexes never enter optional inference |
+| P5. Canonical reads | Proposal assistance and deterministic packets first; learned selection only if qualified | Scope/publication, full-result preservation and mixed-index behavior pass native/transport parity |
+| P6. Controls | Existing clients expose the two smaller/two larger choices, per-index settings, system-fit/current-availability explanations and separate MiniLM status | Service owns state; full parity; eligible choices only; global default off and new indexes excluded |
+| P7. Platform/package | Frozen model/service artifacts, embedded MiniLM verification, process inventory, offline lifecycle and coexistence under resource pressure | Each promoted profile has full receipts; four-slot completion explicitly verified; ordinary AIRK usable without optional assets |
 
-### Data
+Each assignment names its component/`CONTRACT.md`, editable/excluded files, exact T0 command, independent goldens, consumed inputs and done condition. Update contracts for interface, state, invariant or lock/fence changes. The existing task ledger distinguishes source findings, actual reproductions, passing hypotheses and qualification.
 
-- AIRK's parser corpora and replay records are usable with their provenance and splits respected. The manifest's 48,000 fitted rows come from a larger pool and are not 48,000 independent request families.
-- Each task gets its own adjudicated data. Intent labels do not establish relevance labels; relevance labels do not establish sufficiency.
-- Hard cases to include: same-name symbols in different modules, misleading tests, outdated documents, partial extraction, conflicting policies, negatives sharing the query's vocabulary, negation, instructions inside evidence.
-- Group splits by repository, request family, symbol family and paraphrase origin. Keep train, development, calibration, policy-selection and final test partitions distinct. Hold out whole repositories and question families.
-- Planning range: 50 to 200 adjudicated examples per label for feasibility, growing to hundreds or thousands where errors demand it.
-- A local teacher may propose labels or soft targets; human adjudication is the authority, and teacher and student run sequentially on the GPU.
+### Validation ladder
 
-### Training on 16 GB
+1. **T0:** Pure qualification/system-fit/live-availability rules with injected resource observers/clocks; mixed-index partitioning, revocation, applicability, budgets, lifecycle and scoring fixtures. Protect independent four-slot catalog expectations and model/pipeline identities. Batch known sibling regressions after source investigation; zero selected tests fails.
+2. **T1:** Format first; scoped `python scripts/dev-check.py -p <owning-crate>` with required features and Cargo timings, affected unit/contract/client checks. One Cargo owner and persistent target. Review the complete diff before proceeding.
+3. **T2:** Freeze native, model, client, harness and fixture identities separately. Run matched-development preflight before packaged/installed checks: bundled MiniLM execution, optional model process inventory, offline assets, exclusions, actual CLI/MCP parity, rollback, runtime pressure and semantic-indexing progress. A trained MiniLM release also proves its supported representation-regeneration path.
+4. **T3:** Follow [CONTRIBUTING](../../CONTRIBUTING.md) on reviewed frozen inputs: workspace Clippy/tests/doctests, repository/boundary/license checks and required package/platform gates. Scoped success is not full or cross-platform qualification.
 
-- LoRA cuts trainable parameters and QLoRA trains through a quantized frozen base; neither removes activation memory.
-- A GGUF inference artifact is not a training checkpoint.
-- Start at microbatch 1, 512 to 1,024 tokens, gradient accumulation and checkpointing. Measure peak memory before raising either.
-- No full fine-tuning of a multi-billion-parameter model on this GPU. Fitting 2B inference does not show that an upstream multi-GPU recipe fits.
+Record exact commands, identities, selected tests, elapsed times and receipt paths before/after expensive runs. Required Cargo timing evidence includes scope, target directory and incremental setting. Stop on unexpected failure, collect the batch, classify production versus harness/prerequisite failures, review a coherent correction, then rerun only affected inputs. After two T2/T3 failures for a component, report the root cause and missing cheap seam before a third attempt. Never weaken thresholds or retry until green.
 
-### Calibration
+Before a future feature PR, remind the contributor to increment patch/build once and synchronize native/extension versions and lockfiles. Update README, documentation index, release notes and Marketplace/VSIX text to agree with implemented behavior. That is future work; this review changes only this concept.
 
-- After any adapter, quantization, compiler or backend change, rescore the held-out calibration partition on the shipped artifact.
-- Report Brier score, log loss, reliability curves and accepted precision against coverage, per task and slice.
-- A shipped temperature from a public model is a baseline only.
-- Evaluate the cascade as a whole. Escalated cases are a harder, selected population; version the routing policy with the component models.
-- The current `intent-broader/5` record is the reference point: 99.740% accepted precision at 52.125% abstention on its calibration set, `qualified: false`, supported ask-rate gate failing. The target is more accepted coverage on the fallback population at the same precision, with complete operation, target, scope and argument correctness.
+### Required scenario matrix
 
-## Instrumentation and experiment arms
-
-Arbiter adds seven observations in a separate bounded aggregate and a separate experiment artifact; AIRK's content-free usage ledger and its `paired_task` schema keep their current meaning.
-
-| Measurement | Owner | Purpose |
-| --- | --- | --- |
-| Task id, version and bounded route category | Arbiter aggregate | Where the integration actually ran |
-| Counts of `accepted`, `abstained`, `unsupported`, `invalid_input`, `unavailable` | Arbiter aggregate | Separate model quality, scope rejection and operational failure |
-| Queue and inference time | Arbiter aggregate | Local overhead and saturation |
-| Selected and omitted record counts, token and byte totals | Packet accounting | Packet reduction without treating omissions as absence |
-| Native reads and paid LLM calls | Host | Distinguish a smaller result from an eliminated turn |
-| Fresh and cached input, output, retries, fallback | Host or provider counters | Final accounting under an explicit contract |
-| Task outcome, review, rework | Independent harness or adjudication | Whether quality held |
-
-The ledger does not acquire query hashes, source identities, raw prompts, explanation text or unbounded labels. Detailed provenance stays in scoped responses and qualification artifacts. Missing observations stay unknown.
-
-### Experiment arms
-
-| Arm | Configuration |
+| Dimension | Minimum evidence |
 | --- | --- |
-| A | Ordinary agent with competent conventional tools |
-| B | Current AIRK configured well: terse and compact modes, explicit recipes |
-| C1 | AIRK plus Arbiter evidence selection, agent loop and generator unchanged |
-| C2 | AIRK plus Arbiter decisions and the host controller, named turns replaced |
-| D (later) | Generator routing via `agent.generation_route.v1`, only after same-generator results are understood |
+| Disabled baseline | Global off, excluded index, no profile, missing assets and unsupported host preserve ordinary reads/index formats |
+| Embedded model training | Actual encoder training versus frozen-head baseline; both INT8 exports retain measured retrieval gains; new model/pipeline identity; old/new vector mixing rejected; supported regeneration and accurate readiness |
+| Bundled delivery | Installer and executable retain both supported MiniLM INT8 profiles; offline semantic indexing works without Arbiter assets, opt-in or an additional executable |
+| Four-choice catalog | Exactly two smaller/two larger model identities; independent expected catalog; precision variants are not extra choices; only qualified eligible subset activates |
+| Index selection | Enable A only; B stays native; new C starts off; rename preserves A; recreation does not inherit enrollment; forged/cross-user identities rejected |
+| Mixed scope | Partitions remain complete/separate; excluded content never reaches tokenizer/scorer/cache; per-index continuations/application reasons retained |
+| Revocation | Disable during queue, execution and delivery; stale configuration cannot publish; pins/charges remain until actual completion |
+| Isolation | Cross-index/user negatives for features, caches/private artifacts; shared weights do not transfer evidence or authority |
+| Model selection | Compatible choices, exact selected/active identity, unsupported task, failed switch/rollback; no hidden substitute or read-triggered download |
+| System fit | Unsupported CPU/OS/backend/driver; changed qualification identity; insufficient total RAM/VRAM/disk; unified-memory accounting; explicit reasons and no automatic runtime/driver install |
+| Live availability | Qualified host becomes busy before load/admission; concurrent reservation; queue/deadline exhaustion; resource recovery on same selected model; OOM/device failure never treated as routine retry |
+| Assets | Untrusted/corrupt manifest, wrong bytes, traversal/links, disk full, interrupted transfer, canceled/superseded restart, offline import and removal with live references |
+| Native lifecycle | Deadline, OOM, owner/completion-persistence failure and stuck drain; no fabricated completion |
+| Evidence | Stale publication, same-name ambiguity, extraction gaps, contradiction, no valid choice, embedded instructions and intact excerpts |
+| Parity | Complete native/actual CLI/MCP results and input catalogs; Workbench details/copies/exports; no omitted state/errors/continuations |
+| Resources | Per-profile cold/warm p50/p95/p99 and load/inference peaks; RAM/VRAM/disk, fair queues, sustained load, MiniLM reservation and ordinary indexing progress across enabled/excluded indexes |
+| Package/offline | Existing executable inventory; no runner/DLL in model downloads; local content; inference with outbound network blocked |
 
-`paired_task` represents `with_airk` versus `without_airk` on one model and is not reused for B versus C. Arms A through C2 go in a new artifact; if product reporting later needs them, add a versioned schema.
+## 10. Instrumentation and remaining decisions
 
-### Method
+Bound operational aggregates for task/route counts, outcomes, queues, inference and assets. Keep content, query hashes, source identities, prompts and unbounded labels out of ordinary usage reporting. Detailed provenance belongs in scoped responses or explicitly captured local qualification artifacts. Missing observations remain unknown.
 
-- Frozen task set across navigation, documentation lookup, bug investigation, API change, patch review and implementation.
-- Independent sessions, randomized or alternating order, repeated runs, cache conditions disclosed.
-- Pin source, model, task bundle, runtime, tool instructions and acceptance checks.
-- Identical final quality criteria; failures and incomplete tasks stay in the primary report.
-- Ablations separate better prompts, native recipe use, deterministic grouping, learned selection and the controller. If B never uses recipes and C does, the gain is partly adoption.
-- Selection can reorder a prompt prefix and reduce provider cache reuse. Track fresh and cached input separately.
+Measure MiniLM training gains separately from Arbiter gains. First compare old versus trained INT8 semantic retrieval; then freeze the selected semantic baseline while comparing ordinary AIRK, deterministic selection and each optional model on the same tasks, source, generator and rubric. Record bytes/tokens, follow-up reads, latency, critical-evidence recall and outcome. Smaller packets do not prove fewer paid calls or savings. Preserve `paired_task` semantics; use a separately reviewed artifact for new experiments.
 
-Reference fixtures for arm B: 47,767 Full versus 30,508 Terse serialized MCP bytes across nine tools, and 8,477 rich versus 1,826 minimal logical-result bytes on a twelve-definition fixture. These are fixture comparisons, not provider-token measurements.
+Model acquisition is the explicit network activity authorized by enable/apply or update. Requests, evidence, annotations and diagnostics are not uploaded. Test startup, inference, errors and saturation offline after provisioning. A local Arbiter does not make a hosted caller private; the host controls later evidence transmission.
 
-## Qualification matrix
+### Decisions requiring evidence or review
 
-A bundle or pack ships only when every row below has recorded evidence on the target hardware profile.
+- Which MiniLM training recipe improves native INT8 retrieval while preserving regressions, and what supported regeneration/upgrade path accompanies its new pipeline identity?
+- What adaptation, if any, does each of the four named Arbiter choices need to meet shared task gates, and do both larger choices justify their cost?
+- Which embedded runtime/backend reproduces scoring within packaging and ownership constraints?
+- What measured per-profile minimum/recommended requirements, runtime reserves and availability observations qualify each platform without starving ordinary MiniLM work?
+- Which model/base/data licenses permit distribution, and how is the asset catalog authenticated?
+- Where do enrollment/activation records fit without altering state identity, or what separately approved contract is needed?
+- What minimum precision, critical-evidence recall and overhead floors must each task meet?
 
-| Dimension | Required evidence |
-| --- | --- |
-| Compatibility | With Arbiter disabled, absent and failed: existing AIRK test suite passes unchanged; existing indexes open without migration; MCP catalog and response fixtures are byte-identical |
-| Offline operation | Install and warm from local assets, then startup, retrieval, inference, evaluation and a representative training run with external network blocked |
-| No hidden request path | Egress attempts inspected during normal operation, errors, saturation and missing-model cases; every dependency failure returns a typed status |
-| Scope isolation | Cross-project and cross-user negative tests on evidence, caches, bundles and results |
-| Decision quality | Per-task accepted precision, coverage, error costs, slice results and uncertainty intervals |
-| Applicability | Unsupported-input acceptance, no-valid-option cases, language limits, missing and contradictory evidence |
-| Flexibility | Held-out question families, new label descriptions, candidate order and count changes, paraphrases |
-| Robustness | Negation, distractors, instruction-bearing evidence, long-context boundaries, source conflicts, harmful selections among valid labels |
-| Calibration | Reliability, Brier and log loss, post-quantization threshold behavior, escalated cases |
-| Evidence contract | Stale publication rejected or re-prepared; same-name candidates keep disambiguation; exhaustive lookups unfiltered; contradictions retained; omissions reported |
-| Reuse | Unrelated edits, relevant edits, removed files, expired publications, representation changes, new sessions, lost agent context |
-| Runtime | Warm and cold p50, p95, p99; throughput; queue delay; tokenizer time; cache hit and miss; sustained load; impact on AIRK reads and indexing |
-| Resources | Exact GPU, driver and backend; peak allocated and reserved VRAM; host RAM; transfer bytes; installed disk |
-| Lifecycle | Missing assets, interrupted provisioning, offline startup, failed warmup, deadline and OOM handling, activation, rollback |
-| Portability | Reference-to-native agreement on tokens, masks, raw scores, typed probabilities and policy outcomes, with tolerances declared in advance |
-| End-to-end | Arms A, B, C1, C2: task success, critical-evidence recall, follow-up reads, paid calls suppressed, retained, retried and fallen back |
+These questions do not reopen bundled MiniLM INT8 semantic indexing, the two-smaller/two-larger catalog target, default-off Arbiter, per-index opt-in or the no-additional-executable requirement. A candidate that cannot qualify remains unavailable; any replacement is a reviewed change to the corresponding slot.
 
-### Evidence-contract cases
+### Evidence and historical provenance
 
-| Condition | Required behavior |
-| --- | --- |
-| Current publication differs from a prepared plan | Reject or prepare again under the native contract |
-| Source changed after indexing | Preserve indexed identity; verify current saved files before edits |
-| Several same-name candidates | Preserve disambiguation; a confident category does not select an entity |
-| Required evidence omitted or unsupported | Report, retrieve through a permitted path, or abstain |
-| Retrieved text contains instructions | Treat as evidence only |
-| Decision model unavailable | Declared fallback or `unavailable`; no external call |
-| Proposed test set is narrow | Required test and CI policy preserved |
+The earlier concept cited AIRK `b624b31c32c140d66c80f8daf3c62175e4719fcb` and unpublished inputs: *Extending AIRK with Decision Kernel*, *Decision Kernel, The Genesis of an Idea*, and *Decision Kernel, as Alternative to AI*. That baseline and its sidecar/controller sketches are historical context, not current architecture or measured evidence. Placeholder figures, unverified size/latency comparisons and conversational data notes have been replaced by this scoped plan.
 
-### Sample size
-
-Zero observed failures in 300 independent accepted cases gives roughly a 1% upper error bound at 95% confidence (rule of three). It does not establish 99.9% reliability, and correlated cases or thin per-class samples weaken it further. Size each accepted test set to the error claim being made.
-
-## Delivery phases and gates
-
-Eight phases, each gated on measured results from the one before; GPU work starts only after CPU decisions and deterministic rules are shown to leave work unresolved.
-
-| Phase | Deliverable | Gate to proceed |
-| --- | --- | --- |
-| 0. Baseline and contracts | Frozen AIRK configuration, representative task traces, quality rubric; inert `airk.arbiter.advice/1` and `airk.arbiter.packet/1` types; capability probe; compatibility test suite | Specific decisions or evidence failures identified that existing rules and recipes do not solve; compatibility suite green |
-| 1. CPU proposal assistance (T1) | Adapter for `airk.request_supported.v1` and `airk.retrieval_route.v1` in shadow or review-only mode, wired at `parse_text` after grammar | More useful coverage at the agreed precision; explicit commands and review policy unchanged |
-| 2. Evidence packets (C1) | Packet projection with native-result preservation, budget accounting, expansion paths; deterministic selector first, learned selector second | Better end-task result than current AIRK plus deterministic selection, with critical evidence retained |
-| 3. Reference model comparison | Local harness scoring the baseline against d1-2B, Strands Decider 2B and Intern-Decision 0.8B in reference precision, then quantized | At least one flexible model adds useful accepted coverage at acceptable error |
-| 4. Arbiter runner (T2) | `airk-arbiter` sidecar with pinned native runner, GPU probe, pack manifest, provisioning, activation receipts, rollback | License fits distribution; full decision path works offline; no implicit download; no Python in the native profile; coverage gain exceeds latency and operational cost |
-| 5. Host controller (C2) | Bounded controller replacing named orchestration calls, honoring AIRK plan validation | Paid calls actually reduced, fallback accounted for, task success equal or better |
-| 6. Local specialization | First head or adapter training run, quantized artifact, calibration, untouched test report | Improvement survives export and does not regress important slices |
-| 7. Packaging and T3 | Bundled opt-in setting or separate installer; versioned bundles; bounded reporting; platform-specific qualification; extended and 24 GB+ profiles; optional generation routing | Reproducible release evidence per platform; full qualification matrix recorded |
-
-### First demonstrations
-
-Each shows original AIRK behavior, the added decision, the resulting evidence and observed task cost.
-
-1. A hard retrieval paraphrase that the current parser abstains on: "find the implementation behind the retry policy and the tests that document the limit".
-2. Evidence preparation for a small API change: definition, relevant occurrences, controlling design note, test examples, chosen through `airk.recipe_choice.v1` inside plan limits.
-3. A smaller packet that still holds the controlling contract and its tests.
-
-### Standing constraints
-
-- Reviewed-proposal mode ships before any automatic execution of learned plans.
-- A better classifier score does not enable automatic execution.
-- If the deterministic selector matches the learned one, ship the deterministic one and stop.
-
-## Appendix: serving-volume reference and open questions
-
-### Serving-volume reference
-
-The source chart is retained for capacity planning: it shows the request volume at which a resident local runner undercuts a hosted decision API. It uses the source's illustrative inputs, not a hardware quote.
-
-&#91;image: Monthly cost against requests per month for a hosted decision API and local runners with $100 and $300 fixed cost\]
-
-Figure 11. Monthly cost against request volume at 2,000 billable input tokens per request; local fixed costs of $100 and $300 cross the hosted API line near 1.22 and 3.66 million requests.
-
-```
-C_local/month = fixed hardware allocation + idle energy + operations
-                + training/labeling allocation + N x marginal serving cost
-
-break_even_requests = fixed_monthly_cost / (API_cost_per_request - local_marginal_cost)
-```
-
-The denominator must be positive, and the runner must have measured capacity for that volume inside the latency targets. Four million decisions a month averages about 1.54 per second, which says nothing about peak load.
-
-### Open questions
-
-- [ ] Does the LFM license fit AIRK's distribution, or does the compact profile default to an Apache candidate?
-- [ ] Loopback sidecar only, or also an in-process path through a native shim or the d1 ONNX export?
-- [ ] Does the feature connector live in `airk-embed`, or does `airk-arbiter` load its own encoder session?
-- [ ] Minimum qualifying GPU: is 12 GB with the compact model worth a `qualified_reduced` profile, or is 16 GB the floor?
-- [ ] Which backends qualify first: CUDA only, or CUDA plus Vulkan?
-- [ ] Windows native support for the runner and for training, versus WSL2 for training only.
-- [ ] Which host gets the first C2 controller: the Workbench flow, a VS Code agent adapter, or a standalone MCP-side orchestrator?
-- [ ] Does AIRK Server get a shared Arbiter, and if so what is the multi-tenant authorization model? Same-user ownership today does not cover it.
-- [ ] Final call on packaging: bundled opt-in (recommended here) or separate install.
-
-### Source documents
-
-- *Extending AIRK with Decision Kernel* (integration architecture, tasks, packet, seams, phases)
-- *Decision Kernel, The Genesis of an Idea* (models, runtime, memory, provisioning, training, latency)
-- *Decision Kernel, as Alternative to AI* (answer primitives, controller patterns, workflow figure)
-- AIRK source and docs at [iokaio/airk b624b31](https://github.com/iokaio/airk/tree/b624b31c32c140d66c80f8daf3c62175e4719fcb): [architecture](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/architecture.md), [process model](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/process-model.md), [shared embedding service](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/service-embedding.md), [Workbench implementation](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/workbench/implementation.md), [MCP developer guide](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/mcp-developer-guide.md), [identity contract](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/v2-identity-contract.md), [usage reporting](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/usage-reporting.md), [ONNX models](https://github.com/iokaio/airk/blob/b624b31c32c140d66c80f8daf3c62175e4719fcb/docs/onnx-models.md)
-- Runtime references: [d1-2B GGUF](https://huggingface.co/LiquidAI/d1-2B-GGUF), [d1-2B ONNX](https://huggingface.co/LiquidAI/d1-2B-ONNX), [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md), [LFM license](https://huggingface.co/LiquidAI/LFM3-1.7B/blob/main/LICENSE)
-
-
-## Training Data
-
-There's no single open dataset that covers what the Arbiter encoder needs, but some of it is covered. Open data exists for **evidence relevance**: does this code or passage answer this request or issue? Nothing exists for the AIRK-specific tasks: request applicability, route and recipe choice, and the next evidence step. Those labels depend on AIRK's own operations, so you'd have to generate them.
-
-**Usable for relevance and role training:**
-
-| Dataset | What it gives you | License | Fit and caveats |
-|---|---|---|---|
-| [CoRNStack](https://arxiv.org/abs/2412.01007) (Nomic) | Docstring-to-function triplets with mined hard negatives, 6 languages; the [Java split](https://huggingface.co/datasets/nomic-ai/cornstack-java-v1) alone is about 22.9M rows | Apache-2.0 | Best large-scale pretraining for `evidence_relevance`. Its queries are docstrings, which are cleaner than real developer requests. The underlying repos carry their own licenses. |
-| SweLoc ([SweRank](https://arxiv.org/html/2505.07849v1)) | GitHub issue text paired with the Python functions its fix changed. Unchanged functions serve as negatives. Built from 3,387 repos, with SWE-bench repos excluded. | Not confirmed; check the release page | The closest public analog to "which evidence matters for this task." Python only. |
-| SWE-bench family | Issue, gold patch and tests; the touched files become positive labels | Check each variant | Keep it for evaluation only. Training on it contaminates the benchmark everyone compares against. |
-| [CoIR](https://arxiv.org/abs/2407.02883) | A 10-dataset code retrieval benchmark, including CodeSearchNet, CoSQA and StackOverflow QA | Mixed by subset | Use it for evaluation, not training. |
-| Stack Exchange dumps | Question, accepted answer and code | CC BY-SA | Natural developer phrasing. ShareAlike terms apply to redistributed derived data. |
-
-**The gap:** nothing public labels "is this a supported read request," "definition vs. occurrences vs. hybrid search," or "expand, clarify or hand off." Those labels are defined by AIRK's operations, so no outside dataset can contain them.
-
-**Suggested approach:**
-
-1. **Pretrain relevance on CoRNStack**, then fine-tune on issue-to-code data, so the model sees both docstring-style and real-request phrasing.
-2. **Build your own SweLoc-style set** from permissively licensed repos, using AIRK's own indexer:
-   - Mine merged PRs linked to issues.
-   - Take the functions, tests and docs each PR touched as positives.
-   - Take the unchanged neighbors as hard negatives.
-
-   The records come out with AIRK's representation identities and evidence roles. That also sidesteps the licensing uncertainty, since you choose the repos, and it extends past Python.
-3. **Generate the routing and applicability data** from AIRK's existing template and identifier-harvesting pipeline, plus shadow-mode traces from real use. Have the labels adjudicated, not just teacher-generated.
-4. **Evaluate on held-out repos**, plus CoIR and a SWE-bench slice you never train on.
-
-One caution for commercial distribution: even an Apache-licensed dataset wraps code under many licenses. Keep the per-repo license metadata with every training row, so you can later filter to MIT/Apache/BSD sources only.
-
-I can add this as a "Training data sources" subsection under the doc's training pipeline section if you want it there.
+This revision is a design review only. No candidate was downloaded, trained, benchmarked or qualified, and no service behavior is changed by this document.
