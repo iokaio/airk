@@ -305,3 +305,22 @@ Every caller, including `tests/unregister_native.rs`, compiles unchanged.
 - Library tests are identical by identity:
   - default 1070 = 908 `airk-cli` + 70 `airk-endpoint` + 60 `airk-host` + 32 `airk-inference`;
   - `local-inference` 1109.
+
+## Step 3d: `airk-catalog-control` extracted (12 November 2026)
+
+11 modules (20 files) moved into `crates/airk-catalog-control`.
+
+- **Shared fixtures.** The split fixtures (`catalog_split_control::tests`) and the legacy-binding
+  fixtures (`catalog_host_context::legacy_binding_tests`) are public under `test-support`, because
+  `airk-cli` tests use them. `rusqlite` is an optional dependency enabled only by `test-support`.
+- **Helpers back to `cfg(test)`.** Imports and helpers that only this crate's own `#[test]`s use
+  returned to `cfg(test)`: four imports and five helpers.
+- **Widener.** `widen_visibility.py` now also widens types and traits named by the
+  `private_interfaces` lint and by "type `X` is private". It widened `FenceKey`, `KnownUnprepared`,
+  `ReconciledUnprepared`, `NativeSetupReview`, `PreparedIndexSetup` and `NativeGrantDraftContext`.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical by identity: default 1070, `local-inference` 1109.
+- `airk-catalog-control`'s own 96 tests run in 18 s.

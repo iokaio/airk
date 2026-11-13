@@ -17,7 +17,7 @@ fn observed<T>(
         }
     }
 }
-pub(crate) fn console_page(
+pub fn console_page(
     registry: &mut ServiceRegistry,
     after: Option<airk_core::service::ProjectBinding>,
     revision: Option<u64>,
@@ -26,7 +26,7 @@ pub(crate) fn console_page(
 ) -> Result<airk_core::service_console::ConsolePage> {
     console_page_role(registry, after, revision, limit, now_ms, false)
 }
-pub(crate) fn console_page_role(
+pub fn console_page_role(
     registry: &mut ServiceRegistry,
     after: Option<airk_core::service::ProjectBinding>,
     revision: Option<u64>,

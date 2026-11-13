@@ -20,6 +20,7 @@ airk-store = { path = "crates/airk-store" }
 airk-retrieval = { path = "crates/airk-retrieval", default-features = false }
 airk-kernel = { path = "crates/airk-kernel", default-features = false }
 airk-mcp = { path = "crates/airk-mcp" }
+airk-catalog-control = { path = "crates/airk-catalog-control" }
 airk-inference = { path = "crates/airk-inference" }
 airk-endpoint = { path = "crates/airk-endpoint" }
 airk-host = { path = "crates/airk-host" }

@@ -28,17 +28,17 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod tests;
 
 #[derive(Debug)]
-pub(crate) enum SplitAdvance {
+pub enum SplitAdvance {
     Waiting(SplitSnapshot),
     Advanced(SplitSnapshot),
     NeedOriginalFence(SplitSnapshot),
 }
 
-pub(crate) fn execute(
+pub fn execute(
     registry: &mut ServiceRegistry,
     control: &Path,
     method: &ControlMethod,
@@ -213,7 +213,7 @@ fn draft_native(
     caller: Incarnation,
 ) -> Result<SplitDraft> {
     selection.validate()?;
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     ensure!(
         !expired(registry, &selection.key)?,
         "split draft request epoch expired"
@@ -272,7 +272,7 @@ fn draft_native(
             == source.source_configuration.aliases,
         "split catalog and native source configuration differ"
     );
-    let destination = crate::service_registration::prepare(
+    let destination = airk_host::service_registration::prepare(
         Path::new(&original.root),
         Path::new(&selection.destination_data_root),
         &selection.destination_collection,
@@ -548,7 +548,7 @@ fn recovery_configuration(
     Ok((
         match engine {
             Some(engine) => engine,
-            None => crate::runtime_pair::engine_identity()?,
+            None => airk_host::runtime_pair::engine_identity()?,
         },
         configuration,
     ))
@@ -727,7 +727,7 @@ fn enqueue(
 
 /// One durable metadata step per wake. Waiting/read observations do not launch
 /// jobs; proof-bearing native owner actions are returned to the owning actor.
-pub(crate) fn advance_pending(
+pub fn advance_pending(
     registry: &mut ServiceRegistry,
     control: &Path,
     engine: Sha256Digest,
@@ -1077,7 +1077,7 @@ fn advance_release(
 /// Bridge an ACTUAL claimed native job to its exact paid store. Metadata is
 /// published under the still-held prior phase before the new permit is used;
 /// pending journal recovery follows takeover and never precedes its funding.
-pub(crate) fn prepare_claimed_funding(
+pub fn prepare_claimed_funding(
     registry: &ServiceRegistry,
     work: &airk_store::service::registry::catalog::split::ClaimedSplitWork,
 ) -> Result<Option<airk_store::quota::funding::FundingUse>> {

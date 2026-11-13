@@ -37,7 +37,7 @@ struct IndexReview {
 /// A native event can be discarded only after these explicit no-effect
 /// observations. Other metadata/filesystem errors retain the accepted event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NativeMissingSourceObsolete {
+pub enum NativeMissingSourceObsolete {
     RegistrationRetired,
     EpochChanged,
     RootReturned,
@@ -488,18 +488,18 @@ fn inspect_policy_configuration(
     Ok(request)
 }
 
-pub(crate) fn draft(
+pub fn draft(
     registry: &mut ServiceRegistry,
     control: &Path,
     selection: &SourceMutationDraftSelection,
 ) -> Result<SourceMutationDraft> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     draft_native(
         registry,
         control,
         selection,
         crate::local_ipc::caller_identity()?,
-        crate::runtime_pair::engine_identity()?,
+        airk_host::runtime_pair::engine_identity()?,
     )
 }
 fn draft_native(
@@ -633,20 +633,20 @@ fn draft_native(
 /// Exact saved pending/terminal replay must be resolved before this call, because
 /// accepted effects legitimately change the native before-state. Missing-source
 /// retirement observations cannot arrive through this public-request path.
-pub(crate) fn review_request(
+pub fn review_request(
     registry: &mut ServiceRegistry,
     control: &Path,
     request: &CatalogRequest,
     expected_preview: Option<Sha256Digest>,
 ) -> Result<SourceMutationDraft> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     review_request_native(
         registry,
         control,
         request,
         expected_preview,
         crate::local_ipc::caller_identity()?,
-        crate::runtime_pair::engine_identity()?,
+        airk_host::runtime_pair::engine_identity()?,
     )
 }
 fn review_request_native(
@@ -732,7 +732,7 @@ fn review_request_native(
 /// Build only the cutover already authorized by a durable split review. The
 /// original worker has performed the bounded live-source witness; this metadata
 /// turn does not walk or hash source files.
-pub(crate) fn split_cutover(
+pub fn split_cutover(
     registry: &mut ServiceRegistry,
     control: &Path,
     snapshot: &airk_core::catalog_split::SplitSnapshot,
@@ -741,14 +741,14 @@ pub(crate) fn split_cutover(
         registry,
         control,
         snapshot,
-        crate::runtime_pair::engine_identity()?,
+        airk_host::runtime_pair::engine_identity()?,
     )
 }
 
 // Private unit fixture executes the actual accepted work in this test process.
 // It cannot attest installed image identity or live provider/process drains.
-#[cfg(all(test, feature = "local-inference"))]
-pub(crate) fn split_cutover_for_native_fixture(
+#[cfg(all(any(test, feature = "test-support"), feature = "local-inference"))]
+pub fn split_cutover_for_native_fixture(
     registry: &mut ServiceRegistry,
     control: &Path,
     snapshot: &airk_core::catalog_split::SplitSnapshot,
@@ -896,22 +896,22 @@ fn require_missing_with_plain_parent(root: &Path) -> Result<()> {
 }
 /// Native watcher evidence only. Wire callers cannot construct or deserialize
 /// this event; the accepted metadata owner rechecks its current catalog binding.
-pub(crate) struct NativeMissingSourceEvent {
+pub struct NativeMissingSourceEvent {
     project: ProjectBinding,
     registration_epoch: u64,
     configuration_epoch: u64,
 }
 impl NativeMissingSourceEvent {
-    pub(crate) fn binding(&self) -> ProjectBinding {
+    pub fn binding(&self) -> ProjectBinding {
         self.project
     }
-    pub(crate) fn registration_epoch(&self) -> u64 {
+    pub fn registration_epoch(&self) -> u64 {
         self.registration_epoch
     }
-    pub(crate) fn configuration_epoch(&self) -> u64 {
+    pub fn configuration_epoch(&self) -> u64 {
         self.configuration_epoch
     }
-    pub(crate) fn observed(
+    pub fn observed(
         registry: &ServiceRegistry,
         project: ProjectBinding,
         registration_epoch: u64,
@@ -943,13 +943,13 @@ impl NativeMissingSourceEvent {
 /// SourceSupervisor's validated native observation can produce it. This fresh
 /// check admits the original native retirement decision, not a promise that a
 /// missing path cannot subsequently reappear. Accepted retries use saved intent.
-pub(crate) fn draft_missing_from_event(
+pub fn draft_missing_from_event(
     registry: &mut ServiceRegistry,
     control: &Path,
     selection: &SourceMutationDraftSelection,
     event: &NativeMissingSourceEvent,
 ) -> Result<SourceMutationDraft> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     ensure!(
         selection.change == SourceMutationSelection::RetireIndex,
         "native missing event requires index retirement"

@@ -9,15 +9,15 @@ use airk_core::{
 };
 use std::{fs, path::PathBuf};
 
-pub(crate) struct NativeSplitFixture {
-    pub(crate) control: PathBuf,
-    pub(crate) registry: ServiceRegistry,
-    pub(crate) original: ProjectRegistration,
-    pub(crate) selection: SplitDraftSelection,
-    pub(crate) snapshot: Option<SplitSnapshot>,
-    pub(crate) engine: Sha256Digest,
+pub struct NativeSplitFixture {
+    pub control: PathBuf,
+    pub registry: ServiceRegistry,
+    pub original: ProjectRegistration,
+    pub selection: SplitDraftSelection,
+    pub snapshot: Option<SplitSnapshot>,
+    pub engine: Sha256Digest,
     // Rust drops fields in declaration order: close SQLite before TempDir.
-    pub(crate) temporary: tempfile::TempDir,
+    pub temporary: tempfile::TempDir,
 }
 fn response(
     registry: &mut ServiceRegistry,
@@ -31,10 +31,10 @@ fn response(
 /// Root worker tests can request an actual paid sealed DestinationPrepared
 /// fixture. The original publication/settings/incarnation come from real Kernel
 /// indexing; no claimed publication or job result is fabricated here.
-pub(crate) fn native_fixture(prepared: bool) -> Result<NativeSplitFixture> {
+pub fn native_fixture(prepared: bool) -> Result<NativeSplitFixture> {
     native_fixture_with_retention(prepared, None)
 }
-pub(crate) fn native_fixture_with_retention(
+pub fn native_fixture_with_retention(
     prepared: bool,
     target: Option<airk_core::retention::RetainedProfile>,
 ) -> Result<NativeSplitFixture> {
@@ -51,7 +51,7 @@ pub(crate) fn native_fixture_with_retention(
     crate::local_ipc::prepare_root(&control)?;
     let namespace = Incarnation::from_bytes([91; 16]);
     let original =
-        crate::service_registration::prepare(&root, &base.join("original-data"), "original")?;
+        airk_host::service_registration::prepare(&root, &base.join("original-data"), "original")?;
     data_scope::bind(Path::new(&original.data_root), &control, namespace)?;
     let kernel = airk_kernel::Kernel::open_service_collection(
         &root,
@@ -66,8 +66,8 @@ pub(crate) fn native_fixture_with_retention(
         kernel.index()?;
     }
     drop(kernel);
-    let mut registry = crate::catalog_test_fixture::authority_one(&control, namespace)?;
-    crate::catalog_test_fixture::reviewed_index(
+    let mut registry = airk_host::catalog_test_fixture::authority_one(&control, namespace)?;
+    airk_host::catalog_test_fixture::reviewed_index(
         &mut registry,
         &original,
         vec![airk_core::catalog_setup::SetupSource {
@@ -184,6 +184,7 @@ pub(crate) fn native_fixture_with_retention(
         engine,
     })
 }
+#[cfg(test)]
 fn jobs(registry: &ServiceRegistry, control: &Path) -> Result<i64> {
     let _ = registry;
     Ok(rusqlite::Connection::open_with_flags(
@@ -192,6 +193,7 @@ fn jobs(registry: &ServiceRegistry, control: &Path) -> Result<i64> {
     )?
     .query_row("SELECT count(*) FROM service_jobs", [], |row| row.get(0))?)
 }
+#[cfg(test)]
 fn quota_entries(root: &str) -> Result<Vec<std::ffi::OsString>> {
     let mut entries = fs::read_dir(Path::new(root).join(".quota-1.4/reservations"))?
         .map(|entry| entry.map(|entry| entry.file_name()))

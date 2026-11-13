@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Implemented only by the native coordinator's authenticated administrative
 /// connection. Host identity comes from the native namespace and authenticated
 /// local OS caller, never a supplied wire host or open-folder preference.
-pub(crate) trait NativeGrantDraftContext {
+pub trait NativeGrantDraftContext {
     fn namespace(&self) -> Incarnation;
     fn host(&self) -> Sha256Digest;
     fn context_key(&self) -> Sha256Digest;
@@ -77,7 +77,7 @@ impl HostContext {
     }
 }
 
-pub(crate) fn build_reviewed_grant_draft(
+pub fn build_reviewed_grant_draft(
     registry: &mut ServiceRegistry,
     context: &impl NativeGrantDraftContext,
     selection: &GrantDraftSelection,

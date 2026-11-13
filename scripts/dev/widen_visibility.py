@@ -82,9 +82,29 @@ def check(packages, features, target_dir):
         except ValueError:
             continue
         message = event.get("message") if event.get("reason") == "compiler-message" else None
-        if not message or message.get("level") != "error":
+        if not message:
             continue
         code = (message.get("code") or {}).get("code")
+        interface = re.match(r"^(?:type|trait) `([A-Za-z0-9_:<>, ]+)` is more private than the item", message["message"])
+        if code in ("private_interfaces", "private_bounds") and interface:
+            # A public item's signature names a less public type (a -D warnings failure in Clippy).
+            name = re.sub(r"<.*", "", interface.group(1)).split("::")[-1]
+            span = next(iter(message.get("spans", [])), None)
+            if span:
+                for found in definitions(span["file_name"], name):
+                    privacy.append(found + (message["message"],))
+            continue
+        if message.get("level") != "error":
+            continue
+        private_type = re.match(r"^type `([A-Za-z0-9_:<>, ]+)` is private$", message["message"])
+        if code is None and private_type:
+            # A public signature names a crate-private type: widen the type's definition.
+            name = re.sub(r"<.*", "", private_type.group(1)).split("::")[-1]
+            span = next(iter(message.get("spans", [])), None)
+            if span:
+                for found in definitions(span["file_name"], name):
+                    privacy.append(found + (message["message"],))
+            continue
         if code in REEXPORT:
             # `X` is only public within the crate: widen X's definition in the re-exporting crate.
             name = re.search(r"`([A-Za-z0-9_]+)`", message["message"])

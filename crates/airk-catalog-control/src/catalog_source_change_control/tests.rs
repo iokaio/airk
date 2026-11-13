@@ -43,8 +43,8 @@ fn policy_registry_fixture() -> Result<(
 )> {
     let (owner, control, review) = fixture()?;
     let instance = Incarnation::from_bytes([1; 16]);
-    let mut registry = crate::catalog_test_fixture::authority_one(&control, instance)?;
-    crate::catalog_test_fixture::reviewed_index(
+    let mut registry = airk_host::catalog_test_fixture::authority_one(&control, instance)?;
+    airk_host::catalog_test_fixture::reviewed_index(
         &mut registry,
         &review.index.backing,
         setup_sources(&review),
@@ -297,8 +297,8 @@ fn complete_native_trim_draft_binds_canonical_policy_configuration_and_review_wi
     let (_owner, control, review) = fixture()?;
     let instance = Incarnation::from_bytes([1; 16]);
     let engine = Sha256Digest::from_bytes([2; 32]);
-    let mut registry = crate::catalog_test_fixture::authority_one(&control, instance)?;
-    crate::catalog_test_fixture::reviewed_index(
+    let mut registry = airk_host::catalog_test_fixture::authority_one(&control, instance)?;
+    airk_host::catalog_test_fixture::reviewed_index(
         &mut registry,
         &review.index.backing,
         setup_sources(&review),
@@ -450,8 +450,8 @@ fn native_retirement_draft_remains_available_after_accepted_source_change() -> R
     };
     let (_owner, control, review) = fixture()?;
     let instance = Incarnation::from_bytes([1; 16]);
-    let mut registry = crate::catalog_test_fixture::authority_one(&control, instance)?;
-    crate::catalog_test_fixture::reviewed_index(
+    let mut registry = airk_host::catalog_test_fixture::authority_one(&control, instance)?;
+    airk_host::catalog_test_fixture::reviewed_index(
         &mut registry,
         &review.index.backing,
         setup_sources(&review),

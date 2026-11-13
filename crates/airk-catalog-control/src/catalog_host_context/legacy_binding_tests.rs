@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native compatibility metadata handler tests; no installer qualification.
 use super::*;
-use airk_core::{catalog_host::NativeLegacyBindingEligibility, service::ProjectRegistration};
+#[cfg(test)]
+use airk_core::catalog_host::NativeLegacyBindingEligibility;
+use airk_core::service::ProjectRegistration;
 
-pub(crate) fn imported_fixture(
+pub fn imported_fixture(
     foreign_host: bool,
 ) -> Result<(
     tempfile::TempDir,
@@ -16,7 +18,7 @@ pub(crate) fn imported_fixture(
     let root = owner.path().join("runtime");
     crate::local_ipc::prepare_root(&root)?;
     let instance = Incarnation::from_bytes([22; 16]);
-    let registry = crate::catalog_test_fixture::authority_one(&root, instance)?;
+    let registry = airk_host::catalog_test_fixture::authority_one(&root, instance)?;
     let namespace = registry.incarnation()?;
     let registration = ProjectRegistration::new(
         owner.path().join("source").to_str().unwrap().into(),
@@ -45,7 +47,7 @@ pub(crate) fn imported_fixture(
     ))
 }
 
-pub(crate) fn insert_imported_fixture(
+pub fn insert_imported_fixture(
     tx: &rusqlite::Transaction<'_>,
     namespace: Incarnation,
     upgrade: Incarnation,

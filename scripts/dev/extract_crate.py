@@ -145,8 +145,18 @@ def main(argv=None):
 
     # Plan every moved file and its rewritten text before touching anything.
     moves, rewritten, problems = [], {}, []
+    # Platform files mounted with `#[path = "x.rs"]` from a module's root file live beside it in
+    # `src/`; they move with their owner.
+    siblings = {}
     for module in modules:
-        for path in [CLI / "src" / f"{module}.rs", CLI / "src" / module]:
+        root_file = CLI / "src" / f"{module}.rs"
+        if root_file.exists():
+            for name in re.findall(r'#\[path = "([^"/\\]+\.rs)"\]', root_file.read_text(encoding="utf-8")):
+                if (CLI / "src" / name).exists():
+                    siblings.setdefault(module, []).append(name)
+    for module in modules:
+        for path in [CLI / "src" / f"{module}.rs", CLI / "src" / module] + \
+                [CLI / "src" / name for name in siblings.get(module, [])]:
             if path.exists():
                 moves.append(path)
                 files = [path] if path.is_file() else sorted(path.rglob("*.rs"))

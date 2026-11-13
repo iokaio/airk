@@ -123,7 +123,7 @@ impl Candidate {
 }
 
 #[derive(Debug)]
-pub(crate) struct NativeCatalogRetentionFull;
+pub struct NativeCatalogRetentionFull;
 impl std::fmt::Display for NativeCatalogRetentionFull {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("native same-service reconciliation retention capacity exceeded")
@@ -133,7 +133,7 @@ impl std::error::Error for NativeCatalogRetentionFull {}
 
 /// Caller must supply the actual monotonic native delivery history, never an
 /// inferred missing worker/helper entry. Gate capture refuses unknown history.
-pub(crate) fn native_provider_obligation(
+pub fn native_provider_obligation(
     worker: WorkerIdentity,
     helpers: Vec<Incarnation>,
 ) -> WorkerProviderObligation {
@@ -146,7 +146,7 @@ pub(crate) fn native_provider_obligation_kind(
 ) -> WorkerProviderObligation {
     native_provider_obligation_completed(worker, helpers, in_process, None)
 }
-pub(crate) fn native_provider_obligation_completed(
+pub fn native_provider_obligation_completed(
     worker: WorkerIdentity,
     helpers: Vec<Incarnation>,
     in_process: bool,
@@ -170,17 +170,17 @@ pub(crate) fn native_provider_obligation_completed(
 }
 
 #[derive(Clone)]
-pub(crate) struct NativeCatalogAdmission(Arc<Mutex<State>>);
+pub struct NativeCatalogAdmission(Arc<Mutex<State>>);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct IssueTicket {
+pub struct IssueTicket {
     service: Incarnation,
     namespace: Incarnation,
     revision: CatalogRevision,
     generation: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FenceKey {
+pub struct FenceKey {
     // Supplied by the canonical Store operation-key helper; never invented by
     // this adapter or allocated afresh on a retry.
     pub operation_id: Incarnation,
@@ -205,14 +205,14 @@ impl FenceKey {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FenceTicket {
+pub struct FenceTicket {
     key: FenceKey,
     generation: u64,
     service: Incarnation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct InstallTicket {
+pub struct InstallTicket {
     issue: IssueTicket,
     nonce: u64,
     worker: WorkerIdentity,
@@ -278,7 +278,7 @@ impl ScopeTarget {
     }
 }
 #[derive(Clone, Debug)]
-pub(crate) struct FencePlan {
+pub struct FencePlan {
     pub ticket: FenceTicket,
     pub targets: Vec<FenceTarget>,
     pub drain_workers: Vec<WorkerIdentity>,
@@ -376,14 +376,20 @@ struct State {
         BTreeMap<Incarnation, airk_core::inference_provider::CompletionLedgerObservation>,
     #[cfg(feature = "local-inference")]
     provider_ledgers:
-        BTreeMap<Sha256Digest, crate::inference_completion_ledger::NativeLedgerWitness>,
-    provider_reaps:
-        BTreeMap<(Incarnation, Incarnation), crate::embedding_pool_process::ProviderReapWitness>,
-    provider_exclusions:
-        BTreeMap<(Incarnation, Incarnation), crate::service_inference::PredecessorExclusionWitness>,
+        BTreeMap<Sha256Digest, airk_inference::inference_completion_ledger::NativeLedgerWitness>,
+    provider_reaps: BTreeMap<
+        (Incarnation, Incarnation),
+        airk_inference::embedding_pool_process::ProviderReapWitness,
+    >,
+    provider_exclusions: BTreeMap<
+        (Incarnation, Incarnation),
+        airk_inference::service_inference::PredecessorExclusionWitness,
+    >,
     #[cfg(feature = "local-inference")]
-    provider_completions:
-        BTreeMap<(Incarnation, Incarnation), crate::inference_engine::NativeCompletionWitness>,
+    provider_completions: BTreeMap<
+        (Incarnation, Incarnation),
+        airk_inference::inference_engine::NativeCompletionWitness,
+    >,
     installed: BTreeMap<(Incarnation, AuthorityKey, IndexId, Sha256Digest), Installed>,
     highwater: BTreeMap<(Incarnation, AuthorityKey, IndexId), CatalogRevision>,
     lease_highwater: BTreeMap<Incarnation, u64>,
@@ -602,7 +608,7 @@ impl NativeCatalogAdmission {
     /// Capture the current native clock while retaining a saved selection's
     /// namespace and minimum revision. Exact authority is validated separately
     /// and the returned ticket must be rechecked after that validation.
-    pub(crate) fn capture_current_issue(
+    pub fn capture_current_issue(
         &self,
         namespace: Incarnation,
         minimum_revision: CatalogRevision,
@@ -639,11 +645,7 @@ impl NativeCatalogAdmission {
     }
     /// A synchronous nonblocking delivery poll runs under the same lock as
     /// admission close, including its pre-persistence pending-fence interval.
-    pub(crate) fn with_issue<T>(
-        &self,
-        ticket: IssueTicket,
-        effect: impl FnOnce() -> T,
-    ) -> Result<T> {
+    pub fn with_issue<T>(&self, ticket: IssueTicket, effect: impl FnOnce() -> T) -> Result<T> {
         let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         state.check_issue(ticket)?;
         Ok(effect())
@@ -652,7 +654,7 @@ impl NativeCatalogAdmission {
     /// (selection authority §3.6): the issue ticket and the selection's live
     /// nonce of this service are checked under the same gate lock, so a
     /// revoked or replaced grant never receives a receipt.
-    pub(crate) fn with_live_selection<T>(
+    pub fn with_live_selection<T>(
         &self,
         ticket: IssueTicket,
         selection: &SelectionScopeRef,
@@ -669,7 +671,7 @@ impl NativeCatalogAdmission {
     }
     /// Deliver the final bounded native receipt while checking the shared
     /// admission fence at each actual nonblocking write/flush poll.
-    pub(crate) async fn deliver_issue<S: tokio::io::AsyncWrite + Unpin>(
+    pub async fn deliver_issue<S: tokio::io::AsyncWrite + Unpin>(
         &self,
         ticket: IssueTicket,
         stream: &mut S,
@@ -1615,7 +1617,7 @@ impl NativeCatalogAdmission {
     }
     pub fn observe_provider_reaped(
         &self,
-        witness: crate::embedding_pool_process::ProviderReapWitness,
+        witness: airk_inference::embedding_pool_process::ProviderReapWitness,
     ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         let key = (witness.service(), witness.helper());
@@ -1636,8 +1638,8 @@ impl NativeCatalogAdmission {
     #[cfg(feature = "local-inference")]
     pub fn observe_provider_completed(
         &self,
-        witness: crate::inference_engine::NativeCompletionWitness,
-        ledger: crate::inference_completion_ledger::NativeLedgerWitness,
+        witness: airk_inference::inference_engine::NativeCompletionWitness,
+        ledger: airk_inference::inference_completion_ledger::NativeLedgerWitness,
     ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         let observation = witness.observation();
@@ -1703,7 +1705,7 @@ impl NativeCatalogAdmission {
     #[cfg(feature = "local-inference")]
     pub fn observe_ledger_completed(
         &self,
-        ledger: crate::inference_completion_ledger::NativeLedgerWitness,
+        ledger: airk_inference::inference_completion_ledger::NativeLedgerWitness,
     ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         ledger.observation().validate()?;
@@ -1753,7 +1755,7 @@ impl NativeCatalogAdmission {
     }
     pub fn observe_provider_excluded(
         &self,
-        witness: crate::service_inference::PredecessorExclusionWitness,
+        witness: airk_inference::service_inference::PredecessorExclusionWitness,
     ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         let (prior, generation) = witness.key();

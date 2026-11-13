@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) struct NativeSetupReview {
+pub struct NativeSetupReview {
     control: PathBuf,
     request: IndexSetupRequest,
     parent: DirectoryPin,
@@ -72,11 +72,11 @@ impl NativeSetupReview {
 
 /// Pins actual native owners until the preparation receipt has committed.
 /// The opaque Store proof is never returned to a frontend or extracted alone.
-pub(crate) enum PreparedIndexSetup {
+pub enum PreparedIndexSetup {
     Anchored(airk_store::service::registry::catalog::setup::storage::PreparedStorage),
 }
 impl PreparedIndexSetup {
-    pub(crate) fn record(self, registry: &mut ServiceRegistry) -> Result<IndexSetupReceipt> {
+    pub fn record(self, registry: &mut ServiceRegistry) -> Result<IndexSetupReceipt> {
         match self {
             Self::Anchored(storage) => storage.record(registry),
         }
@@ -85,7 +85,7 @@ impl PreparedIndexSetup {
 
 /// Read-only review. New custom storage requires an existing canonical parent;
 /// only its explicitly selected leaf can be created by `prepare`.
-pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<NativeSetupReview> {
+pub fn review(control: &Path, request: &IndexSetupRequest) -> Result<NativeSetupReview> {
     review_inner(control, request, None)
 }
 fn review_inner(
@@ -93,7 +93,7 @@ fn review_inner(
     request: &IndexSetupRequest,
     legacy_adoption: Option<Sha256Digest>,
 ) -> Result<NativeSetupReview> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     let control = control.canonicalize()?;
     validate_request(&control, request)?;
     let registry = ServiceRegistry::open_saved(&control)?;
@@ -142,7 +142,7 @@ pub(crate) fn review_split(
     control: &Path,
     request: &airk_core::catalog_split::SplitRequest,
 ) -> Result<NativeSetupReview> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     request.validate()?;
     let context = split_format_request(request)?;
     let mut review = review_filesystem(control.canonicalize()?, &context, false)?;
@@ -291,7 +291,7 @@ fn review_filesystem(
     })
 }
 
-pub(crate) fn prepare(
+pub fn prepare(
     registry: &ServiceRegistry,
     control: &Path,
     review: NativeSetupReview,

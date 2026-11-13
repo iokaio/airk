@@ -61,7 +61,7 @@ fn qualify(
     // Match the ordinary native worker's read-only model context. This binds
     // immutable descriptors/runtime only: no provisioning, model weights,
     // inference, source scan or Current mutation is performed by qualification.
-    let kernel = crate::bundled_assets::bind_service_models(
+    let kernel = airk_host::bundled_assets::bind_service_models(
         airk_kernel::Kernel::open_existing_service_observer(&index.backing)?
             .with_expected_source_policy(registry.catalog_source_policy(index.id)?)?,
         registry.control_root(),
@@ -103,13 +103,13 @@ pub(crate) fn admit(
         caller,
         key,
         request,
-        crate::runtime_pair::engine_identity()?,
+        airk_host::runtime_pair::engine_identity()?,
     )
 }
 
 /// Only a fresh pre-admission typed refusal can claim no accepted job.
 /// An exact already-accepted key always returns its historical accepted job.
-pub(crate) fn admit_response(
+pub fn admit_response(
     registry: &mut ServiceRegistry,
     project: ProjectBinding,
     caller: Incarnation,
@@ -141,7 +141,7 @@ pub(crate) fn admit_response(
 
 /// Exact saved acknowledgment, independent of current/superseding grants,
 /// settings and engine. Missing/pruned evidence is unknown, never replay leave.
-pub(crate) fn receipt(
+pub fn receipt(
     registry: &ServiceRegistry,
     caller: Incarnation,
     key: &RequestKey,
@@ -179,7 +179,7 @@ pub(crate) fn receipt(
     )
 }
 
-pub(crate) fn execute(
+pub fn execute(
     kernel: &airk_kernel::Kernel,
     registry: &mut ServiceRegistry,
     lease: &ProjectLease,
@@ -190,7 +190,7 @@ pub(crate) fn execute(
         .configuration_work(job)?
         .context("accepted refresh work missing")?;
     ensure!(
-        work.engine == crate::runtime_pair::engine_identity()?,
+        work.engine == airk_host::runtime_pair::engine_identity()?,
         "refresh engine changed; new review required"
     );
     let selection = selected(&work.request)?;

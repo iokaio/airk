@@ -9,7 +9,7 @@ use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
 use std::path::Path;
 
-pub(crate) fn execute(
+pub fn execute(
     registry: &mut ServiceRegistry,
     control: &Path,
     method: &ControlMethod,
@@ -66,7 +66,7 @@ fn execute_inner(
     Ok(Some(match method {
         ControlMethod::CatalogIndexSetupDraft { selection } => {
             selection.validate()?;
-            let registration = crate::service_registration::prepare(
+            let registration = airk_host::service_registration::prepare(
                 Path::new(&selection.primary_root),
                 Path::new(&selection.data_root),
                 &selection.collection,

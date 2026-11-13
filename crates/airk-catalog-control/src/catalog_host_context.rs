@@ -18,12 +18,12 @@ fn native_host(namespace: Incarnation, caller: Incarnation) -> Result<Sha256Dige
     ))
 }
 
-pub(crate) fn current_native_host(namespace: Incarnation) -> Result<Sha256Digest> {
+pub fn current_native_host(namespace: Incarnation) -> Result<Sha256Digest> {
     native_host(namespace, crate::local_ipc::caller_identity()?)
 }
 
 /// Observe existing compatibility metadata without issuing or repairing access.
-pub(crate) fn legacy_binding(
+pub fn legacy_binding(
     registry: &mut ServiceRegistry,
     project: airk_core::service::ProjectBinding,
     expected_revision: Option<CatalogRevision>,
@@ -130,7 +130,7 @@ fn selection_identity(selection: &GrantDraftSelection) -> Result<Sha256Digest> {
     ))
 }
 
-pub(crate) struct NativeHostContext {
+pub struct NativeHostContext {
     descriptor: NativeHostContextDescriptor,
     caller: Incarnation,
     selection: Option<Sha256Digest>,
@@ -139,7 +139,7 @@ pub(crate) struct NativeHostContext {
 impl NativeHostContext {
     /// Called inside the authenticated native metadata handler. No wire caller
     /// or host is accepted; local IPC already enforces the same-OS-user boundary.
-    pub(crate) fn load(
+    pub fn load(
         registry: &mut ServiceRegistry,
         key: Sha256Digest,
         expected_revision: Option<CatalogRevision>,
@@ -184,13 +184,13 @@ impl NativeHostContext {
         })
     }
 
-    pub(crate) fn descriptor(&self) -> &NativeHostContextDescriptor {
+    pub fn descriptor(&self) -> &NativeHostContextDescriptor {
         &self.descriptor
     }
 
     /// Capture an explicit administrative review request. Saved context defaults
     /// are preferences, not permission, and cannot manufacture an active grant.
-    pub(crate) fn for_review(mut self, selection: &GrantDraftSelection) -> Result<Self> {
+    pub fn for_review(mut self, selection: &GrantDraftSelection) -> Result<Self> {
         ensure!(
             selection.key.namespace == self.descriptor.namespace
                 && selection.expected_catalog_revision == self.descriptor.catalog_revision,
@@ -225,8 +225,8 @@ impl NativeGrantDraftContext for NativeHostContext {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod legacy_binding_tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod legacy_binding_tests;
 
 #[cfg(test)]
 mod tests {

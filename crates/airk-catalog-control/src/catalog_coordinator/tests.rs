@@ -363,7 +363,7 @@ fn fixture() -> Result<(
         root: control.canonicalize()?,
     };
     let instance = Incarnation::from_bytes([1; 16]);
-    let mut registry = crate::catalog_test_fixture::authority_one(root.path(), instance)?;
+    let mut registry = airk_host::catalog_test_fixture::authority_one(root.path(), instance)?;
     let (namespace, epoch) = registry.request_epoch()?;
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([3; 16]));
     let create = CatalogRequest {

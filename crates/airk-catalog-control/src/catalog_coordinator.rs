@@ -17,7 +17,7 @@ use airk_store::service::registry::{
 use anyhow::{Result, ensure};
 
 /// Native control port; no method consumes a frontend assertion of revocation.
-pub(crate) trait CatalogControl {
+pub trait CatalogControl {
     fn uses_gate(&self, gate: &NativeCatalogAdmission) -> bool;
     fn revoke(&self, ticket: &FenceTicket, target: &FenceTarget) -> Result<()>;
     /// `RevokeScope` for a selection scope the fence revoked locally (§3.3
@@ -59,7 +59,7 @@ pub(crate) trait CatalogControl {
     }
 }
 #[derive(Debug)]
-pub(crate) struct CatalogRevisionChanged;
+pub struct CatalogRevisionChanged;
 impl std::fmt::Display for CatalogRevisionChanged {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("catalog_revision_changed")
@@ -67,7 +67,7 @@ impl std::fmt::Display for CatalogRevisionChanged {
 }
 impl std::error::Error for CatalogRevisionChanged {}
 #[derive(Debug)]
-pub(crate) struct CatalogClockPending;
+pub struct CatalogClockPending;
 impl std::fmt::Display for CatalogClockPending {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("catalog_clock_pending")
@@ -76,7 +76,7 @@ impl std::fmt::Display for CatalogClockPending {
 impl std::error::Error for CatalogClockPending {}
 /// Bounded native startup/configuration-completion boundary, never Health or a
 /// read/query loop. Observes metadata only and publishes its cached clock.
-pub(crate) fn refresh_catalog_clock(
+pub fn refresh_catalog_clock(
     gate: &NativeCatalogAdmission,
     registry: &ServiceRegistry,
 ) -> Result<bool> {
@@ -98,7 +98,7 @@ pub(crate) fn refresh_catalog_clock(
 }
 
 /// Constructed only after exact native Store observations, never from a wire bool.
-pub(crate) struct KnownUnprepared {
+pub struct KnownUnprepared {
     key: FenceKey,
     absence: CatalogFenceAbsence,
 }
@@ -132,7 +132,7 @@ impl KnownUnprepared {
 
 /// Current same-namespace saved absence, usable only to release an already
 /// retained ephemeral close. It never changes original mutation admission.
-pub(crate) struct ReconciledUnprepared {
+pub struct ReconciledUnprepared {
     key: FenceKey,
     absence: CatalogFenceUnpreparedAbsence,
 }
@@ -159,7 +159,7 @@ impl ReconciledUnprepared {
     }
 }
 
-pub(crate) struct CatalogCoordinator<C: CatalogControl> {
+pub struct CatalogCoordinator<C: CatalogControl> {
     gate: NativeCatalogAdmission,
     control: C,
     cleanup: Option<FencedReceipt>,
@@ -169,12 +169,12 @@ pub(crate) struct CatalogCoordinator<C: CatalogControl> {
 }
 /// A native accepted operation may have durable/fence effects. Keep the exact
 /// journal identity and complete known record; never report a no-write refusal.
-pub(crate) struct CatalogApplyOutcomeUnknown {
+pub struct CatalogApplyOutcomeUnknown {
     request: CatalogRequest,
     observation: Option<FenceObservation>,
 }
 #[derive(Debug)]
-pub(crate) struct CatalogApplyRejectedNoEffects;
+pub struct CatalogApplyRejectedNoEffects;
 impl std::fmt::Display for CatalogApplyRejectedNoEffects {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("catalog_preparation_rejected")
@@ -193,7 +193,7 @@ impl std::fmt::Display for CatalogApplyOutcomeUnknown {
 }
 impl std::error::Error for CatalogApplyOutcomeUnknown {}
 impl CatalogApplyOutcomeUnknown {
-    pub(crate) fn capture(
+    pub fn capture(
         registry: &ServiceRegistry,
         request: &CatalogRequest,
         error: anyhow::Error,
@@ -238,7 +238,7 @@ impl CatalogApplyOutcomeUnknown {
 
 /// Called by the authenticated metadata actor. Context defaults remain
 /// preferences; the persisted reviewed grant is the evidence authority.
-pub(crate) fn native_scoped_selection(
+pub fn native_scoped_selection(
     registry: &mut ServiceRegistry,
     request: &airk_core::service::ScopedConnectRequest,
 ) -> Result<crate::catalog_authority::NativeCatalogAuthoritySelection> {
@@ -355,8 +355,8 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
     }
     /// Qualification can retain the actual accepted owner at the durable
     /// prepare boundary. It uses the same classification/control/commit path.
-    #[cfg(test)]
-    pub(crate) fn apply_fenced_with_prepared_test_hook(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn apply_fenced_with_prepared_test_hook(
         &mut self,
         registry: &mut ServiceRegistry,
         request: &CatalogRequest,

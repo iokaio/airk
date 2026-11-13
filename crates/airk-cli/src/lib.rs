@@ -7,15 +7,15 @@ pub use airk_endpoint::admin_contract;
 /// The service's `/admin` plane (split Phase 5): launch codes, sessions,
 /// embedded assets and admin dispatch.
 pub(crate) mod admin_plane;
-pub(crate) mod catalog_admission;
-pub(crate) mod catalog_authority;
-pub(crate) mod catalog_coordinator;
-pub(crate) mod catalog_grant_draft;
-mod catalog_host_context;
-mod catalog_index_setup;
-mod catalog_index_setup_control;
-mod catalog_source_change_control;
-mod catalog_split_control;
+pub(crate) use airk_catalog_control::catalog_admission;
+pub(crate) use airk_catalog_control::catalog_authority;
+pub(crate) use airk_catalog_control::catalog_coordinator;
+pub(crate) use airk_catalog_control::catalog_grant_draft;
+pub(crate) use airk_catalog_control::catalog_host_context;
+pub(crate) use airk_catalog_control::catalog_index_setup;
+pub(crate) use airk_catalog_control::catalog_index_setup_control;
+pub(crate) use airk_catalog_control::catalog_source_change_control;
+pub(crate) use airk_catalog_control::catalog_split_control;
 #[cfg(test)]
 pub(crate) use airk_host::catalog_test_fixture;
 pub mod combined_frontend;
@@ -36,9 +36,9 @@ pub use airk_ipc as ipc;
 /// Compatibility path (split G1): the transport moved to `ipc::endpoint`.
 pub use ipc::endpoint as local_ipc;
 mod native_admin_connections;
+pub(crate) use airk_catalog_control::reference_refresh_control;
+pub(crate) use airk_catalog_control::registry_console;
 pub(crate) use airk_host::read_attempt;
-mod reference_refresh_control;
-mod registry_console;
 /// Private role admission (split plan §5.1, step 3.0).
 pub mod role_admission;
 mod runtime_metadata;

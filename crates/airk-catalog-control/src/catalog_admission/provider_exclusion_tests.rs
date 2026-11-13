@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Provider exclusion admission test. Moved from `service_inference::tests`
 //! (split step 2b): it drives the catalog Gate, which sits above inference.
-use crate::service_inference::PredecessorExclusionWitness;
 use airk_core::{identity::Incarnation, index_catalog::CatalogRevision};
+use airk_inference::service_inference::PredecessorExclusionWitness;
 use anyhow::Result;
 use std::sync::Arc;
 

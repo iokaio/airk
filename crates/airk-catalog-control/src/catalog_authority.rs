@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 /// Exact native selection captured by the caller. `host` must be authenticated by
 /// the native host; a client-supplied host digest is not authentication.
 #[derive(Clone)]
-pub(crate) struct NativeCatalogAuthoritySelection {
+pub struct NativeCatalogAuthoritySelection {
     pub namespace: Incarnation,
     pub host: Sha256Digest,
     pub catalog_revision: CatalogRevision,
@@ -47,7 +47,7 @@ impl NativeCatalogAuthoritySelection {
 /// and delivery; a returned payload alone is not live authorization.
 /// NativeBroker must separately validate active backing registration and worker
 /// identity at issuance and delivery. Catalog metadata proves no availability.
-pub(crate) fn build_catalog_read_authority(
+pub fn build_catalog_read_authority(
     registry: &mut ServiceRegistry,
     selection: &NativeCatalogAuthoritySelection,
 ) -> Result<ScopedReadAuthority> {
@@ -60,7 +60,7 @@ pub(crate) fn build_catalog_read_authority(
 
 /// The trusted native legacy-binding route resolves only an existing sealed
 /// compatibility record. Absence/revocation never falls back or creates a grant.
-pub(crate) fn build_legacy_catalog_read_authority(
+pub fn build_legacy_catalog_read_authority(
     registry: &mut ServiceRegistry,
     namespace: Incarnation,
     host: Sha256Digest,
@@ -191,7 +191,7 @@ fn build_catalog_read_authority_kind(
 /// in-process admission call; never on a `ControlMethod`. The read projects
 /// are computed by the builder, never supplied.
 #[derive(Clone, Debug)]
-pub(crate) struct SelectionConnectRequest {
+pub struct SelectionConnectRequest {
     pub selection_ref: SelectionScopeRef,
     pub window_selection: WindowScopeSelection,
     pub index_id: IndexId,
@@ -217,7 +217,7 @@ impl SelectionConnectRequest {
 /// grant's catalog revision. Read-only (`catalog_state`/`catalog_detail`);
 /// it writes nothing and creates no `GrantId` (§3.8). The caller holds the
 /// gate's issue ticket at that same revision and rechecks it at delivery.
-pub(crate) fn build_selection_read_authority(
+pub fn build_selection_read_authority(
     registry: &mut ServiceRegistry,
     request: &SelectionConnectRequest,
 ) -> Result<SelectionReadAuthority> {
