@@ -132,6 +132,7 @@ current classes, `session_commands.rs:102` [V]).
 | M22 | (U100) `StorageInventory {}` | `StorageInventory { inventory }`: the install record's five locations in order, sizes, reviewed purge rule each (`airk_core::storage_admin`) | `inventory::inventory` :110 | R | Read |
 | M24 | `FolderBrowse { path?, show_hidden?, after? }` | `FolderListing { listing }` (`airk_core::folder_browse`): the folders in `path` (never files; links and junctions listed, never entered, and a path through one, or with `.`/`..`, is refused), or without a path the starting list (drives, home, the installation's data location); at most 200 entries and 48 KiB per page, continued after the last name; marks for installation locations and index roots; failure codes `folder_not_found`, `folder_not_a_folder`, `folder_link_not_followed`, `folder_not_readable`, `folder_path_not_absolute`, `folder_request_invalid`. Admin row `files.browse`, `airkctl folders` | `service_runtime/folders.rs` | R | Read |
 | — | Setup review refusals (`CatalogIndexSetupDraft`, 1.8.33) | A review that refused its folders answers `Failure { code }` with `index_setup_path_missing`, `index_setup_paths_overlap`, `index_setup_storage_occupied`, `index_setup_path_redirected`, `index_setup_path_not_a_folder` or `index_setup_alias_unavailable` (`catalog_index_setup_control::setup_refusal`) instead of the generic `invalid_registry_request` | `catalog_index_setup_control.rs` | R | Read |
+| — | Setup creates the index set (`CatalogIndexSetupApply`, 1.8.34, U103) | Completing a setup also creates one index set named after the index, with a whole-source `subtree` membership for every source root, in the same registry transaction. The set ID is `QueryProjectId::from_identity(operation_id)`, so an exact retry finds it. `IndexSetupReceipt` and every persisted format are unchanged (rows in existing tables). An index that predates this has no set: `catalog.preview`/`catalog.apply` with `create_project` and `set_membership` make it readable (Admin "Make readable") | `airk-store` `catalog/setup.rs` | R | Mutation |
 | — | Installed first start (1.8.32/1.8.33) | An admitted start (`serve_admitted`) on a control root without a catalog runs fresh Genesis before the lifecycle and stop checks; an interrupted Genesis completes on the next admitted start. A root already used without a catalog fails the start with `catalog_genesis_refused`; a Genesis that could not run now fails it with `catalog_genesis_failed` | `service_runtime/first_start.rs` | — | — |
 | M23 | (U100) `StoragePurgePlan { kind }` → `StoragePurgePlan { plan, plan_digest }`; `StoragePurge { kind, plan_digest }` → `StoragePurged { receipt }` | Cache contents or closed logs only; the purge applies exactly the current plan the digest names; planned files that stay are listed | `inventory::purge` :267 | M, X | Apply only with the preview digest |
 | V1 [served 3e.9] | `AgentConnectionVerify { connection_id }` | `AgentConnectionVerified { result: {schema, connection_id, url, verified, http_status?, protocol_version?, server?, detail?} }` or `AgentRefused { message }` | `http_commands::verify_connection_at`: one MCP `initialize` over HTTPS pinned to the installation's public issuer with the stored credential, then `DELETE` of that session; the token never leaves the service (replaces the extension's HTTPS `verifyMcp`) | R | Read |
@@ -524,6 +525,13 @@ one read.
   refused with `session_command_refused` [P]; they are one-shots only.
 - `Connect`/`ConnectScoped`, upgrade checkpoints, `HttpEnroll` and A1 are
   refused on the `control` relay.
+- (1.8.34, U103) The `control` relay forwards exactly the methods whose row
+  in the operation table (§4.3) lists the `session` surface; every other
+  method is refused with `session_command_refused` before it reaches the
+  service. `airkctl` reads the checked-in table (its `NativeReadScoped` row
+  is the `NativeRead` variant); W5 `AssistanceWindows` stays relayed under
+  the window plane's own contract, and the other window-plane frames keep
+  their own frames and are never relayed.
 - Fixture `airkctl_session_frames.json` asserts these refusals and that no
   frame in any sequence contains a 64-hex token field.
 
@@ -663,6 +671,19 @@ no `never_over_http` row has a route.
   the typed confirmation.
 - **Search** (`search.call`) accepts only the `unselected` (help) and `admin`
   selections from the browser; any other is 400.
+
+#### 4.3c Amendment (U103, 13 November 2026): the Explorer's status, usage and job actions
+
+- `session` is added to `catalog.policy_status`, `catalog.split_status`,
+  `usage.document`, `logs.recent`, `indexes.watch`, `indexes.pause`,
+  `jobs.enqueue`, `jobs.retry` and `jobs.cancel`, and a read row
+  `indexes.watch_state` (`Watch`; pipe, airkctl, session) is added. The
+  admin pages read watch state through `indexes.progress`.
+- The session column is enforced by the `airkctl` session relay (§3.8).
+- Status: a read that the catalog refuses for lack of read authority answers
+  `index_error.code = "index_read_unavailable"` with `index_state:"unknown"`
+  and the index's current `work` observation (one `Progress` read), instead of
+  `index_worker_unavailable`.
 
 #### 4.3b Amendment (U98, 12 November 2026): request identities and typed confirmation
 

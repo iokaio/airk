@@ -226,6 +226,26 @@
    ]
   },
   {
+   "operation": "indexes.watch_state",
+   "method": "Watch",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session"
+   ],
+   "authorization": [
+    "owner_pipe"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
    "operation": "indexes.prepare_configuration",
    "method": "PrepareConfiguration",
    "plane": "management",
@@ -425,6 +445,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -467,6 +488,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -701,6 +723,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -891,6 +914,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -1304,6 +1328,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -1325,6 +1350,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -1346,6 +1372,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -1375,6 +1402,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [
@@ -1404,6 +1432,7 @@
    "surfaces": [
     "pipe",
     "airkctl",
+    "session",
     "admin"
    ],
    "authorization": [

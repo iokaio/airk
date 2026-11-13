@@ -1,10 +1,10 @@
 {
   "schema": "airk.split-fixture.view-messages/1",
   "contract": "docs/split/contracts.md section 6 (C9)",
-  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden. U97: the read-only index library read (library.read) and the AIRK Admin opener (admin.open) are editor-only; the Explorer's management messages were removed with their UI.",
+  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden. U97: the read-only index library read (library.read) and the AIRK Admin opener (admin.open) are editor-only; the Explorer's management messages were removed with their UI. U103: the Explorer's index status actions, usage and activity (work.action, work.usage, work.activity) run through the editor's airkctl session and are editor-only; manage.* stays admin.",
   "counts": {
     "ui": 25,
-    "editor": 34,
+    "editor": 37,
     "admin": 6
   },
   "messages": [
@@ -330,6 +330,21 @@
     },
     {
       "type": "admin.open",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "work.action",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "work.usage",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "work.activity",
       "side": "editor",
       "capability": null
     }

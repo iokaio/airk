@@ -30,6 +30,9 @@ extension, scripts and users (split plan §4.2; draft in
   `handoff_publish`) follow `fixtures/split/i1/window_plane.json`; a service
   refusal of one is `refused {code, retryable}`, distinct from session-level
   `failed`. The window lease never appears in a session frame.
+- The session `control` relay forwards exactly the operation-table rows
+  (`fixtures/split/i3/admin_operations.json`) that list the `session`
+  surface (contracts §3.8, U103); others are `session_command_refused`.
 - `airkctl` depends only on `airk-core`, `airk-process` and `airk-ipc` (U27).
 
 ## Fixtures

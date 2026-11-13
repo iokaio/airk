@@ -570,6 +570,9 @@ These maps are in memory [V `:288-290`, built in `new` `:417-419`].
 
 ### 3.5 Read restriction (Q1 decided: at least one project, F5)
 
+(1.8.34, U103) Q1 is unchanged. Index setup now creates an index set for
+every new index, so a lone index is selectable through that set.
+
 - Reads require at least one selected project. This fails closed, consistent
   with `Membership.scope`'s "Empty means no authority, never all sources"
   (core `index_catalog.rs:281`) and with the catalog path, which requires a
