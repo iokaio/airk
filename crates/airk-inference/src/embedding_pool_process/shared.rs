@@ -4,7 +4,10 @@
 use super::*;
 #[cfg(windows)]
 use airk_store::service::registry::SharedHelperContainment;
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+#[cfg(all(
+    windows,
+    any(not(feature = "local-inference"), any(test, feature = "test-support"))
+))]
 use airk_store::service::registry::shared_helper_job_name;
 use airk_store::service::registry::{
     ServiceRegistry, SharedHelperDrain, SharedHelperIdentity, SharedHelperPhase,
@@ -56,7 +59,11 @@ pub(crate) fn known_transition(
     }
 }
 
-#[cfg(any(unix, not(feature = "local-inference"), test))]
+#[cfg(any(
+    unix,
+    not(feature = "local-inference"),
+    any(test, feature = "test-support")
+))]
 pub(crate) fn complete(root: &Path, owner: SharedHelperIdentity) -> Result<SharedHelperDrain> {
     let mut registry = registry(root)?;
     let record = registry
@@ -91,7 +98,7 @@ pub fn recover_shared_helper(
 /// a replacement service instance. All recorded helpers are now excluded owners,
 /// including the last recorded instance. Never prune history here: worker drain
 /// obligations may still need these terminal observations on the next startup.
-pub(crate) fn quiesce_for_maintenance(lease: &airk_store::service::ServiceLease) -> Result<bool> {
+pub fn quiesce_for_maintenance(lease: &airk_store::service::ServiceLease) -> Result<bool> {
     let root = lease.root();
     let saved = ServiceRegistry::open_saved(root)?;
     let Some(state) = saved.catalog_state()? else {
@@ -250,7 +257,10 @@ fn recover_windows(record: &SharedHelperDrain) -> Result<bool> {
     }
 }
 
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+#[cfg(all(
+    windows,
+    any(not(feature = "local-inference"), any(test, feature = "test-support"))
+))]
 pub(super) struct ManagedWindows {
     pub child: Option<airk_process::AtomicJobChild>,
     job: airk_process::ChildJob,
@@ -258,7 +268,10 @@ pub(super) struct ManagedWindows {
     owner: SharedHelperIdentity,
     finished: bool,
 }
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+#[cfg(all(
+    windows,
+    any(not(feature = "local-inference"), any(test, feature = "test-support"))
+))]
 impl ManagedWindows {
     pub(super) fn member_pids(&self) -> Result<Vec<u32>> {
         self.job.member_pids()
@@ -362,7 +375,10 @@ impl ManagedWindows {
         Ok(())
     }
 }
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+#[cfg(all(
+    windows,
+    any(not(feature = "local-inference"), any(test, feature = "test-support"))
+))]
 impl Drop for ManagedWindows {
     fn drop(&mut self) {
         while self.drain(Duration::from_secs(2)).is_err() {
@@ -371,7 +387,10 @@ impl Drop for ManagedWindows {
     }
 }
 
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+#[cfg(all(
+    windows,
+    any(not(feature = "local-inference"), any(test, feature = "test-support"))
+))]
 fn session() -> Result<u32> {
     let mut session = 0;
     // SAFETY: current process identity and correctly sized native output.
@@ -386,7 +405,10 @@ fn session() -> Result<u32> {
     );
     Ok(session)
 }
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+#[cfg(all(
+    windows,
+    any(not(feature = "local-inference"), any(test, feature = "test-support"))
+))]
 fn boot(user: &str) -> Result<airk_store::service::registry::ProviderBoot> {
     use sha2::{Digest, Sha256};
     // SAFETY: scalar monotonic native uptime query with no pointer arguments.

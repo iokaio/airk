@@ -279,3 +279,29 @@ Every caller, including `tests/unregister_native.rs`, compiles unchanged.
   - default 1070 = 940 `airk-cli` + 70 `airk-endpoint` + 60 `airk-host`;
   - `local-inference` 1109.
 - `airk-endpoint`'s own tests run in 9.6 s.
+
+## Step 3c: `airk-inference` extracted (12 November 2026)
+
+8 modules (25 files) moved into `crates/airk-inference`.
+
+- **Grouped imports.** The new `lib.rs` aliases each earlier-crate module that grouped imports name
+  (`pub(crate) use airk_host::{runtime_pair, embedding_pool_protocol}`), and `use airk_cli::{…}`
+  becomes `use crate::{…}`. Both are now done by `extract_crate.py`.
+- **Test hooks.** The crate's test-hook layer (the inference pool's compute hooks, fixtures, and the
+  legacy pool used by the supervisor and gateway tests in `airk-cli`) compiles under `test-support`,
+  through the new `scripts/dev/test_support_cfg.py`.
+  - The rule: the `test` predicate in each non-test-module `cfg` becomes
+    `any(test, feature = "test-support")`.
+  - Four helpers that only this crate's own `#[test]`s use went back to `cfg(test)`.
+- **Visibility under `local-inference`.** The widener must be run with
+  `--features airk-cli/local-inference`; 33 `Pool` and owner methods called by `airk-cli` became `pub`.
+  `pool::{State, ComputeContext}`, `accounting::{Accounting, ComputeCharge}` and the
+  `pool::{InferenceOwner, NativeCompletionWitness}` re-export were widened by hand, for public
+  test-support signatures.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical by identity:
+  - default 1070 = 908 `airk-cli` + 70 `airk-endpoint` + 60 `airk-host` + 32 `airk-inference`;
+  - `local-inference` 1109.

@@ -8,28 +8,28 @@ use tokio::{sync::Semaphore, task::JoinSet};
 /// Native capability: construction is private and requires the actual owner
 /// barrier. The serializable observation alone cannot create this capability.
 #[derive(Clone)]
-pub(crate) struct NativeCompletionWitness {
+pub struct NativeCompletionWitness {
     observation: CompletionObservation,
     _owner: Arc<State>,
     namespace: Incarnation,
     _lease: Arc<airk_store::service::ServiceLease>,
 }
 impl NativeCompletionWitness {
-    pub(crate) fn observation(&self) -> &CompletionObservation {
+    pub fn observation(&self) -> &CompletionObservation {
         &self.observation
     }
-    pub(crate) fn matches(&self, service: Incarnation, generation: Incarnation) -> bool {
+    pub fn matches(&self, service: Incarnation, generation: Incarnation) -> bool {
         self.observation.provider.service_instance == service
             && self.observation.provider.provider_generation == generation
             && self.observation.state == CompletionState::Complete
     }
-    pub(crate) fn namespace(&self) -> Incarnation {
+    pub fn namespace(&self) -> Incarnation {
         self.namespace
     }
 }
 
-pub(crate) struct InferenceOwner {
-    pub(crate) state: Arc<State>,
+pub struct InferenceOwner {
+    pub state: Arc<State>,
     provider: ProviderIdentity,
     threads: Arc<AtomicUsize>,
     observation: Arc<Mutex<(u64, u64, usize, Instant)>>,
@@ -43,7 +43,7 @@ pub(crate) struct InferenceOwner {
     _lease: Arc<airk_store::service::ServiceLease>,
 }
 impl InferenceOwner {
-    pub(crate) fn start(
+    pub fn start(
         lease: Arc<airk_store::service::ServiceLease>,
         service: Incarnation,
         inference_threads: u16,
@@ -58,7 +58,7 @@ impl InferenceOwner {
         let provider = ProviderIdentity {
             schema: 1,
             service_instance: service,
-            approved_execution_sha256: airk_cli::runtime_pair::current_executable_sha256()?
+            approved_execution_sha256: airk_host::runtime_pair::current_executable_sha256()?
                 .parse()?,
             provider_generation: pool,
         };
@@ -90,7 +90,7 @@ impl InferenceOwner {
                 // Create the model owner before accepting grants. FFI/model
                 // initialization occurs only inside this service-owned role.
                 let mut engine = Engine::new(&runtime)?;
-                engine.embedded=Some(airk_store::service::embedded_model::EmbeddedModelBinding::new(airk_cli::bundled_assets::EmbeddedAssets::plan()?,Arc::new(airk_cli::bundled_assets::EmbeddedAssets))?);
+                engine.embedded=Some(airk_store::service::embedded_model::EmbeddedModelBinding::new(airk_host::bundled_assets::EmbeddedAssets::plan()?,Arc::new(airk_host::bundled_assets::EmbeddedAssets))?);
                 engine.inference_threads = engine_threads;
                 let (compute_ready, compute_start) = std::sync::mpsc::sync_channel(1);
                 let compute = std::thread::Builder::new().name("airk-inference-compute".into()).stack_size(8 << 20).spawn(move || {
@@ -183,10 +183,10 @@ impl InferenceOwner {
             _lease: lease,
         })
     }
-    pub(crate) fn generation(&self) -> Incarnation {
+    pub fn generation(&self) -> Incarnation {
         self.provider.provider_generation
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_compute_hook(&self, hook: ComputeHook) -> Result<()> {
         let (reply, completed) = oneshot::channel();
         self.state
@@ -196,7 +196,7 @@ impl InferenceOwner {
         completed.blocking_recv()?;
         Ok(())
     }
-    pub(crate) fn provider_status(&self) -> Result<airk_core::inference_provider::ProviderStatus> {
+    pub fn provider_status(&self) -> Result<airk_core::inference_provider::ProviderStatus> {
         let mut status = self
             .state
             .accounting
@@ -211,10 +211,10 @@ impl InferenceOwner {
         status.validate()?;
         Ok(status)
     }
-    pub(crate) fn completion(&self) -> Option<&NativeCompletionWitness> {
+    pub fn completion(&self) -> Option<&NativeCompletionWitness> {
         self.completion.as_ref()
     }
-    pub(crate) fn worker_settled(&self, worker: Incarnation) -> Result<bool> {
+    pub fn worker_settled(&self, worker: Incarnation) -> Result<bool> {
         self.state
             .accounting
             .as_ref()
@@ -228,7 +228,7 @@ impl InferenceOwner {
             .context("missing inference accounting")?
             .forget_worker(worker)
     }
-    pub(crate) fn register(&self, grant: protocol::Grant, identity: WorkerIdentity) -> Result<()> {
+    pub fn register(&self, grant: protocol::Grant, identity: WorkerIdentity) -> Result<()> {
         ensure!(
             !self.state.closing.load(Ordering::Acquire),
             "inference owner closing"
@@ -283,7 +283,7 @@ impl InferenceOwner {
             Ok(false)
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn revoke(&self, worker: Incarnation) -> Result<()> {
         let mut retirement = self
             .state
@@ -320,7 +320,7 @@ impl InferenceOwner {
     ) -> Result<protocol::Observation> {
         drain_control(&self.state, retirement::Control::Forget, ticket)
     }
-    pub(crate) fn status(&self) -> Result<protocol::Observation> {
+    pub fn status(&self) -> Result<protocol::Observation> {
         let value = self
             .observation
             .lock()
@@ -340,7 +340,7 @@ impl InferenceOwner {
     /// The actual accounting owner retains the first accepted operation and
     /// full capture, including workers without an inference grant. Stop must
     /// continue this barrier rather than inventing another operation/roster.
-    pub(crate) fn checkpoint_context(&self) -> Result<Option<CompletionObservation>> {
+    pub fn checkpoint_context(&self) -> Result<Option<CompletionObservation>> {
         let accounting = self
             .state
             .accounting
@@ -351,7 +351,7 @@ impl InferenceOwner {
             .map(|operation| accounting.observation(self.provider, operation))
             .transpose()
     }
-    pub(crate) fn checkpoint_drain(
+    pub fn checkpoint_drain(
         &mut self,
         operation: Incarnation,
         workers: Vec<WorkerIdentity>,
@@ -406,7 +406,7 @@ impl InferenceOwner {
         }
         Ok(self.completion.as_ref())
     }
-    pub(crate) fn stop(&mut self) -> Result<bool> {
+    pub fn stop(&mut self) -> Result<bool> {
         self.failure |= !self.stop_requested
             && self
                 .owner

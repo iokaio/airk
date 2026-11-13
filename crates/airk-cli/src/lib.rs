@@ -19,18 +19,18 @@ mod catalog_split_control;
 #[cfg(test)]
 pub(crate) use airk_host::catalog_test_fixture;
 pub mod combined_frontend;
-pub mod embedding_client;
-pub mod embedding_pool_bootstrap;
-pub mod embedding_pool_client;
-mod embedding_pool_process;
 pub use airk_host::embedding_pool_protocol;
+pub use airk_inference::embedding_client;
+pub use airk_inference::embedding_pool_bootstrap;
+pub use airk_inference::embedding_pool_client;
+pub(crate) use airk_inference::embedding_pool_process;
 mod http_backend;
 pub use airk_endpoint::http_endpoint;
 mod http_gateway;
 #[cfg(feature = "local-inference")]
-pub(crate) mod inference_completion_ledger;
+pub(crate) use airk_inference::inference_completion_ledger;
 #[cfg(feature = "local-inference")]
-pub(crate) mod inference_engine;
+pub(crate) use airk_inference::inference_engine;
 /// The local transport lives in `airk-ipc` (split G6); `ipc` keeps the old path.
 pub use airk_ipc as ipc;
 /// Compatibility path (split G1): the transport moved to `ipc::endpoint`.
@@ -42,8 +42,8 @@ mod registry_console;
 /// Private role admission (split plan §5.1, step 3.0).
 pub mod role_admission;
 mod runtime_metadata;
-pub(crate) mod service_inference;
 pub use airk_host::runtime_pair;
+pub(crate) use airk_inference::service_inference;
 pub mod service_configuration;
 pub mod service_frontend;
 /// Phase 7: the private `setup` and `service-login` roles (I4 writer).
@@ -105,9 +105,9 @@ pub use airk_host::source_protocol;
 pub mod source_worker;
 
 mod source_supervisor;
-#[cfg(unix)]
-pub mod unix_guardian;
 pub(crate) use airk_host::user_paths;
+#[cfg(unix)]
+pub use airk_inference::unix_guardian;
 
 pub use airk_host::cli_io;
 pub mod client_requests;

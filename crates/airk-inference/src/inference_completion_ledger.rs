@@ -37,15 +37,15 @@ struct Record {
 /// Only a completed native owner can issue this witness. Keeping the actual
 /// service lease also prevents an excluded owner from being mistaken for live.
 #[derive(Clone)]
-pub(crate) struct NativeLedgerWitness {
+pub struct NativeLedgerWitness {
     observation: CompletionLedgerObservation,
     _ownership: Arc<airk_store::service::ServiceLease>,
 }
 impl NativeLedgerWitness {
-    pub(crate) fn observation(&self) -> &CompletionLedgerObservation {
+    pub fn observation(&self) -> &CompletionLedgerObservation {
         &self.observation
     }
-    pub(crate) fn matches(&self, namespace: Incarnation, service: Incarnation) -> bool {
+    pub fn matches(&self, namespace: Incarnation, service: Incarnation) -> bool {
         self.observation.namespace == namespace && self.observation.service_instance == service
     }
 }
@@ -69,7 +69,7 @@ fn hash(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::from_bytes(Sha256::digest(bytes).into())
 }
 fn read(path: &Path, maximum: usize) -> Result<Vec<u8>> {
-    crate::install_files::safe_file(path)?;
+    airk_host::install_files::safe_file(path)?;
     ensure!(
         fs::metadata(path)?.len() <= maximum as u64,
         "native completion evidence exceeds capacity"
@@ -229,7 +229,7 @@ impl NativeLedger {
         temporary.write_all(&desired_head)?;
         temporary.as_file().sync_all()?;
         if head_path.try_exists()? {
-            crate::install_files::safe_file(&head_path)?;
+            airk_host::install_files::safe_file(&head_path)?;
         }
         temporary.persist(&head_path)?;
         sync(&self.directory)?;

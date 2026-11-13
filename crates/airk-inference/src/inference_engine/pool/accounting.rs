@@ -19,7 +19,7 @@ struct Counts {
     workers: BTreeMap<Incarnation, (u64, u64, u64)>,
 }
 #[derive(Default)]
-pub(crate) struct Accounting(Mutex<Counts>);
+pub struct Accounting(Mutex<Counts>);
 impl Accounting {
     pub(super) fn status(
         &self,
@@ -99,10 +99,7 @@ impl Accounting {
         state.workers.remove(&worker);
         Ok(())
     }
-    pub(crate) fn admit(
-        self: &Arc<Self>,
-        worker: Incarnation,
-    ) -> Result<(ComputeCharge, DeliveryCharge)> {
+    pub fn admit(self: &Arc<Self>, worker: Incarnation) -> Result<(ComputeCharge, DeliveryCharge)> {
         let mut state = self
             .0
             .lock()
@@ -200,7 +197,7 @@ impl Accounting {
         Ok(observation)
     }
 }
-pub(crate) struct ComputeCharge {
+pub struct ComputeCharge {
     owner: Arc<Accounting>,
     running: bool,
     worker: Incarnation,
@@ -241,7 +238,7 @@ impl Drop for ComputeCharge {
         }
     }
 }
-pub(crate) struct DeliveryCharge(Arc<Accounting>, Incarnation);
+pub struct DeliveryCharge(Arc<Accounting>, Incarnation);
 impl Drop for DeliveryCharge {
     fn drop(&mut self) {
         let mut state = self

@@ -7,7 +7,7 @@ mod tests;
 /// Native lease exclusion for an earlier in-process provider. This is never a
 /// process-reap receipt and is valid only for a trusted InProcess obligation.
 #[derive(Clone)]
-pub(crate) struct PredecessorExclusionWitness {
+pub struct PredecessorExclusionWitness {
     current: airk_core::identity::Incarnation,
     prior: airk_core::identity::Incarnation,
     generation: airk_core::identity::Incarnation,
@@ -15,7 +15,7 @@ pub(crate) struct PredecessorExclusionWitness {
     _ownership: std::sync::Arc<airk_store::service::ServiceLease>,
 }
 impl PredecessorExclusionWitness {
-    pub(crate) fn acquire(
+    pub fn acquire(
         ownership: std::sync::Arc<airk_store::service::ServiceLease>,
         current: airk_core::identity::Incarnation,
         prior: airk_core::identity::Incarnation,
@@ -31,7 +31,7 @@ impl PredecessorExclusionWitness {
             _ownership: ownership,
         })
     }
-    pub(crate) fn matches(
+    pub fn matches(
         &self,
         current: airk_core::identity::Incarnation,
         namespace: airk_core::identity::Incarnation,
@@ -43,7 +43,7 @@ impl PredecessorExclusionWitness {
             && self.prior == prior
             && self.generation == generation
     }
-    pub(crate) fn key(
+    pub fn key(
         &self,
     ) -> (
         airk_core::identity::Incarnation,
@@ -53,7 +53,7 @@ impl PredecessorExclusionWitness {
     }
 }
 #[cfg(not(feature = "local-inference"))]
-pub(crate) use crate::embedding_pool_process::Pool;
+pub use crate::embedding_pool_process::Pool;
 
 #[cfg(feature = "local-inference")]
 mod native {
@@ -90,13 +90,13 @@ mod native {
         events: Vec<CompletedProvider>,
         ledger: Option<crate::inference_completion_ledger::NativeLedger>,
     }
-    pub(crate) struct CompletedProvider {
+    pub struct CompletedProvider {
         pub completion: NativeCompletionWitness,
         pub ledger: crate::inference_completion_ledger::NativeLedgerWitness,
         owners: Weak<Mutex<FactoryOwners>>,
     }
     impl CompletedProvider {
-        pub(crate) fn acknowledge(self) -> Result<()> {
+        pub fn acknowledge(self) -> Result<()> {
             let owners = self
                 .owners
                 .upgrade()
@@ -151,9 +151,9 @@ mod native {
             Ok(())
         }
     }
-    pub(crate) struct Pool {
+    pub struct Pool {
         owner: Option<InferenceOwner>,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         legacy: Option<crate::embedding_pool_process::Pool>,
         root: PathBuf,
         service: Incarnation,
@@ -166,7 +166,7 @@ mod native {
     }
     /// Sole production factory for this service incarnation. A zero-provider
     /// proof is possible only before this actual factory ever creates an owner.
-    pub(crate) struct InferenceFactory {
+    pub struct InferenceFactory {
         ownership: Arc<airk_store::service::ServiceLease>,
         provider: ProviderIdentity,
         allocated: bool,
@@ -175,7 +175,7 @@ mod native {
         owners: Arc<Mutex<FactoryOwners>>,
     }
     impl InferenceFactory {
-        pub(crate) fn new(
+        pub fn new(
             ownership: Arc<airk_store::service::ServiceLease>,
             service: Incarnation,
         ) -> Result<Self> {
@@ -183,7 +183,7 @@ mod native {
             let provider = ProviderIdentity {
                 schema: 1,
                 service_instance: service,
-                approved_execution_sha256: crate::runtime_pair::current_executable_sha256()?
+                approved_execution_sha256: airk_host::runtime_pair::current_executable_sha256()?
                     .parse()?,
                 provider_generation: new_instance_id()?,
             };
@@ -205,14 +205,14 @@ mod native {
                 owners: Arc::new(Mutex::new(owners)),
             })
         }
-        pub(crate) fn take_completed(&mut self) -> Result<Vec<CompletedProvider>> {
+        pub fn take_completed(&mut self) -> Result<Vec<CompletedProvider>> {
             let mut owners = self
                 .owners
                 .lock()
                 .map_err(|_| anyhow::anyhow!("native factory history unavailable"))?;
             Ok(std::mem::take(&mut owners.events))
         }
-        pub(crate) fn start(&mut self, threads: u16) -> Result<Pool> {
+        pub fn start(&mut self, threads: u16) -> Result<Pool> {
             ensure!(!self.closed, "inference factory admission closed");
             let index = {
                 let mut owners = self
@@ -251,7 +251,7 @@ mod native {
             Ok(pool)
         }
 
-        pub(crate) fn empty_checkpoint(
+        pub fn empty_checkpoint(
             &mut self,
             operation: Incarnation,
             workers: Vec<WorkerIdentity>,
@@ -351,7 +351,7 @@ mod native {
             let now = Instant::now();
             Ok(Self {
                 owner: Some(owner),
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 legacy: None,
                 root: root.to_path_buf(),
                 service,
@@ -367,12 +367,8 @@ mod native {
                 factory_slot: None,
             })
         }
-        #[cfg(test)]
-        pub(crate) fn start_fixture(
-            root: &Path,
-            service: Incarnation,
-            main: &Path,
-        ) -> Result<Self> {
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn start_fixture(root: &Path, service: Incarnation, main: &Path) -> Result<Self> {
             let legacy = crate::embedding_pool_process::Pool::start_fixture(root, service, main)?;
             let generation = legacy.identity();
             let health = legacy.health();
@@ -389,20 +385,17 @@ mod native {
                 factory_slot: None,
             })
         }
-        pub(crate) fn identity(&self) -> Incarnation {
+        pub fn identity(&self) -> Incarnation {
             self.generation
         }
-        #[cfg(test)]
-        pub(crate) fn set_compute_hook(
-            &self,
-            hook: crate::inference_engine::ComputeHook,
-        ) -> Result<()> {
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn set_compute_hook(&self, hook: crate::inference_engine::ComputeHook) -> Result<()> {
             self.owner
                 .as_ref()
                 .context("native inference owner unavailable")?
                 .set_compute_hook(hook)
         }
-        pub(crate) fn provider_status(
+        pub fn provider_status(
             &self,
         ) -> anyhow::Result<Option<airk_core::inference_provider::ProviderStatus>> {
             self.owner
@@ -411,33 +404,33 @@ mod native {
                 .transpose()
         }
         pub(crate) fn in_process(&self) -> bool {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             if self.legacy.is_some() {
                 return false;
             }
             true
         }
-        pub(crate) fn process_id(&self) -> Option<u32> {
-            #[cfg(test)]
+        pub fn process_id(&self) -> Option<u32> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = &self.legacy {
                 return Some(legacy.process_id());
             }
             None
         }
         #[cfg(windows)]
-        pub(crate) fn descendant_rss(&self) -> Result<Vec<Option<u64>>> {
-            #[cfg(test)]
+        pub fn descendant_rss(&self) -> Result<Vec<Option<u64>>> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = &self.legacy {
                 return legacy.descendant_rss();
             }
             // Native compute and model pages are already in the service RSS.
             Ok(Vec::new())
         }
-        pub(crate) fn health(&self) -> PoolHealth {
+        pub fn health(&self) -> PoolHealth {
             self.health
         }
-        pub(crate) fn failure(&mut self) -> Result<Option<String>> {
-            #[cfg(test)]
+        pub fn failure(&mut self) -> Result<Option<String>> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return Ok(legacy
                     .exit_status()?
@@ -449,11 +442,11 @@ mod native {
                 .filter(|owner| owner.failed())
                 .map(|_| "inference_owner_failed".into()))
         }
-        pub(crate) fn retiring(&self) -> bool {
+        pub fn retiring(&self) -> bool {
             self.stop_operation.is_some()
         }
-        pub(crate) fn terminate(&mut self) -> Result<()> {
-            #[cfg(test)]
+        pub fn terminate(&mut self) -> Result<()> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.terminate();
             }
@@ -485,8 +478,8 @@ mod native {
             }
             Ok(())
         }
-        #[cfg(test)]
-        pub(crate) fn completion_witness(
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn completion_witness(
             &self,
         ) -> Option<crate::inference_engine::NativeCompletionWitness> {
             self.owner
@@ -494,16 +487,16 @@ mod native {
                 .and_then(InferenceOwner::completion)
                 .cloned()
         }
-        pub(crate) fn reap_witness(&self) -> Option<ProviderReapWitness> {
-            #[cfg(test)]
+        pub fn reap_witness(&self) -> Option<ProviderReapWitness> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = &self.legacy {
                 return legacy.reap_witness();
             }
             // An in-process barrier can never manufacture a process-reap fact.
             None
         }
-        #[cfg(test)]
-        pub(crate) fn access(
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn access(
             &mut self,
             worker: Incarnation,
             project: ProjectRegistration,
@@ -521,8 +514,8 @@ mod native {
                 project,
             )
         }
-        #[cfg(test)]
-        pub(crate) fn revoke(&mut self, worker: Incarnation) -> Result<()> {
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn revoke(&mut self, worker: Incarnation) -> Result<()> {
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.revoke(worker);
             }
@@ -531,12 +524,12 @@ mod native {
                 .context("inference owner unavailable")?
                 .revoke(worker)
         }
-        pub(crate) fn access_worker(
+        pub fn access_worker(
             &mut self,
             identity: WorkerIdentity,
             project: ProjectRegistration,
         ) -> Result<protocol::Access> {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.access_worker(identity, project);
             }
@@ -583,8 +576,8 @@ mod native {
                 in_process: true,
             })
         }
-        pub(crate) fn renew(&mut self, worker: Incarnation) -> Result<Renewal> {
-            #[cfg(test)]
+        pub fn renew(&mut self, worker: Incarnation) -> Result<Renewal> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.renew(worker);
             }
@@ -600,11 +593,11 @@ mod native {
                 Renewal::Missing
             })
         }
-        pub(crate) fn retirement_ticket(
+        pub fn retirement_ticket(
             &self,
             identity: WorkerIdentity,
         ) -> Result<Option<protocol::ProviderDrainTicket>> {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_ref() {
                 return legacy.retirement_ticket(identity);
             }
@@ -617,11 +610,11 @@ mod native {
             }
             Ok(None)
         }
-        pub(crate) fn begin_retirement(
+        pub fn begin_retirement(
             &mut self,
             identity: WorkerIdentity,
         ) -> Result<protocol::ProviderDrainTicket> {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.begin_retirement(identity);
             }
@@ -644,11 +637,11 @@ mod native {
             self.tickets.insert(identity.worker, ticket);
             Ok(ticket)
         }
-        pub(crate) fn poll_retirement(
+        pub fn poll_retirement(
             &mut self,
             ticket: &protocol::ProviderDrainTicket,
         ) -> Result<ProviderDrainState> {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.poll_retirement(ticket);
             }
@@ -673,11 +666,8 @@ mod native {
                 _ => Ok(ProviderDrainState::Unknown),
             }
         }
-        pub(crate) fn finish_retirement(
-            &mut self,
-            ticket: &protocol::ProviderDrainTicket,
-        ) -> Result<()> {
-            #[cfg(test)]
+        pub fn finish_retirement(&mut self, ticket: &protocol::ProviderDrainTicket) -> Result<()> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.finish_retirement(ticket);
             }
@@ -695,8 +685,8 @@ mod native {
             self.tickets.remove(&ticket.worker.worker);
             Ok(())
         }
-        pub(crate) fn status(&mut self) -> Result<protocol::Observation> {
-            #[cfg(test)]
+        pub fn status(&mut self) -> Result<protocol::Observation> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.status();
             }
@@ -708,8 +698,8 @@ mod native {
             self.health.last_ack_at = Instant::now();
             Ok(status)
         }
-        pub(crate) fn configure_threads(&mut self, threads: u16) -> Result<()> {
-            #[cfg(test)]
+        pub fn configure_threads(&mut self, threads: u16) -> Result<()> {
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
                 return legacy.configure_threads(threads);
             }
@@ -718,12 +708,12 @@ mod native {
                 .context("inference owner unavailable")?
                 .configure_threads(threads)
         }
-        pub(crate) fn checkpoint_drain(
+        pub fn checkpoint_drain(
             &mut self,
             operation: Incarnation,
             workers: Vec<WorkerIdentity>,
         ) -> Result<Option<CompletionObservation>> {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             ensure!(
                 self.legacy.is_none(),
                 "legacy helper requires verified process-exit checkpoint"
@@ -742,9 +732,9 @@ mod native {
     }
 }
 #[cfg(feature = "local-inference")]
-pub(crate) use native::{CompletedProvider, InferenceFactory, Pool};
+pub use native::{CompletedProvider, InferenceFactory, Pool};
 
-pub(crate) fn process_id(pool: &Pool) -> Option<u32> {
+pub fn process_id(pool: &Pool) -> Option<u32> {
     #[cfg(feature = "local-inference")]
     {
         pool.process_id()
@@ -754,7 +744,7 @@ pub(crate) fn process_id(pool: &Pool) -> Option<u32> {
         Some(pool.process_id())
     }
 }
-pub(crate) fn in_process(pool: &Pool) -> bool {
+pub fn in_process(pool: &Pool) -> bool {
     #[cfg(feature = "local-inference")]
     {
         pool.in_process()
@@ -765,7 +755,7 @@ pub(crate) fn in_process(pool: &Pool) -> bool {
         false
     }
 }
-pub(crate) fn provider_status(
+pub fn provider_status(
     pool: &Pool,
 ) -> anyhow::Result<Option<airk_core::inference_provider::ProviderStatus>> {
     #[cfg(feature = "local-inference")]

@@ -26,7 +26,7 @@ pub(super) struct Retirements {
     drains: BTreeMap<Incarnation, Drain>,
 }
 impl Retirements {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn native_identity(&self, worker: Incarnation) -> Option<WorkerIdentity> {
         self.members.get(&worker).and_then(|member| member.identity)
     }

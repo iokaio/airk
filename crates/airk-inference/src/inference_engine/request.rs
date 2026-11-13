@@ -45,7 +45,7 @@ pub(crate) fn handle(
                 model.is_none() && tokenizer.is_none(),
                 "asset extraction cannot run in a model session"
             );
-            airk_cli::bundled_assets::extract(&directory)?;
+            airk_host::bundled_assets::extract(&directory)?;
             Response::Extracted
         }
         Request::Open {

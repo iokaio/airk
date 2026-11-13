@@ -12,7 +12,7 @@ enum Helper {
     Legacy {
         child: NativeChild,
         #[cfg(windows)]
-        containment: crate::child_job::ChildJob,
+        containment: airk_host::child_job::ChildJob,
     },
     #[cfg(unix)]
     Guarded(airk_process::GroupChild),
@@ -48,10 +48,12 @@ impl OwnedHelper {
         }
         #[cfg(windows)]
         {
-            let mut child = crate::native_process::spawn(command).map_err(spawn_failure)?;
-            let containment =
-                crate::native_process::attach_owned(&mut child, crate::child_job::ChildJob::attach)
-                    .context(FailureCode("helper_containment_failed".into()))?;
+            let mut child = airk_host::native_process::spawn(command).map_err(spawn_failure)?;
+            let containment = airk_host::native_process::attach_owned(
+                &mut child,
+                airk_host::child_job::ChildJob::attach,
+            )
+            .context(FailureCode("helper_containment_failed".into()))?;
             let stdin = child
                 .stdin
                 .take()

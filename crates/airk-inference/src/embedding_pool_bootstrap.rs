@@ -115,7 +115,7 @@ impl GuardedBootstrap {
         #[cfg(windows)]
         Ok(())
     }
-    pub fn validate_init(&self, init: &crate::embedding_pool_protocol::Init) -> Result<()> {
+    pub fn validate_init(&self, init: &airk_host::embedding_pool_protocol::Init) -> Result<()> {
         self.enforce_native_owner()?;
         ensure!(
             init.runtime.canonicalize()? == self.runtime
@@ -131,8 +131,8 @@ impl GuardedBootstrap {
         );
         Ok(())
     }
-    fn ready(&self) -> crate::embedding_pool_protocol::Observation {
-        crate::embedding_pool_protocol::Observation::GuardedReady {
+    fn ready(&self) -> airk_host::embedding_pool_protocol::Observation {
+        airk_host::embedding_pool_protocol::Observation::GuardedReady {
             namespace: self.namespace,
             service: self.owner.service,
             pool: self.owner.helper,

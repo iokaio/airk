@@ -22,7 +22,7 @@ impl Fixture {
         let root = directory.path().join("runtime");
         crate::local_ipc::prepare_root(&root)?;
         let root = root.canonicalize()?;
-        drop(crate::catalog_test_fixture::authority_one(&root, OLD)?);
+        drop(airk_host::catalog_test_fixture::authority_one(&root, OLD)?);
         let lease = ServiceLease::acquire(&root)?;
         registry(&root)?.record_service_instance(&lease, OLD)?;
         Ok(Self {

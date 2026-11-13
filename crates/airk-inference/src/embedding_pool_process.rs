@@ -1,34 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Service-owned verified inference child. Private control contains no embedding inputs.
-#[cfg(any(not(feature = "local-inference"), test))]
-use crate::embedding_pool_protocol as protocol;
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 use crate::{runtime_pair, service_ipc};
 use airk_core::identity::Incarnation;
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 use airk_core::{
     identity::{Sha256Digest, framed_digest},
     service::{ProjectRegistration, WorkerIdentity},
 };
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
+use airk_host::embedding_pool_protocol as protocol;
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 use airk_kernel::service_broker::new_instance_id;
 use anyhow::{Context, Result, ensure};
-#[cfg(any(windows, not(feature = "local-inference"), test))]
+#[cfg(any(
+    windows,
+    not(feature = "local-inference"),
+    any(test, feature = "test-support")
+))]
 use std::time::Duration;
 use std::{path::Path, sync::mpsc, time::Instant};
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 use std::{
     path::PathBuf,
     process::{Command, ExitStatus, Stdio},
     sync::{Arc, Mutex, mpsc::Receiver},
 };
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 mod owned;
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 mod retirement;
-pub(crate) mod shared;
-#[cfg(any(not(feature = "local-inference"), test))]
+pub mod shared;
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 pub use protocol::ProviderDrainTicket;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderDrainState {
@@ -83,7 +87,7 @@ impl std::fmt::Display for FailureCode {
 }
 impl std::error::Error for FailureCode {}
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 fn spawn_failure(error: std::io::Error) -> anyhow::Error {
     let code = if error.kind() == std::io::ErrorKind::PermissionDenied {
         "helper_permission_denied"
@@ -93,7 +97,7 @@ fn spawn_failure(error: std::io::Error) -> anyhow::Error {
     anyhow::Error::new(error).context(FailureCode(code.into()))
 }
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 pub fn exit_code(status: ExitStatus) -> String {
     #[cfg(unix)]
     {
@@ -133,7 +137,7 @@ pub fn failure_code(error: &anyhow::Error, fallback: &str) -> String {
     fallback.into()
 }
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 pub struct Pool {
     child: owned::OwnedHelper,
     input: Option<owned::Input>,
@@ -149,7 +153,7 @@ pub struct Pool {
     reaped: Option<ProviderReapWitness>,
 }
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 fn route_observation(
     observation: protocol::Observation,
     drains: &Mutex<retirement::Drains>,
@@ -168,7 +172,7 @@ fn route_observation(
         observation => sender.try_send(observation).is_ok(),
     }
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl Drop for Pool {
     fn drop(&mut self) {
         if let Some(mut input) = self.input.take() {
@@ -196,7 +200,7 @@ impl Drop for Pool {
         }
     }
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl Pool {
     pub fn terminate(&mut self) -> Result<()> {
         self.finish_native_reap()
@@ -251,8 +255,8 @@ impl Pool {
             &std::env::current_exe()?.canonicalize()?,
         )
     }
-    #[cfg(test)]
-    pub(crate) fn start_fixture(root: &Path, service: Incarnation, main: &Path) -> Result<Self> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_fixture(root: &Path, service: Incarnation, main: &Path) -> Result<Self> {
         Self::start_from_main(root, service, 1, main)
     }
     fn start_from_main(
@@ -362,7 +366,10 @@ impl Pool {
     pub fn exit_status(&mut self) -> std::io::Result<Option<ExitStatus>> {
         self.child.try_wait()
     }
-    #[cfg(any(not(feature = "local-inference"), all(test, unix)))]
+    #[cfg(any(
+        not(feature = "local-inference"),
+        all(any(test, feature = "test-support"), unix)
+    ))]
     pub fn containment_failed(&self, error: &std::io::Error) -> bool {
         #[cfg(unix)]
         {
@@ -401,7 +408,7 @@ impl Pool {
         // observation before submitting another operation; do not replay it.
         self.finish_pending_status()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn access(
         &mut self,
         worker: Incarnation,
@@ -477,7 +484,7 @@ impl Pool {
         })();
         self.finish_control(result)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn revoke(&mut self, worker: Incarnation) -> Result<()> {
         self.begin_control()?;
         let result = (|| {
@@ -1122,8 +1129,8 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let mut child = crate::native_process::spawn(&mut command)?;
-        let result = crate::native_process::attach_owned(&mut child, |_| {
+        let mut child = airk_host::native_process::spawn(&mut command)?;
+        let result = airk_host::native_process::attach_owned(&mut child, |_| {
             anyhow::bail!("injected containment failure")
         });
         assert!(result.is_err());

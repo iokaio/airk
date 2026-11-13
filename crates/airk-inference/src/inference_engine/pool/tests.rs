@@ -2,7 +2,7 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
-pub(crate) fn fixture(
+pub fn fixture(
     root: &Path,
     label: &str,
     name: &str,
@@ -40,7 +40,7 @@ pub(crate) fn fixture(
     ))
 }
 
-pub(crate) fn open(location: ModelLocation, identity: String) -> Request {
+pub fn open(location: ModelLocation, identity: String) -> Request {
     Request::Open {
         protocol: PROTOCOL,
         version: env!("CARGO_PKG_VERSION").into(),
@@ -471,7 +471,7 @@ fn bundled_provision_is_global_persistent_and_does_not_unload_compatible_inferen
     };
     assert_eq!(
         objects.local_set(),
-        airk_cli::bundled_assets::default_plan()?
+        airk_host::bundled_assets::default_plan()?
     );
     let Response::Provisioned { objects: other } =
         engine.request(&second, session, Request::ProvisionBundled)?

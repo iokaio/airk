@@ -27,13 +27,13 @@ struct SharedInit {
     program: PathBuf,
 }
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 struct Reservation {
     root: PathBuf,
     owner: SharedHelperIdentity,
     transferred: bool,
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl Drop for Reservation {
     fn drop(&mut self) {
         if !self.transferred {
@@ -162,7 +162,7 @@ fn socket() -> Result<UnixStream> {
     Ok(unsafe { UnixStream::from_raw_fd(fd) })
 }
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 pub(crate) fn spawn(
     root: &Path,
     service: Incarnation,
@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     }
 }
 
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 struct SharedOwner {
     child: Child,
     socket: Option<UnixStream>,
@@ -300,13 +300,13 @@ struct SharedOwner {
     finished: Option<ExitStatus>,
     drained: bool,
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 #[derive(Debug)]
 struct SharedGuardianReaped {
     owner: SharedHelperIdentity,
     status: ExitStatus,
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl std::fmt::Display for SharedGuardianReaped {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -316,16 +316,16 @@ impl std::fmt::Display for SharedGuardianReaped {
         )
     }
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl std::error::Error for SharedGuardianReaped {}
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 pub(crate) fn owner_reaped(error: &io::Error, service: Incarnation, helper: Incarnation) -> bool {
     error
         .get_ref()
         .and_then(|error| error.downcast_ref::<SharedGuardianReaped>())
         .is_some_and(|error| error.owner == SharedHelperIdentity { service, helper })
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl SharedOwner {
     fn request(&mut self, request: Request) -> io::Result<Reply> {
         let result = (|| {
@@ -368,7 +368,7 @@ impl SharedOwner {
         self.drained = true;
     }
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl GroupOwner for SharedOwner {
     fn id(&self) -> u32 {
         self.group
@@ -458,7 +458,7 @@ impl GroupOwner for SharedOwner {
         Err(error)
     }
 }
-#[cfg(any(not(feature = "local-inference"), test))]
+#[cfg(any(not(feature = "local-inference"), any(test, feature = "test-support")))]
 impl Drop for SharedOwner {
     fn drop(&mut self) {
         if !self.drained && self.finished.is_none() {
@@ -479,7 +479,7 @@ pub(crate) fn serve() -> Result<()> {
     );
     let main = std::env::current_exe()?.canonicalize()?;
     ensure!(
-        crate::runtime_pair::verify_helper(&main)? == init.program,
+        airk_host::runtime_pair::verify_helper(&main)? == init.program,
         "shared guardian helper payload changed"
     );
     let actual = pin.metadata()?;

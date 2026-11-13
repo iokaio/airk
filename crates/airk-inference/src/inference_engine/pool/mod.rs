@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Canonical in-process inference pool. The service-owned `InferenceOwner`
 // drives it; this library owns the native in-process completion barrier.
-use airk_cli::{
+use crate::{
     embedding_pool_protocol as protocol,
     local_ipc::{self, Stream},
 };
@@ -23,10 +23,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
-pub(crate) mod accounting;
+pub mod accounting;
 mod owner;
 mod retirement;
-pub(crate) use owner::{InferenceOwner, NativeCompletionWitness};
+pub use owner::{InferenceOwner, NativeCompletionWitness};
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
@@ -44,15 +44,15 @@ enum Binding {
 struct Session {
     binding: Binding,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ComputeContext {
+pub struct ComputeContext {
     pub worker: Option<airk_core::service::WorkerIdentity>,
     pub helper: Incarnation,
     pub request_id: Incarnation,
     pub session: Incarnation,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) type ComputeHook = Box<dyn FnMut(Option<&ComputeContext>, &Request) + Send>;
 
 pub(crate) struct Engine {
@@ -70,11 +70,11 @@ pub(crate) struct Engine {
     reuses: u64,
     used: Instant,
     inference_threads: Arc<AtomicUsize>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     before_compute: Option<ComputeHook>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     compute_context: Option<ComputeContext>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     after_model_selection: Option<Box<dyn FnMut() + Send>>,
 }
 
@@ -201,11 +201,11 @@ impl Engine {
             reuses: 0,
             used: Instant::now(),
             inference_threads: Arc::new(AtomicUsize::new(1)),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             before_compute: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             compute_context: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             after_model_selection: None,
         })
     }
@@ -337,7 +337,7 @@ impl Engine {
                         objects: embedded.reference(&self.runtime)?,
                     });
                 }
-                let set = airk_cli::bundled_assets::EmbeddedAssets::plan()?;
+                let set = airk_host::bundled_assets::EmbeddedAssets::plan()?;
                 if self.model_files.installed_reference(&set).is_ok() {
                     // Reusing installed files must not unload a compatible resident model.
                     return Ok(Response::Provisioned {
@@ -349,7 +349,7 @@ impl Engine {
                 self.model_key = None;
                 let _lease = self.model_files.install_readers(&set, |name| {
                     Ok(Box::new(std::io::Cursor::new(
-                        airk_cli::bundled_assets::EmbeddedAssets::bytes(name)?,
+                        airk_host::bundled_assets::EmbeddedAssets::bytes(name)?,
                     )))
                 })?;
                 Ok(Response::Provisioned {
@@ -494,7 +494,7 @@ impl Engine {
                             "invalid model operation"
                         );
                         self.select_model(&binding, owner)?;
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-support"))]
                         if let Some(hook) = self.after_model_selection.as_mut() {
                             hook();
                         }
@@ -521,7 +521,7 @@ impl Engine {
                         // Model selection may perform a slow native load. Recheck
                         // the authoritative fence after it, at actual inference.
                         require_live(owner)?;
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-support"))]
                         if let Some(hook) = self.before_compute.as_mut() {
                             hook(self.compute_context.as_ref(), &request);
                         }
@@ -534,7 +534,7 @@ impl Engine {
                         );
                         self.select_tokenizer(path, owner)?;
                         require_live(owner)?;
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-support"))]
                         if let Some(hook) = self.before_compute.as_mut() {
                             hook(self.compute_context.as_ref(), &request);
                         }
@@ -546,9 +546,9 @@ impl Engine {
     }
 }
 
-pub(crate) enum Work {
+pub enum Work {
     Sweep,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     ComputeHook {
         hook: ComputeHook,
         reply: oneshot::Sender<()>,
@@ -561,7 +561,7 @@ pub(crate) enum Work {
         reply: oneshot::Sender<protocol::ResultEnvelope>,
         charge: Option<accounting::ComputeCharge>,
         authorization: Option<Arc<State>>,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         native_worker: Option<airk_core::service::WorkerIdentity>,
     },
     Release {
@@ -581,7 +581,7 @@ pub(crate) enum Work {
 }
 fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
     match work {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         Work::ComputeHook { hook, reply } => {
             engine.before_compute = Some(hook);
             let _ = reply.send(());
@@ -604,14 +604,14 @@ fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
             reply,
             mut charge,
             authorization,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             native_worker,
         } => {
             if let Some(charge) = charge.as_mut() {
                 charge.running();
             }
             let envelope = *envelope;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             {
                 engine.compute_context = Some(ComputeContext {
                     worker: native_worker,
@@ -663,7 +663,7 @@ fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
             });
             // Result errors must not leak this call's observation into later
             // work. This is instrumentation only, never an admission decision.
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             {
                 engine.compute_context = None;
             }
@@ -757,15 +757,15 @@ fn register_authorization(
     protocol::Observation::Registered
 }
 
-pub(crate) struct State {
+pub struct State {
     service: Incarnation,
     pool: Incarnation,
     role: String,
     grants: Mutex<BTreeMap<Sha256Digest, Authorization>>,
     retirement: Mutex<retirement::Retirements>,
-    pub(crate) sender: mpsc::Sender<Work>,
+    pub sender: mpsc::Sender<Work>,
     closing: Arc<AtomicBool>,
-    pub(crate) accounting: Option<Arc<accounting::Accounting>>,
+    pub accounting: Option<Arc<accounting::Accounting>>,
 }
 impl State {
     fn grant_live(&self, grant: &protocol::Grant) -> Result<bool> {
@@ -903,7 +903,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
                 None => (None, None),
             };
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             let native_worker = {
                 let retirement = state
                     .retirement
@@ -921,7 +921,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     reply,
                     charge,
                     authorization: Some(state.clone()),
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-support"))]
                     native_worker,
                 })
                 .map_err(|_| anyhow::anyhow!("pool queue is full"))?;
@@ -956,5 +956,5 @@ impl Engine {
         self.request_guarded(grant, session, request, None)
     }
 }
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod tests;

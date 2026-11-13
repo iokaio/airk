@@ -264,7 +264,7 @@ struct Hub {
     identity: airk_core::service::WorkerIdentity,
     state: Mutex<HubState>,
     changed: Condvar,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     waiting: Mutex<Option<mpsc::Sender<()>>>,
 }
 impl Hub {
@@ -283,7 +283,7 @@ impl Hub {
                 connecting: false,
             }),
             changed: Condvar::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             waiting: Mutex::new(None),
         })
     }
@@ -378,7 +378,7 @@ impl Hub {
                     )
                     .context(HelperUnavailable));
                 }
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 if let Some(waiting) = self.waiting.lock().unwrap().as_ref() {
                     let _ = waiting.send(());
                 }
@@ -490,9 +490,9 @@ static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
 /// for the whole process; an in-process owner keeps its own handle and binds
 /// its connector only on that owner's threads.
 #[derive(Clone)]
-pub(crate) struct PoolHandle(Arc<Hub>);
+pub struct PoolHandle(Arc<Hub>);
 impl PoolHandle {
-    pub(crate) fn new(
+    pub fn new(
         runtime: &Path,
         identity: airk_core::service::WorkerIdentity,
         access: Option<protocol::Access>,
@@ -502,28 +502,24 @@ impl PoolHandle {
         hub.update_pending(access, pending)?;
         Ok(Self(hub))
     }
-    pub(crate) fn connector(&self) -> Arc<dyn Connector> {
+    pub fn connector(&self) -> Arc<dyn Connector> {
         Arc::new(HubConnector(self.0.clone()))
     }
     /// The child-process installation: exactly once per process.
-    pub(crate) fn install_process(&self) -> Result<()> {
+    pub fn install_process(&self) -> Result<()> {
         ensure!(
             HUB.set(self.0.clone()).is_ok(),
             "pool connector already installed"
         );
         embedding_worker::install_connector(self.connector())
     }
-    pub(crate) fn update(&self, access: Option<protocol::Access>) -> Result<()> {
+    pub fn update(&self, access: Option<protocol::Access>) -> Result<()> {
         self.0.update(access)
     }
-    pub(crate) fn update_pending(
-        &self,
-        access: Option<protocol::Access>,
-        pending: bool,
-    ) -> Result<()> {
+    pub fn update_pending(&self, access: Option<protocol::Access>, pending: bool) -> Result<()> {
         self.0.update_pending(access, pending)
     }
-    pub(crate) fn close(&self) {
+    pub fn close(&self) {
         self.0.close();
     }
 }

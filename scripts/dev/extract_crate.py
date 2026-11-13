@@ -83,6 +83,9 @@ def rewrite(text, owner, group, earlier):
         return match.group(0)
 
     text = re.sub(r"\b(crate|airk_cli)::([a-z0-9_]+)", replace, text)
+    # `airk_cli::{a, b}` names the old crate root; in the new crate that is `crate::{…}`
+    # (each named module resolves through the aliases `lib.rs` declares).
+    text = re.sub(r"\bairk_cli::\{", "crate::{", text)
     return text, problems
 
 
@@ -172,6 +175,15 @@ def main(argv=None):
     header = ["// SPDX-License-Identifier: Apache-2.0",
               f"//! The {group} part of the former `airk-cli` crate (docs/simplify/airk-cli-split.md).",
               f"extern crate self as {ident(crate)};"]
+    # Grouped imports (`use crate::{a, b}`) are not rewritten; alias each earlier-crate module
+    # they name so `crate::<module>` keeps resolving in the moved code.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import module_graph
+    grouped = set()
+    for text in rewritten.values():
+        grouped.update(module_graph.grouped(text))
+    header += [f"pub(crate) use {ident(CRATES[owner[name]])}::{name};"
+               for name in sorted(grouped) if owner.get(name) in earlier]
     header += [ALIASES[name] for name in ("ipc", "local_ipc", "service_ipc") if name in used_aliases or
                ("ipc" == name and {"local_ipc", "service_ipc"} & used_aliases)]
     if "owner_acl" in used_aliases:

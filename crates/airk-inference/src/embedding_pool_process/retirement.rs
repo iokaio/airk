@@ -62,7 +62,7 @@ impl Drains {
     pub(super) fn registered(&mut self, identity: airk_core::service::WorkerIdentity) {
         self.members.insert(identity.worker, identity);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn revoked(&mut self, worker: Incarnation) {
         if !self
             .slots

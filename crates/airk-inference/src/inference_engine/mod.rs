@@ -2,7 +2,7 @@
 //! Service-owned inference execution, sharing the canonical model handlers.
 mod request;
 use request::handle;
-pub(crate) mod pool;
-#[cfg(test)]
+pub mod pool;
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use pool::ComputeHook;
-pub(crate) use pool::{InferenceOwner, NativeCompletionWitness};
+pub use pool::{InferenceOwner, NativeCompletionWitness};
