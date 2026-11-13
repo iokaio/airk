@@ -3,7 +3,7 @@
 extern crate self as airk_cli;
 /// I3 admin HTTP contract (split C5): leaf types, pure admission decisions and
 /// the generated-schema owner. `admin_plane` is its handler (Phase 5).
-pub mod admin_contract;
+pub use airk_endpoint::admin_contract;
 /// The service's `/admin` plane (split Phase 5): launch codes, sessions,
 /// embedded assets and admin dispatch.
 pub(crate) mod admin_plane;
@@ -25,7 +25,7 @@ pub mod embedding_pool_client;
 mod embedding_pool_process;
 pub use airk_host::embedding_pool_protocol;
 mod http_backend;
-pub mod http_endpoint;
+pub use airk_endpoint::http_endpoint;
 mod http_gateway;
 #[cfg(feature = "local-inference")]
 pub(crate) mod inference_completion_ledger;
@@ -39,16 +39,10 @@ mod native_admin_connections;
 pub(crate) use airk_host::read_attempt;
 mod reference_refresh_control;
 mod registry_console;
-pub(crate) mod service_inference;
-/// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
-/// which must not depend on service or IPC protocol code.
-#[cfg(windows)]
-pub(crate) mod owner_acl {
-    pub(crate) use crate::local_ipc::require_owner_private;
-}
 /// Private role admission (split plan §5.1, step 3.0).
 pub mod role_admission;
 mod runtime_metadata;
+pub(crate) mod service_inference;
 pub use airk_host::runtime_pair;
 pub mod service_configuration;
 pub mod service_frontend;
@@ -120,7 +114,7 @@ pub mod client_requests;
 pub mod console_client;
 /// Client side of the native service control transport (moved from `service_runtime`).
 pub(crate) mod control_client;
-pub mod explorer_assistance;
+pub use airk_endpoint::explorer_assistance;
 pub(crate) use airk_host::request_journal;
 pub mod session;
 pub use airk_host::session_protocol;

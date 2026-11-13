@@ -306,10 +306,7 @@ fn leaf(bundle: &mut Bundle, now: u64) -> Result<()> {
 impl TlsIdentity {
     /// Nonmutating inspection: unlike load_or_create this never renews a leaf,
     /// repairs an export, or replaces an expired issuer.
-    pub(crate) fn inspect_bundle(
-        root: &Path,
-        binding: &InstallationBinding,
-    ) -> Result<TlsBundleIdentity> {
+    pub fn inspect_bundle(root: &Path, binding: &InstallationBinding) -> Result<TlsBundleIdentity> {
         let bytes = read_private(root, BUNDLE, MAX_BUNDLE)?.context("HTTP key bundle missing")?;
         let bundle = checked_bundle(&bytes, binding)?;
         let ca = read_private(root, CA_FILE, MAX_CA)?.context("HTTP issuer export missing")?;
@@ -365,7 +362,7 @@ impl TlsIdentity {
 
     /// Freeze the latest legitimate leaf only after native stop/exclusion.
     /// The immutable prepared issuer/key remains the original approval proof.
-    pub(crate) fn snapshot_current_predecessor(
+    pub fn snapshot_current_predecessor(
         active: &Path,
         prepared_old: &Path,
         current_old: &Path,
@@ -399,7 +396,7 @@ impl TlsIdentity {
     /// The caller's actual native lease proves that no service can read this
     /// pair while it is changed. Each file may be old or new after interruption;
     /// anything else is preserved and refused before either write.
-    pub(crate) fn publish_staged_bundle(
+    pub fn publish_staged_bundle(
         active: &Path,
         staged_old: &Path,
         staged_new: &Path,
@@ -454,7 +451,7 @@ impl TlsIdentity {
 
     /// Finalization removes only this operation's exact staged old private
     /// bundle. The public issuer and all unrelated trust/receipt files remain.
-    pub(crate) fn retire_staged_private_key(
+    pub fn retire_staged_private_key(
         staged_old: &Path,
         expected: &TlsBundleIdentity,
     ) -> Result<()> {

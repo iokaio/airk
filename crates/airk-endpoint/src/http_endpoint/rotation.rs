@@ -472,19 +472,19 @@ pub fn require_trust_change_allowed(control: &Path) -> Result<()> {
 
 /// The `runtime http-issuer-rotation` reply (moved from
 /// `runtime_install/http_rotation.rs`, U90), also the service's M18 `Status`.
-pub(crate) fn now_ms() -> Result<u64> {
+pub fn now_ms() -> Result<u64> {
     Ok(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis()
         .try_into()?)
 }
-pub(crate) fn saved_endpoint(control: &Path) -> Result<Option<EndpointDescriptor>> {
+pub fn saved_endpoint(control: &Path) -> Result<Option<EndpointDescriptor>> {
     let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
     let binding = installation_binding(control, registry.incarnation()?)?;
     load_descriptor(&control.join("http-1"), &binding)
 }
 
-pub(crate) fn output(
+pub fn output(
     control: &Path,
     trust_result: Option<serde_json::Value>,
 ) -> Result<serde_json::Value> {

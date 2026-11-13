@@ -14,7 +14,7 @@ use std::{
 };
 
 mod rotation_receipts;
-pub(crate) use rotation_receipts::{
+pub use rotation_receipts::{
     abort_rotation_new, commit_rotation_receipt, finalize_rotation_old, snapshot_rotation_receipt,
 };
 
@@ -29,7 +29,7 @@ const PORTS: engine::Ports<InstallationBinding> = engine::Ports {
     files: engine::Files {
         read: read_private,
         write: write_private,
-        regular: crate::install_files::safe_file,
+        regular: airk_host::install_files::safe_file,
     },
     powershell: windows_program,
     validate_binding: crate::http_endpoint::validate_binding,
@@ -40,20 +40,20 @@ const PORTS: engine::Ports<InstallationBinding> = engine::Ports {
 /// receipt lock: the verified control root, the rotation lock and no pending
 /// rotation, in that order.
 fn active_guard(control: &Path) -> Result<Box<dyn std::any::Any>> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     let lock = super::rotation::lock(control)?;
     super::rotation::require_trust_change_allowed(control)?;
     Ok(Box::new(lock))
 }
 
-pub(crate) fn public_ca(root: &Path, expected: Sha256Digest) -> Result<Vec<u8>> {
+pub fn public_ca(root: &Path, expected: Sha256Digest) -> Result<Vec<u8>> {
     engine::public_ca(&PORTS.files, root, &expected.to_string())
 }
 
 fn windows_program() -> Result<PathBuf> {
     #[cfg(windows)]
     {
-        crate::native_command::windows_tool("WindowsPowerShell/v1.0/powershell.exe")
+        airk_host::native_command::windows_tool("WindowsPowerShell/v1.0/powershell.exe")
     }
     #[cfg(all(not(windows), test))]
     {
@@ -67,7 +67,7 @@ fn windows_program() -> Result<PathBuf> {
 
 /// Read the protected endpoint against the existing native namespace without
 /// starting a service or generating a replacement identity.
-pub(crate) fn saved_identity(
+pub fn saved_identity(
     control: &Path,
 ) -> Result<(
     InstallationBinding,
@@ -83,7 +83,7 @@ pub(crate) fn saved_identity(
 
 /// Uninstall never adopts or removes a preexisting issuer. Unknown mutation
 /// outcomes stop removal so the exact receipt and public CA remain recoverable.
-pub(crate) fn remove_owned(control: &Path) -> Result<Option<TrustStatus>> {
+pub fn remove_owned(control: &Path) -> Result<Option<TrustStatus>> {
     remove_owned_with(control, &mut |root, binding, sha| {
         manage(root, binding, sha, Action::Remove)
     })
@@ -142,7 +142,7 @@ pub fn manage(
             Host::current(),
             &mut |program, args| {
                 let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-                crate::native_command::execute_native_observation(program, &refs)
+                airk_host::native_command::execute_native_observation(program, &refs)
             },
         )
     }

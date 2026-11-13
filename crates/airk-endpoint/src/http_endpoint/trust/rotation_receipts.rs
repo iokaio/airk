@@ -38,7 +38,7 @@ fn checked_receipt(
     let receipt: Receipt = serde_json::from_slice(bytes)?;
     let store = match host {
         Host::Windows => PathBuf::from("CurrentUser/Root"),
-        Host::Macos => crate::user_paths::home()?.join("Library/Keychains/login.keychain-db"),
+        Host::Macos => airk_host::user_paths::home()?.join("Library/Keychains/login.keychain-db"),
         Host::Unsupported => bail!("owned user trust receipt is unsupported on this platform"),
     };
     ensure!(
@@ -104,7 +104,7 @@ fn archived_receipt(old: &Path, saved: &Preimage, host: Host) -> Result<Option<V
     }
 }
 
-pub(crate) fn snapshot_rotation_receipt(
+pub fn snapshot_rotation_receipt(
     active: &Path,
     old: &Path,
     binding: InstallationBinding,
@@ -160,7 +160,7 @@ fn snapshot_with(
     Ok(())
 }
 
-pub(crate) fn commit_rotation_receipt(
+pub fn commit_rotation_receipt(
     active: &Path,
     old: &Path,
     new: &Path,
@@ -215,7 +215,7 @@ fn commit_with(
     Ok(())
 }
 
-pub(crate) fn finalize_rotation_old(
+pub fn finalize_rotation_old(
     old: &Path,
     binding: InstallationBinding,
     ca: Sha256Digest,
@@ -262,7 +262,7 @@ fn finalize_with(
     Ok(Some(status))
 }
 
-pub(crate) fn abort_rotation_new(
+pub fn abort_rotation_new(
     new: &Path,
     binding: InstallationBinding,
     ca: Sha256Digest,

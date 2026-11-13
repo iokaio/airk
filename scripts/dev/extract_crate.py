@@ -101,6 +101,9 @@ def manifest(crate, group, earlier, cli_manifest):
                           + [f'"{CRATES[g]}/local-inference"' for g in earlier])
     support = ", ".join(f'"{CRATES[g]}/test-support"' for g in earlier)
     body = "\n".join(keep)
+    # airk-cli already depends on the crates extracted before; list each once, below.
+    for name in CRATES.values():
+        body = re.sub(rf"(?m)^{re.escape(name)}(?:\.workspace = true| = \{{[^\n]*\}})\n", "", body)
     body = body.replace("[dependencies]\n", "[dependencies]\n" + deps, 1)
     if "[dev-dependencies]\n" in body:
         body = body.replace("[dev-dependencies]\n", "[dev-dependencies]\n" + dev, 1)

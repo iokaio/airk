@@ -13,7 +13,13 @@ pub(super) async fn prepare(
     project: ProjectBinding,
     draft: ConfigurationDraft,
 ) -> ControlResponse {
-    match crate::service_configuration::prepare(control, project, draft).await {
+    match airk_host::service_configuration::prepare(
+        &crate::client_requests::ControlRoot(control),
+        project,
+        draft,
+    )
+    .await
+    {
         Ok(request) => ControlResponse::ConfigurationPrepared {
             request: Box::new(request),
         },

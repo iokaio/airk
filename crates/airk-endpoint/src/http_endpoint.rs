@@ -16,7 +16,7 @@ mod metadata;
 mod store;
 mod tls;
 pub mod trust;
-pub(crate) use airk_core::service_http_credentials::same_authority;
+pub use airk_core::service_http_credentials::same_authority;
 pub use metadata::{
     load_descriptor, publish_descriptor, read_registration_file, read_registrations_file,
     read_selection_file,
@@ -37,7 +37,7 @@ pub(crate) fn validate_binding(binding: &InstallationBinding) -> Result<()> {
 
 /// Reconstruct from the verified native control root, not from untrusted JSON.
 pub fn installation_binding(control: &Path, namespace: Incarnation) -> Result<InstallationBinding> {
-    crate::install_layout::validate_control_root(control)?;
+    airk_host::install_layout::validate_control_root(control)?;
     let control = control.canonicalize()?;
     let user = crate::local_ipc::current_user()?;
     InstallationBinding::derive(&control, &user, namespace)
@@ -72,7 +72,7 @@ impl BoundEndpoint {
 }
 
 /// Moved to `airk-ipc` (U90) so `airkctl` keeps the same owner-private records.
-pub(crate) use airk_ipc::private_record::read_private;
+pub use airk_ipc::private_record::read_private;
 use airk_ipc::private_record::{private_file, write_private};
 
 fn digest(bytes: &[u8]) -> Sha256Digest {

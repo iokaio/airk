@@ -52,7 +52,7 @@ pub struct Launch {
 
 /// Validate one explicitly attached window. Launch metadata is global, but this
 /// session identity must never be replaced by discovery of another window.
-pub(crate) fn window_plan(descriptor: &Path) -> Result<(Launch, String)> {
+pub fn window_plan(descriptor: &Path) -> Result<(Launch, String)> {
     let window = read_window(descriptor)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -360,7 +360,7 @@ pub fn command(launch: &Launch) -> Command {
 
 pub fn run(descriptor: &Path) -> Result<()> {
     let launch = plan(descriptor)?;
-    crate::native_process::forward_stdio(command(&launch))
+    airk_host::native_process::forward_stdio(command(&launch))
 }
 
 #[cfg(test)]

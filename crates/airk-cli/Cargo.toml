@@ -11,7 +11,7 @@ publish.workspace = true
 
 [features]
 default = []
-local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model", "airk-host/local-inference"]
+local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model", "airk-host/local-inference", "airk-endpoint/local-inference"]
 bundled-model = []
 parser-training = []
 
@@ -20,6 +20,7 @@ name = "airk"
 path = "src/main.rs"
 
 [dependencies]
+airk-endpoint.workspace = true
 airk-host.workspace = true
 airk-core.workspace = true
 airk-ipc.workspace = true
@@ -53,6 +54,7 @@ hyper-util.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+airk-endpoint = { workspace = true, features = ["test-support"] }
 airk-host = { workspace = true, features = ["test-support"] }
 hyper = { workspace = true, features = ["client"] }
 airk-ingest.workspace = true

@@ -123,5 +123,9 @@
    "runtime_commands",
    "standalone_setup"
   ]
- }
+ },
+ "facades": {
+  "service_configuration": "cli"
+ },
+ "facades_note": "airk-cli's `service_configuration` re-exports airk_host::service_configuration and adds `prepare(control: &Path, \u2026)` for external callers (tests); its own references are the composition root's."
 }

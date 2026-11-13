@@ -257,3 +257,25 @@ Every caller, including `tests/unregister_native.rs`, compiles unchanged.
   - `local-inference`: 1109 tests, all identical.
 - `airk-host`'s own tests run in 1.9 s.
 - Integration targets compile (Clippy `--all-targets`); running them is deferred to the end of the split.
+
+## Step 3b: `airk-endpoint` extracted (12 November 2026)
+
+`http_endpoint`, `admin_contract` and `explorer_assistance` (3 modules, 16 files) moved into
+`crates/airk-endpoint`.
+
+- **Facade.** `airk-cli`'s `service_configuration` facade is declared under `"facades"` in the groups file:
+  edges into it mean the `airk-host` module, and its own edges are the composition root's. The two
+  in-crate calls use `airk_host::service_configuration::prepare` with `ControlRoot` directly.
+- **Deleted.** `airk-cli`'s `owner_acl` alias had no caller after the move (a clean compile is the
+  evidence); `airk-endpoint` declares its own.
+- **Script fixes.**
+  - `extract_crate.py` no longer duplicates dependencies on crates already extracted.
+  - `widen_visibility.py` widens a grouped `pub(crate) use … {` from a continuation line.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical to step 2b by identity:
+  - default 1070 = 940 `airk-cli` + 70 `airk-endpoint` + 60 `airk-host`;
+  - `local-inference` 1109.
+- `airk-endpoint`'s own tests run in 9.6 s.

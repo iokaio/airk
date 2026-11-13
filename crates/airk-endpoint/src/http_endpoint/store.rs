@@ -427,7 +427,7 @@ impl CredentialStore {
     }
     /// Recheck under the service's credential mutex immediately before issuance.
     /// A read-only lookup is insufficient: explicit revocation can race it.
-    pub(crate) fn validate_reattachment(
+    pub fn validate_reattachment(
         &self,
         previous: Incarnation,
         next: Incarnation,
@@ -469,7 +469,7 @@ impl CredentialStore {
     }
     /// The caller must notify the gateway for every returned ID, including an
     /// uncertain commit error, before compacting or returning to enrollment.
-    pub(crate) fn revoke_inactive(&mut self, now_unix_ms: u64) -> (Vec<Incarnation>, Result<()>) {
+    pub fn revoke_inactive(&mut self, now_unix_ms: u64) -> (Vec<Incarnation>, Result<()>) {
         let result = Self::open(&self.root, self.ledger.binding.clone());
         match result {
             Ok(current) => *self = current,
@@ -517,7 +517,7 @@ impl CredentialStore {
     /// Reclaim active-ledger capacity without discarding issuance ownership or
     /// allowing a retired ID to be enrolled again. Each historical token path
     /// becomes one bounded, secret-free retirement proof; no directory scan.
-    pub(crate) fn compact_revoked(&mut self) -> Result<()> {
+    pub fn compact_revoked(&mut self) -> Result<()> {
         *self = Self::open(&self.root, self.ledger.binding.clone())?;
         let mut next = self.ledger.clone();
         for record in self.ledger.records.iter().filter(|record| record.revoked) {

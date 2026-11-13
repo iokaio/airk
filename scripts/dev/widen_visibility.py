@@ -131,6 +131,14 @@ def widen(path, number):
     file = Path(path) if Path(path).is_absolute() else ROOT / path
     lines = file.read_text(encoding="utf-8").split("\n")
     index = number - 1
+    # A name inside a grouped `pub(crate) use a::{x, y};` spanning lines: widen the `use` itself.
+    for back in range(index, max(index - 12, -1), -1):
+        if "}" in lines[back] and back != index:
+            break
+        if re.match(r"^\s*pub\((?:crate|super|self|in [^)]*)\)\s+use\b", lines[back]) and "{" in lines[back]:
+            index = back
+            number = back + 1
+            break
     line = lines[index]
     if RESTRICTED.search(line):
         lines[index] = RESTRICTED.sub("pub ", line, count=1)

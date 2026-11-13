@@ -121,7 +121,8 @@ pub async fn prepare_configuration(
     draft: crate::service_configuration::Draft,
 ) -> Result<Incarnation> {
     let control = control.canonicalize()?;
-    let request = crate::service_configuration::prepare(&control, project, draft).await?;
+    let request =
+        airk_host::service_configuration::prepare(&ControlRoot(&control), project, draft).await?;
     let (namespace, epoch) = request_epoch(&control).await?;
     crate::request_journal::persist(
         &control,
