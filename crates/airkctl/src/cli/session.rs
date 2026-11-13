@@ -71,7 +71,9 @@ const REFUSED_COMMANDS: &[(&str, &str)] = &[
     // Relays any I1 method, so it would bypass the `control` refusals.
     ("service", "rpc"),
 ];
-/// Global options of `airkctl` that take a separate value.
+/// Options of `airkctl` that take a separate value: the global ones, and
+/// the open read selectors of `tools call` (U105), whose values (index and
+/// set names) must never be read as command words.
 const VALUE_OPTIONS: &[&str] = &[
     "--output",
     "--service-runtime-dir",
@@ -84,6 +86,9 @@ const VALUE_OPTIONS: &[&str] = &[
     "--root",
     "--data-dir",
     "--collection",
+    "--index",
+    "--set",
+    "--connection",
 ];
 
 /// Wakes the session loop (a manual clock calls it after advancing).

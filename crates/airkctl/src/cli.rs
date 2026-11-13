@@ -364,15 +364,23 @@ enum AgentsCommand {
         no_user: bool,
     },
     /// Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection
-    /// (--selection-file with a new --connection-id) or reusing an existing connection.
+    /// (--selection-file with a new --connection-id), a new open connection (--open) or
+    /// reusing an existing connection.
+    ///
+    /// An open connection reads its default scope (`agents default` or the Explorer sets it);
+    /// with agent choice on, the agent may name indexes and index sets per call.
     Connect {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
         #[arg(long, value_enum)]
         client: crate::agents::Client,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
+        #[arg(long, required_unless_present = "open")]
+        connection_id: Option<airk_core::identity::Incarnation>,
+        /// Enroll a new open connection with a new id: no reviewed grant, agent choice off and
+        /// an empty default scope until `agents default` sets one.
+        #[arg(long, conflicts_with_all = ["connection_id", "selection_file"])]
+        open: bool,
         /// Owner-private reviewed selection to enroll as --connection-id.
         #[arg(long)]
         selection_file: Option<PathBuf>,
@@ -446,6 +454,33 @@ enum AgentsCommand {
         /// Arguments for the client, after `--`.
         #[arg(last = true)]
         args: Vec<std::ffi::OsString>,
+    },
+    /// Set an open connection's default scope and agent choice; the agent's next call uses it.
+    ///
+    /// --index and --set take ids or exact names and replace the whole default scope;
+    /// --clear empties it. Without --expected-revision the current defaults revision is
+    /// read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
+    Default {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        /// An index (`idx_…` or its exact name) in the default scope (repeatable).
+        #[arg(long = "index")]
+        indexes: Vec<String>,
+        /// An index set (`prj_…` or its exact name) in the default scope (repeatable).
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// Empty the default scope.
+        #[arg(long, conflicts_with_all = ["indexes", "sets"])]
+        clear: bool,
+        /// Whether the agent may name indexes and sets itself and list them.
+        #[arg(long, value_parser = ["off", "on"])]
+        agent_choice: Option<String>,
+        /// Refuse unless the stored defaults are at this revision.
+        #[arg(long)]
+        expected_revision: Option<u64>,
     },
     /// Revoke one local HTTPS connection while preserving its original receipt.
     Revoke {
@@ -821,17 +856,30 @@ enum ServiceCommand {
 #[command(disable_help_subcommand = true)]
 enum ToolsCommand {
     /// List the connection's unified tools; --json includes complete schemas and annotations.
+    ///
+    /// With --connection, the catalog an open agent connection sees: its scope selectors and
+    /// list_indexes appear only when its agent choice is on.
     List {
         #[arg(long)]
         json: bool,
+        /// An open agent connection whose catalog to list.
+        #[arg(long)]
+        connection: Option<airk_core::identity::Incarnation>,
     },
     /// Show a tool's description, input schema, defaults and argument template.
     Help {
         tool: String,
         #[arg(long)]
         json: bool,
+        /// An open agent connection whose catalog to read.
+        #[arg(long)]
+        connection: Option<airk_core::identity::Incarnation>,
     },
     /// Invoke an MCP tool and print its unchanged result envelope as JSON.
+    ///
+    /// --index and --set read whole indexes and index sets (ids or exact names) through the
+    /// open read path an agent uses; --connection applies that open connection's default scope
+    /// and agent choice, exactly as its MCP calls do. list_indexes always takes that path.
     Call {
         tool: String,
         /// JSON object; omit for {}. Maximum 64 KiB.
@@ -840,6 +888,15 @@ enum ToolsCommand {
         /// Read a UTF-8 JSON object from a regular file (maximum 64 KiB).
         #[arg(long)]
         args_file: Option<PathBuf>,
+        /// An index to read whole: `idx_…` or its exact name (repeatable, at most 32).
+        #[arg(long = "index")]
+        indexes: Vec<String>,
+        /// An index set to read as its member indexes: `prj_…` or its exact name (repeatable).
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// The open agent connection whose default scope and agent choice apply.
+        #[arg(long)]
+        connection: Option<airk_core::identity::Incarnation>,
     },
     /// Open a connection-bound interactive console with help and examples.
     Shell,
@@ -1064,14 +1121,19 @@ fn version(cx: &mut Context) -> u8 {
 }
 
 fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 {
-    let (detail, json) = match action {
-        ToolsCommand::List { json } => (
+    let (detail, json, connection_id) = match action {
+        ToolsCommand::List { json, connection } => (
             ToolsCatalogDetail::List {
                 schemas: json || cx.output == Output::Json,
             },
             json,
+            connection,
         ),
-        ToolsCommand::Help { tool, json } => (ToolsCatalogDetail::Help { tool }, json),
+        ToolsCommand::Help {
+            tool,
+            json,
+            connection,
+        } => (ToolsCatalogDetail::Help { tool }, json, connection),
         ToolsCommand::Call { .. } | ToolsCommand::Shell => {
             unreachable!("calls and the console are not catalog reads")
         }
@@ -1089,6 +1151,7 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
         ControlMethod::ToolsCatalog {
             detail,
             combined: selection.combined.clone().map(Box::new),
+            connection_id,
         },
         VERSION,
     ) {
@@ -1952,6 +2015,7 @@ impl AgentsCommand {
             | AgentsCommand::Repair { runtime_dir, .. }
             | AgentsCommand::Remove { runtime_dir, .. }
             | AgentsCommand::Verify { runtime_dir, .. }
+            | AgentsCommand::Default { runtime_dir, .. }
             | AgentsCommand::Launch { runtime_dir, .. } => runtime_dir.clone(),
         }
     }
@@ -2091,6 +2155,32 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
         AgentsCommand::Verify { connection_id, .. } => {
             crate::agents::verify(&control, VERSION, *connection_id)
         }
+        AgentsCommand::Default {
+            connection_id,
+            indexes,
+            sets,
+            clear,
+            agent_choice,
+            expected_revision,
+            ..
+        } => crate::agents::default_scope(
+            &control,
+            VERSION,
+            *connection_id,
+            crate::agents::DefaultsRequest {
+                indexes: indexes.clone(),
+                sets: sets.clone(),
+                clear: *clear,
+                agent_choice: agent_choice.as_deref().map(|choice| {
+                    if choice == "on" {
+                        airk_core::service_http_credentials::AgentChoice::On
+                    } else {
+                        airk_core::service_http_credentials::AgentChoice::Off
+                    }
+                }),
+                expected_revision: *expected_revision,
+            },
+        ),
         AgentsCommand::List {
             connection_id: Some(id),
             ..
@@ -2130,6 +2220,7 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
         AgentsCommand::Connect {
             client,
             connection_id,
+            open,
             selection_file,
             user,
             project,
@@ -2145,12 +2236,16 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
                     projects,
                     user: *user,
                 };
-                let source = match selection_file {
-                    Some(file) => manage::Source::Enroll {
-                        id: *connection_id,
+                let source = match (*open, connection_id, selection_file) {
+                    (true, _, _) => manage::Source::Open,
+                    (false, Some(id), Some(file)) => manage::Source::Enroll {
+                        id: *id,
                         selection_file: file.clone(),
                     },
-                    None => manage::Source::Existing(*connection_id),
+                    (false, Some(id), None) => manage::Source::Existing(*id),
+                    (false, None, _) => {
+                        return usage(cx, "--connection-id is required unless --open is given");
+                    }
                 };
                 let scope = if *user {
                     crate::agents::config::Scope::User
@@ -2454,9 +2549,46 @@ fn call(
         Ok(resolved) => resolved,
         Err(code) => return code,
     };
+    call_resolved(cx, control, selection, tool, arguments)
+}
+
+/// `tools call --index/--set/--connection` (U105): M3 `ToolSelection::Open`,
+/// the open read path an agent's MCP calls use. It names no project or
+/// session, so it cannot be combined with one.
+fn open_call(
+    cx: &mut Context,
+    selection: &Selection,
+    tool: String,
+    arguments: Map<String, Value>,
+    open: ToolSelection,
+) -> u8 {
+    if selection.project.is_some() || selection.catalog.is_some() || selection.combined.is_some() {
+        return usage(
+            cx,
+            "--index, --set and --connection cannot be combined with a project or session selection",
+        );
+    }
+    if let Err(error) = open.validate() {
+        return usage(cx, &format!("{error:#}"));
+    }
+    let control = match control(cx, selection) {
+        Ok(control) => control,
+        Err(code) => return code,
+    };
+    call_resolved(cx, control, open, tool, arguments)
+}
+
+/// Send one resolved M3 call and print its answer.
+fn call_resolved(
+    cx: &mut Context,
+    control: PathBuf,
+    selection: ToolSelection,
+    tool: String,
+    arguments: Map<String, Value>,
+) -> u8 {
     let local_help = matches!(
         selection,
-        ToolSelection::Unselected | ToolSelection::Project { .. }
+        ToolSelection::Unselected | ToolSelection::Project { .. } | ToolSelection::Open { .. }
     ) && matches!(tool.as_str(), "airk_help" | "help");
     let response_mode = if cx.io.full_responses {
         ToolResponseMode::Full
@@ -3359,9 +3491,28 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                     tool,
                     args,
                     args_file,
+                    indexes,
+                    sets,
+                    connection,
                 },
         } => match crate::tools::read_arguments(args.as_deref(), args_file.as_deref()) {
-            Ok(arguments) => call(cx, &selection, tool, arguments),
+            // `list_indexes` reads no project: it always takes the open path.
+            Ok(arguments)
+                if indexes.is_empty()
+                    && sets.is_empty()
+                    && connection.is_none()
+                    && tool != airk_core::agent_scope::LIST_INDEXES =>
+            {
+                call(cx, &selection, tool, arguments)
+            }
+            Ok(arguments) => {
+                let open = ToolSelection::Open {
+                    index_ids: indexes,
+                    index_set_ids: sets,
+                    connection_id: connection,
+                };
+                open_call(cx, &selection, tool, arguments, open)
+            }
             Err(error) => usage(cx, &format!("{error:#}")),
         },
         Command::Tools {

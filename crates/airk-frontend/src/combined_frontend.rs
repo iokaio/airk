@@ -2654,11 +2654,21 @@ impl<S: Session> Backend<S> {
                     None,
                     &self.selection.requested(),
                 )),
-                Err(_) => Ok(failure(
-                    "combined_read_unavailable",
-                    None,
-                    &self.selection.requested(),
-                )),
+                Err(error) => {
+                    // The reply keeps only the stable code; the full chain
+                    // goes to the owner-private raw log (best effort).
+                    let _ = airk_host::service_logs::record_service_error(
+                        &self.control,
+                        "combined_read",
+                        "combined_read_unavailable",
+                        &error,
+                    );
+                    Ok(failure(
+                        "combined_read_unavailable",
+                        None,
+                        &self.selection.requested(),
+                    ))
+                }
             }
         })
     }

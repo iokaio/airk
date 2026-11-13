@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 mod imported_legacy;
+mod open;
+pub use open::{OpenChoice, OpenHooks, OpenRead, OpenReader, open_factory};
 
 fn live(context: &ReadAttemptContext) -> Result<()> {
     ensure!(
@@ -92,8 +94,9 @@ async fn validate_details(
                 selection.validate()?;
                 Ok((HttpSelection::ImportedLegacyUnion { selection },None))
             }
-            // U105 contract step: no open admission yet (refused, never served).
-            HttpSelection::Open { .. } => anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED),
+            // U105 (§7): an open connection needs only a ready catalog in its
+            // namespace (checked above); it names no grant and no registration.
+            HttpSelection::Open { selection } => Ok((HttpSelection::Open { selection }, None)),
         }
     });
     tokio::select! {
@@ -300,8 +303,9 @@ impl LazyBackend {
                 HttpSelection::ImportedLegacyUnion { .. } => anyhow::bail!(
                     "multi-project HTTP routing requires its original explicit project selector"
                 ),
+                // Served by `open_factory`, never by this lazy backend.
                 HttpSelection::Open { .. } => {
-                    anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED)
+                    anyhow::bail!("an open connection reads through its open backend")
                 }
             };
             backend.client(*self.client.lock().unwrap_or_else(|e| e.into_inner()));

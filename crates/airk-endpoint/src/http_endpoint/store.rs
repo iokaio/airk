@@ -2,8 +2,8 @@
 use super::{InstallationBinding, digest, private_file, read_private, write_private};
 pub use airk_core::service_http_credentials::AuthenticatedCredential;
 use airk_core::service_http_credentials::{
-    Ledger, MAX_CREDENTIALS, MAX_STORE, MAX_TOKEN, Record, RevocationReason, STORE, filename,
-    same_authority, validate_attachment,
+    AgentChoice, Ledger, MAX_CREDENTIALS, MAX_STORE, MAX_TOKEN, OpenConnectionState, Record,
+    RevocationReason, STORE, filename, same_authority, validate_attachment,
 };
 use airk_core::usage::ClientFamily;
 use airk_core::{
@@ -69,6 +69,25 @@ pub struct IssuedCredential {
     pub generation: u64,
     pub credential_file: PathBuf,
     pub explorer_descriptor: Option<PathBuf>,
+    /// U105: the record's open state (present exactly for `Open`).
+    pub open: Option<OpenConnectionState>,
+}
+
+/// Why an open connection's defaults were not changed (U105).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenDefaultsRefused {
+    /// No active (unrevoked, unexpired) open record has this id.
+    NotOpen,
+    /// The stored defaults revision is not the expected one.
+    Conflict,
+}
+
+/// One defaults change: `None` keeps a field's stored value.
+pub struct OpenDefaultsChange {
+    pub expected_defaults_revision: u64,
+    pub index_ids: Option<Vec<airk_core::index_catalog::IndexId>>,
+    pub index_set_ids: Option<Vec<airk_core::index_catalog::QueryProjectId>>,
+    pub agent_choice: Option<AgentChoice>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionOwnership {
@@ -640,6 +659,7 @@ impl CredentialStore {
                 "HTTP enrollment credential mismatch"
             );
             let generation = record.generation;
+            let open = record.open.clone();
             if record.selection != selection {
                 let mut next = self.ledger.clone();
                 next.records
@@ -654,6 +674,7 @@ impl CredentialStore {
                 generation,
                 credential_file: self.root.join(filename(id)),
                 explorer_descriptor,
+                open,
             });
         }
         let expires = now_unix_ms
@@ -735,6 +756,7 @@ impl CredentialStore {
                 generation: record.generation,
                 credential_file: self.root.join(filename(id)),
                 explorer_descriptor,
+                open: record.open.clone(),
             });
         }
         ensure!(
@@ -742,6 +764,10 @@ impl CredentialStore {
             "HTTP credential storage limit reached; explicit cleanup required"
         );
         let token = random_token(id)?;
+        // U105/U106(b): a new open connection starts with choice off and an
+        // empty default scope; every other selection has no open state.
+        let open =
+            matches!(selection, HttpSelection::Open { .. }).then(OpenConnectionState::initial);
         let mut next = self.ledger.clone();
         next.records.push(Record {
             client,
@@ -753,7 +779,7 @@ impl CredentialStore {
             verifier: digest(token.as_bytes()),
             revoked: false,
             revocation_reason: None,
-            open: None,
+            open: open.clone(),
         });
         // Refuse predictable aggregate-capacity failures before publishing the
         // immutable token. Uncertain I/O failures still preserve orphan evidence.
@@ -771,7 +797,86 @@ impl CredentialStore {
             generation: 1,
             credential_file: self.root.join(filename(id)),
             explorer_descriptor,
+            open,
         })
+    }
+    /// U105: an unrevoked open connection's agent choice from this store's
+    /// current ledger, without disk I/O (every defaults change commits through
+    /// this store). For catalogs only; reads reread the ledger (`open_state`).
+    pub fn current_open_choice(&self, id: Incarnation) -> Option<AgentChoice> {
+        self.ledger
+            .records
+            .iter()
+            .find(|record| record.id == id && !record.revoked)
+            .and_then(|record| record.open.as_ref())
+            .map(|open| open.agent_choice)
+    }
+    /// U105: the current open state of an active open connection, read from
+    /// the durable ledger (never a cached copy), so a defaults change takes
+    /// effect on the next call.
+    pub fn open_state(
+        &self,
+        id: Incarnation,
+        now_unix_ms: u64,
+    ) -> Result<std::result::Result<OpenConnectionState, OpenDefaultsRefused>> {
+        let current = Self::read_existing(&self.root, self.ledger.binding.clone())?;
+        Ok(current
+            .ledger
+            .records
+            .iter()
+            .find(|record| {
+                record.id == id && !record.revoked && now_unix_ms < record.expires_unix_ms
+            })
+            .and_then(|record| record.open.clone())
+            .ok_or(OpenDefaultsRefused::NotOpen))
+    }
+    /// U105/U106(b): compare-and-swap an open connection's defaults. A
+    /// change bumps `defaults_revision` and never the credential
+    /// `generation`; an unchanged request still commits nothing new and
+    /// answers the stored state. The caller has checked the ids against the
+    /// current catalog.
+    pub fn set_open_defaults(
+        &mut self,
+        id: Incarnation,
+        change: OpenDefaultsChange,
+        now_unix_ms: u64,
+    ) -> Result<std::result::Result<OpenConnectionState, OpenDefaultsRefused>> {
+        *self = Self::open(&self.root, self.ledger.binding.clone())?;
+        let mut next = self.ledger.clone();
+        let Some(record) = next.records.iter_mut().find(|record| {
+            record.id == id && !record.revoked && now_unix_ms < record.expires_unix_ms
+        }) else {
+            return Ok(Err(OpenDefaultsRefused::NotOpen));
+        };
+        let Some(open) = record.open.as_mut() else {
+            return Ok(Err(OpenDefaultsRefused::NotOpen));
+        };
+        if open.defaults_revision != change.expected_defaults_revision {
+            return Ok(Err(OpenDefaultsRefused::Conflict));
+        }
+        let mut changed = open.clone();
+        if let Some(ids) = change.index_ids {
+            changed.default_index_ids = ids;
+        }
+        if let Some(ids) = change.index_set_ids {
+            changed.default_index_set_ids = ids;
+        }
+        if let Some(choice) = change.agent_choice {
+            changed.agent_choice = choice;
+        }
+        if changed == *open {
+            return Ok(Ok(changed));
+        }
+        changed.defaults_revision = open
+            .defaults_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("open connection defaults revision exhausted"))?;
+        changed.validate()?;
+        *open = changed.clone();
+        next.validate(&self.ledger.binding)?;
+        airk_core::index_catalog::encoded_size(&next, MAX_STORE)?;
+        self.commit(next)?;
+        Ok(Ok(changed))
     }
     pub fn authenticate(&self, token: &str, now_unix_ms: u64) -> Result<AuthenticatedCredential> {
         // A previously opened reader cannot retain authority after native

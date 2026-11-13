@@ -275,3 +275,79 @@ fn set_create_indexes_are_checked_before_the_service() {
         )
     );
 }
+
+/// U105: open read, connection and description arguments are checked before
+/// the service.
+#[test]
+fn open_agent_arguments_are_checked_before_the_service() {
+    let missing = std::env::temp_dir().join("airkctl-no-such-control-root");
+    let missing = missing.to_str().unwrap();
+    let project = "ab".repeat(32);
+    let (code, _, stderr) = run_line(&[
+        "--service-project",
+        &project,
+        "--service-runtime-dir",
+        missing,
+        "tools",
+        "call",
+        "search",
+        "--index",
+        "docs",
+    ]);
+    assert_eq!(
+        (code, stderr.as_str()),
+        (
+            2,
+            "airkctl: --index, --set and --connection cannot be combined with a project or session selection\n"
+        )
+    );
+    let mut too_many = vec!["--service-runtime-dir", missing, "tools", "call", "search"];
+    let names: Vec<String> = (0..33).map(|n| format!("index{n}")).collect();
+    for name in &names {
+        too_many.extend(["--index", name.as_str()]);
+    }
+    assert_eq!(run_line(&too_many).0, 2);
+    let connection = "1c".repeat(16);
+    for invalid in [
+        // `connect` needs --connection-id or --open, never both.
+        &["agents", "connect", "--client", "codex"][..],
+        &[
+            "agents",
+            "connect",
+            "--client",
+            "codex",
+            "--open",
+            "--connection-id",
+            &connection,
+        ],
+        &[
+            "agents",
+            "default",
+            "--connection-id",
+            &connection,
+            "--clear",
+            "--index",
+            "docs",
+        ],
+        &[
+            "agents",
+            "default",
+            "--connection-id",
+            &connection,
+            "--agent-choice",
+            "maybe",
+        ],
+        &["library", "describe", "--text", "x"],
+        &[
+            "library",
+            "describe",
+            "--index",
+            "idx_01010101010101010101010101010101",
+            "--text",
+            "x",
+            "--clear",
+        ],
+    ] {
+        assert_eq!(run_line(invalid).0, 2, "{invalid:?}");
+    }
+}

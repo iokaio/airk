@@ -157,6 +157,38 @@ pub fn record_client_error(root: &Path, operation: &str, input: &[u8]) -> Result
     Sink::named(root, DIRECTORY, OWNER, RECORD_BYTES)?.append_bytes(record)
 }
 
+/// A read failure the service answered with only a stable code (for example
+/// `combined_read_unavailable`): its full error chain, bounded, in the same
+/// owner-private raw log, so the code is diagnosable without a wire field.
+pub fn record_service_error(
+    root: &Path,
+    operation: &str,
+    code: &str,
+    error: &anyhow::Error,
+) -> Result<()> {
+    ensure!(
+        !operation.is_empty()
+            && operation.len() <= 64
+            && operation
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_')
+            && !code.is_empty()
+            && code.len() <= 128
+            && code
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+        "invalid service diagnostic"
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    let record = serde_json::to_vec(&serde_json::json!({"schema":1,"kind":"service_error",
+        "observed_unix_ms":now,"native_version":env!("CARGO_PKG_VERSION"),"operation":operation,
+        "failure":{"code":code,"detail":FailureDetail::capture(error)}}))?;
+    Sink::named(root, DIRECTORY, OWNER, RECORD_BYTES)?.append_bytes(record)
+}
+
 /// Exact retained JSONL, oldest first. This explicit local CLI path never uses
 /// service RPC or the redacted diagnostic report. No source files are read.
 pub fn export(root: &Path) -> Result<Vec<u8>> {
@@ -239,6 +271,29 @@ mod tests {
         let mut streamed = Vec::new();
         assert_eq!(export_to(&root, &mut streamed)?, bytes.len() as u64);
         assert_eq!(streamed, bytes);
+        Ok(())
+    }
+    #[test]
+    fn a_coded_read_failure_keeps_its_full_chain_in_the_raw_log() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("control");
+        crate::local_ipc::prepare_root(&root)?;
+        let error = anyhow::anyhow!("member returned evidence outside its selected source scope")
+            .context("compose combined read");
+        record_service_error(&root, "combined_read", "combined_read_unavailable", &error)?;
+        let bytes = export(&root)?;
+        let record: serde_json::Value = serde_json::from_str(std::str::from_utf8(&bytes)?.trim())?;
+        assert_eq!(record["kind"], "service_error");
+        assert_eq!(record["operation"], "combined_read");
+        assert_eq!(record["failure"]["code"], "combined_read_unavailable");
+        assert_eq!(
+            record["failure"]["detail"]["chain"],
+            "0: compose combined read\n1: member returned evidence outside its selected source scope\n"
+        );
+        for (operation, code) in [("../x", "c"), ("ok", "Bad Code"), ("", "c")] {
+            assert!(record_service_error(&root, operation, code, &error).is_err());
+        }
+        assert_eq!(export(&root)?, bytes);
         Ok(())
     }
     #[test]

@@ -3699,3 +3699,453 @@ async fn window_selection_reports_a_failed_member_as_the_catalog_grant_does() ->
     f.assert_sources_unchanged()?;
     Ok(())
 }
+
+/// One in-process `airkctl` run on the fixture's control root with full
+/// responses: (exit code, stdout, stderr).
+async fn airkctl_full(f: &Fixture, line: &[&str]) -> Result<(u8, String, String)> {
+    let control = f.control.to_str().context("control root is not UTF-8")?;
+    let arguments: Vec<std::ffi::OsString> = ["airkctl", "--service-runtime-dir", control]
+        .into_iter()
+        .chain(line.iter().copied())
+        .map(Into::into)
+        .collect();
+    let (code, stdout, stderr) = tokio::task::spawn_blocking(move || {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: true,
+            window: None,
+        };
+        let code = airkctl::cli::run(arguments, &mut io);
+        (code, stdout, stderr)
+    })
+    .await?;
+    Ok((code, String::from_utf8(stdout)?, String::from_utf8(stderr)?))
+}
+
+fn open_selection(
+    indexes: &[&str],
+    sets: &[&str],
+    connection_id: Option<Incarnation>,
+) -> airk_core::service::ToolSelection {
+    airk_core::service::ToolSelection::Open {
+        index_ids: indexes.iter().map(|name| (*name).to_owned()).collect(),
+        index_set_ids: sets.iter().map(|name| (*name).to_owned()).collect(),
+        connection_id,
+    }
+}
+
+/// The refusal code of a pipe read that did not produce a result.
+fn refusal_code(refused: &Value) -> String {
+    refused["code"].as_str().unwrap_or_default().to_owned()
+}
+
+/// `tools list --connection` lists `list_indexes` exactly when choice is on.
+async fn open_catalog_lists(f: &Fixture, connection: &str, choice_on: bool) -> Result<()> {
+    let (code, stdout, stderr) =
+        airkctl_full(f, &["tools", "list", "--connection", connection]).await?;
+    ensure!(code == 0, "tools list --connection failed: {stderr}");
+    ensure!(
+        stdout.contains("list_indexes") == choice_on,
+        "catalog with choice {choice_on}: {stdout}"
+    );
+    Ok(())
+}
+
+/// U105 (open-agent-access step 5): `airkctl tools call --index/--set
+/// [--connection]` and M3 `ToolSelection::Open` are one service path. The
+/// list tool and an open read return the same complete result through both;
+/// a set expands to its member indexes read whole; the connection's stored
+/// defaults and agent choice decide each call and change without a new
+/// credential generation.
+#[tokio::test]
+async fn open_reads_keep_cli_and_pipe_results_and_follow_connection_defaults() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    // The list tool: the local owner may list; CLI and pipe answer the same.
+    let listed = pipe_read(
+        &f,
+        open_selection(&[], &[], None),
+        "list_indexes",
+        &json!({}),
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("list refused: {refused}"))?;
+    let (code, stdout, stderr) = airkctl_full(&f, &["tools", "call", "list_indexes"]).await?;
+    ensure!(code == 0, "airkctl list_indexes failed: {stderr}");
+    let from_cli: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(from_cli, listed, "list_indexes CLI and pipe differ");
+    let list = body(&listed)?;
+    let indexes = list["indexes"].as_array().context("indexes absent")?;
+    let sets = list["index_sets"].as_array().context("index sets absent")?;
+    assert_eq!((indexes.len(), sets.len()), (3, 3), "{list}");
+    assert_eq!(indexes[0]["id"], json!(f.indexes[0]));
+    assert_eq!(indexes[0]["readiness"], "ready", "{list}");
+    assert_eq!(
+        indexes[0]["paths"],
+        json!([f.registrations[0].root]),
+        "{list}"
+    );
+    let set = sets
+        .iter()
+        .find(|set| set["id"] == json!(f.projects[0]))
+        .context("first set absent")?;
+    assert_eq!(set["index_ids"], json!([f.indexes[0], f.indexes[1]]));
+    let index_name = indexes[0]["name"]
+        .as_str()
+        .context("index name")?
+        .to_owned();
+    let set_name = set["name"].as_str().context("set name")?.to_owned();
+
+    // One index by exact name: the same complete read through CLI and pipe.
+    let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"});
+    let piped = pipe_read(
+        &f,
+        open_selection(&[&index_name], &[], None),
+        "airk_search",
+        &arguments,
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("open read refused: {refused}"))?;
+    ensure!(piped["isError"] != true, "open read failed: {piped}");
+    let argument_text = arguments.to_string();
+    let (code, stdout, stderr) = airkctl_full(
+        &f,
+        &[
+            "tools",
+            "call",
+            "airk_search",
+            "--index",
+            &index_name,
+            "--args",
+            &argument_text,
+        ],
+    )
+    .await?;
+    ensure!(code == 0, "airkctl open read failed: {stderr}");
+    let from_cli: Value = serde_json::from_str(&stdout)?;
+    let (left, right) = (
+        stable(logical_comparison_copy(&body(&from_cli)?)?)?,
+        stable(logical_comparison_copy(&body(&piped)?)?)?,
+    );
+    if let Some(difference) = first_difference(&left, &right, "") {
+        anyhow::bail!("open read CLI and pipe differ: {difference}");
+    }
+    ensure!(!piped.to_string().contains("grant_nonce"), "N3: {piped}");
+
+    // A set expands to its two member indexes, each read whole.
+    let expanded = pipe_read(
+        &f,
+        open_selection(&[], &[&set_name], None),
+        "airk_search",
+        &arguments,
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("set read refused: {refused}"))?;
+    ensure!(expanded["isError"] != true, "set read failed: {expanded}");
+    let expanded = body(&expanded)?;
+    assert_eq!(
+        expanded["members"]
+            .as_array()
+            .context("members absent")?
+            .len(),
+        2,
+        "{expanded}"
+    );
+
+    // Refusals before any read: an unknown name, a local call naming nothing.
+    for (selection, code) in [
+        (
+            open_selection(&["no such index"], &[], None),
+            "scope_name_unknown",
+        ),
+        (open_selection(&[], &[], None), "agent_default_scope_unset"),
+    ] {
+        let refused = pipe_read(&f, selection, "airk_search", &arguments)
+            .await?
+            .err()
+            .context("refusal expected")?;
+        assert_eq!(refusal_code(&refused), code, "{refused}");
+    }
+
+    // An open connection: choice off and no default scope until set.
+    let ControlResponse::HttpEndpoint {
+        endpoint: Some(endpoint),
+    } = airk_cli::service_runtime::request(&f.control, ControlMethod::HttpEndpoint).await?
+    else {
+        anyhow::bail!("HTTPS endpoint unavailable");
+    };
+    let connection_id = Incarnation::from_bytes([0x5a; 16]);
+    let enrolled = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::HttpEnroll {
+            connection_id,
+            selection: Box::new(airk_core::service_http::HttpSelection::Open {
+                selection: airk_core::service_http::OpenHttpSelection {
+                    namespace: endpoint.namespace,
+                },
+            }),
+            client: airk_core::usage::ClientFamily::Codex,
+            explorer_descriptor: None,
+            reattach_connection_id: None,
+        },
+    )
+    .await?;
+    let ControlResponse::HttpConnection { connection } = enrolled else {
+        anyhow::bail!(
+            "open enrollment refused: {}",
+            serde_json::to_string(&enrolled)?
+        );
+    };
+    assert_eq!(
+        connection.open,
+        Some(airk_core::service_http_credentials::OpenConnectionState::initial())
+    );
+    let connection_text = connection_id.to_string();
+    open_catalog_lists(&f, &connection_text, false).await?;
+    for (selection, tool, code) in [
+        (
+            open_selection(&[], &[], Some(connection_id)),
+            "airk_search",
+            "agent_default_scope_unset",
+        ),
+        (
+            open_selection(&[&index_name], &[], Some(connection_id)),
+            "airk_search",
+            "agent_scope_choice_disabled",
+        ),
+        (
+            open_selection(&[], &[], Some(connection_id)),
+            "list_indexes",
+            "agent_scope_choice_disabled",
+        ),
+    ] {
+        let refused = pipe_read(&f, selection, tool, &json!({}))
+            .await?
+            .err()
+            .context("refusal expected")?;
+        assert_eq!(refusal_code(&refused), code, "{tool}: {refused}");
+    }
+    // Defaults: compare-and-swap on the defaults revision.
+    let set_defaults = |expected: u64| ControlMethod::AgentConnectionDefaults {
+        connection_id,
+        expected_defaults_revision: expected,
+        index_ids: Some(vec![f.indexes[0]]),
+        index_set_ids: None,
+        agent_choice: None,
+    };
+    let changed = airk_cli::service_runtime::request(&f.control, set_defaults(1)).await?;
+    let ControlResponse::AgentConnectionDefaults { open, .. } = changed else {
+        anyhow::bail!("defaults refused: {}", serde_json::to_string(&changed)?);
+    };
+    assert_eq!(open.defaults_revision, 2);
+    let conflict = airk_cli::service_runtime::request(&f.control, set_defaults(1)).await?;
+    assert_eq!(
+        serde_json::to_value(&conflict)?["code"],
+        "agent_defaults_conflict"
+    );
+    // The next call reads the new default scope: the same result as naming it.
+    let defaulted = pipe_read(
+        &f,
+        open_selection(&[], &[], Some(connection_id)),
+        "airk_search",
+        &arguments,
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("default read refused: {refused}"))?;
+    // Each lease (local owner, connection) is its own selection authority:
+    // only the documented selection-dependent fields differ.
+    let (left, right) = (
+        without_selection_source(stable(logical_comparison_copy(&body(&defaulted)?)?)?),
+        without_selection_source(stable(logical_comparison_copy(&body(&piped)?)?)?),
+    );
+    if let Some(difference) = first_difference(&left, &right, "") {
+        anyhow::bail!("default scope and named read differ: {difference}");
+    }
+    // `agents default` turns choice on; the list tool appears and answers.
+    let (code, stdout, stderr) = airkctl_full(
+        &f,
+        &[
+            "agents",
+            "default",
+            "--connection-id",
+            &connection_text,
+            "--agent-choice",
+            "on",
+            "--expected-revision",
+            "2",
+        ],
+    )
+    .await?;
+    ensure!(code == 0, "agents default failed: {stderr}");
+    let printed: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(printed["schema"], 1);
+    assert_eq!(printed["connectionId"], json!(connection_id));
+    assert_eq!(printed["open"]["defaults_revision"], 3);
+    assert_eq!(printed["open"]["agent_choice"], "on");
+    assert_eq!(printed["open"]["default_index_ids"], json!([f.indexes[0]]));
+    open_catalog_lists(&f, &connection_text, true).await?;
+    let listed_by_agent = pipe_read(
+        &f,
+        open_selection(&[], &[], Some(connection_id)),
+        "list_indexes",
+        &json!({}),
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("agent list refused: {refused}"))?;
+    assert_eq!(listed_by_agent, listed);
+    f.assert_sources_unchanged()
+}
+
+/// The service's open state update through the pipe (`AgentConnectionDefaults`).
+async fn set_open_defaults(
+    f: &Fixture,
+    connection_id: Incarnation,
+    expected: u64,
+    index_ids: Option<Vec<IndexId>>,
+    agent_choice: Option<airk_core::service_http_credentials::AgentChoice>,
+) -> Result<airk_core::service_http_credentials::OpenConnectionState> {
+    let changed = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::AgentConnectionDefaults {
+            connection_id,
+            expected_defaults_revision: expected,
+            index_ids,
+            index_set_ids: None,
+            agent_choice,
+        },
+    )
+    .await?;
+    let ControlResponse::AgentConnectionDefaults { open, .. } = changed else {
+        anyhow::bail!("defaults refused: {}", serde_json::to_string(&changed)?);
+    };
+    Ok(open)
+}
+
+fn listed_tools(reply: &Value) -> Result<Vec<String>> {
+    Ok(reply["result"]["tools"]
+        .as_array()
+        .context("tools/list result absent")?
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect())
+}
+
+/// U105 (open-agent-access step 6): an open HTTPS MCP connection. Its
+/// `tools/list` follows the agent choice and its calls follow the stored
+/// default scope; a change applies to the next request on the same session,
+/// with no reconnect and no new credential. MCP and the pipe (and so the
+/// CLI) return the same results through the one service path.
+#[tokio::test]
+async fn open_https_connection_follows_choice_and_defaults_on_the_same_session() -> Result<()> {
+    use airk_core::service_http_credentials::AgentChoice;
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let mut mcp = McpSession::start_selection(
+        &f,
+        airk_core::service_http::HttpSelection::Open {
+            selection: airk_core::service_http::OpenHttpSelection {
+                namespace: f.session.namespace,
+            },
+        },
+    )?;
+    let connection_id = mcp.transport.connection.connection_id;
+    assert_eq!(
+        mcp.transport.connection.open,
+        Some(airk_core::service_http_credentials::OpenConnectionState::initial())
+    );
+    // Choice off: no selectors, no list tool, and no default scope yet.
+    let off = mcp.request(2, "tools/list", json!({}))?;
+    let names = listed_tools(&off)?;
+    ensure!(
+        !names.contains(&"list_indexes".to_owned()) && names.contains(&"search".to_owned()),
+        "{off}"
+    );
+    let search = off["result"]["tools"]
+        .as_array()
+        .context("tools")?
+        .iter()
+        .find(|tool| tool["name"] == "search")
+        .context("search tool")?;
+    ensure!(
+        search["inputSchema"]["properties"]
+            .get("index_ids")
+            .is_none(),
+        "{search}"
+    );
+    let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"});
+    let unset = mcp.call(3, "search", arguments.clone())?;
+    assert_eq!(
+        unset["result"]["structuredContent"]["error"]["code"], "agent_default_scope_unset",
+        "{unset}"
+    );
+    // Defaults set through the pipe apply to the next call on this session.
+    set_open_defaults(&f, connection_id, 1, Some(vec![f.indexes[0]]), None).await?;
+    let read = mcp.call(4, "search", arguments.clone())?;
+    ensure!(read["result"]["isError"] != true, "{read}");
+    let piped = pipe_read(
+        &f,
+        open_selection(&[], &[], Some(connection_id)),
+        "search",
+        &arguments,
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("pipe read refused: {refused}"))?;
+    let (left, right) = (
+        stable(logical_comparison_copy(&body(&read["result"])?)?)?,
+        stable(logical_comparison_copy(&body(&piped)?)?)?,
+    );
+    if let Some(difference) = first_difference(&left, &right, "") {
+        anyhow::bail!("MCP and pipe open reads differ: {difference}");
+    }
+    // Naming a scope is refused while choice is off.
+    let named = mcp.call(5, "search", {
+        let mut named = arguments.clone();
+        named["index_ids"] = json!([f.indexes[1]]);
+        named
+    })?;
+    assert_eq!(
+        named["result"]["structuredContent"]["error"]["code"], "agent_scope_choice_disabled",
+        "{named}"
+    );
+    // Choice on: the same session lists the selectors and the list tool.
+    set_open_defaults(&f, connection_id, 2, None, Some(AgentChoice::On)).await?;
+    let on = mcp.request(6, "tools/list", json!({}))?;
+    ensure!(
+        listed_tools(&on)?.contains(&"list_indexes".to_owned()),
+        "{on}"
+    );
+    let listed = mcp.call(7, "list_indexes", json!({}))?;
+    let piped_list = pipe_read(
+        &f,
+        open_selection(&[], &[], None),
+        "list_indexes",
+        &json!({}),
+    )
+    .await?
+    .map_err(|refused| anyhow::anyhow!("pipe list refused: {refused}"))?;
+    assert_eq!(body(&listed["result"])?, body(&piped_list)?);
+    let set_name = body(&piped_list)?["index_sets"]
+        .as_array()
+        .context("sets")?
+        .iter()
+        .find(|set| set["id"] == json!(f.projects[0]))
+        .and_then(|set| set["name"].as_str().map(str::to_owned))
+        .context("set name")?;
+    let expanded = mcp.call(8, "search", {
+        let mut named = arguments.clone();
+        named["index_set_ids"] = json!([set_name]);
+        named
+    })?;
+    ensure!(expanded["result"]["isError"] != true, "{expanded}");
+    assert_eq!(
+        body(&expanded["result"])?["members"]
+            .as_array()
+            .context("members absent")?
+            .len(),
+        2
+    );
+    f.assert_sources_unchanged()
+}

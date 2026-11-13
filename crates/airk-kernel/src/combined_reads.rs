@@ -290,9 +290,23 @@ fn qualify(
     publication: &RevisionEnvelope,
 ) -> Result<QualifiedOrigin> {
     let (source, relative) = source_for_path(sources, path)?;
-    let project_ids = member.projects_for(source.source_root_id, relative)?;
+    // U106(d): an open member is read whole and attributes no Project; its
+    // evidence must still lie inside its own scope atoms.
+    let project_ids = if member.memberships.is_empty() {
+        airk_core::index_catalog::relative_path(relative, false)?;
+        ensure!(
+            member
+                .scope
+                .iter()
+                .any(|atom| atom.matches_canonical(source.source_root_id, relative)),
+            "member returned evidence outside its selected source scope"
+        );
+        Vec::new()
+    } else {
+        member.projects_for(source.source_root_id, relative)?
+    };
     ensure!(
-        !project_ids.is_empty(),
+        !project_ids.is_empty() || member.memberships.is_empty(),
         "member returned evidence outside its selected source scope"
     );
     Ok(QualifiedOrigin {

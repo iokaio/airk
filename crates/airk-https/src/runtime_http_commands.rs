@@ -250,6 +250,7 @@ async fn resolved_existing_connection(
             .to_str()
             .context("HTTP credential path not UTF-8")?
             .into(),
+        open: authenticated.open,
     };
     connection.validate()?;
     Ok(serde_json::to_value(connection)?)

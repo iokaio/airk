@@ -1413,3 +1413,66 @@ fn private_record_rejects_links_and_public_permissions() {
     .unwrap();
     assert!(read_private(root.path(), "record", 32).is_err());
 }
+
+#[test]
+fn open_connections_start_off_and_defaults_change_by_revision_without_a_new_generation()
+-> anyhow::Result<()> {
+    use airk_core::{
+        service_http::OpenHttpSelection,
+        service_http_credentials::{AgentChoice, OpenConnectionState},
+        usage::ClientFamily,
+    };
+    let root = private_root();
+    let id = Incarnation::from_bytes([41; 16]);
+    let open = HttpSelection::Open {
+        selection: OpenHttpSelection {
+            namespace: binding().namespace,
+        },
+    };
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let issued = store.enroll_default_for_client(id, open.clone(), None, ClientFamily::Codex, 1)?;
+    assert_eq!(issued.open, Some(OpenConnectionState::initial()));
+    let token = read_client_token(root.path(), id)?;
+    let before = store.authenticate(&token, 2)?;
+    assert_eq!(before.open, Some(OpenConnectionState::initial()));
+    // A grant-bound connection has no open state and cannot take defaults.
+    let scoped = Incarnation::from_bytes([42; 16]);
+    assert_eq!(store.enroll_default(scoped, selection(), 1)?.open, None);
+    let change = |expected, choice| OpenDefaultsChange {
+        expected_defaults_revision: expected,
+        index_ids: Some(vec![IndexId::from_identity(id)]),
+        index_set_ids: None,
+        agent_choice: choice,
+    };
+    assert_eq!(
+        store.set_open_defaults(scoped, change(1, None), 2)?,
+        Err(OpenDefaultsRefused::NotOpen)
+    );
+    // Compare-and-swap on the defaults revision; the generation stays.
+    let changed = store
+        .set_open_defaults(id, change(1, Some(AgentChoice::On)), 2)?
+        .unwrap();
+    assert_eq!(changed.defaults_revision, 2);
+    assert_eq!(changed.agent_choice, AgentChoice::On);
+    assert_eq!(changed.default_index_ids, vec![IndexId::from_identity(id)]);
+    assert_eq!(
+        store.set_open_defaults(id, change(1, None), 3)?,
+        Err(OpenDefaultsRefused::Conflict)
+    );
+    // An unchanged request answers the stored state without a new revision.
+    assert_eq!(
+        store.set_open_defaults(id, change(2, Some(AgentChoice::On)), 3)?,
+        Ok(changed.clone())
+    );
+    let reopened = CredentialStore::open(root.path(), binding())?;
+    let after = reopened.authenticate(&token, 4)?;
+    assert_eq!(after.generation, before.generation);
+    assert_eq!(after.open, Some(changed.clone()));
+    assert_eq!(reopened.open_state(id, 4)?, Ok(changed));
+    // Re-enrolling the same id keeps the stored defaults; revocation ends them.
+    let again = store.enroll_default_for_client(id, open, None, ClientFamily::Codex, 5)?;
+    assert_eq!(again.open.map(|open| open.defaults_revision), Some(2));
+    store.revoke(id)?;
+    assert_eq!(store.open_state(id, 6)?, Err(OpenDefaultsRefused::NotOpen));
+    Ok(())
+}

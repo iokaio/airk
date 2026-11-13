@@ -1644,7 +1644,6 @@ impl Management {
     }
     /// U105: the service's own open-read handler admits one whole index in
     /// process; the result is consumed only by `take_in_process`.
-    #[allow(dead_code)] // U105 step 5 wires `ToolSelection::Open` to it.
     pub(crate) async fn connect_open(
         &self,
         request: airk_catalog_control::catalog_authority::OpenConnectRequest,

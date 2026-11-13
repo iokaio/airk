@@ -105,10 +105,11 @@ pub(super) async fn response(
             code: "admin_scope_not_granted".into(),
         };
     }
-    // U105 contract step: open agent reads are not served yet.
+    // Open reads are dispatched to `open_reads::response`, which needs the
+    // service's agent plane; a call that reaches here bypassed the dispatch.
     if matches!(selection, ToolSelection::Open { .. }) {
         return ControlResponse::Failure {
-            code: "not_yet_served".into(),
+            code: super::scope_grant::SCOPE_UNAVAILABLE.into(),
         };
     }
     match run(control, tool, arguments, selection, mode, client).await {
@@ -194,6 +195,18 @@ pub(super) async fn selection_read(
         [index_id] => single_selection_backend(state, grant, *index_id, client).await?,
         _ => combined_selection_backend(state, grant, client).await?,
     };
+    read_through(backend, tool, arguments, mode).await
+}
+
+/// One call through a selection or open backend and the canonical
+/// handlers, then the backend's release (a cleanup failure never replaces
+/// a result).
+pub(super) async fn read_through(
+    backend: Arc<dyn RemoteTools>,
+    tool: String,
+    arguments: Map<String, Value>,
+    mode: ToolResponseMode,
+) -> std::result::Result<Value, SelectionRead> {
     let result = async {
         let result = call(backend.as_ref(), tool, arguments, response_mode(mode)).await?;
         require_envelope(&result)?;
@@ -274,7 +287,6 @@ async fn single_selection_backend(
 /// connect and reconnect re-runs the in-process open admission (exact
 /// revision, live agent nonce, whole-index authority build). The session's
 /// selection names the one index and no project.
-#[allow(dead_code)] // U105 step 5 calls it for `ToolSelection::Open`.
 pub(super) async fn open_single_backend(
     state: &Arc<super::State>,
     selection_ref: airk_core::scoped_reads::SelectionScopeRef,
@@ -372,7 +384,6 @@ async fn combined_selection_backend(
 /// combined facade's open basis (no Project, its own snapshot and cursor
 /// domain). Members connect through the in-process open admission and the
 /// result is delivered under the live agent nonce, as for a selection.
-#[allow(dead_code)] // U105 step 5 calls it for `ToolSelection::Open`.
 pub(super) async fn open_combined_backend(
     state: &Arc<super::State>,
     selection_ref: airk_core::scoped_reads::SelectionScopeRef,
@@ -547,9 +558,10 @@ async fn run(
         ToolSelection::Admin => {
             anyhow::bail!("admin scope reads are served only by the admin plane")
         }
-        // Refused by `response` before this point (U105 contract step).
+        // Dispatched to `open_reads::response` before this point; it needs
+        // the service's agent plane and in-process open admission.
         ToolSelection::Open { .. } => {
-            anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED)
+            anyhow::bail!("open agent reads are served by the service dispatch")
         }
         ToolSelection::Project { binding } => {
             let project =

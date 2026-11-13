@@ -379,7 +379,7 @@ S2b): the admin plane's injected `SelectionReader` runs the same
 | W7 | 64 KiB | 4 MiB (the frame ceiling; 3f.1) | At most eight 256 KiB drafts per drain |
 | W8, M12 | 128 KiB / 64 KiB (W8 request), 64 KiB / 128 KiB (M12 response) (3f.1) | A 64 KiB handoff and its fields |
 
-### 2.9 Open agent access (U105/U106, contract step) [landed, not served]
+### 2.9 Open agent access (U105/U106) [served: service, CLI, HTTPS MCP]
 
 Spec: `docs/split/open-agent-access.md` step 1. D8 is recorded by U105 and
 U106: these are wire, persisted-record, catalog-field and provenance
@@ -388,16 +388,17 @@ absent. Every consumer refuses the new values until its step lands.
 
 | Addition | Owner | Shape | Until served |
 |---|---|---|---|
-| `HttpSelection::Open` | `airk_core::service_http` | `{"kind":"open","selection":{"namespace":…}}` (`OpenHttpSelection`); `same_authority` compares namespaces; `authority_digest` covers the namespace only (golden `open-namespace` in `httpAuthorityDigest.json`, mirrored by `serviceHttp.ts`) | HTTPS validation, lazy backend and gateway capture refuse `open connections are not served yet` |
-| Ledger `Record.open` | `airk_core::service_http_credentials` | `OpenConnectionState {defaults_revision ≥ 1, default_index_ids ≤ 32, default_index_set_ids ≤ 32, agent_choice: off\|on}`, `default` + `skip_serializing_if`, last field; present exactly when the selection is `Open`; a predecessor refuses it (`deny_unknown_fields`) | No enrollment produces it. Format proof: `fixtures/split/agents/credentials_ledger_v1.json` |
-| `ToolSelection::Open` | `airk_core::service` | `{"open":{"index_ids":[…],"index_set_ids":[…],"connection_id"?}}`; ids or exact names, ≤ 32 each, non-empty, ≤ 256 bytes, no control characters, ≤ 24 KiB (`ToolSelection::validate`) | M3 answers `not_yet_served` |
+| `HttpSelection::Open` | `airk_core::service_http` | `{"kind":"open","selection":{"namespace":…}}` (`OpenHttpSelection`); `same_authority` compares namespaces; `authority_digest` covers the namespace only (golden `open-namespace` in `httpAuthorityDigest.json`, mirrored by `serviceHttp.ts`) | Served: HTTPS validation accepts it (ready catalog in its namespace, no grant, no registration), so `HttpEnroll` and connection info serve it; gateway capture admits any current revision of its namespace (minimum `INITIAL`); requests read through `http_backend::open_factory` (below). The step-1 constant `OPEN_NOT_SERVED` is removed |
+| Ledger `Record.open` | `airk_core::service_http_credentials` | `OpenConnectionState {defaults_revision ≥ 1, default_index_ids ≤ 32, default_index_set_ids ≤ 32, agent_choice: off\|on}`, `default` + `skip_serializing_if`, last field; present exactly when the selection is `Open`; a predecessor refuses it (`deny_unknown_fields`) | Step 5: `HttpEnroll` of an `Open` selection writes `OpenConnectionState::initial()`; `CredentialStore::set_open_defaults` compare-and-swaps it (generation unchanged); `AuthenticatedCredential.open` and `HttpConnectionInfo.open` (`default` + `skip_serializing_if`, present exactly for `Open`) carry it. Format proof: `fixtures/split/agents/credentials_ledger_v1.json` |
+| `ToolSelection::Open` | `airk_core::service` | `{"open":{"index_ids":[…],"index_set_ids":[…],"connection_id"?}}`; ids or exact names, ≤ 32 each, non-empty, ≤ 256 bytes, no control characters, ≤ 24 KiB (`ToolSelection::validate`) | Step 5: served by `service_runtime::open_reads` (below) |
 | `SelectionOwnerKind::Agent` | `airk_core::scoped_reads` | `"agent"`; `ScopeObservation::validate` admits empty memberships only for it | Step 3: minted only by the service agent plane (`service_runtime::agent_plane`), not yet called (step 5) |
 | `OpenReadAuthority` | `airk_kernel::scoped_reads` | `{schema, backing, index_id, selection (owner agent), sources (≥ 1), source_revision, policy_epoch, policy_digest}`, domain `airk/scoped-read-authority/open/1`, one Subtree `""` atom per source; `Kernel::with_open_reads` | Step 3: built by `catalog_authority::build_open_read_authority`, admitted by `NativeCatalogAdmission::reserve_open_scope`, installed by the worker (`Scopes::install_open`, selection ledger) and opened by `LocalTools::open_session_with_client`. Source attribution names the index and source with no project |
 | Descriptions | `airk_core::index_catalog` | `IndexDefinition.description`, `QueryProject.description`: `default` + `skip_serializing_if`, ≤ 1 KiB, not blank, no control characters except `
 ` | Served (step 2): loaded from `catalog_descriptions` only when that table exists |
 | `CatalogOperation::SetIndexDescription` / `SetProjectDescription` | `airk_core::catalog_management` | `{operation, id, expected_definition_revision, description: string\|null}`; no typed confirmation, no worker drain, no authority fence | Served (step 2): fenced by `expected_definition_revision` (bumps it; tombstoned index refused); the first `Some` installs the layer, `null` clears and never installs it |
-| `ControlMethod::AgentConnectionDefaults` → `ControlResponse::AgentConnectionDefaults` | `airk_core::service` | `{connection_id, expected_defaults_revision, index_ids?, index_set_ids?, agent_choice?}` (typed ids; `null` refused) → `{connection_id, open: OpenConnectionState}`; group `agent_connection_defaults` in `control_methods.json`; metadata relay `console_method_not_reviewed` | `not_yet_served` |
-| Refusal codes | `airk_core::service_http::open_refusal` | `agent_scope_choice_disabled`, `agent_default_scope_unset`, `scope_name_ambiguous`, `scope_name_unknown` | Unused |
+| `ControlMethod::AgentConnectionDefaults` → `ControlResponse::AgentConnectionDefaults` | `airk_core::service` | `{connection_id, expected_defaults_revision, index_ids?, index_set_ids?, agent_choice?}` (typed ids; `null` refused) → `{connection_id, open: OpenConnectionState}`; group `agent_connection_defaults` in `control_methods.json`; metadata relay `console_method_not_reviewed` | Step 5: served; I3 row `agents.connection_defaults` (surfaces pipe, airkctl, session) so the Explorer session relays it |
+| `ControlMethod::ToolsCatalog.connection_id` | `airk_core::service` | optional `connection_id` (`default` + `skip_serializing_if`, `null` refused; cases in `control_methods.json`): the open connection's catalog, `airk_mcp::open::catalog(agent_choice)`; never with `combined` (`invalid_tool_catalog_selection`) | Step 5: served |
+| Refusal codes | `airk_core::service_http::open_refusal` | `agent_scope_choice_disabled`, `agent_default_scope_unset`, `scope_name_ambiguous`, `scope_name_unknown`; step 5 adds `agent_scope_too_large` (> 32 indexes after expansion), `agent_connection_not_open`, `agent_defaults_conflict`, `list_cursor_expired` | Step 5: used by M3 and `AgentConnectionDefaults`; the service also answers `agent_selection_capacity` (agent lease budget full) and `scoped_read_unavailable` (empty or unavailable scope) |
 
 Description layer (step 2): `service_catalog_descriptions_v1.sql` adds
 `catalog_descriptions(kind, id, description)` (`kind` `index`/`project`,
@@ -441,6 +442,65 @@ Fan-out, budgets, merge, verification and in-process delivery (shared
 selection path's. `tools_call::open_combined_backend` is wired in step 5.
 Query-scope `indexes`/`sources` views require a `project_id` and so refuse
 for an open scope; `projects` is empty.
+
+Service and CLI (step 5): M3 `ToolSelection::Open` is
+`service_runtime::open_reads::response`. `help` answers in process. The
+connection's open state is reread from the durable ledger on every call;
+`airk_core::agent_scope` decides the scope over a catalog listing read at
+one revision: with a connection and choice off a call naming anything is
+refused, naming nothing reads the stored default (unset refuses); with
+choice on or for the local owner (no `connection_id`, which must name a
+scope) the named ids or exact names are read; sets expand to their live
+members read whole, the union is deduplicated and bounded to 32. The scope
+is leased through the agent plane (key: the connection, or the local owner's
+caller identity) and read through `open_single_backend` (one index) or
+`open_combined_backend` (several), then released. `list_indexes` (local
+owner, or a connection with choice on) is `agent_scope::list_page`: every
+live index `{id, name, description, description_generated, paths (enabled
+source roots), readiness (import_pending|no_enabled_source|ready, catalog
+view only)}` then every set `{id, name, description, description_generated,
+index_ids}`, at most `MAX_PAGE_BYTES` per page (at least one entry),
+continued by `next_cursor` (`lix1.<revision>.<offset>`, refused
+`list_cursor_expired` at another revision). A generated description is
+`<name>: indexes <paths>` or `<name>: index set of <member names>`, bounded
+to 1 KiB. `AgentConnectionDefaults` checks named ids against the current
+catalog (live index, present set), compare-and-swaps through the credential
+store and, when the revision moved, drops that connection's agent leases;
+`HttpRevoke` drops them too, a 30 s sweep drops idle leases and service end
+closes the plane. `airkctl`: `tools call --index/--set [--connection]`
+(`list_indexes` always takes this path), `tools list|help --connection`,
+`agents connect --open`, `agents default`, `library describe`; the session
+value options include `--index`, `--set` and `--connection`.
+
+HTTPS MCP (step 6): the service injects `http_backend::OpenHooks` into the
+gateway's validation (the pattern of the admin plane's selection reader):
+`reader` is `open_reads::response` (the M3 path, with the connection id; the
+MCP session inserts its response mode as for every read) and `choice` reads the
+connection's agent choice from the live credential store. The open backend
+keeps no state from connect time: `catalog()` is
+`airk_mcp::open::catalog(current choice)` on every `tools/list`, and each call
+removes `index_ids`/`index_set_ids` from the arguments (arrays of strings,
+else `INVALID_SCHEMA` before the service) and passes them as names. A service
+refusal becomes a tool error with the same stable code the CLI reports.
+Defaults and choice changes never change the credential generation, so the
+gateway's cached service and its MCP sessions continue and the change
+applies to the next request. Help is answered by the service against the
+caller's open catalog. `list_indexes` is declared once among the canonical
+read names (`remote::canonical_read_name`, which also gates the local JSON
+API); the backend's catalog decides whether a session offers it. The
+service does not emit `notifications/tools/list_changed`: its MCP sessions
+hold no per-session notification handle, so an agent whose client caches
+`tools/list` sees a choice change after it lists tools again or reconnects;
+calls are decided by the service on every request either way.
+
+A combined read failure answered only as `combined_read_unavailable` now
+writes its full error chain to the owner-private raw log
+(`service_logs::record_service_error`, kind `service_error`); the reply is
+unchanged. Open members qualify their evidence against their own whole-index
+scope with no Project: `QualifiedOrigin`/`RankedOrigin` carry empty
+`project_ids` exactly for an agent-owned selection
+(`QualifiedOrigin::validate_for`; `materialize_ranked_origin` admits it only
+when the result's selection owner is `agent`).
 
 Fixtures: `fixtures/split/agents/open_access.json` (selections, agent
 observations, the open fingerprint, description cases),

@@ -156,6 +156,24 @@ pub(super) enum LibraryCommand {
         #[command(flatten)]
         apply: ApplyArgs,
     },
+    /// Set or clear the description of an index or an index set; agents read it in
+    /// list_indexes (without one, a description is generated from the name and paths).
+    Describe {
+        /// The index (`idx_…`).
+        #[arg(long, conflicts_with = "set", required_unless_present = "set")]
+        index: Option<String>,
+        /// The index set (`prj_…`).
+        #[arg(long)]
+        set: Option<String>,
+        /// The description: at most 1 KiB, newlines allowed, no other control characters.
+        #[arg(long, conflicts_with = "clear", required_unless_present = "clear")]
+        text: Option<String>,
+        /// Remove the stored description.
+        #[arg(long)]
+        clear: bool,
+        #[command(flatten)]
+        apply: ApplyArgs,
+    },
 }
 
 /// Preview, then apply only with --yes; destructive changes need --confirm.
@@ -293,6 +311,34 @@ pub(super) fn run(cx: &mut Context, selection: Selection, command: LibraryComman
                 })
             })
         }
+        LibraryCommand::Describe {
+            index,
+            set,
+            text,
+            apply,
+            ..
+        } => change(cx, &selection, apply, |cx, control| {
+            // `--clear` (required when `--text` is absent) stores `None`.
+            match (index, set) {
+                (Some(index), _) => {
+                    let index = index_definition(cx, control, &index)?;
+                    Ok(CatalogOperation::SetIndexDescription {
+                        id: index.id,
+                        expected_definition_revision: index.definition_revision,
+                        description: text,
+                    })
+                }
+                (None, Some(set)) => {
+                    let project = project(cx, control, &set)?;
+                    Ok(CatalogOperation::SetProjectDescription {
+                        id: project.id,
+                        expected_definition_revision: project.definition_revision,
+                        description: text,
+                    })
+                }
+                (None, None) => Err(usage(cx, "name --index or --set")),
+            }
+        }),
         LibraryCommand::Retire { index, apply } => change(cx, &selection, apply, |cx, control| {
             let index = index_definition(cx, control, &index)?;
             Ok(CatalogOperation::RetireIndex {

@@ -23,7 +23,7 @@ pub use metadata::{
 };
 pub use store::{
     AttachmentRetirementProof, AuthenticatedCredential, ConnectionOwnership, CredentialStore,
-    IssuedCredential, authority_digest, read_client_token,
+    IssuedCredential, OpenDefaultsChange, OpenDefaultsRefused, authority_digest, read_client_token,
 };
 pub use tls::{TlsBundleIdentity, TlsIdentity};
 pub mod rotation;

@@ -216,6 +216,21 @@ pub enum Source {
         id: Incarnation,
         selection_file: PathBuf,
     },
+    /// U105: a new open connection with a freshly minted id, in the
+    /// endpoint's namespace.
+    Open,
+}
+
+/// The open selection of the live endpoint's namespace.
+fn open_selection(inputs: &Inputs<'_>) -> Result<HttpSelection, ErrorLine> {
+    let endpoint = crate::agents::endpoint(inputs.control, inputs.version)?;
+    let namespace = endpoint["namespace"]
+        .as_str()
+        .and_then(|text| text.parse().ok())
+        .ok_or_else(|| refused("the HTTPS endpoint names no namespace"))?;
+    Ok(HttpSelection::Open {
+        selection: airk_core::service_http::OpenHttpSelection { namespace },
+    })
 }
 
 /// `agents connect`: enroll or reuse a connection and write its entry.
@@ -237,6 +252,12 @@ pub fn connect(
                 id,
                 selection_file: file,
             } => enroll(inputs, id, selection_file(&file)?, client)?,
+            Source::Open => enroll(
+                inputs,
+                crate::journal::mint()?,
+                open_selection(inputs)?,
+                client,
+            )?,
         };
     let project = inputs
         .projects
@@ -258,7 +279,7 @@ pub fn connect(
         |source| config::connect(agent, scope, source, server_key, &written),
     )
     .map_err(refused)?;
-    Ok(json!({
+    let mut written = json!({
         "schema": 1,
         "client": agent.name(),
         "scope": scope,
@@ -267,7 +288,12 @@ pub fn connect(
         "connectionId": connection.connection_id,
         "url": url,
         "changed": changed,
-    }))
+    });
+    // U105: an open connection reports its stored defaults and choice.
+    if let Some(open) = &connection.open {
+        written["open"] = serde_json::to_value(open).map_err(refused)?;
+    }
+    Ok(written)
 }
 
 fn project_root_of(entry: &config::Entry, inputs: &Inputs<'_>) -> Option<PathBuf> {

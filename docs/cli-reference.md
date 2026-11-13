@@ -13,6 +13,7 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl agents`](#airkctl-agents)
 - [`airkctl agents connect`](#airkctl-agents-connect)
 - [`airkctl agents credential`](#airkctl-agents-credential)
+- [`airkctl agents default`](#airkctl-agents-default)
 - [`airkctl agents endpoint`](#airkctl-agents-endpoint)
 - [`airkctl agents info`](#airkctl-agents-info)
 - [`airkctl agents launch`](#airkctl-agents-launch)
@@ -49,6 +50,7 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl jobs retry`](#airkctl-jobs-retry)
 - [`airkctl library`](#airkctl-library)
 - [`airkctl library change`](#airkctl-library-change)
+- [`airkctl library describe`](#airkctl-library-describe)
 - [`airkctl library list`](#airkctl-library-list)
 - [`airkctl library rename`](#airkctl-library-rename)
 - [`airkctl library retire`](#airkctl-library-retire)
@@ -423,11 +425,12 @@ Commands:
   info        Read an existing connection's verified references without issuing credentials
   credential  Print an existing, unrevoked connection's bearer header for an agent's header helper
   list        Classify AIRK's entries in agent configuration files; read-only
-  connect     Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id) or reusing an existing connection
+  connect     Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id), a new open connection (--open) or reusing an existing connection
   repair      Rewrite AIRK entries whose endpoint or helper is stale; --connection-id replaces an unknown connection
   remove      Remove AIRK's entries (only those naming --connection-id, when given)
   verify      Probe the service's own MCP endpoint with a connection's stored credential
   launch      Start Claude Code, Codex or VS Code on this connection in the foreground (U91)
+  default     Set an open connection's default scope and agent choice; the agent's next call uses it
   revoke      Revoke one local HTTPS connection while preserving its original receipt
 
 Options:
@@ -478,9 +481,11 @@ Options:
 ## airkctl agents connect
 
 ```text
-Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id) or reusing an existing connection
+Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id), a new open connection (--open) or reusing an existing connection.
 
-Usage: airkctl agents connect [OPTIONS] --client <CLIENT> --connection-id <CONNECTION_ID>
+An open connection reads its default scope (`agents default` or the Explorer sets it); with agent choice on, the agent may name indexes and index sets per call.
+
+Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
 Options:
       --output <OUTPUT>
@@ -507,34 +512,37 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
-      --selection-file <SELECTION_FILE>
-          Owner-private reviewed selection to enroll as --connection-id
+      --open
+          Enroll a new open connection with a new id: no reviewed grant, agent choice off and an empty default scope until `agents default` sets one
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
 
-      --user
-          Write the user-level file instead of the project's
-
-      --project <PROJECT>
-          The project folder (default: the current directory)
+      --selection-file <SELECTION_FILE>
+          Owner-private reviewed selection to enroll as --connection-id
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
 
+      --user
+          Write the user-level file instead of the project's
+
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
+
+      --project <PROJECT>
+          The project folder (default: the current directory)
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --server-key <SERVER_KEY>
           [default: airk]
 
       --airkctl <AIRKCTL>
           The airkctl executable written credential helpers name (default: this airkctl)
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -548,7 +556,7 @@ Options:
           [default: default]
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```
 
 ## airkctl agents credential
@@ -590,6 +598,83 @@ Options:
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## airkctl agents default
+
+```text
+Set an open connection's default scope and agent choice; the agent's next call uses it.
+
+--index and --set take ids or exact names and replace the whole default scope; --clear empties it. Without --expected-revision the current defaults revision is read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
+
+Usage: airkctl agents default [OPTIONS] --connection-id <CONNECTION_ID>
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --connection-id <CONNECTION_ID>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --index <INDEXES>
+          An index (`idx_…` or its exact name) in the default scope (repeatable)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --set <SETS>
+          An index set (`prj_…` or its exact name) in the default scope (repeatable)
+
+      --clear
+          Empty the default scope
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --agent-choice <AGENT_CHOICE>
+          Whether the agent may name indexes and sets itself and list them
+
+          [possible values: off, on]
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --expected-revision <EXPECTED_REVISION>
+          Refuse unless the stored defaults are at this revision
 
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
@@ -2905,6 +2990,7 @@ Commands:
   set-delete   Delete an index set (its indexes stay); needs --confirm <set name>
   rename       Rename an index
   retire       Retire an index (stop tracking it); needs --confirm <index name>
+  describe     Set or clear the description of an index or an index set; agents read it in list_indexes (without one, a description is generated from the name and paths)
 
 Options:
       --output <OUTPUT>
@@ -2994,6 +3080,79 @@ Options:
 
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl library describe
+
+```text
+Set or clear the description of an index or an index set; agents read it in list_indexes (without one, a description is generated from the name and paths)
+
+Usage: airkctl library describe [OPTIONS]
+
+Options:
+      --index <INDEX>
+          The index (`idx_…`)
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --set <SET>
+          The index set (`prj_…`)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --text <TEXT>
+          The description: at most 1 KiB, newlines allowed, no other control characters
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --clear
+          Remove the stored description
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --yes
+          Apply the previewed change
+
+      --confirm <CONFIRM>
+          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --member-availability <MEMBER_AVAILABILITY>
           Report member failures or require every selected member to answer
@@ -6507,7 +6666,9 @@ Options:
 ## airkctl tools call
 
 ```text
-Invoke an MCP tool and print its unchanged result envelope as JSON
+Invoke an MCP tool and print its unchanged result envelope as JSON.
+
+--index and --set read whole indexes and index sets (ids or exact names) through the open read path an agent uses; --connection applies that open connection's default scope and agent choice, exactly as its MCP calls do. list_indexes always takes that path.
 
 Usage: airkctl tools call [OPTIONS] <TOOL>
 
@@ -6531,14 +6692,23 @@ Options:
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
 
+      --index <INDEXES>
+          An index to read whole: `idx_…` or its exact name (repeatable, at most 32)
+
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --set <SETS>
+          An index set to read as its member indexes: `prj_…` or its exact name (repeatable)
+
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --connection <CONNECTION>
+          The open agent connection whose default scope and agent choice apply
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
@@ -6563,7 +6733,7 @@ Options:
           [default: default]
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```
 
 ## airkctl tools help
@@ -6586,6 +6756,9 @@ Options:
 
           [default: text]
           [possible values: json, text]
+
+      --connection <CONNECTION>
+          An open agent connection whose catalog to read
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -6628,7 +6801,9 @@ Options:
 ## airkctl tools list
 
 ```text
-List the connection's unified tools; --json includes complete schemas and annotations
+List the connection's unified tools; --json includes complete schemas and annotations.
+
+With --connection, the catalog an open agent connection sees: its scope selectors and list_indexes appear only when its agent choice is on.
 
 Usage: airkctl tools list [OPTIONS]
 
@@ -6641,6 +6816,9 @@ Options:
 
           [default: text]
           [possible values: json, text]
+
+      --connection <CONNECTION>
+          An open agent connection whose catalog to list
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -6677,7 +6855,7 @@ Options:
           [default: default]
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```
 
 ## airkctl tools shell

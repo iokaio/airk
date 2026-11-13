@@ -76,6 +76,7 @@ fn setup(control: &Path) -> Result<(ServiceHealth, HttpConnectionInfo)> {
             .join(format!("credential-{id}.token"))
             .to_string_lossy()
             .into_owned(),
+        open: None,
     };
     Ok((health, connection))
 }

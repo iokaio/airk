@@ -22,6 +22,7 @@ pub mod combined;
 pub mod explorer_offline;
 pub mod help;
 pub mod local;
+pub mod open;
 pub mod query_capacity;
 pub mod remote;
 pub mod scope_instructions;

@@ -91,6 +91,160 @@ pub fn verify(
     )?)
 }
 
+/// `agents default` inputs (U105).
+pub struct DefaultsRequest {
+    /// Ids or exact names; with `sets`, the whole new default scope.
+    pub indexes: Vec<String>,
+    pub sets: Vec<String>,
+    /// Empty the default scope.
+    pub clear: bool,
+    pub agent_choice: Option<airk_core::service_http_credentials::AgentChoice>,
+    /// The stored defaults revision to replace; read from `agents info`
+    /// when absent.
+    pub expected_revision: Option<u64>,
+}
+
+/// The current index and index set pages at one catalog revision, for name
+/// resolution by the shared rule (`airk_core::agent_scope`).
+fn catalog_listing(
+    control: &Path,
+    version: &str,
+) -> Result<airk_core::agent_scope::CatalogListing, ErrorLine> {
+    use airk_core::catalog_management::{
+        CatalogItem, CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES,
+    };
+    let mut listing: Option<airk_core::agent_scope::CatalogListing> = None;
+    for kind in [CatalogKind::Indexes, CatalogKind::Projects] {
+        let mut after = None;
+        loop {
+            let expected = listing.as_ref().and_then(|listing| listing.revision);
+            let response = crate::service::request(
+                control,
+                ControlMethod::CatalogPage {
+                    request: CatalogPageRequest {
+                        kind,
+                        index_id: None,
+                        project_id: None,
+                        after: after.take(),
+                        expected_catalog_revision: expected,
+                        limit: airk_core::index_catalog::MAX_SELECTION,
+                        max_bytes: MAX_PAGE_BYTES,
+                    },
+                },
+                version,
+            )?;
+            let ControlResponse::CatalogPage { page, .. } = response else {
+                return Err(crate::service::refusal(&response));
+            };
+            let listing = listing.get_or_insert_with(|| airk_core::agent_scope::CatalogListing {
+                namespace: page.namespace,
+                revision: Some(page.revision),
+                indexes: Vec::new(),
+                projects: Vec::new(),
+                memberships: Vec::new(),
+                sources: Vec::new(),
+            });
+            if listing.revision != Some(page.revision) {
+                return Err(refused(
+                    "the catalog changed while it was read; run the command again",
+                ));
+            }
+            for item in page.items {
+                match item {
+                    CatalogItem::Index(index) => listing.indexes.push(index),
+                    CatalogItem::Project(project) => listing.projects.push(project),
+                    _ => return Err(refused("unexpected catalog page item")),
+                }
+            }
+            match page.continuation {
+                Some(next) => after = Some(next),
+                None => break,
+            }
+        }
+    }
+    listing.ok_or_else(|| refused("catalog unavailable"))
+}
+
+fn name_refused(code: &str, name: &str) -> ErrorLine {
+    ErrorLine::new(ExitClass::Refused, code, false, &format!("{code}: {name}"))
+}
+
+/// `agents default` (U105): resolve names by the shared rule, read the
+/// current defaults revision when none is given, then
+/// `AgentConnectionDefaults`. Prints `{"schema":1,"connectionId","open"}`.
+pub fn default_scope(
+    control: &Path,
+    version: &str,
+    connection_id: Incarnation,
+    request: DefaultsRequest,
+) -> Result<Value, ErrorLine> {
+    let (index_ids, index_set_ids) = if request.clear {
+        (Some(Vec::new()), Some(Vec::new()))
+    } else if request.indexes.is_empty() && request.sets.is_empty() {
+        (None, None)
+    } else {
+        let listing = catalog_listing(control, version)?;
+        let mut indexes = Vec::new();
+        for name in &request.indexes {
+            let id = airk_core::agent_scope::index_by_name(&listing, name)
+                .map_err(|code| name_refused(code, name))?;
+            if !indexes.contains(&id) {
+                indexes.push(id);
+            }
+        }
+        let mut sets = Vec::new();
+        for name in &request.sets {
+            let id = airk_core::agent_scope::set_by_name(&listing, name)
+                .map_err(|code| name_refused(code, name))?;
+            if !sets.contains(&id) {
+                sets.push(id);
+            }
+        }
+        (Some(indexes), Some(sets))
+    };
+    let expected_defaults_revision = match request.expected_revision {
+        Some(revision) => revision,
+        None => {
+            let connection: airk_core::service_http::HttpConnectionInfo =
+                serde_json::from_value(info(control, version, connection_id)?)
+                    .map_err(|error| refused(&error.to_string()))?;
+            connection
+                .open
+                .ok_or_else(|| {
+                    ErrorLine::new(
+                        ExitClass::Refused,
+                        airk_core::service_http::open_refusal::AGENT_CONNECTION_NOT_OPEN,
+                        false,
+                        "this connection is not an open agent connection",
+                    )
+                })?
+                .defaults_revision
+        }
+    };
+    let response = crate::service::request(
+        control,
+        ControlMethod::AgentConnectionDefaults {
+            connection_id,
+            expected_defaults_revision,
+            index_ids,
+            index_set_ids,
+            agent_choice: request.agent_choice,
+        },
+        version,
+    )?;
+    match response {
+        ControlResponse::AgentConnectionDefaults {
+            connection_id: changed,
+            open,
+        } if changed == connection_id => Ok(serde_json::json!({
+            "schema": 1,
+            "connectionId": changed,
+            "open": open,
+        })),
+        other => Err(crate::service::refusal(&other)),
+    }
+}
+
 /// `http-revoke`: the service must accept requests; the revoke is fenced to
 /// the observed instance and must name the connection asked for.
 pub fn revoke(

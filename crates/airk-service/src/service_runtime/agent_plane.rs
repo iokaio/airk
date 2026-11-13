@@ -6,10 +6,10 @@
 //! connection's defaults change or revocation, and a catalog revision move.
 //! Every drop returns its nonces as [`Dropped`] for the caller to revoke in
 //! the gate after releasing the plane's lock (selection authority §3.3,
-//! §3.7). Time, nonces and the gate registration are injected.
-//!
-//! Callers land with the service's open-read path (open-agent-access step 5).
-#![cfg_attr(not(test), allow(dead_code))]
+//! §3.7). Time, nonces and the gate registration are injected. The service's
+//! open-read path (`open_reads`) leases; the dispatch drops on defaults
+//! change and revocation, a periodic sweep drops idle leases and service
+//! end closes the plane.
 use airk_catalog_control::catalog_admission::MAX_AGENT_SELECTIONS;
 use airk_core::{
     identity::{Incarnation, Sha256Digest, framed_digest},

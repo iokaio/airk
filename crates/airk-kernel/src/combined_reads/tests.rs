@@ -961,3 +961,79 @@ fn thirty_two_full_native_shaped_search_members_fit_and_materialize_without_drop
     eprintln!("32 full native-shaped members: canonical bytes={bytes}");
     Ok(())
 }
+
+/// U106(d) regression (open-agent-access step 5): an open read of two whole
+/// indexes, on the same source root identity and on different ones, has no
+/// Project memberships. Its evidence qualifies against each member's own
+/// scope atoms with no Project; evidence outside them still refuses. Before
+/// the fix every hit refused ("member returned evidence outside its selected
+/// source scope"), so every multi-index open search answered
+/// `combined_read_unavailable`.
+#[test]
+fn open_members_qualify_whole_index_evidence_without_a_project() -> Result<()> {
+    use airk_core::{
+        identity::Sha256Digest,
+        scoped_reads::{ScopeSelectionObservation, SelectionOwnerKind},
+    };
+    let observation = ScopeSelectionObservation {
+        owner: SelectionOwnerKind::Agent,
+        scope_identity: Sha256Digest::from_bytes([9; 32]),
+        catalog_revision: CatalogRevision::INITIAL,
+    };
+    let query = QuerySelection {
+        project_ids: Vec::new(),
+        index_ids: Some(vec![index(1), index(2)]),
+        member_availability: MemberAvailability::Report,
+    };
+    for second_root in [1u8, 2] {
+        let mut composition = request()?;
+        composition.selection = query.resolve_open(
+            &[
+                (index(1), vec![root(1)]),
+                (index(2), vec![root(second_root)]),
+            ],
+            observation,
+        )?;
+        let first = input(1, vec![hit("api/one.rs", "one"), hit("impl/two.rs", "two")])?;
+        let mut second = input(2, vec![hit("docs/three.md", "three")])?;
+        second.sources[0].source_root_id = root(second_root);
+        let combined = compose(&composition, vec![first, second])?;
+        assert_eq!(combined.members.len(), 2);
+        assert_eq!(combined.ranking.len(), 3);
+        assert!(!combined.partial && combined.error.is_none());
+        let value = serde_json::to_value(&combined)?;
+        assert_eq!(value["selection"]["selection"]["owner"], "agent");
+        for ranking in &combined.ranking {
+            assert!(ranking.origin.project_ids.is_empty());
+            let origin = airk_core::combined_reads::materialize_ranked_origin(
+                &value,
+                &serde_json::to_value(ranking)?,
+            )?;
+            assert!(origin.project_ids.is_empty());
+        }
+        // A member answering from a root outside its scope still refuses.
+        let mut foreign = input(2, vec![hit("docs/three.md", "three")])?;
+        foreign.sources[0].source_root_id = root(7);
+        assert!(compose(&composition, vec![foreign]).is_err());
+    }
+    // A Project-free origin is valid only in an agent-owned result.
+    let open = compose(
+        &{
+            let mut composition = request()?;
+            composition.selection = query.resolve_open(
+                &[(index(1), vec![root(1)]), (index(2), vec![root(1)])],
+                observation,
+            )?;
+            composition
+        },
+        vec![input(1, vec![hit("api/one.rs", "one")])?],
+    )?;
+    let mut value = serde_json::to_value(&open)?;
+    let rank = serde_json::to_value(&open.ranking[0])?;
+    value["selection"]["selection"]["owner"] = json!("window");
+    assert!(airk_core::combined_reads::materialize_ranked_origin(&value, &rank).is_err());
+    // And a Project-scoped composition never yields a Project-free origin.
+    let scoped = compose(&request()?, vec![input(1, vec![hit("api/one.rs", "one")])?])?;
+    assert_eq!(scoped.ranking[0].origin.project_ids, vec![project(1)]);
+    Ok(())
+}

@@ -1039,6 +1039,9 @@ fn a_stale_window_read_reselects_once_and_retries_once() {
 fn the_control_relay_forwards_exactly_the_session_rows() {
     // Reviewed, checked-in expectation; not derived from the table reader.
     let expected: std::collections::BTreeSet<String> = [
+        // U105: the Explorer's applied search scope sets an open
+        // connection's defaults.
+        "AgentConnectionDefaults",
         "Cancel",
         "CatalogDetail",
         "CatalogPage",
@@ -1079,6 +1082,8 @@ fn the_control_relay_forwards_exactly_the_session_rows() {
         json!({"configure_watch": {"project": project, "enabled": false}}),
         json!({"logs": {"limit": 5}}),
         json!({"assistance_windows": {}}),
+        json!({"agent_connection_defaults": {"connection_id": "a".repeat(32),
+            "expected_defaults_revision": 1, "agent_choice": "on"}}),
     ] {
         assert!(
             matches!(relay_rule(&method(forwarded.clone())), Relay::Forward),
@@ -1105,4 +1110,21 @@ fn the_control_relay_forwards_exactly_the_session_rows() {
     // The scoped native read row names the `NativeRead` variant.
     assert_eq!(table_spelling("NativeRead".to_owned()), "NativeReadScoped");
     assert_eq!(table_spelling("Progress".to_owned()), "Progress");
+}
+
+/// U105: an open read's index or set value named like a refused command word
+/// is a value, not a command.
+#[test]
+fn open_read_selector_values_are_not_command_words() {
+    let argv = |line: &[&str]| {
+        line.iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>()
+    };
+    for value in ["--index", "--set"] {
+        assert!(!refused_command(&argv(&[
+            "tools", "call", "search", value, "shell"
+        ])));
+    }
+    assert!(refused_command(&argv(&["tools", "shell"])));
 }

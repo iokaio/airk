@@ -987,10 +987,10 @@ impl ConnectionFence {
                 .map(|member| member.expected_catalog_revision)
                 .max()
                 .ok_or_else(|| std::io::Error::other("empty imported HTTP authority"))?,
-            // U105 contract step: an open connection is never captured yet.
-            HttpSelection::Open { .. } => {
-                anyhow::bail!(airk_core::service_http::OPEN_NOT_SERVED)
-            }
+            // U105: an open connection has no saved catalog clock; any current
+            // revision of its namespace admits it, and a later move fences the
+            // captured ticket as for every other selection.
+            HttpSelection::Open { .. } => airk_core::index_catalog::CatalogRevision::INITIAL,
         };
         let mut held = self
             .ticket

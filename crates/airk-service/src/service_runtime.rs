@@ -26,6 +26,7 @@ mod http;
 mod journal;
 mod lifecycle;
 mod login;
+mod open_reads;
 mod registration;
 mod resolve;
 mod rotation;
@@ -88,6 +89,36 @@ struct State {
     selection_control: Option<airk_supervisor::project_supervisor::CatalogControlHandle>,
     /// A1 launch codes and admin sessions (split Phase 5), in memory.
     admin: Arc<airk_https::admin_plane::AdminPlane>,
+    /// U105/U106(d): open agent selection leases, in memory.
+    agents: Mutex<agent_plane::AgentPlane>,
+}
+
+/// The system clock in Unix milliseconds, as the planes read it.
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
+}
+
+/// The agent lease plane with the system clock, OS-random nonces and, with
+/// a catalog gate, live registration of each lease's nonce (nested inside
+/// the plane's lock, as for windows). Without a gate every lease refuses.
+fn agents(
+    instance: airk_core::identity::Incarnation,
+    gate: Option<airk_catalog_control::catalog_admission::NativeCatalogAdmission>,
+) -> agent_plane::AgentPlane {
+    agent_plane::AgentPlane::new(
+        instance,
+        Box::new(unix_ms),
+        Box::new(|| new_instance_id().expect("the OS random source is available")),
+        Box::new(
+            move |selection: &airk_core::scoped_reads::SelectionScopeRef| match &gate {
+                Some(gate) => gate.register_selection(selection).map_err(|_| ()),
+                None => Err(()),
+            },
+        ),
+    )
 }
 
 /// The window plane with the system clock (Unix milliseconds) and the OS
@@ -113,12 +144,7 @@ fn windows(
     });
     window_plane::WindowPlane::new(
         instance,
-        Box::new(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-                .unwrap_or_default()
-        }),
+        Box::new(unix_ms),
         Box::new(move |_| random()),
         Box::new(move || {
             let mut bytes = [0u8; 32];
@@ -142,7 +168,17 @@ fn revoke_in_gate(
     airk_core::service::WorkerIdentity,
     airk_core::service::ScopedReadRef,
 )> {
-    let nonces = dropped.into_nonces();
+    revoke_nonces_in_gate(gate, dropped.into_nonces())
+}
+
+/// [`revoke_in_gate`] for nonces of any owner plane.
+fn revoke_nonces_in_gate(
+    gate: Option<&airk_catalog_control::catalog_admission::NativeCatalogAdmission>,
+    nonces: Vec<airk_core::identity::Incarnation>,
+) -> Vec<(
+    airk_core::service::WorkerIdentity,
+    airk_core::service::ScopedReadRef,
+)> {
     match gate {
         Some(gate) if !nonces.is_empty() => gate.revoke_selection(&nonces).unwrap_or_default(),
         _ => Vec::new(),
@@ -153,7 +189,35 @@ fn revoke_in_gate(
 /// blocking thread (it waits for each acknowledgement). A revoked nonce is
 /// no longer live, so its scope is unusable even before the worker answers.
 fn revoke_dropped(state: &State, dropped: window_plane::Dropped) {
-    let pairs = revoke_in_gate(state.catalog_gate.as_ref(), dropped);
+    revoke_scopes(state, revoke_in_gate(state.catalog_gate.as_ref(), dropped));
+}
+
+/// [`revoke_dropped`] for the agent plane's dropped leases.
+fn revoke_agent_dropped(state: &State, dropped: agent_plane::Dropped) {
+    revoke_scopes(
+        state,
+        revoke_nonces_in_gate(state.catalog_gate.as_ref(), dropped.into_nonces()),
+    );
+}
+
+/// Drop every agent lease of `connection` (its defaults changed or it was
+/// revoked) and revoke their nonces with the plane's lock released.
+fn revoke_agent_connection(state: &State, connection: airk_core::identity::Incarnation) {
+    let dropped = match state.agents.lock() {
+        Ok(mut agents) => agents.revoke_connection(connection),
+        Err(_) => return,
+    };
+    revoke_agent_dropped(state, dropped);
+}
+
+/// `RevokeScope` for each pair on a blocking thread.
+fn revoke_scopes(
+    state: &State,
+    pairs: Vec<(
+        airk_core::service::WorkerIdentity,
+        airk_core::service::ScopedReadRef,
+    )>,
+) {
     if let (false, Some(control)) = (pairs.is_empty(), state.selection_control.clone()) {
         drop(tokio::task::spawn_blocking(move || {
             control.revoke_selection_scopes(pairs)
@@ -421,7 +485,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             },
             ControlMethod::HttpRevoke { connection_id } => match state.http.get() {
                 Some(owner) => match owner.revoke(connection_id).await {
-                    Ok(()) => ControlResponse::HttpRevoked { connection_id },
+                    Ok(()) => {
+                        revoke_agent_connection(&state, connection_id);
+                        ControlResponse::HttpRevoked { connection_id }
+                    }
                     Err(_) => ControlResponse::Failure {
                         code: "http_revocation_refused".into(),
                     },
@@ -638,11 +705,26 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::ToolsCatalog {
                 detail,
                 combined: None,
+                connection_id: None,
             } => airk_frontend::tool_catalog::response(&detail)?,
             ControlMethod::ToolsCatalog {
                 detail,
                 combined: Some(request),
+                connection_id: None,
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            // U105: an open connection's catalog follows its agent choice.
+            ControlMethod::ToolsCatalog {
+                detail,
+                combined: None,
+                connection_id: Some(connection_id),
+            } => open_reads::catalog(&state, &detail, connection_id).await,
+            ControlMethod::ToolsCatalog {
+                combined: Some(_),
+                connection_id: Some(_),
+                ..
+            } => ControlResponse::Failure {
+                code: "invalid_tool_catalog_selection".into(),
+            },
             ControlMethod::ClientRequestPrepare {
                 caller,
                 key,
@@ -768,10 +850,25 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::AgentConnectionVerify { connection_id } => {
                 agents::verify(&state.control_root, connection_id).await
             }
-            // U105 contract step: the defaults path lands with open reads.
-            ControlMethod::AgentConnectionDefaults { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::AgentConnectionDefaults {
+                connection_id,
+                expected_defaults_revision,
+                index_ids,
+                index_set_ids,
+                agent_choice,
+            } => {
+                open_reads::defaults(
+                    &state,
+                    connection_id,
+                    airk_endpoint::http_endpoint::OpenDefaultsChange {
+                        expected_defaults_revision,
+                        index_ids,
+                        index_set_ids,
+                        agent_choice,
+                    },
+                )
+                .await
+            }
             ControlMethod::HttpIssuerRotation { action } => {
                 rotation::response(&state.control_root, action).await
             }
@@ -948,6 +1045,34 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     arguments,
                     response_mode,
                     usage_client,
+                )
+                .await
+            }
+            // U105: an open read (a connection's default scope, or named
+            // indexes and sets), leased through the agent plane.
+            ControlMethod::ToolsCall {
+                tool,
+                arguments,
+                selection:
+                    airk_core::service::ToolSelection::Open {
+                        index_ids,
+                        index_set_ids,
+                        connection_id,
+                    },
+                response_mode,
+                usage_client,
+            } => {
+                open_reads::response(
+                    &state,
+                    open_reads::OpenCall {
+                        connection_id,
+                        index_names: index_ids,
+                        set_names: index_set_ids,
+                        tool,
+                        arguments,
+                        mode: response_mode,
+                        client: usage_client,
+                    },
                 )
                 .await
             }
@@ -1196,6 +1321,7 @@ async fn serve_with_admission(
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
     let plane = windows(instance, root.canonicalize()?, catalog_gate.clone());
+    let catalog_gate_for_agents = catalog_gate.clone();
     // The A2 read runs in process; `State` is bound once it exists.
     let reader_state: Arc<std::sync::OnceLock<std::sync::Weak<State>>> =
         Arc::new(std::sync::OnceLock::new());
@@ -1237,6 +1363,7 @@ async fn serve_with_admission(
         windows: Mutex::new(plane),
         selection_control,
         admin: Arc::new(admin),
+        agents: Mutex::new(agents(instance, catalog_gate_for_agents)),
     });
     let _ = reader_state.set(Arc::downgrade(&state));
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
@@ -1259,6 +1386,10 @@ async fn serve_with_admission(
         .map_err(|_| anyhow::anyhow!("service activity unavailable"))? = Instant::now();
     let admission = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
+    // Idle agent leases are dropped by every lease call and by this sweep,
+    // so an unused nonce never outlives its idle bound by more than a tick.
+    let mut agent_sweep = tokio::time::interval(Duration::from_secs(30));
+    agent_sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
     idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -1290,6 +1421,12 @@ async fn serve_with_admission(
                         result
                     });
                 } else {log.record(airk_core::service_logs::LogKind::ControlCapacity,None,None);}
+            },
+            _ = agent_sweep.tick() => {
+                let dropped = state.agents.lock().map(|mut agents| agents.sweep());
+                if let Ok(dropped) = dropped {
+                    revoke_agent_dropped(&state, dropped);
+                }
             },
             _ = state.shutdown.notified() => {log.record(airk_core::service_logs::LogKind::ShutdownRequested,None,None);break},
             _ = idle_tick.tick(), if idle_grace.is_some() => {
@@ -1325,11 +1462,19 @@ async fn serve_with_admission(
         Ok(mut windows) => Some(windows.end()),
         Err(_) => None,
     };
+    // Every agent lease ends with the service, as window grants do.
+    let agents_ended = state
+        .agents
+        .lock()
+        .map(|mut agents| agents.close().into_nonces())
+        .unwrap_or_default();
     // Every admin session and its A2 grant ends with the service; the plane
     // revokes their nonces once its lock is released.
     state.admin.end();
     if let Some(ended) = ended {
-        let pairs = revoke_in_gate(state.catalog_gate.as_ref(), ended);
+        let mut nonces = ended.into_nonces();
+        nonces.extend(agents_ended);
+        let pairs = revoke_nonces_in_gate(state.catalog_gate.as_ref(), nonces);
         if let (false, Some(control)) = (pairs.is_empty(), state.selection_control.clone()) {
             let _ = tokio::time::timeout(
                 Duration::from_secs(5),

@@ -33,8 +33,8 @@ mod raw;
 pub const OWNER_RECORDS: [&str; 2] = [OWNER, raw::OWNER];
 pub use raw::export as export_raw;
 pub use raw::export_to as export_raw_to;
-pub use raw::record_client_error;
 pub use raw::{FailureDetail, JobFailure};
+pub use raw::{record_client_error, record_service_error};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

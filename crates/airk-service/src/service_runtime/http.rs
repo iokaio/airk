@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The native service owns the retained HTTPS socket, identity and enrollment.
 use super::*;
+use airk_core::service_http_credentials::OpenConnectionState;
 use airk_core::{
     identity::Incarnation,
     service_http::{
@@ -9,7 +10,8 @@ use airk_core::{
     },
 };
 use airk_endpoint::http_endpoint::{
-    self, BoundEndpoint, CredentialStore, InstallationBinding, TlsIdentity,
+    self, BoundEndpoint, CredentialStore, InstallationBinding, OpenDefaultsChange,
+    OpenDefaultsRefused, TlsIdentity,
 };
 use std::{
     path::PathBuf,
@@ -38,6 +40,46 @@ fn now_ms() -> Result<u64> {
         .duration_since(UNIX_EPOCH)?
         .as_millis()
         .try_into()?)
+}
+
+/// U105 (§7): the open connection hooks: the service's open-read path (the
+/// one M3 `ToolSelection::Open` reaches) and the connection's current agent
+/// choice from the live credential store.
+fn open_hooks(
+    state: Weak<State>,
+    credentials: Arc<Mutex<CredentialStore>>,
+) -> airk_https::http_backend::OpenHooks {
+    airk_https::http_backend::OpenHooks {
+        reader: Arc::new(move |read: airk_https::http_backend::OpenRead| {
+            let state = state.clone();
+            Box::pin(async move {
+                let Some(state) = state.upgrade() else {
+                    return airk_core::service::ControlResponse::Failure {
+                        code: "service_draining".into(),
+                    };
+                };
+                super::open_reads::response(
+                    &state,
+                    super::open_reads::OpenCall {
+                        connection_id: Some(read.connection_id),
+                        index_names: read.index_names,
+                        set_names: read.set_names,
+                        tool: read.tool,
+                        arguments: read.arguments,
+                        mode: airk_core::service::ToolResponseMode::Terse,
+                        client: read.client,
+                    },
+                )
+                .await
+            })
+        }),
+        choice: Arc::new(move |id| {
+            credentials
+                .lock()
+                .ok()
+                .and_then(|credentials| credentials.current_open_choice(id))
+        }),
+    }
 }
 
 impl Owner {
@@ -90,10 +132,12 @@ impl Owner {
         let (tls, receiver) = watch::channel(identity.acceptor());
         let control = state.control_root.clone();
         let weak: Weak<State> = Arc::downgrade(state);
+        let open_hooks = open_hooks(weak.clone(), credentials.clone());
         let validate: airk_https::http_gateway::ValidateRequest =
             Arc::new(move |credential, context| {
                 let control = control.clone();
                 let weak = weak.clone();
+                let open_hooks = open_hooks.clone();
                 Box::pin(async move {
                     let state = weak
                         .upgrade()
@@ -104,13 +148,25 @@ impl Owner {
                     if let Some(owner) = state.http.get() {
                         owner.update_state()?;
                     }
-                    let factory = airk_https::http_backend::factory_attached(
-                        control,
-                        credential.selection,
-                        credential.explorer_descriptor,
-                        context,
-                    )
-                    .await?;
+                    // U105: an open connection needs only a ready catalog in
+                    // its namespace; each call reads through the open path.
+                    let factory = if matches!(credential.selection, HttpSelection::Open { .. }) {
+                        airk_https::http_backend::validate(
+                            &control,
+                            &credential.selection,
+                            &context,
+                        )
+                        .await?;
+                        airk_https::http_backend::open_factory(credential.connection_id, open_hooks)
+                    } else {
+                        airk_https::http_backend::factory_attached(
+                            control,
+                            credential.selection,
+                            credential.explorer_descriptor,
+                            context,
+                        )
+                        .await?
+                    };
                     Ok(airk_https::http_backend::with_query_capacity(
                         factory,
                         state.supervisor.query_capacity_reader(),
@@ -276,9 +332,48 @@ impl Owner {
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("HTTP credential path not Unicode"))?
                 .into(),
+            open: issued.open,
         };
         connection.validate()?;
         Ok(connection)
+    }
+
+    /// U105: an active open connection's stored state, reread from the
+    /// durable ledger on every call.
+    pub(super) async fn open_state(
+        &self,
+        id: Incarnation,
+    ) -> Result<std::result::Result<OpenConnectionState, OpenDefaultsRefused>> {
+        let credentials = self.credentials.clone();
+        tokio::task::spawn_blocking(move || {
+            credentials
+                .lock()
+                .map_err(|_| anyhow::anyhow!("HTTP credential store unavailable"))?
+                .open_state(id, now_ms()?)
+        })
+        .await?
+    }
+
+    /// U105: compare-and-swap an open connection's defaults through the
+    /// credential store (the generation never changes). The caller checked
+    /// the ids against the current catalog.
+    pub(super) async fn set_open_defaults(
+        &self,
+        id: Incarnation,
+        change: OpenDefaultsChange,
+    ) -> Result<std::result::Result<OpenConnectionState, OpenDefaultsRefused>> {
+        let credentials = self.credentials.clone();
+        let guard = self.checkpoint.admit()?;
+        let ownership = self.ownership.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            let _ownership = ownership;
+            credentials
+                .lock()
+                .map_err(|_| anyhow::anyhow!("HTTP credential store unavailable"))?
+                .set_open_defaults(id, change, now_ms()?)
+        })
+        .await?
     }
 
     pub(super) async fn revoke(&self, id: Incarnation) -> Result<()> {
