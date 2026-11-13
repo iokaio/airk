@@ -15,6 +15,11 @@ export const CLEAR_SCOPE={generation:0,selection:{index_ids:[],project_ids:[]}};
 
 /** The native window selection bound (windowScope.ts SCOPE_MAX_SELECTION, CatalogPageRequest MAX_SELECTION). */
 export const SCOPE_MAX_SELECTION=32;
+/** (U105) Description bound (windowScope.ts DESCRIPTION_MAX_BYTES): 1 KiB of UTF-8. */
+export const DESCRIPTION_MAX_BYTES=1024;
+export const descriptionBytes=(text:string)=>new TextEncoder().encode(text).length;
+/** (U105) A catalog row's user-written description, when it has one. */
+export const descriptionOf=(item:Record<string,unknown>)=>typeof item.description==='string'&&item.description.trim()?item.description:undefined;
 
 /** (U104) The scope is a union: every member of the checked index sets plus every checked index.
  * Apply is enabled for a changed selection, or for the automatic scope (applying it makes it the
@@ -57,6 +62,8 @@ export function IndexingScreen(props: ScreenProps) {
     const [error,setError]=useState(''),[errorDetail,setErrorDetail]=useState('');
     const [scopeIndexes,setScopeIndexes]=useState<string[]>([]),[scopeProjects,setScopeProjects]=useState<string[]>([]);
     const [setName,setSetName]=useState('');
+    /** (U105) The one description being edited. */
+    const [editing,setEditing]=useState<{kind:'index'|'set';id:string;text:string}>();
     const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',review_split:'Review an independent split',split_pending:'Split unavailable on this connection',removal_pending:'Review permanent exclusions in AIRK Admin',manual_selection:'Choose manually while observations are unknown'};
     const [situation,setSituation]=useState('keep');
     const scope=view.searchScope;
@@ -81,6 +88,20 @@ export function IndexingScreen(props: ScreenProps) {
         if(tab!=='window'||disabled||workingNow.current||automaticRead.current===readOwner)return;
         if(!scope){automaticRead.current=readOwner;void run(()=>request('indexing.scope.read',{}),true);}
     },[readOwner,disabled,connectionPending,scope]);
+    const describe=(kind:'index'|'set',id:string,text:string|undefined)=>void run(async()=>{
+        await request('indexing.scope.describe',text===undefined?{kind,id}:{kind,id,text});setEditing(undefined);await request('indexing.scope.read',{});},true);
+    const descriptionControls=(kind:'index'|'set',item:Record<string,unknown>)=>{
+        const id=String(item.id),current=descriptionOf(item),open=editing?.kind===kind&&editing.id===id;
+        if(!open)return <button type="button" class="ghost description-edit" disabled={disabled||!!editing} onClick={()=>setEditing({kind,id,text:current??''})}>Edit description</button>;
+        const bytes=descriptionBytes(editing.text),over=bytes>DESCRIPTION_MAX_BYTES;
+        return <div class="description-editor">
+            <label>Description of {String(item.name??id)}<textarea rows={3} value={editing.text} disabled={disabled} onInput={event=>{const text=event.currentTarget.value;setEditing(value=>value&&{...value,text});}}/></label>
+            <small class={over?'callout':'muted'}>{bytes} of {DESCRIPTION_MAX_BYTES} bytes. Agents with "Let the agent choose indexes" on read this description to pick indexes.</small>
+            <span class="actions"><button type="button" disabled={disabled||over||!editing.text.trim()} onClick={()=>describe(kind,id,editing.text)}>Save</button>
+                <button type="button" class="ghost" disabled={disabled||current===undefined} onClick={()=>describe(kind,id,undefined)}>Clear</button>
+                <button type="button" class="ghost" disabled={disabled} onClick={()=>setEditing(undefined)}>Cancel</button></span>
+        </div>;
+    };
     const shownError=error||(tab==='window'&&(scope?.outOfDate||props.state.searchScope?.outOfDate)?SCOPE_OUT_OF_DATE:'');
     const shownDetail=errorDetail;
     return <section class="indexing-screen">
@@ -99,12 +120,12 @@ export function IndexingScreen(props: ScreenProps) {
             {!scope&&!view.busy&&<p>Search choices have not loaded.{disabled?'':' Use Refresh choices to retry.'}</p>}
             {scope&&<form onSubmit={event=>{event.preventDefault();void run(async()=>{await request('indexing.scope.apply',{generation:view.generation,selection:{index_ids:scopeIndexes,project_ids:scopeProjects}});await request('indexing.scope.read',{});},true);}}>
                 <fieldset disabled={disabled} class="indexing-scope-list"><legend>Indexes</legend>
-                    {scope.indexes.filter(item=>item.tombstone!==true).map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeIndexes.includes(String(item.id))} onChange={event=>setScopeIndexes(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{typeof catalogObject(item.backing??{}).root==='string'&&<small>{String(catalogObject(item.backing).root)}</small>}{scope.indexSetsComplete&&!scope.indexSets?.[String(item.id)]?.length&&<small>In no index set: Apply creates an index set named after it</small>}</span></label>)}
+                    {scope.indexes.filter(item=>item.tombstone!==true).map(item=><div class="scope-choice" key={String(item.id)}><label><input type="checkbox" checked={scopeIndexes.includes(String(item.id))} onChange={event=>setScopeIndexes(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{descriptionOf(item)&&<small class="description">{descriptionOf(item)}</small>}{typeof catalogObject(item.backing??{}).root==='string'&&<small>{String(catalogObject(item.backing).root)}</small>}{scope.indexSetsComplete&&!scope.indexSets?.[String(item.id)]?.length&&<small>In no index set: Apply creates an index set named after it</small>}</span></label>{descriptionControls('index',item)}</div>)}
                     {!scope.indexes.some(item=>item.tombstone!==true)&&<p>No indexes on this page. Create one in AIRK Admin.</p>}
                     {scope.indexContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'indexes',next:true}),true)}>More indexes</button>}
                 </fieldset>
                 <fieldset disabled={disabled} class="indexing-scope-list"><legend>Index sets</legend>
-                    {scope.projects.map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeProjects.includes(String(item.id))} onChange={event=>setScopeProjects(items=>toggle(items,String(item.id),event.currentTarget.checked))}/>{String(item.name??item.id)}</label>)}
+                    {scope.projects.map(item=><div class="scope-choice" key={String(item.id)}><label><input type="checkbox" checked={scopeProjects.includes(String(item.id))} onChange={event=>setScopeProjects(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{descriptionOf(item)&&<small class="description">{descriptionOf(item)}</small>}</span></label>{descriptionControls('set',item)}</div>)}
                     {!scope.projects.length&&<p>No index sets on this page. Create one in AIRK Admin.</p>}
                     {scope.projectContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'projects',next:true}),true)}>More index sets</button>}
                     <AdminButton page="index-library" label="Create or change index sets in AIRK Admin" ghost disabled={!props.state.trusted} choose={false}/>
@@ -120,7 +141,7 @@ export function IndexingScreen(props: ScreenProps) {
                     <button type="button" disabled={disabled||!setName.trim()||!scopeIndexes.length&&!scopeProjects.length} onClick={()=>{const name=setName.trim();if(!name){setError('Enter a name for the new index set.');return;}void run(async()=>{await request('indexing.scope.saveSet',{name,selection:{index_ids:scopeIndexes,project_ids:scopeProjects}});setSetName('');await request('indexing.scope.read',{});},true);}}>Save as index set</button>
                 </div>
                 <p class="muted">Save as index set creates a new index set holding the checked indexes and the indexes of the checked sets.</p>
-                <p class="muted">Coding agents read the scope they were connected with. <button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'agents'})}>Connect an agent</button></p>
+                <p class="muted">Coding agents connected in Management › Agents follow this window's search scope unless you turn following off there. <button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'agents'})}>Connect an agent</button></p>
             </form>}
         </article>
         <details class="card" id="recommendations"><summary>Help me choose indexes</summary><h2>Recommendations</h2>

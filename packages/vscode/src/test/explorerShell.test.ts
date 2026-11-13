@@ -1130,6 +1130,38 @@ test('U104 Management › Agents and Save as index set reach their host hooks; t
     finally { plain.explorer.dispose(); }
 });
 
+test('U105 the choice switch, following and description editing reach their host hooks; their messages are strictly typed', async () => {
+    const f = controller(), calls: unknown[][] = [];
+    (f.host as any).agents = {
+        read: async () => ({}), connectAgentToScope: async () => ({}), disconnect: async () => ({}),
+        setChoice: async (id: string, choice: string) => { calls.push(['choice', id, choice]); return { connectionId: id, choice, result: { schema: 1 } }; },
+        setFollow: async (id: string, follow: boolean) => { calls.push(['follow', id, follow]); throw Object.assign(new Error('Not listed.'), { code: 'agent_connection_not_listed' }); },
+    };
+    (f.host as any).windowScope = windowScope(true, { describe: async (kind: string, target: string, text?: string) => { calls.push(['describe', kind, target, text ?? null]); return { class: 'success' }; } });
+    const id = '0a'.repeat(16), index = 'idx_' + '12'.repeat(16), set = 'prj_' + '34'.repeat(16);
+    try {
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'indexing.scope.describe', kind: 'index', id: index, text: 'Two\nlines' }), { class: 'success' });
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'indexing.scope.describe', kind: 'set', id: set }), { class: 'success' });
+        assert.deepEqual(calls.splice(0), [['describe', 'index', index, 'Two\nlines'], ['describe', 'set', set, null]]);
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'agents.choice', connectionId: id, choice: 'on' }), { connectionId: id, choice: 'on', result: { schema: 1 } });
+        await assert.rejects((f.explorer as any).dispatch({ type: 'agents.follow', connectionId: id, follow: true }), (error: any) => error.error.code === 'agent_connection_not_listed');
+        assert.deepEqual(calls.slice(0, 2), [['choice', id, 'on'], ['follow', id, true]]);
+        for (const message of [
+            { type: 'agents.choice', connectionId: id, choice: 'off' }, { type: 'agents.follow', connectionId: id, follow: false },
+            { type: 'indexing.scope.describe', kind: 'index', id: index, text: 'Line one\nLine two' }, { type: 'indexing.scope.describe', kind: 'set', id: set },
+            { type: 'indexing.scope.describe', kind: 'index', id: index, text: 'é'.repeat(512) },
+        ]) { assert.ok(parseWebviewMessage({ v: 1, requestId: 'a', ...message }), JSON.stringify(message).slice(0, 80)); }
+        for (const message of [
+            { type: 'agents.choice', connectionId: id, choice: 'maybe' }, { type: 'agents.choice', connectionId: 'short', choice: 'on' },
+            { type: 'agents.follow', connectionId: id, follow: 'yes' }, { type: 'agents.follow', connectionId: id },
+            { type: 'indexing.scope.describe', kind: 'grant', id: index }, { type: 'indexing.scope.describe', kind: 'index', id: 'idx_short' },
+            { type: 'indexing.scope.describe', kind: 'index', id: index, text: '' }, { type: 'indexing.scope.describe', kind: 'index', id: index, text: 'é'.repeat(513) },
+            { type: 'indexing.scope.describe', kind: 'index', id: index, text: 'bell\u0007' },
+        ]) { assert.equal(parseWebviewMessage({ v: 1, requestId: 'a', ...message }), undefined, JSON.stringify(message).slice(0, 80)); }
+        for (const type of ['agents.choice', 'agents.follow', 'indexing.scope.describe'] as const) { assert.equal(explorerRequestPolicy(type).uncertain, true, type); }
+    } finally { f.explorer.dispose(); }
+});
+
 test('U103 an index in no index set is never read through the binding route; the header names the cause', async () => {
     const f = controller(); f.explorer.dispose();
     const route = { state: 'not_readable', indexId: 'idx_' + '12'.repeat(16), indexName: 'demo', code: 'index_read_unavailable', message: 'demo is in no index set, so it is not readable yet.' };

@@ -1,10 +1,10 @@
 {
   "schema": "airk.split-fixture.view-messages/1",
   "contract": "docs/split/contracts.md section 6 (C9)",
-  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden. U97: the read-only index library read (library.read) and the AIRK Admin opener (admin.open) are editor-only; the Explorer's management messages were removed with their UI. U103: the Explorer's index status actions, usage and activity (work.action, work.usage, work.activity) run through the editor's airkctl session and are editor-only; manage.* stays admin. U104: the search scope's Save as index set (indexing.scope.saveSet) and Management › Agents (agents.read, agents.connect, agents.disconnect) run through the editor's airkctl session and are editor-only.",
+  "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden. U97: the read-only index library read (library.read) and the AIRK Admin opener (admin.open) are editor-only; the Explorer's management messages were removed with their UI. U103: the Explorer's index status actions, usage and activity (work.action, work.usage, work.activity) run through the editor's airkctl session and are editor-only; manage.* stays admin. U104: the search scope's Save as index set (indexing.scope.saveSet) and Management › Agents (agents.read, agents.connect, agents.disconnect) run through the editor's airkctl session and are editor-only. U105: description editing in the search scope (indexing.scope.describe) and the Agents screen's choice switch and follow setting (agents.choice, agents.follow) run through the editor's airkctl session and are editor-only.",
   "counts": {
     "ui": 25,
-    "editor": 41,
+    "editor": 44,
     "admin": 6
   },
   "messages": [
@@ -365,6 +365,21 @@
     },
     {
       "type": "agents.disconnect",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "indexing.scope.describe",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "agents.choice",
+      "side": "editor",
+      "capability": null
+    },
+    {
+      "type": "agents.follow",
       "side": "editor",
       "capability": null
     }

@@ -53,6 +53,49 @@ export function removeAgents(airkctl: AgentsRunner, projects: readonly string[],
 export function connectAgent(airkctl: AgentsRunner, client: Client, connectionId: string, project: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'connect', '--client', client, '--connection-id', connectionId, '--project', project]);
 }
+/** (U105) Whether an open connection's agent may list and pick indexes itself; `off` by default. */
+export type AgentChoice = 'off' | 'on';
+/** (U105) An open connection's default scope: index sets and indexes, read as a union. */
+export interface AgentDefaultScope { readonly index_ids: readonly string[]; readonly project_ids: readonly string[] }
+/** (U105) The service-stored defaults of an open connection, as `agents connect --open`, `agents default` and `agents info` report them. */
+export interface OpenConnectionState { defaults_revision: number; default_index_ids: string[]; default_index_set_ids: string[]; agent_choice: AgentChoice }
+const INDEX_ID = /^idx_[0-9a-f]{32}$/, SET_ID = /^prj_[0-9a-f]{32}$/;
+/** The `open` member of a native answer; undefined when absent (a grant-bound connection) or malformed. */
+export function openConnectionState(value: unknown): OpenConnectionState | undefined {
+    const open = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+    if (!open) { return undefined; }
+    const list = (items: unknown, pattern: RegExp) => Array.isArray(items) && items.length <= 1024 && items.every(item => typeof item === 'string' && pattern.test(item)) ? items as string[] : undefined;
+    const indexes = list(open.default_index_ids, INDEX_ID), sets = list(open.default_index_set_ids, SET_ID);
+    if (typeof open.defaults_revision !== 'number' || !Number.isSafeInteger(open.defaults_revision) || open.defaults_revision < 1
+        || !indexes || !sets || (open.agent_choice !== 'off' && open.agent_choice !== 'on')) { return undefined; }
+    return { defaults_revision: open.defaults_revision, default_index_ids: [...indexes], default_index_set_ids: [...sets], agent_choice: open.agent_choice };
+}
+/** (U105) `agents connect --open`: enroll a new open connection (choice off, empty default) and write the client's entry for `project`. */
+export function connectOpenArgv(client: Client, project: string): string[] {
+    return ['agents', 'connect', '--open', '--client', client, '--project', project];
+}
+export function connectOpenAgent(airkctl: AgentsRunner, client: Client, project: string): Promise<unknown> {
+    return airkctl.session.json(connectOpenArgv(client, project));
+}
+/** (U105) `agents default`: a given scope replaces the default scope as a whole (an empty one is `--clear`);
+ * a given choice sets `--agent-choice`; anything not given keeps its stored value. */
+export function agentDefaultArgv(connectionId: string, change: { scope?: AgentDefaultScope; choice?: AgentChoice; expectedRevision?: number }): string[] {
+    if (!INCARNATION.test(connectionId)) { throw new Error('invalid_connection_id'); }
+    const scope = change.scope;
+    return ['agents', 'default', '--connection-id', connectionId,
+        ...(scope ? scope.index_ids.length || scope.project_ids.length
+            ? [...scope.index_ids.flatMap(id => ['--index', id]), ...scope.project_ids.flatMap(id => ['--set', id])] : ['--clear'] : []),
+        ...(change.choice ? ['--agent-choice', change.choice] : []),
+        ...(change.expectedRevision !== undefined ? ['--expected-revision', String(change.expectedRevision)] : [])];
+}
+export function setAgentDefaults(airkctl: AgentsRunner, connectionId: string, change: { scope?: AgentDefaultScope; choice?: AgentChoice; expectedRevision?: number }): Promise<unknown> {
+    return airkctl.session.json(agentDefaultArgv(connectionId, change));
+}
+/** `agents revoke`: revoke one connection (its original receipt is kept). */
+export function revokeConnection(airkctl: AgentsRunner, connectionId: string): Promise<unknown> {
+    if (!INCARNATION.test(connectionId)) { return Promise.reject(new Error('invalid_connection_id')); }
+    return airkctl.session.json(['agents', 'revoke', '--connection-id', connectionId]);
+}
 /** `agents info`: an existing connection's references (never its credential). */
 export function connectionInfo(airkctl: AgentsRunner, connectionId: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'info', '--connection-id', connectionId]);

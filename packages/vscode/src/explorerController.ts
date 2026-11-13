@@ -106,12 +106,16 @@ export interface ExplorerHost {
     openAdmin?(target: AdminTarget, choose: boolean): Promise<void>;
 }
 
-/** Management › Agents (U104, airkctl/features/windowAgents.ts). */
+/** Management › Agents (U104, U105, airkctl/features/windowAgents.ts). */
 export interface AgentsHost {
     read(): Promise<unknown>;
     disconnect(connectionId: string): Promise<unknown>;
-    /** Connect `client` to the window's search scope (one hook, rewired when the connection model lands). */
+    /** Connect `client` with an open connection whose default scope is the window's search scope. */
     connectAgentToScope(client: AgentClient): Promise<unknown>;
+    /** U105: an open connection's agent choice (`agents default --agent-choice`). */
+    setChoice?(connectionId: string, choice: 'off' | 'on'): Promise<unknown>;
+    /** U105: whether an open connection follows this window's search scope. */
+    setFollow?(connectionId: string, follow: boolean): Promise<unknown>;
 }
 /** Shares one reviewed Studio or Planner snapshot with a coding agent. */
 export interface HandoffPublisher {
@@ -133,6 +137,8 @@ export interface WindowScopeHost {
     applySearchScope(selection: Record<string, unknown>): Promise<Record<string, unknown>>;
     /** U104: save the checked indexes and the members of the checked sets as a new named index set. */
     saveIndexSet?(name: string, selection: Record<string, unknown>): Promise<Record<string, unknown>>;
+    /** U105: set (`text`) or clear (undefined) an index's or index set's description. */
+    describe?(kind: 'index' | 'set', id: string, text: string | undefined): Promise<Record<string, unknown>>;
     clearSearchScope(): Promise<void>;
     onDidChange(listener: () => void): { dispose(): void };
 }
@@ -681,7 +687,7 @@ export class ExplorerController implements vscode.Disposable {
             const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
             // Using recommended advice and applying an agent search draft select the window search
             // scope themselves, which starts a new evidence epoch; their own committed outcome stands.
-            const managementOrLocal=['admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
+            const managementOrLocal=['admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','agents.choice','agents.follow','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -746,6 +752,11 @@ export class ExplorerController implements vscode.Disposable {
                 const scope=this.scopeHost();
                 if(!scope.saveIndexSet)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Creating index sets is not available in this window.'));
                 return this.scopeWork(()=>scope.saveIndexSet!(message.name,message.selection));
+            }
+            case 'indexing.scope.describe': {
+                const scope=this.scopeHost();
+                if(!scope.describe)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Editing descriptions is not available in this window.'));
+                return this.scopeWork(()=>scope.describe!(message.kind,message.id,message.text));
             }
             case 'library.read': {
                 this.requireAuthorization(true);
@@ -864,14 +875,29 @@ export class ExplorerController implements vscode.Disposable {
                 if(!this.host.activity)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Activity is not available in this window.'));
                 return this.host.activity();
             }
-            // U104: Management › Agents. Failures keep their native code (scopeWork).
+            // U104, U105: Management › Agents. Failures keep their native code (scopeWork).
             case 'agents.read':
             case 'agents.connect':
-            case 'agents.disconnect': {
+            case 'agents.disconnect':
+            case 'agents.choice':
+            case 'agents.follow': {
                 this.requireAuthorization(true);
                 const agents=this.host.agents;
                 if(!agents)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Agent connections are not available in this window.'));
-                return this.scopeWork(()=>message.type==='agents.read'?agents.read():message.type==='agents.connect'?agents.connectAgentToScope(message.client):agents.disconnect(message.connectionId));
+                switch(message.type){
+                    case 'agents.read': return this.scopeWork(()=>agents.read());
+                    case 'agents.connect': return this.scopeWork(()=>agents.connectAgentToScope(message.client));
+                    case 'agents.disconnect': return this.scopeWork(()=>agents.disconnect(message.connectionId));
+                    case 'agents.choice': {
+                        if(!agents.setChoice)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','The agent choice is not available in this window.'));
+                        return this.scopeWork(()=>agents.setChoice!(message.connectionId,message.choice));
+                    }
+                    case 'agents.follow': {
+                        if(!agents.setFollow)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Following the search scope is not available in this window.'));
+                        return this.scopeWork(()=>agents.setFollow!(message.connectionId,message.follow));
+                    }
+                }
+                throw new EvidenceFailure(explorerError('INVALID_MESSAGE'));
             }
             case 'search.form': {
                 const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks } = message;

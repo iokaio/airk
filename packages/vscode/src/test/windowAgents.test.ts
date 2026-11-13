@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // U104: Management › Agents host side. `agents list`/`agents remove` argv for
-// this window's first folder, the connectable entries of the native report
-// field for field, and the Connect hook, which writes nothing until the scope
-// connection lands. Expected argv are written out here.
+// this window's first folder and the connectable entries of the native report
+// field for field. The U105 open connection (Connect, defaults, choice,
+// following, Disconnect and revoke) is in windowAgentsOpen.test.ts. Expected
+// argv are written out here.
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { agentEntries, CONNECT_PENDING, WindowAgents } from '../airkctl/features/windowAgents';
+import { agentEntries, WindowAgents } from '../airkctl/features/windowAgents';
 
 const folder = '/work/app', id = '0a'.repeat(16);
 const report = { checked: ['/work/app/.mcp.json'], findings: [], blockers: [], entries: [
@@ -25,8 +26,11 @@ function agents(answer: unknown = report, folderOf: () => string | undefined = (
 test('U104 Agents reads this folder with agents list --no-user and lists the connectable entries with the complete report', async () => {
     const f = agents();
     const view = await f.host.read();
-    assert.deepEqual(f.calls, [['agents', 'list', '--project', folder, '--no-user']]);
+    // U105: each named connection is read with `agents info`; the report has no `open`, so it is grant-bound.
+    assert.deepEqual(f.calls, [['agents', 'list', '--project', folder, '--no-user'], ['agents', 'info', '--connection-id', id]]);
     assert.equal(view.folder, folder);
+    assert.deepEqual(view.connections, [{ connectionId: id, remembered: false, follows: false, info: report }]);
+    assert.equal(view.windowScope, null);
     assert.deepEqual(view.entries, [
         { client: 'claude', agent: 'claude', file: '/work/app/.mcp.json', scope: 'project', serverKey: 'airk', connectionId: id, status: 'ok' },
         { client: 'vscode', agent: 'copilot', file: '/work/app/.vscode/mcp.json', scope: 'project', serverKey: 'airk', status: null },
@@ -38,19 +42,13 @@ test('U104 Agents reads this folder with agents list --no-user and lists the con
 
 test('U104 Disconnect removes only the entries naming that connection; an invalid id or no folder sends nothing', async () => {
     const f = agents({ schema: 1, actions: [], blockers: [] });
-    await f.host.disconnect(id);
-    assert.deepEqual(f.calls, [['agents', 'remove', '--project', folder, '--no-user', '--connection-id', id]]);
+    assert.deepEqual(await f.host.disconnect(id), { removed: { schema: 1, actions: [], blockers: [] } });
+    // A grant-bound connection (no `open` in `agents info`) is only removed, never revoked here.
+    assert.deepEqual(f.calls, [['agents', 'info', '--connection-id', id], ['agents', 'remove', '--project', folder, '--no-user', '--connection-id', id]]);
     await assert.rejects(f.host.disconnect('ZZ'), (error: any) => error.code === 'INVALID_MESSAGE');
     const none = agents(report, () => undefined);
     await assert.rejects(none.host.read(), (error: any) => error.code === 'NO_PROJECT');
     f.setReady(false);
     await assert.rejects(f.host.read(), (error: any) => error.code === 'service_missing');
-    assert.equal(f.calls.length + none.calls.length, 1);
-});
-
-test('U104 the Connect hook answers that it is coming in the next step and runs no command', async () => {
-    const f = agents();
-    assert.deepEqual(await f.host.connectAgentToScope('codex'), { status: 'pending', client: 'codex', message: CONNECT_PENDING });
-    assert.match(CONNECT_PENDING, /^Coming in the next step/);
-    assert.deepEqual(f.calls, []);
+    assert.equal(f.calls.length + none.calls.length, 2);
 });

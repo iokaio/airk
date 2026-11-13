@@ -740,6 +740,11 @@ const REF = { kind: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_-]+$/ } as 
 /** Agents Management › Agents connects (`airkctl agents connect --client`; U91, U104). */
 export const AGENT_CLIENTS = ['claude', 'codex', 'vscode'] as const;
 export type AgentClient = typeof AGENT_CLIENTS[number];
+/** (U105) An open connection's agent choice: `off` (default scope only) or `on` (the agent lists and picks indexes). */
+export const AGENT_CHOICE_VALUES = ['off', 'on'] as const;
+/** (U105) Descriptions are edited on indexes and index sets (`airkctl library describe --index|--set`). */
+export const DESCRIPTION_KINDS = ['index', 'set'] as const;
+const CONNECTION_ID = { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ } as const;
 
 export const WEBVIEW_MESSAGES = {
     'ready': {},
@@ -795,6 +800,9 @@ export const WEBVIEW_MESSAGES = {
     'indexing.scope.apply': { selection:{kind:'json',max:4096},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
     /** U104: save the checked indexes and the members of the checked sets as a new named index set (`library set-create --index`). */
     'indexing.scope.saveSet': { name:{kind:'string',min:1,max:128}, selection:{kind:'json',max:4096} },
+    /** U105: set (`text`, at most 1 KiB) or clear (no `text`) the description of an index or index set (`library describe … --yes`). */
+    'indexing.scope.describe': { kind:{kind:'enum',values:DESCRIPTION_KINDS}, id:{kind:'string',min:36,max:36,pattern:/^(idx|prj)_[0-9a-f]{32}$/},
+        text:{kind:'string',min:1,max:1024,maxBytes:1024,optional:true} },
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
     /** U103: one everyday action on the selected index; `job` names the job for retry and cancel. */
@@ -805,10 +813,15 @@ export const WEBVIEW_MESSAGES = {
     'work.activity': {},
     /** U104: Management › Agents: this window folder's agent entries (`airkctl agents list --no-user`) and the window scope. */
     'agents.read': {},
-    /** U104: connect an agent to the window's search scope (host hook `connectAgentToScope`). */
+    /** U105: connect an agent with an open connection whose default scope is the window's search scope
+     * (`airkctl agents connect --open`, then `airkctl agents default`). */
     'agents.connect': { client: { kind: 'enum', values: AGENT_CLIENTS } },
-    /** U104: remove this folder's entries naming one connection (`airkctl agents remove --connection-id`). */
-    'agents.disconnect': { connectionId: { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ } },
+    /** U104: remove this folder's entries naming one connection (`airkctl agents remove --connection-id`); U105: then revoke an open connection no entry names. */
+    'agents.disconnect': { connectionId: CONNECTION_ID },
+    /** U105: turn an open connection's agent choice off or on (`airkctl agents default --agent-choice`). */
+    'agents.choice': { connectionId: CONNECTION_ID, choice: { kind: 'enum', values: AGENT_CHOICE_VALUES } },
+    /** U105: whether an open connection's default scope follows this window's search scope (workspace setting; on sends the scope now). */
+    'agents.follow': { connectionId: CONNECTION_ID, follow: { kind: 'bool' } },
     /** Read-only index library (U97): one native catalog read through the window's airkctl session. */
     'library.read': {
         method: { kind: 'enum', values: LIBRARY_METHODS },
@@ -878,6 +891,7 @@ const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessa
     'strategy.run.export', 'details.copy', 'clipboard.write',
     'manage.command', 'work.action', 'planner.saveInWorkspace', 'planner.exportJSON',
     'indexing.scope.saveSet', 'agents.connect', 'agents.disconnect',
+    'indexing.scope.describe', 'agents.choice', 'agents.follow',
     'strategy.export', 'studio.save', 'suggestions.resolve',
     'suggestions.applied', 'suggestions.discardAll', 'handoff.share',
     'recipes.save', 'recipes.delete', 'recipes.export',
