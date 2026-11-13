@@ -31,6 +31,7 @@ export function projectSummaries(state: ServiceConsoleState): ProjectSummary[] {
         const project = obj(row.project), registration = obj(project.registration), binding = text(registration.binding);
         if (!binding || !/^[0-9a-f]{64}$/.test(binding)) { return []; }
         const inspection = obj(row.inspection), snapshot = obj(inspection.snapshot), semantic = obj(snapshot.semantic);
+        // `row.progress` is the native `ProgressObservation` ({worker, progress, job, observed_unix_ms}).
         const progress = obj(row.progress), job = obj(progress.job), work = obj(progress.progress), watch = obj(row.watch);
         const root = displayPath(text(registration.root) ?? '');
         const semanticState = SEMANTIC.find(value => value === semantic.state);
@@ -54,6 +55,10 @@ export function projectSummaries(state: ServiceConsoleState): ProjectSummary[] {
             ...(text(job.state) ? { jobState: text(job.state) } : {}),
             ...(text(job.kind) ? { jobKind: text(job.kind) } : {}),
             ...(text(work.phase) ? { phase: text(work.phase) } : {}),
+            ...(text(job.id) ? { jobId: text(job.id) } : {}),
+            ...(text(obj(row.pending_job).id) ? { pendingJobId: text(obj(row.pending_job).id), ...(text(obj(row.pending_job).state) ? { pendingJobState: text(obj(row.pending_job).state) } : {}) } : {}),
+            ...(count(work.committed_changes) !== undefined ? { committedChanges: count(work.committed_changes) } : {}),
+            ...(count(work.captured_files) !== undefined ? { capturedFiles: count(work.captured_files) } : {}),
             ...(count(inspection.observed_unix_ms) !== undefined ? { observedAt: count(inspection.observed_unix_ms) } : {}),
         };
         return [summary];

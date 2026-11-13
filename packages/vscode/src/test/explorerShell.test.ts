@@ -115,7 +115,7 @@ test('management actions and UI-local completions retain their outcomes across e
         if(type==='extension.reload'){(f.host as any).extensionUpdate=()=>({version:'new'});(f.host as any).reloadUpdatedExtension=change;}
         try{
             f.explorer.open('#indexing/library');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();const epoch=f.explorer.snapshot().selectionEpoch;
-            await instance.handle({v:1,type,requestId:'committed',page:'overview',command:'airk.httpIssuerRotationStatus',section:'service',key:'notice'});
+            await instance.handle({v:1,type,requestId:'committed',page:'overview',command:'airk.reconnectAgents',section:'service',key:'notice'});
             assert.notEqual(f.explorer.snapshot().selectionEpoch,epoch,type);
             const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='committed');assert.equal(reply?.ok,true,type);
             if(type==='manage.command'||type==='notice.dismiss')assert.deepEqual(reply.data,{committed:type});
@@ -1084,4 +1084,36 @@ test('late Search cannot deliver evidence or success acknowledgment after projec
             assert.equal(reply.ok,false);assert.equal(reply.error.code,'REQUEST_SUPERSEDED');
         }finally{explorer.dispose();}
     }
+});
+
+test('U103 index actions reach the host with the selected index and return the complete outcome; retry and cancel need a job', async () => {
+    const f = controller(), calls: unknown[][] = [];
+    const outcome = { ok: false, argv: ['jobs', 'retry', 'cd'.repeat(32), '--service-project', project, '--output', 'json'], class: 'refused', exitCode: 3, error: { code: 'job_not_retryable', message: 'Not failed.' } };
+    (f.host as any).workAction = async (...args: unknown[]) => { calls.push(args); return outcome; };
+    try {
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'work.action', action: 'retry', project, job: 'cd'.repeat(32) }), outcome, 'a refused action returns its complete native outcome');
+        assert.deepEqual(await (f.explorer as any).dispatch({ type: 'work.action', action: 'pause', project }), outcome);
+        assert.deepEqual(calls, [['retry', project, 'cd'.repeat(32)], ['pause', project, undefined]]);
+        await assert.rejects((f.explorer as any).dispatch({ type: 'work.action', action: 'cancel', project }), (error: any) => error.error.code === 'INVALID_MESSAGE');
+        await assert.rejects((f.explorer as any).dispatch({ type: 'work.action', action: 'pause', project: 'ef'.repeat(32) }), (error: any) => error.error.code === 'NO_PROJECT');
+        assert.equal(calls.length, 2);
+        assert.ok(parseWebviewMessage({ v: 1, type: 'work.action', requestId: 'w', action: 'watch_on', project }));
+        assert.equal(parseWebviewMessage({ v: 1, type: 'work.action', requestId: 'w', action: 'restart', project }), undefined);
+        assert.equal(parseWebviewMessage({ v: 1, type: 'work.action', requestId: 'w', action: 'retry', project, job: 'short' }), undefined);
+    } finally { f.explorer.dispose(); }
+});
+
+test('U103 an index in no index set is never read through the binding route; the header names the cause', async () => {
+    const f = controller(); f.explorer.dispose();
+    const route = { state: 'not_readable', indexId: 'idx_' + '12'.repeat(16), indexName: 'demo', code: 'index_read_unavailable', message: 'demo is in no index set, so it is not readable yet.' };
+    const host = { ...f.host, readRoute: () => route, windowScope: undefined };
+    const plain = new ExplorerController(host as any);
+    try {
+        await assert.rejects((plain as any).dispatch({ type: 'search.run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false }),
+            (error: any) => error.error.code === 'index_read_unavailable' && /in no index set/.test(error.error.message));
+        await (plain as any).loadStatus();
+        assert.equal(plain.snapshot().status, undefined, 'no refused status read is sent or shown as a result');
+        (plain as any).publish();
+        assert.equal(f.statusBar.at(-1), 'AIRK: not readable: no index set');
+    } finally { plain.dispose(); }
 });

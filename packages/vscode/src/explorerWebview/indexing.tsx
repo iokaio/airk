@@ -13,6 +13,20 @@ export const SCOPE_OUT_OF_DATE='Search scope out of date — reselect. Refresh t
 /** Nothing selected releases the window scope (scope_release). */
 export const CLEAR_SCOPE={generation:0,selection:{index_ids:[],project_ids:[]}};
 
+/** Apply is enabled only for a changed, valid selection (U103). Indexes alone are read through
+ * the index sets that hold them, so each needs at least one; with sets checked, each checked
+ * index must belong to one of them. Unknown memberships leave validation to the service. */
+export function scopeApplyState(input:{indexes:readonly string[];projects:readonly string[];appliedIndexes:readonly string[];appliedProjects:readonly string[];
+    indexSets?:Readonly<Record<string,readonly string[]>>;indexSetsComplete?:boolean}):{changed:boolean;valid:boolean;enabled:boolean;unreadable:string[];outside:string[]}{
+    const key=(items:readonly string[])=>JSON.stringify([...items].sort());
+    const changed=key(input.indexes)!==key(input.appliedIndexes)||key(input.projects)!==key(input.appliedProjects);
+    const known=input.indexSets&&input.indexSetsComplete===true?input.indexSets:undefined;
+    const unreadable=known&&!input.projects.length?input.indexes.filter(id=>!known[id]?.length):[];
+    const outside=known&&input.projects.length?input.indexes.filter(id=>!known[id]?.some(set=>input.projects.includes(set))):[];
+    const valid=!unreadable.length&&!outside.length;
+    return {changed,valid,enabled:changed&&valid,unreadable,outside};
+}
+
 /**
  * Indexing (U97): the window search scope and recommendations, and a read-only
  * index library. Native metadata is rendered as escaped Preact text; every
@@ -29,7 +43,10 @@ export function IndexingScreen(props: ScreenProps) {
     const scope=view.searchScope;
     const scopeSelection=JSON.stringify([scope?.selectedIndexIds,scope?.selectedProjectIds]);
     useEffect(()=>{setScopeIndexes(scope?.selectedIndexIds??[]);setScopeProjects(scope?.selectedProjectIds??[]);},[scopeSelection]);
-    const scopeDirty=JSON.stringify([scopeIndexes.slice().sort(),scopeProjects.slice().sort()])!==JSON.stringify([(scope?.selectedIndexIds??[]).slice().sort(),(scope?.selectedProjectIds??[]).slice().sort()]);
+    const apply=scopeApplyState({indexes:scopeIndexes,projects:scopeProjects,appliedIndexes:scope?.selectedIndexIds??[],appliedProjects:scope?.selectedProjectIds??[],indexSets:scope?.indexSets,indexSetsComplete:scope?.indexSetsComplete});
+    const scopeDirty=apply.changed;
+    const indexName=(id:string)=>{const row=scope?.indexes.find(item=>String(item.id)===id);return String(row?.name??id);};
+    const route=props.state.searchScope?.route;
     const toggle=(items:string[],id:string,checked:boolean)=>checked?[...items.filter(item=>item!==id),id]:items.filter(item=>item!==id);
     // Keep the complete action chain exclusive, including the fresh read after Apply.
     // A scope failure shows its message and keeps its code in Details; only an absent
@@ -51,29 +68,33 @@ export function IndexingScreen(props: ScreenProps) {
         <div class="section-head"><p class="indexing-intro">{tab==='window'?'Choose the indexes and index sets to search in this VS Code window.':tab==='projects'?'Index sets on this computer. Create and change them in AIRK Admin.':'Indexes on this computer. Create, change and delete them in AIRK Admin.'}</p>
             {tab==='window'&&<AdminButton page="index-library" disabled={!props.state.trusted}/>}</div>
         {tab==='window'&&shownError&&<Notice noticeKey={noticeKey("indexing-error", shownError, shownDetail)} class="notice" role="alert"><p>{shownError}</p>{shownDetail&&<details><summary>Details</summary><code>{shownDetail}</code></details>}</Notice>}
-        {!props.state.trusted&&<Notice global noticeKey="workspace-restricted" class="notice"><p>Trust this workspace to read indexes.</p></Notice>}
-        {props.state.nativeExecutionEnabled===false&&<Notice global noticeKey="native-execution-disabled" class="notice"><p>Enable native execution in AIRK settings to read indexes.</p></Notice>}
+        {!props.state.trusted&&<Notice global condition noticeKey="workspace-restricted" class="notice"><p>Trust this workspace to read indexes.</p></Notice>}
+        {props.state.nativeExecutionEnabled===false&&<Notice global condition noticeKey="native-execution-disabled" class="notice"><p>Enable native execution in AIRK settings to read indexes.</p></Notice>}
         {tab==='window'?<>{view.busy&&<p role="status">Loading search choices…</p>}
         {connectionPending&&props.state.trusted&&<p role="status">{props.state.connection==='connecting'?'Connecting to the AIRK Service before loading search choices…':'The AIRK Service is unavailable. Search choices load when it is ready.'}</p>}
         <article class="card"><h2>Search scope</h2>
             <p>Check the indexes and index sets you want to search, then apply your selection. Shared indexes are searched once.</p>
+            {route?.state==='scope'&&route.automatic&&<p role="status">This window reads its folder's index automatically: <strong>{route.indexName??route.indexId}</strong>. Apply a selection to choose another scope.</p>}
+            {route?.state==='not_readable'&&<p class="callout" role="status">{route.message??'This window\'s index is in no index set, so it is not readable yet.'} {route.indexId&&<AdminButton page="index-library" index={route.indexId} label="Make readable in AIRK Admin" disabled={!props.state.trusted} choose={false}/>}</p>}
             <button disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{}),true)}>Refresh choices</button>
-            {!scope&&!view.busy&&<p>Search choices have not loaded. Use Refresh choices to retry.</p>}
+            {!scope&&!view.busy&&<p>Search choices have not loaded.{disabled?'':' Use Refresh choices to retry.'}</p>}
             {scope&&<form onSubmit={event=>{event.preventDefault();void run(async()=>{await request('indexing.scope.apply',{generation:view.generation,selection:{index_ids:scopeIndexes,project_ids:scopeProjects}});await request('indexing.scope.read',{});},true);}}>
                 <fieldset disabled={disabled} class="indexing-scope-list"><legend>Indexes</legend>
-                    {scope.indexes.filter(item=>item.tombstone!==true).map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeIndexes.includes(String(item.id))} onChange={event=>setScopeIndexes(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{typeof catalogObject(item.backing??{}).root==='string'&&<small>{String(catalogObject(item.backing).root)}</small>}</span></label>)}
+                    {scope.indexes.filter(item=>item.tombstone!==true).map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeIndexes.includes(String(item.id))} onChange={event=>setScopeIndexes(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{typeof catalogObject(item.backing??{}).root==='string'&&<small>{String(catalogObject(item.backing).root)}</small>}{scope.indexSetsComplete&&!scope.indexSets?.[String(item.id)]?.length&&<small>In no index set: not readable yet</small>}</span></label>)}
                     {!scope.indexes.some(item=>item.tombstone!==true)&&<p>No indexes on this page. Create one in AIRK Admin.</p>}
                     {scope.indexContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'indexes',next:true}),true)}>More indexes</button>}
                 </fieldset>
                 <fieldset disabled={disabled} class="indexing-scope-list"><legend>Index sets</legend>
-                    {scope.projects.filter(item=>!scope.managedProjectIds?.includes(String(item.id))).map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeProjects.includes(String(item.id))} onChange={event=>setScopeProjects(items=>toggle(items,String(item.id),event.currentTarget.checked))}/>{String(item.name??item.id)}</label>)}
-                    {!scope.projects.some(item=>!scope.managedProjectIds?.includes(String(item.id)))&&<p>No index sets on this page. Create one in AIRK Admin.</p>}
+                    {scope.projects.map(item=><label key={String(item.id)}><input type="checkbox" checked={scopeProjects.includes(String(item.id))} onChange={event=>setScopeProjects(items=>toggle(items,String(item.id),event.currentTarget.checked))}/>{String(item.name??item.id)}</label>)}
+                    {!scope.projects.length&&<p>No index sets on this page. Create one in AIRK Admin.</p>}
                     {scope.projectContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'projects',next:true}),true)}>More index sets</button>}
                     <AdminButton page="index-library" label="Create or change index sets in AIRK Admin" ghost disabled={!props.state.trusted} choose={false}/>
                 </fieldset>
-                <p>{scopeIndexes.length} {scopeIndexes.length===1?'index':'indexes'} and {scopeProjects.length} {scopeProjects.length===1?'index set':'index sets'} selected. Choose at least one index set; checked indexes narrow it to those indexes. Uncheck everything to stop searching indexes in this window.</p>
+                <p>{scopeIndexes.length} {scopeIndexes.length===1?'index':'indexes'} and {scopeProjects.length} {scopeProjects.length===1?'index set':'index sets'} selected. Indexes checked alone are searched through the index sets that hold them; with index sets checked, checked indexes narrow those sets. Uncheck everything to stop searching indexes in this window.</p>
+                {apply.unreadable.map(id=><p key={id} class="callout" role="status">{indexName(id)} is in no index set, so it is not readable yet. <AdminButton page="index-library" index={id} label="Make readable in AIRK Admin" disabled={!props.state.trusted} choose={false}/></p>)}
+                {apply.outside.length>0&&<p class="callout" role="status">{apply.outside.map(indexName).join(', ')} {apply.outside.length===1?'is':'are'} in none of the checked index sets. Check a set that holds {apply.outside.length===1?'it':'them'}, or uncheck the sets to search the {apply.outside.length===1?'index':'indexes'} through their own sets.</p>}
                 <p role="status">{scopeDirty?'Changes not applied.':scope.active?'Selection active in this window.':'Apply your selection to use it in this window.'}</p>
-                <button disabled={disabled||!scopeDirty&&scope.active||scopeIndexes.length>0&&!scopeProjects.length}>Apply selection</button>
+                <button disabled={disabled||!apply.enabled}>Apply selection</button>
                 {scope.active&&<button type="button" class="ghost" disabled={disabled} onClick={()=>void run(async()=>{await request('indexing.scope.apply',CLEAR_SCOPE);await request('indexing.scope.read',{});},true)}>Clear search scope</button>}
                 <p class="muted">Existing manual coding-agent configurations keep their own selection.</p>
             </form>}
@@ -101,7 +122,7 @@ export function IndexingScreen(props: ScreenProps) {
                 <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>View index sets</button>
                 <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
             </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}
-            <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.dismiss',{}))}>Keep this layout / Dismiss</button>
+            {view.recommendations&&<button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.dismiss',{}))}>Keep this layout / Dismiss</button>}
         </details>
         </>:<LibraryView key={tab} tab={tab==='projects'?'projects':'library'} state={props.state}/>}
     </section>;

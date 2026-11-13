@@ -4,7 +4,7 @@ import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
 import { RECIPE_SCHEMA, type SearchRecipe } from '../explorerStrategies';
 import { formatRoute, parseRoute, Route, routeKey, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
 import catalog from 'airk-explorer-help';
-import { headline } from '../explorerStatus';
+import { headline, headlineWork } from '../explorerStatus';
 import { notify, onHost, ready, request, savedState, saveState } from './api';
 import { BrandMark, Facts, useDialogFocus, WorkspaceIcon } from './components';
 import { ago, observed, shortToken } from './format';
@@ -66,10 +66,12 @@ export function App() {
 
     useEffect(() => { saveState({ ...savedState<Persisted>(), route: formatRoute(route) }); }, [route]);
     // Nested project views share this observer; child unmounts cannot turn it off.
+    // A failed host request is shown, never swallowed.
+    const surface = (failure: unknown) => setSourceError(failure instanceof Error ? failure.message : String(failure));
     useEffect(() => {
         const open = route.workspace === 'overview';
-        void request('manage.observe', { open }).catch(() => undefined);
-        return () => { if (open) { void request('manage.observe', { open: false }).catch(() => undefined); } };
+        void request('manage.observe', { open }).catch(surface);
+        return () => { if (open) { void request('manage.observe', { open: false }).catch(surface); } };
     }, [route.workspace]);
 
     const go = (next: Route) => { setRoute(next); setPalette(false); notify('nav.go', { route: formatRoute(next) }); };
@@ -93,9 +95,11 @@ export function App() {
         <p class="muted">If it remains unavailable, close and reopen Explorer after the extension host restarts.</p></main>; }
     const project = state.projects.find(entry => entry.project === state.selectedProject);
     const managed = route.workspace === 'overview' ? state.management?.projects.find(entry => entry.summary.project === state.selectedProject) : undefined;
-    const fallback = headline(state.connection, state.status, state.projects.length);
+    const fallback = headline(state.connection, state.status, state.projects.length, headlineWork(project, state.searchScope?.route));
+    // Running work, a pause and a missing index set are named over the generic project health (U103).
+    const specific = /^(indexing|paused|not readable)/.test(fallback.word);
     const status = state.extensionUpdate ? { word: 'Reload to finish update', severity: 'warn' }
-        : managed && state.connection !== 'untrusted' && state.connection !== 'incompatible' ? { word: managed.health.title, severity: managed.health.severity } : fallback;
+        : managed && !specific && state.connection !== 'untrusted' && state.connection !== 'incompatible' ? { word: managed.health.title, severity: managed.health.severity } : fallback;
     return (
         <NoticeContext.Provider value={{ dismissed: state.dismissedNotices ?? [], project: state.selectedProject }}>
         <div class={`airk-explorer${themed ? ' airk-themed' : ''}`}>
@@ -109,7 +113,7 @@ export function App() {
                     title="Drafts proposed by coding agents">Suggestions <span aria-live="polite">{state.suggestions?.open ?? 0}</span></button>
                 <button type="button" class={`workbench-toggle ghost${state.workbenchVisible ? ' active' : ''}`} aria-pressed={state.workbenchVisible ?? false}
                     title={state.workbenchVisible ? 'Hide Workbench' : 'Show Workbench'}
-                    onClick={() => { void request('workbench.toggle', {}).catch(() => undefined); }}>Workbench</button>
+                    onClick={() => { void request('workbench.toggle', {}).catch(surface); }}>Workbench</button>
                 <button type="button" class="ghost" aria-haspopup="listbox" onClick={() => void openHelp()}>Help <span aria-hidden="true">⌄</span></button>
                 <button type="button" class="ghost" onClick={() => go({ workspace: 'help', focus: 'about-airk' })}>About</button>
                 <button type="button" class={`theme-toggle ghost${themed ? ' active' : ''}`} aria-pressed={themed}
@@ -122,12 +126,12 @@ export function App() {
             <div class="source-context"><span class="eyebrow">Source file</span><code title={state.sourceFile}>{state.sourceFile ?? 'No file selected'}</code>
                 <button class="link" disabled={choosingSource || !state.trusted || !state.selectedProject} onClick={() => void chooseSource()}>Choose file…</button>
                 <small>Choose a file for Code › Outline and Evidence › Inspector. These views use the saved index.</small></div>
-            {sourceError && <Notice global noticeKey={noticeKey('source-error', sourceError)} class="notice" role="alert"><p>{sourceError}</p></Notice>}
-            {state.workspaceTrusted===false&&<Notice global noticeKey="workspace-restricted" class="notice"><p>VS Code Restricted Mode is active. AIRK native commands and evidence reads are unavailable.</p><button onClick={()=>{void request('workspace.manageTrust',{}).catch(failure=>setSourceError(failure instanceof Error?failure.message:String(failure)));}}>Manage Workspace Trust</button></Notice>}
-            {!state.trusted&&state.workspaceTrusted!==false&&<Notice global noticeKey={noticeKey('client-authority', state.workspaceTrusted)} class="notice"><p>{state.workspaceTrusted===true?'This AIRK client is no longer authorized. Reopen AIRK after the client or window has been renewed.':'AIRK client authority is unavailable. Workspace trust has not been reported by this host.'}</p></Notice>}
-            {state.nativeExecutionEnabled===false&&state.workspaceTrusted!==false&&<Notice global noticeKey="native-execution-disabled" class="notice"><p>AIRK native execution is turned off in User settings. Navigation, help and local logs remain available.</p></Notice>}
-            {pill && <StatusPopover state={state} project={project} onClose={() => setPill(false)} />}
-            {state.notice && <Notice noticeKey={noticeKey('host-error', state.notice.code, state.notice.message)} class="notice" role="alert"><p>{friendlyError(state.notice)}</p><button class="ghost" onClick={() => go({ workspace: 'help', focus: 'recovering-errors' })}>Recovery help</button></Notice>}
+            {sourceError && <Notice global condition noticeKey={noticeKey('source-error', sourceError)} class="notice" role="alert"><p>{sourceError}</p></Notice>}
+            {state.workspaceTrusted===false&&<Notice global condition noticeKey="workspace-restricted" class="notice"><p>VS Code Restricted Mode is active. AIRK native commands and evidence reads are unavailable.</p><button onClick={()=>{void request('workspace.manageTrust',{}).catch(failure=>setSourceError(failure instanceof Error?failure.message:String(failure)));}}>Manage Workspace Trust</button></Notice>}
+            {!state.trusted&&state.workspaceTrusted!==false&&<Notice global condition noticeKey={noticeKey('client-authority', state.workspaceTrusted)} class="notice"><p>{state.workspaceTrusted===true?'This AIRK client is no longer authorized. Reopen AIRK after the client or window has been renewed.':'AIRK client authority is unavailable. Workspace trust has not been reported by this host.'}</p></Notice>}
+            {state.nativeExecutionEnabled===false&&state.workspaceTrusted!==false&&<Notice global condition noticeKey="native-execution-disabled" class="notice"><p>AIRK native execution is turned off in User settings. Navigation, help and local logs remain available.</p></Notice>}
+            {pill && <StatusPopover state={state} project={project} onClose={() => setPill(false)} onError={surface} />}
+            {state.notice && <Notice condition noticeKey={noticeKey('host-error', state.notice.code, state.notice.message)} class="notice" role="alert"><p>{friendlyError(state.notice)}</p><button class="ghost" onClick={() => go({ workspace: 'help', focus: 'recovering-errors' })}>Recovery help</button></Notice>}
             {inbox && <Inbox view={state.suggestions} close={() => setInbox(false)}
                 applyNavigation={body => { const next = parseRoute(body.route); if (next) { setNavigation(prior => ({ route: body.route, filters: body.filters, serial: (prior?.serial ?? 0) + 1 })); go(next); } }}
                 applySearch={search => {
@@ -140,15 +144,15 @@ export function App() {
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
                     {route.workspace === 'overview' && <div class="project-context">
-                        <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} />
+                        <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} onError={surface} />
                     </div>}
-                    {state.startup&&!state.runtimeUpgrade&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
+                    {state.startup&&!state.runtimeUpgrade&&!state.extensionUpdate&&<StartupProgress startup={state.startup} onError={surface} />}
                     {state.agentConfigAlerts&&!state.extensionUpdate&&<AgentConfigAlert alerts={state.agentConfigAlerts} showDetails={() => { void openAdmin({ page: 'agents' }).catch(failure => setSourceError(failure instanceof Error ? failure.message : String(failure))); }} />}
                     {state.extensionUpdate && <Notice global noticeKey={noticeKey('extension-update', state.extensionUpdate.runningVersion, state.extensionUpdate.installedVersion)} class="card">
                         <h1>Reload to finish the AIRK update</h1>
                         <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>
                         <p>Reload this window to load the updated interface and finish runtime activation. Saved indexing work is retained by the AIRK service.</p>
-                        <button type="button" onClick={() => { void request('extension.reload', {}).catch(() => undefined); }}>Reload to finish update</button>
+                        <button type="button" onClick={() => { void request('extension.reload', {}).catch(surface); }}>Reload to finish update</button>
                     </Notice>}
                     {route.workspace === 'overview'
                         ? <Overview state={state} project={project} go={go} />
@@ -163,22 +167,22 @@ export function App() {
     );
 }
 
-function StartupProgress({startup}:{startup:NonNullable<ExplorerViewState['startup']>}) {
+function StartupProgress({startup,onError}:{startup:NonNullable<ExplorerViewState['startup']>;onError(failure:unknown):void}) {
     const [now,setNow]=useState(Date.now());
     useEffect(()=>{if(startup.failed)return;const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[startup.startedAt,startup.failed]);
     return <Notice global noticeKey={noticeKey('startup', !!startup.failed, startup.failed ? startup.message : undefined)}><strong>{startup.failed?'Connection needs attention':'Connecting to AIRK'}</strong>
         <p>{startup.message}</p>{!startup.failed&&<p>Elapsed: {Math.max(0,Math.floor((now-startup.startedAt)/1000))} seconds. You can keep using Explorer while AIRK connects.</p>}
-        <button class="ghost" onClick={()=>{void request('manage.command',{command:'airk.showExtensionOutput'}).catch(()=>undefined);}}>Show connection log</button></Notice>;
+        <button class="ghost" onClick={()=>{void request('manage.command',{command:'airk.showExtensionOutput'}).catch(onError);}}>Show connection log</button></Notice>;
 }
 
-function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: string; loading?: boolean }) {
+function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: string; loading?: boolean; onError(failure: unknown): void }) {
     if (!props.projects.length) { return <span class="muted">{props.loading ? 'Loading projects…' : 'No registered project'}</span>; }
     return (
         <label class="picker">
             <span>Project</span>
             <select value={props.selected ?? ''} onChange={event => {
                 const project = (event.target as HTMLSelectElement).value;
-                if (/^[0-9a-f]{64}$/.test(project)) { void request('project.select', { project }).catch(() => undefined); }
+                if (/^[0-9a-f]{64}$/.test(project)) { void request('project.select', { project }).catch(props.onError); }
             }}>
                 {props.projects.map(entry => <option key={entry.project} value={entry.project} disabled={!entry.current} title={entry.current ? entry.collection : 'Open this project in the workspace to select its evidence'}>{entry.name}{entry.current ? ' (open)' : ' (open workspace to select)'}</option>)}
             </select>
@@ -186,7 +190,7 @@ function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: 
     );
 }
 
-function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSummary; onClose(): void }) {
+function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSummary; onClose(): void; onError(failure: unknown): void }) {
     const dialog = useDialogFocus(props.onClose);
     const { state, project } = props, status = state.status;
     return (
@@ -195,6 +199,8 @@ function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSumma
                 ['Service connection', state.connection],
                 ['Project', project ? `${project.collection} (${project.root || project.name})` : 'none selected'],
                 ['Published index', status?.indexState ?? 'not observed'],
+                ['Read route', state.searchScope?.route ? `${state.searchScope.route.state}${state.searchScope.route.automatic ? ' (automatic)' : ''}${state.searchScope.route.code ? ` · ${state.searchScope.route.code}` : ''}` : 'not resolved'],
+                ['Current job', project?.jobState ? `${project.jobKind ?? 'job'} · ${project.jobState}${project.phase ? ` · ${project.phase}` : ''}` : 'none observed'],
                 ['Publication', <span title={status?.publication}>{shortToken(status?.publication)}</span>],
                 ['Source work (scheduler)', status?.freshness ?? 'not observed'],
                 ['Live source verified', observed(status?.liveSourceVerified)],
@@ -205,7 +211,7 @@ function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSumma
             ]} />
             <p class="muted">Health, published readiness, source freshness and semantic coverage are separate observations. Ready is not proof that saved files still match the index.</p>
             <div class="actions">
-                <button type="button" onClick={() => { void request('status.refresh', {}).catch(() => undefined); }}>Refresh</button>
+                <button type="button" onClick={() => { void request('status.refresh', {}).catch(props.onError); }}>Refresh</button>
                 <button type="button" class="ghost" onClick={props.onClose}>Close</button>
             </div>
         </section>

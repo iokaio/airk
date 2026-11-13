@@ -8,8 +8,6 @@ related_airk_help: usage
 ---
 # Usage and savings
 
-Local usage and savings estimates are in AIRK Admin, Usage. They are estimates, not billing data.
+Management › Usage reads the local usage report of the selected index through this window's AIRK session (`airkctl usage report`). Choose the period (the last 7, 30 or 90 days) and Refresh usage. Reported values are local estimates, not billing data, and the complete native report stays available under Complete response for copying.
 
-Management moved from the Explorer to the AIRK admin pages; this window reads indexes and evidence only. Its Management tabs open the matching admin page.
-
-Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
+A failed read shows its native code; it is never shown as an empty report. Usage recording settings (mode, retention, import and clearing) are in AIRK Admin, Usage: choose Usage settings in AIRK Admin.

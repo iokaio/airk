@@ -205,10 +205,17 @@ enum Command {
     Pause,
     /// Resume work paused with `pause`.
     Resume,
-    /// Turn native source watching on or off for the project (on keeps the index current after edits).
+    /// Turn native source watching on or off for the project (on keeps the index current after edits), or print its watch status.
     Watch {
-        #[arg(value_parser = ["on", "off"])]
+        #[arg(value_parser = ["on", "off", "status"])]
         mode: String,
+    },
+    /// Print the project's live indexing progress: the running job's phase and counts, pending and queued jobs, and pause state.
+    Progress,
+    /// Read, retry or cancel one job by its ID.
+    Jobs {
+        #[command(subcommand)]
+        action: JobsCommand,
     },
     /// The index library: list, show and set up indexes (the admin pages' Index library).
     Library {
@@ -528,6 +535,17 @@ enum ExplorerCommand {
         #[arg(long)]
         output_file: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
+enum JobsCommand {
+    /// Print one job's record.
+    Get { id: String },
+    /// Retry a failed job.
+    Retry { id: String },
+    /// Cancel a pending or running job.
+    Cancel { id: String },
 }
 
 #[derive(Subcommand)]
@@ -1522,6 +1540,42 @@ fn project_control(
         Err(code) => return code,
     };
     match crate::service::request(&control, method(registration.binding), VERSION) {
+        Ok(response) => print_control(cx, &response),
+        Err(mut line) => {
+            if line.class == ExitClass::Internal {
+                line.class = ExitClass::OutcomeUnknown;
+                line.code = "service_request_outcome_unknown".into();
+            }
+            fail(cx, &line)
+        }
+    }
+}
+
+/// U103: `jobs get|retry|cancel ID` on the selected service.
+fn jobs_command(cx: &mut Context, selection: Selection, action: JobsCommand) -> u8 {
+    if let Err(code) = administrative(cx, &selection) {
+        return code;
+    }
+    let raw = match &action {
+        JobsCommand::Get { id } | JobsCommand::Retry { id } | JobsCommand::Cancel { id } => id,
+    };
+    let Ok(id) = raw.parse::<airk_core::identity::Sha256Digest>() else {
+        return usage(cx, "a job ID is 64 lowercase hexadecimal characters");
+    };
+    let control = match control(cx, &selection) {
+        Ok(control) => control,
+        Err(code) => return code,
+    };
+    let response = match action {
+        JobsCommand::Get { .. } => {
+            crate::service::request(&control, ControlMethod::Job { id }, VERSION)
+        }
+        JobsCommand::Retry { .. } => crate::journal::retry(&control, VERSION, id),
+        JobsCommand::Cancel { .. } => {
+            crate::service::request(&control, ControlMethod::Cancel { id }, VERSION)
+        }
+    };
+    match response {
         Ok(response) => print_control(cx, &response),
         Err(mut line) => {
             if line.class == ExitClass::Internal {
@@ -3278,12 +3332,19 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             project,
             paused: false,
         }),
+        Command::Watch { mode } if mode == "status" => {
+            project_control(cx, selection, |project| ControlMethod::Watch { project })
+        }
         Command::Watch { mode } => project_control(cx, selection, move |project| {
             ControlMethod::ConfigureWatch {
                 project,
                 enabled: mode == "on",
             }
         }),
+        Command::Progress => {
+            project_control(cx, selection, |project| ControlMethod::Progress { project })
+        }
+        Command::Jobs { action } => jobs_command(cx, selection, action),
         Command::Projects { runtime_dir } => projects(cx, selection, runtime_dir),
         Command::Folders {
             path,

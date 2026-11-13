@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Open AIRK Admin (U97). Management lives in the admin pages (U6); the
-// Explorer only links there. The host opens them where `airk.admin.openIn`
+// Explorer links there. U103: status, usage, recent activity and the everyday
+// index actions are in the Explorer itself. The host opens them where `airk.admin.openIn`
 // says (VS Code's Simple Browser or the default browser); no sign-in URL ever
 // reaches this webview.
 import { useState } from 'preact/hooks';
@@ -43,22 +44,21 @@ export function CreateIndexForFolders(props: { folders?: readonly string[]; disa
     </article>;
 }
 
-/** Management tabs open the matching admin page; routes stay valid for links, help and agent drafts. */
+/** Management tabs that open the matching admin page (Activity and Usage are read in the Explorer, U103);
+ * routes stay valid for links, help and agent drafts. */
 const MANAGE_PAGES: Readonly<Record<string, { page: AdminPage; title: string; text: string }>> = {
     overview: { page: 'overview', title: 'Overview', text: 'Service health, indexes and work in progress.' },
-    activity: { page: 'activity', title: 'Activity', text: 'Indexing jobs, their progress and their outcomes.' },
     storage: { page: 'storage', title: 'Storage', text: 'Index storage, quotas and cleanup.' },
     repair: { page: 'recovery', title: 'Recovery', text: 'Recovery plans for indexes that need repair.' },
     service: { page: 'service', title: 'Service', text: 'Start, stop and restart the AIRK Service and review its runtime.' },
     agents: { page: 'agents', title: 'Agents', text: 'Coding-agent connections and their access.' },
-    usage: { page: 'usage', title: 'Usage', text: 'Local usage and savings estimates.' },
     logs: { page: 'logs', title: 'Logs', text: 'Service and extension logs.' },
 };
 export function AdminHandoffScreen(props: ScreenProps) {
     const target = MANAGE_PAGES[props.route.tab ?? 'overview'] ?? MANAGE_PAGES.overview;
     return <article class="card admin-handoff">
         <h2>{target.title} is in AIRK Admin</h2>
-        <p>{target.text} Management moved to the AIRK admin pages; this window reads indexes and evidence only.</p>
+        <p>{target.text} This is managed in the AIRK admin pages. Index status, usage, recent activity and the everyday index actions (index now, pause, resume, watching, retry and cancel) are in this Explorer.</p>
         <AdminButton page={target.page} label={`Open ${target.title} in AIRK Admin`} disabled={!props.state.trusted} />
     </article>;
 }

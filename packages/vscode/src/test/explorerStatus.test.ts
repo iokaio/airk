@@ -15,7 +15,8 @@ test('airk_status maps to separate readiness, freshness and semantic observation
     }, 5);
     assert.deepEqual(summary, { indexState: 'available', semantic: 'partial', freshness: 'idle', observedAt: 5, publication: 'airk-r1:tok',
         files: 12, chunks: 40, semanticReadiness: { state: 'partial', completed_artifacts: 4, selected_artifacts: 12 }, semanticCompleted: 4, semanticSelected: 12, liveSourceVerified: false, vectorsEnabled: true,
-        localModelReady: true, versionsMatch: null, workPhase: 'extract', workPaused: false });
+        localModelReady: true, versionsMatch: null, workPhase: 'extract', workPaused: false,
+        work: { project_paused: false, progress: { phase: 'extract' } } });
     const unavailable = statusSummary({ index_state: 'unavailable', index_error: { code: 'index_unavailable', message: 'private detail' }, files: null, publication: null }, 1);
     assert.deepEqual(unavailable, { indexState: 'unavailable', semantic: 'unknown', freshness: 'unknown', observedAt: 1, indexError: 'index_unavailable' });
     assert.equal(unavailable.files, undefined, 'null counts stay unknown, never zero');

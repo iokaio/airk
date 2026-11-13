@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explorer and Workbench host over the `airkctl` facade (plan §8.1, §10.3
 //! "features"). Reads use the window session; management (index library,
-//! storage, service, recovery, usage, logs) is in the admin pages, so the
-//! control source here is read-only and every management action answers with
-//! the Open AIRK Admin guidance instead of a second implementation. The window
+//! storage, service, recovery, agents) is in the admin pages, so the control
+//! source here is read-only and every management action answers with the Open
+//! AIRK Admin guidance instead of a second implementation. U103: the Explorer
+//! shows live progress, job, watch and pause state (liveStatus.ts), usage and
+//! recent activity, and runs the everyday index actions (index now, pause,
+//! resume, watch on/off, retry, cancel) as `airkctl` commands. The window
 //! search scope (W4), Assistance drafts and handoffs use the session's window
 //! plane when their capabilities are advertised (windowScope.ts,
 //! windowAssistance.ts).
@@ -11,6 +14,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { AgentConfigHealth } from '../../agentConfigHealth';
 import type { ExplorerHost, HandoffPublisher } from '../../explorerController';
+import type { ReadRouteView, WorkAction } from '../../explorerContracts';
 import type { SearchDraft } from '../../explorerDrafts';
 import type { ControlSource } from '../../explorerControl';
 import { SuggestionStore } from '../../explorerSuggestions';
@@ -21,6 +25,7 @@ import { AirkctlUnavailable, type Airkctl, type AirkctlState } from '../index';
 import type { AdminOpener, AdminTarget } from './adminOpener';
 import { WindowScope } from './windowScope';
 import { HANDOFF_CAPABILITY, WindowAssistance, WindowHandoffs } from './windowAssistance';
+import { commandOutcome, LiveStatus, liveRow, LOGS_ARGV, usageArgv, workActionArgv, type CommandOutcome, type LiveObservation } from './liveStatus';
 
 /** The Workbench side of the window search scope: prefills an inert search form under it. */
 export interface WindowScopeWorkbench { prefillWindowSearch(search: SearchDraft): Promise<void> }
@@ -56,19 +61,23 @@ export function specsFor(rows: readonly ProjectRow[], folders: readonly string[]
 
 const observation = (state: ConsoleObservation['state'], value?: RecordValue, code?: string): ConsoleObservation =>
     ({ state, ...(value ? { value } : {}), ...(code ? { code } : {}), checkedAt: Date.now() });
-/** The read-only console state the Explorer renders from the facade state. */
-export function consoleState(state: AirkctlState, rows: readonly ProjectRow[], trusted: boolean, revision: number): ServiceConsoleState {
+/** The console state the Explorer renders from the facade state. Rows carry the live native
+ * Progress and Watch reads of `live` (U103), so project summaries, work progress and the
+ * overview's watching, paused and current-job facts show real observations; `events` are
+ * this window's session status/job events. */
+export function consoleState(state: AirkctlState, rows: readonly ProjectRow[], trusted: boolean, revision: number,
+    live: (binding: string) => LiveObservation | undefined = () => undefined, events: readonly RecordValue[] = [], eventsOmitted = false): ServiceConsoleState {
     const connected = state.kind === 'ready';
     const health = connected && state.health && typeof state.health === 'object'
         ? observation('live', { observation: state.health as RecordValue }) : observation('unavailable', undefined, state.kind);
     const page: ConsolePage | undefined = connected ? {
         revision, cached: true, observed_unix_ms: Date.now(), after: null,
-        projects: rows.map(row => ({ project: { registration: { binding: row.project, root: row.root, data_root: row.data_root, collection: row.collection } } })),
+        projects: rows.map(row => liveRow({ binding: row.project, root: row.root, data_root: row.data_root, collection: row.collection }, live(row.project))),
     } : undefined;
     return {
         revision: String(revision), trusted, busy: state.kind === 'checking', authority: 'airkctl', version: 'version' in state ? state.version : '',
         connected, health, resources: observation('unavailable'), model: observation('unavailable'), sources: observation('unavailable'),
-        bootstrap: observation('unavailable'), events: [], historyOmitted: false, selected: new Set(), pending: [], includePaths: false,
+        bootstrap: observation('unavailable'), events: connected ? [...events] : [], historyOmitted: connected && eventsOmitted, selected: new Set(), pending: [], includePaths: false,
         ...(page ? { page } : {}),
         ...(state.kind !== 'ready' && state.kind !== 'checking' ? { message: describe(state) } : {}),
     };
@@ -111,8 +120,12 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     /** This window's search scope (U77, W4). */
     readonly windowScope: WindowScope;
     readonly assistance: WindowAssistance;
+    /** Live Progress/Watch reads and session status/job events (U103). */
+    readonly live: LiveStatus;
     private readonly publisher: WindowHandoffs;
     private workbench?: WindowScopeWorkbench;
+    /** The project the Explorer selected; its index is read under the automatic scope. */
+    private followed?: string;
 
     constructor(context: vscode.ExtensionContext, private readonly airkctl: Airkctl, private readonly output: vscode.OutputChannel,
         private readonly status: vscode.StatusBarItem, private readonly admin?: AdminOpener) {
@@ -132,22 +145,30 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         }, line => output.appendLine(line));
         this.assistance = new WindowAssistance(airkctl.session, capabilities, this.suggestions, line => output.appendLine(line));
         this.publisher = new WindowHandoffs(airkctl.session, () => this.suggestionsBinding());
+        this.live = new LiveStatus(airkctl.session, () => this.publishLive(), undefined, undefined, line => output.appendLine(line));
         const host = this;
         this.control = {
+            // The observation identity names the project registry read only: live progress
+            // updates the rows without discarding the published status of the selected index.
             get controller() { return { state: host.current, observationIdentity: String(host.revision) }; },
             run: async action => {
                 if (action === 'refresh' || action === 'reconnect' || action === 'connect') { await host.refresh(true); return; }
                 throw new AdminOnly(action);
             },
-            retain: () => ({ dispose: () => {} }),
+            // A visible Explorer keeps progress polling while work runs (stopped when hidden or idle).
+            retain: () => host.live.retain(),
             onDidChangeState: listener => { host.stateChanged.add(listener); return { dispose: () => { host.stateChanged.delete(listener); } }; },
         };
         this.subscriptions.push(airkctl.onDidChangeState(() => { void this.refresh(false); }), airkctl.session.onEvent(event => {
             void this.assistance.event(event);
+            this.live.event(event);
             // The window and its scope grant are gone; the remembered choice is applied again on the next refresh.
-            if (event.kind === 'session_lost') { this.windowScope.lost(); }
-            if (event.kind === 'resync' && event.reason === 'service_restarted') { this.windowScope.lost(); void this.windowScope.restore(); }
-        }));
+            if (event.kind === 'session_lost') { this.windowScope.lost(); this.reacquire(); }
+            if (event.kind === 'resync' && event.reason === 'service_restarted') {
+                this.windowScope.lost();
+                void this.windowScope.restore().then(() => this.windowScope.ensureDefault(this.workspaceBinding()));
+            }
+        }), { dispose: () => this.live.dispose() });
     }
     private suggestionsBinding(): string { return vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()).join('\n') ?? ''; }
 
@@ -207,6 +228,39 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     log(line: string): void { this.output.appendLine(line); }
     setStatusBar(text: string, tooltip: string): void { this.status.text = text; this.status.tooltip = tooltip; }
 
+    /** The project whose index the window reads without a chosen scope: the Explorer's selection,
+     * else the active editor's project among this window's folders. */
+    private workspaceBinding(): string | undefined {
+        const specs = this.specs(), folders = (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath);
+        const related = specs.filter(spec => folders.some(folder => within(spec.root, folder) || within(folder, spec.root)));
+        if (this.followed && specs.some(spec => spec.service?.project === this.followed)) { return this.followed; }
+        const active = this.activeProject();
+        return related.find(spec => spec.service?.project === active)?.service?.project ?? related[0]?.service?.project;
+    }
+    private reacquiredAt = 0;
+    /** After the session child ended, subscribe again and re-apply the remembered or automatic
+     * scope once the session is used again (at most every 5 s; the child restarts with backoff). */
+    private reacquire(): void {
+        const now = Date.now();
+        if (this.airkctl.state.kind !== 'ready' || now - this.reacquiredAt < 5000) { return; }
+        this.reacquiredAt = now;
+        void Promise.all([this.assistance.start(), this.windowScope.restore()])
+            .then(() => this.windowScope.ensureDefault(this.workspaceBinding()))
+            .catch(error => this.output.appendLine(`AIRK: the window scope was not re-applied: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    /** The Explorer selected `binding`: read its index under the automatic scope (U103). */
+    followProject(binding: string | undefined): void {
+        this.followed = binding;
+        if (this.airkctl.state.kind === 'ready') { void this.windowScope.ensureDefault(this.workspaceBinding()); }
+    }
+    /** How the selected index is read without a chosen scope (scope, binding or not readable). */
+    readRoute(): ReadRouteView | undefined { return this.windowScope.readRoute(); }
+
+    private publishLive(): void {
+        this.current = consoleState(this.airkctl.state, this.rows, this.trusted(), this.revision, binding => this.live.observation(binding), this.live.events, this.live.eventsOmitted);
+        for (const listener of [...this.stateChanged]) { try { listener(this.current); } catch { /* Listener failures stay local. */ } }
+    }
+
     /** Re-read projects through the session when ready; publish the console state. */
     async refresh(recheck: boolean): Promise<void> {
         if (recheck) { await this.airkctl.check(); }
@@ -216,13 +270,43 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
             catch (error) { this.output.appendLine(`AIRK: projects could not be read: ${error instanceof Error ? error.message : String(error)}`); this.rows = []; }
         } else { this.rows = []; }
         this.revision++;
-        this.current = consoleState(this.airkctl.state, this.rows, this.trusted(), this.revision);
-        for (const listener of [...this.stateChanged]) { try { listener(this.current); } catch { /* Listener failures stay local. */ } }
+        const ready = this.airkctl.state.kind === 'ready';
+        if (ready) { this.live.track(this.specs().flatMap(spec => spec.service ? [spec.service.project] : [])); } else { this.live.clear(); }
+        this.publishLive();
         if (JSON.stringify(this.rows) !== before) { this.specsChanged.fire(); }
-        if (this.airkctl.state.kind === 'ready') {
+        if (ready) {
             // Each starts nothing without its capability; the scope is re-applied only after a fresh catalog read.
-            await Promise.all([this.assistance.start(), this.windowScope.restore()]);
+            await Promise.all([this.assistance.start(), this.windowScope.restore(), this.live.read()]);
+            await this.windowScope.ensureDefault(this.workspaceBinding());
         } else { this.windowScope.lost(); }
+    }
+
+    private requireReadyState(): void {
+        const state = this.airkctl.state;
+        if (state.kind !== 'ready') { throw new AirkctlUnavailable(state.kind); }
+    }
+    /** One everyday action on an index (U103): the `airkctl` command's complete outcome, then a fresh live read. */
+    async workAction(action: WorkAction, binding: string, job?: string): Promise<CommandOutcome> {
+        this.requireReadyState();
+        if (!this.specs().some(spec => spec.service?.project === binding)) { throw Object.assign(new Error('Choose an index of this window.'), { code: 'NO_PROJECT' }); }
+        const argv = workActionArgv(action, binding, job);
+        const outcome = commandOutcome(argv, await this.airkctl.session.invoke(argv, { deadlineMs: 60_000 }));
+        this.output.appendLine(`AIRK: ${argv.slice(0, argv.indexOf('--service-project')).join(' ')} → ${outcome.class}`);
+        await this.live.read();
+        return outcome;
+    }
+    /** `airkctl usage report` for one index of this window (complete native document). */
+    async usage(binding: string, days: number): Promise<CommandOutcome> {
+        this.requireReadyState();
+        if (!this.specs().some(spec => spec.service?.project === binding)) { throw Object.assign(new Error('Choose an index of this window.'), { code: 'NO_PROJECT' }); }
+        const argv = usageArgv(binding, days);
+        return commandOutcome(argv, await this.airkctl.session.invoke(argv, { deadlineMs: 60_000 }));
+    }
+    /** Recent activity: this window's session status/job events and the service's recent log records. */
+    async activity(): Promise<{ events: RecordValue[]; eventsOmitted: boolean; logs: CommandOutcome }> {
+        this.requireReadyState();
+        const logs = commandOutcome(LOGS_ARGV, await this.airkctl.session.invoke(LOGS_ARGV, { deadlineMs: 30_000 }));
+        return { events: [...this.live.events].reverse(), eventsOmitted: this.live.eventsOmitted, logs };
     }
 
     dispose(): void { for (const item of this.subscriptions.splice(0)) { item.dispose(); } this.workbench = undefined; this.specsChanged.dispose(); this.stateChanged.clear(); }

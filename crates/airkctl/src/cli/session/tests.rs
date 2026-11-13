@@ -1031,3 +1031,78 @@ fn a_stale_window_read_reselects_once_and_retries_once() {
     assert_eq!(code, 0);
     service.finished(&script);
 }
+
+/// U103 (contracts §3.8): the `control` relay forwards exactly the reviewed
+/// operation-table rows that list `session`, plus W5; everything else is
+/// refused before the pipe.
+#[test]
+fn the_control_relay_forwards_exactly_the_session_rows() {
+    // Reviewed, checked-in expectation; not derived from the table reader.
+    let expected: std::collections::BTreeSet<String> = [
+        "Cancel",
+        "CatalogDetail",
+        "CatalogPage",
+        "CatalogPolicyStatus",
+        "CatalogSplitStatus",
+        "ConfigureWatch",
+        "Enqueue",
+        "Events",
+        "ExplorerHandoff",
+        "ExplorerOffline",
+        "Health",
+        "Inspection",
+        "Job",
+        "Logs",
+        "NativeReadScoped",
+        "Pause",
+        "Progress",
+        "Projects",
+        "RecordClientError",
+        "ResolveProject",
+        "Retry",
+        "ToolsCall",
+        "ToolsCatalog",
+        "UsageDocument",
+        "Watch",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(*session_methods(), expected);
+    let project = "c".repeat(64);
+    let method = |value: Value| serde_json::from_value::<ControlMethod>(value).unwrap();
+    for forwarded in [
+        json!("health"),
+        json!({"progress": {"project": project}}),
+        json!({"watch": {"project": project}}),
+        json!({"pause": {"project": project, "paused": true}}),
+        json!({"configure_watch": {"project": project, "enabled": false}}),
+        json!({"logs": {"limit": 5}}),
+        json!({"assistance_windows": {}}),
+    ] {
+        assert!(
+            matches!(relay_rule(&method(forwarded.clone())), Relay::Forward),
+            "{forwarded}"
+        );
+    }
+    for refused in [
+        json!("shutdown"),
+        json!("resources"),
+        json!({"workers": {"projects": [project]}}),
+        json!("lifecycle_status"),
+    ] {
+        assert!(
+            matches!(relay_rule(&method(refused.clone())), Relay::Refuse),
+            "{refused}"
+        );
+    }
+    assert_eq!(
+        method_name(&method(
+            json!({"catalog_policy_status": {"index_id": format!("idx_{}", "a".repeat(32))}})
+        )),
+        Some("CatalogPolicyStatus".to_owned())
+    );
+    // The scoped native read row names the `NativeRead` variant.
+    assert_eq!(table_spelling("NativeRead".to_owned()), "NativeReadScoped");
+    assert_eq!(table_spelling("Progress".to_owned()), "Progress");
+}

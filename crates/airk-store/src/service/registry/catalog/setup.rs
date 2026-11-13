@@ -563,7 +563,26 @@ impl ServiceRegistry {
             completion.legacy_adoption.is_none(),
             "ordinary setup cannot supply a legacy adoption publication"
         );
-        self.complete_setup_inner(caller, key, request_digest, completion)
+        self.complete_setup_inner(caller, key, request_digest, completion, false)
+    }
+
+    /// U103: [`Self::complete_index_setup`] that also creates the index's
+    /// index set in the same transaction (`operations::create_setup_index_set`),
+    /// so the new index is readable through a window or catalog selection at
+    /// once. The receipt is unchanged; an exact retry finds the completed
+    /// receipt and its set.
+    pub fn complete_index_setup_with_index_set(
+        &mut self,
+        caller: Incarnation,
+        key: &RequestKey,
+        request_digest: Sha256Digest,
+        completion: &SetupCompletion,
+    ) -> Result<IndexSetupReceipt> {
+        ensure!(
+            completion.legacy_adoption.is_none(),
+            "ordinary setup cannot supply a legacy adoption publication"
+        );
+        self.complete_setup_inner(caller, key, request_digest, completion, true)
     }
 
     fn complete_setup_inner(
@@ -572,6 +591,7 @@ impl ServiceRegistry {
         key: &RequestKey,
         request_digest: Sha256Digest,
         completion: &SetupCompletion,
+        index_set: bool,
     ) -> Result<IndexSetupReceipt> {
         let tx = self
             .connection
@@ -632,6 +652,15 @@ impl ServiceRegistry {
             "UPDATE index_sources SET enabled=1 WHERE index_id=?1",
             [after.index_id.to_string()],
         )?;
+        if index_set {
+            super::operations::create_setup_index_set(
+                &tx,
+                after.operation_id,
+                &before.request.name,
+                after.index_id,
+                &after.source_ids,
+            )?;
+        }
         super::super::schedule_project_setup(
             &tx,
             before.request.registration.binding,

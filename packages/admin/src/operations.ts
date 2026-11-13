@@ -18,6 +18,7 @@ export const OPS = {
   workers: 'service.workers',
   indexesList: 'indexes.list',
   indexesPause: 'indexes.pause',
+  indexesProgress: 'indexes.progress',
   catalogPage: 'catalog.page',
   catalogDetail: 'catalog.detail',
   catalogPreview: 'catalog.preview',
@@ -216,6 +217,8 @@ export const body = {
     projects: { after, revision, limit },
   }),
   indexesPause: (project: string, paused: boolean) => ({ pause: { project, paused } }),
+  /** U103: live progress of one registered index (ControlMethod Progress). */
+  indexesProgress: (project: string) => ({ progress: { project } }),
   /** CatalogPageRequest; limit ≤ MAX_SELECTION (32), max_bytes ≤ 48 KiB. */
   catalogIndexes: (expectedRevision: number | null) => catalogPage('indexes', {}, null, expectedRevision),
   catalogPage,

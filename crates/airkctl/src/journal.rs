@@ -59,6 +59,31 @@ pub fn epoch(control: &Path, version: &str) -> Result<(Incarnation, u64), ErrorL
     }
 }
 
+/// U103: retry a failed job with a fresh request key. Retries are not saved
+/// client requests (the journal holds `Enqueue` and `ConfigureProject`); a
+/// lost reply is an unknown outcome, and `jobs get` reads the job.
+pub fn retry(
+    control: &Path,
+    version: &str,
+    id: airk_core::identity::Sha256Digest,
+) -> Result<ControlResponse, ErrorLine> {
+    let (namespace, epoch) = epoch(control, version)?;
+    let key = RequestKey {
+        namespace,
+        epoch,
+        nonce: mint()?,
+    };
+    crate::service::request(
+        control,
+        ControlMethod::Retry {
+            id,
+            caller: mint()?,
+            key,
+        },
+        version,
+    )
+}
+
 /// M5: journal a keyed `Enqueue` and return its nonce.
 pub fn prepare(
     control: &Path,

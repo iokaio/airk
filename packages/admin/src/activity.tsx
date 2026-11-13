@@ -54,9 +54,9 @@ const JOB_KIND: Record<string, string> = {
   recover: 'Recovery',
   maintain: 'Maintenance',
 };
-const jobKind = (kind: unknown): string => JOB_KIND[str(kind) ?? ''] ?? str(kind) ?? 'Job';
+export const jobKind = (kind: unknown): string => JOB_KIND[str(kind) ?? ''] ?? str(kind) ?? 'Job';
 
-const JOB_STATE: Record<string, { text: string; tone: string }> = {
+export const JOB_STATE: Record<string, { text: string; tone: string }> = {
   pending: { text: 'Waiting', tone: 'warn' },
   running: { text: 'Running', tone: 'info' },
   succeeded: { text: 'Succeeded', tone: 'ok' },
@@ -142,7 +142,7 @@ function problemOf(result: CallResult): Problem | null {
   }
 }
 
-function ProblemLine(props: { state: CallState }): JSX.Element | null {
+export function ProblemLine(props: { state: CallState }): JSX.Element | null {
   if (props.state.phase !== 'done') return null;
   const problem = problemOf(props.state.result);
   if (problem === null) return null;
@@ -157,7 +157,7 @@ function ProblemLine(props: { state: CallState }): JSX.Element | null {
 }
 
 /** The complete native result, collapsed (open on failure). */
-function Complete(props: { state: CallState; label?: string }): JSX.Element | null {
+export function Complete(props: { state: CallState; label?: string }): JSX.Element | null {
   if (props.state.phase !== 'done') return null;
   return (
     <details class="complete" open={props.state.result.kind !== 'ok'}>
@@ -167,7 +167,7 @@ function Complete(props: { state: CallState; label?: string }): JSX.Element | nu
   );
 }
 
-function Badge(props: { tone: string; children: ComponentChildren }): JSX.Element {
+export function Badge(props: { tone: string; children: ComponentChildren }): JSX.Element {
   return <span class={`badge badge-${props.tone}`}>{props.children}</span>;
 }
 
@@ -179,7 +179,7 @@ function localTime(ms: unknown): string {
 // ---------------------------------------------------------------------------
 // Index names: binding → name, from the catalog and the registered projects.
 
-type IndexInfo = {
+export type IndexInfo = {
   binding: string;
   name: string | null;
   id: string | null;
@@ -189,7 +189,7 @@ type IndexInfo = {
   registered: boolean;
 };
 
-function useIndexes(): {
+export function useIndexes(): {
   indexes: IndexInfo[];
   nameOf: (binding: string) => string;
   reload: () => Promise<void>;
@@ -270,7 +270,7 @@ function useIndexes(): {
   return { indexes, nameOf, reload, catalog, projects, partial, registryKnown };
 }
 
-function IndexSelect(props: {
+export function IndexSelect(props: {
   label: string;
   indexes: IndexInfo[];
   value: string;

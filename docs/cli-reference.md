@@ -43,6 +43,10 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl info`](#airkctl-info)
 - [`airkctl init`](#airkctl-init)
 - [`airkctl inspect`](#airkctl-inspect)
+- [`airkctl jobs`](#airkctl-jobs)
+- [`airkctl jobs cancel`](#airkctl-jobs-cancel)
+- [`airkctl jobs get`](#airkctl-jobs-get)
+- [`airkctl jobs retry`](#airkctl-jobs-retry)
 - [`airkctl library`](#airkctl-library)
 - [`airkctl library change`](#airkctl-library-change)
 - [`airkctl library list`](#airkctl-library-list)
@@ -58,6 +62,7 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl outline`](#airkctl-outline)
 - [`airkctl parse`](#airkctl-parse)
 - [`airkctl pause`](#airkctl-pause)
+- [`airkctl progress`](#airkctl-progress)
 - [`airkctl projects`](#airkctl-projects)
 - [`airkctl read`](#airkctl-read)
 - [`airkctl refs`](#airkctl-refs)
@@ -137,7 +142,9 @@ Commands:
   inspect        Queue an inspection of the project's configuration and index
   pause          Pause work for the project
   resume         Resume work paused with `pause`
-  watch          Turn native source watching on or off for the project (on keeps the index current after edits)
+  watch          Turn native source watching on or off for the project (on keeps the index current after edits), or print its watch status
+  progress       Print the project's live indexing progress: the running job's phase and counts, pending and queued jobs, and pause state
+  jobs           Read, retry or cancel one job by its ID
   library        The index library: list, show and set up indexes (the admin pages' Index library)
   folders        List the folders in PATH (folders only, links never followed), or the starting list without one (M24: AIRK Admin's Browse dialog)
   projects       List the projects registered with the service (same fields as the MCP `projects` tool)
@@ -2655,6 +2662,231 @@ Options:
           Print help
 ```
 
+## airkctl jobs
+
+```text
+Read, retry or cancel one job by its ID
+
+Usage: airkctl jobs [OPTIONS] <COMMAND>
+
+Commands:
+  get     Print one job's record
+  retry   Retry a failed job
+  cancel  Cancel a pending or running job
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl jobs cancel
+
+```text
+Cancel a pending or running job
+
+Usage: airkctl jobs cancel [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl jobs get
+
+```text
+Print one job's record
+
+Usage: airkctl jobs get [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl jobs retry
+
+```text
+Retry a failed job
+
+Usage: airkctl jobs retry [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
 ## airkctl library
 
 ```text
@@ -3632,6 +3864,58 @@ Options:
 Pause work for the project
 
 Usage: airkctl pause [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl progress
+
+```text
+Print the project's live indexing progress: the running job's phase and counts, pending and queued jobs, and pause state
+
+Usage: airkctl progress [OPTIONS]
 
 Options:
       --output <OUTPUT>
@@ -6973,13 +7257,13 @@ Options:
 ## airkctl watch
 
 ```text
-Turn native source watching on or off for the project (on keeps the index current after edits)
+Turn native source watching on or off for the project (on keeps the index current after edits), or print its watch status
 
 Usage: airkctl watch [OPTIONS] <MODE>
 
 Arguments:
   <MODE>
-          [possible values: on, off]
+          [possible values: on, off, status]
 
 Options:
       --output <OUTPUT>

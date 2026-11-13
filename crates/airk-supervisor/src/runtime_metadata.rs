@@ -408,6 +408,27 @@ fn work_observation(
         "queue_limit":16,"interpretation":"Health is not progress. Progress is cached; compare sample age and serving worker identity. Unknown totals remain unknown. No matching wait sample does not prove no wait. Use airk_help topic=jobs or topic=indexing for interpretation and CLI management guidance."})
 }
 
+/// U103: the index's work (progress and watch) for a status reply whose read
+/// the catalog refused. Two registry reads, no health or worker read, so it
+/// fits the scalar status budget.
+pub async fn status_work(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+) -> serde_json::Value {
+    use airk_core::service::ControlMethod;
+    // Bounded so a stalled service still lets status answer its refusal.
+    let reads = async {
+        tokio::join!(
+            airk_installer::control_client::request(control, ControlMethod::Progress { project }),
+            airk_installer::control_client::request(control, ControlMethod::Watch { project }),
+        )
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(1), reads).await {
+        Ok((progress, watch)) => work_observation(None, project, progress.ok(), watch.ok(), None),
+        Err(_) => work_observation(None, project, None, None, None),
+    }
+}
+
 /// A completed metadata-only status reply when no index query could be submitted.
 pub async fn unavailable(
     control: &Path,

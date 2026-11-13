@@ -4,17 +4,17 @@
       "content_type": "text/css; charset=utf-8",
       "sha256": "0e1ab1c650fd1f4a97ebb3ecf0a9b2d537a7f75acdecc5dd4c37e906f536ecf7"
     },
-    "app.4ed978b6.js": {
+    "app.ba75f8c5.js": {
       "content_type": "text/javascript; charset=utf-8",
-      "sha256": "4ed978b6c401187c2851295ee825870844da25cf2bf43654f2a218754154566c"
+      "sha256": "ba75f8c53f39b54b486cb4ced1755d21e5f90004ca6fa49d7b8ee4cde3e0edc9"
     },
     "index.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "57457c2996aa7f1edbd3df9bbd5b3b58788cc60b2cb93b6947af2f6a254f54be"
+      "sha256": "9efbfc58a9bb8f3355729dade6a465c37bec5c7085418b77c67dc8613534b557"
     },
     "launch.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "57457c2996aa7f1edbd3df9bbd5b3b58788cc60b2cb93b6947af2f6a254f54be"
+      "sha256": "9efbfc58a9bb8f3355729dade6a465c37bec5c7085418b77c67dc8613534b557"
     }
   },
   "schema": "airk-admin-assets/1"

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ConnectionState, FreshnessState, IndexState, ProjectSummary, ProjectWorkView, SemanticState, StatusSummary } from './explorerContracts';
+import type { ConnectionState, FreshnessState, IndexState, ProjectSummary, ProjectWorkView, ReadRouteView, SemanticState, StatusSummary } from './explorerContracts';
 import { comparePublicationVector } from './publications';
 
 type Value = Record<string, unknown>;
@@ -74,7 +74,9 @@ export function statusSummary(payload: Value, observedAt = Date.now(), rawPayloa
     if (payload.schema === 'airk.combined-read/1') { return combinedStatusSummary(payload, observedAt, rawPayload); }
     const indexState: IndexState = payload.index_state === 'available' ? 'available' : payload.index_state === 'unavailable' ? 'unavailable' : 'unknown';
     const publication = obj(payload.publication), semantic = obj(payload.semantic_readiness), freshness = obj(payload.freshness), discovery=obj(payload.discovery_readiness);
-    const runtime = obj(payload.runtime), work = obj(payload.work), progress = obj(work.progress), indexError = obj(payload.index_error);
+    const runtime = obj(payload.runtime), work = obj(payload.work), indexError = obj(payload.index_error);
+    // `work.progress` is the native ProgressObservation: counters in `.progress`, the sampled job in `.job`.
+    const sample = obj(work.progress), progress = Object.keys(obj(sample.progress)).length ? obj(sample.progress) : sample, sampledJob = obj(sample.job);
     const runtimeVersions = ([['MCP frontend (airk)', 'mcp_frontend'], ['Index worker (airk)', 'index_worker']] as const).map(([label, key]): readonly [string, string] => {
         const observed = obj(runtime[key]), process = obj(observed.process);
         const version = typeof process.version === 'string' ? process.version.slice(0, 64) : 'not observed';
@@ -103,6 +105,10 @@ export function statusSummary(payload: Value, observedAt = Date.now(), rawPayloa
         ...(runtime.mcp_frontend || runtime.index_worker ? { runtimeVersions } : {}),
         ...(typeof progress.phase === 'string' ? { workPhase: progress.phase.slice(0, 64) } : {}),
         ...(typeof work.project_paused === 'boolean' ? { workPaused: work.project_paused } : {}),
+        ...(typeof sampledJob.state === 'string' ? { workJobState: sampledJob.state.slice(0, 64) } : {}),
+        ...(count(progress.committed_changes) !== undefined ? { workCommitted: count(progress.committed_changes) } : {}),
+        ...(count(progress.captured_files) !== undefined ? { workCaptured: count(progress.captured_files) } : {}),
+        ...(Object.keys(work).length ? { work: structuredClone(work) } : {}),
     };
     return summary;
 }
@@ -157,16 +163,49 @@ function combinedStatusSummary(payload: Value, observedAt: number, rawPayload: V
     };
 }
 
-/** One word for the status bar and pill: the worst current condition, never a merged "OK". */
-export function headline(connection: ConnectionState, status: StatusSummary | undefined, projects: number): { word: string; severity: 'ok' | 'warn' | 'error' | 'info' } {
+/** The selected index's live work (native Progress read) and read route, for the header (U103). */
+export interface HeadlineWork {
+    readonly jobState?: string;
+    readonly pendingJobState?: string;
+    readonly paused?: boolean;
+    readonly committed?: number;
+    readonly captured?: number;
+    readonly route?: ReadRouteView;
+}
+/** The selected index's live work (its project summary) and read route, for `headline`. */
+export function headlineWork(project: Pick<ProjectSummary, 'jobState' | 'pendingJobState' | 'paused' | 'committedChanges' | 'capturedFiles'> | undefined, route?: ReadRouteView): HeadlineWork {
+    return { ...(project?.jobState ? { jobState: project.jobState } : {}), ...(project?.pendingJobState ? { pendingJobState: project.pendingJobState } : {}),
+        ...(project?.paused !== undefined ? { paused: project.paused } : {}), ...(project?.committedChanges !== undefined ? { committed: project.committedChanges } : {}),
+        ...(project?.capturedFiles !== undefined ? { captured: project.capturedFiles } : {}), ...(route ? { route } : {}) };
+}
+/** "indexing <committed>/<captured> files" when both counts are known, else "indexing…". */
+export function indexingWord(committed: number | undefined, captured: number | undefined): string {
+    return committed !== undefined && captured !== undefined ? `indexing ${committed.toLocaleString('en-US')}/${captured.toLocaleString('en-US')} files` : 'indexing…';
+}
+export const NOT_READABLE_WORD = 'not readable: no index set';
+/** One word for the status bar and pill: the worst current condition, never a merged "OK". A known
+ * cause (running work, pause, no index set) is named; "index unavailable" is only the native
+ * `index_state: unavailable` or another unexplained unreadable state. */
+export function headline(connection: ConnectionState, status: StatusSummary | undefined, projects: number, work: HeadlineWork = {}): { word: string; severity: 'ok' | 'warn' | 'error' | 'info' } {
     if (connection === 'untrusted') { return { word: 'untrusted', severity: 'warn' }; }
     if (connection === 'incompatible') { return { word: 'incompatible', severity: 'error' }; }
     if (connection === 'disconnected') { return { word: 'disconnected', severity: 'error' }; }
     if (connection === 'connecting') { return { word: 'connecting', severity: 'info' }; }
     if (!projects) { return { word: 'no projects', severity: 'info' }; }
+    // A paused index keeps its job record; pause is the cause to name.
+    if ((work.paused ?? status?.workPaused) === true) { return { word: 'paused', severity: 'info' }; }
+    const jobState = work.jobState ?? status?.workJobState;
+    if (jobState === 'running') {
+        return { word: indexingWord(work.committed ?? status?.workCommitted, work.captured ?? status?.workCaptured), severity: 'info' };
+    }
+    if (work.route?.state === 'not_readable' || status?.indexError === 'index_read_unavailable') { return { word: NOT_READABLE_WORD, severity: 'warn' }; }
     if (!status) { return { word: connection === 'degraded' ? 'degraded' : 'ready', severity: connection === 'degraded' ? 'warn' : 'info' }; }
     if (status.combined?.partial) { return { word: status.combined.available ? 'partial indexes' : 'member status unknown', severity: 'warn' }; }
-    if (status.indexState !== 'available') { return { word: 'index unavailable', severity: 'warn' }; }
+    if (status.indexState !== 'available') {
+        if (work.pendingJobState === 'pending' || status.freshness === 'pending' || status.freshness === 'running') { return { word: 'indexing…', severity: 'info' }; }
+        if (status.indexState === 'unknown' && status.indexError) { return { word: `not readable (${status.indexError})`.slice(0, 96), severity: 'warn' }; }
+        return { word: 'index unavailable', severity: 'warn' };
+    }
     if (status.freshness === 'failed' || status.freshness === 'blocked' || status.semantic === 'failed') { return { word: 'attention', severity: 'error' }; }
     if (status.semantic === 'unavailable') { return { word: 'semantic unavailable', severity: 'warn' }; }
     if (connection === 'degraded') { return { word: 'degraded', severity: 'warn' }; }

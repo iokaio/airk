@@ -560,7 +560,7 @@ fn mutate_with_context(
         CatalogOperation::BeginIndexSourceChange {..}
         | CatalogOperation::CompleteIndexSourceChange {..}
         | CatalogOperation::RetireIndex {..} => super::source_change::mutate(db,request,runtime)?,
-        CatalogOperation::CreateProject{id,name}=>{db.execute("INSERT INTO query_projects VALUES(?1,?2,1,1,1)",params![id.to_string(),name])?;}
+        CatalogOperation::CreateProject{id,name}=>create_project(db,*id,name)?,
         CatalogOperation::RenameProject{id,expected_definition_revision,name}=>changed(db.execute("UPDATE query_projects SET name=?1,definition_revision=?2 WHERE id=?3 AND definition_revision=?4",params![name,number(expected_definition_revision.next()?),id.to_string(),number(*expected_definition_revision)])?)?,
         CatalogOperation::RenameIndex{id,expected_definition_revision,name}=>changed(db.execute("UPDATE index_definitions SET name=?1,definition_revision=?2 WHERE id=?3 AND definition_revision=?4 AND tombstone=0",params![name,number(expected_definition_revision.next()?),id.to_string(),number(*expected_definition_revision)])?)?,
         CatalogOperation::DeleteProject{id,expected_definition_revision,expected_scope_revision,expected_defaults_revision}=>{
@@ -574,13 +574,7 @@ fn mutate_with_context(
             }
         }
         CatalogOperation::SetMembership{membership:m,expected_scope_revision,expected_membership_revision}=>{
-            roots_ready(db,m)?;
-            changed(db.execute("UPDATE query_projects SET scope_revision=?1 WHERE id=?2 AND scope_revision=?3",params![number(expected_scope_revision.next()?),m.project_id.to_string(),number(*expected_scope_revision)])?)?;
-            if let Some(old)=expected_membership_revision {
-                changed(db.execute("UPDATE project_index_memberships SET revision=?1 WHERE project_id=?2 AND index_id=?3 AND revision=?4",params![number(m.revision),m.project_id.to_string(),m.index_id.to_string(),number(*old)])?)?;
-                db.execute("DELETE FROM project_index_scopes WHERE project_id=?1 AND index_id=?2",params![m.project_id.to_string(),m.index_id.to_string()])?;
-            } else {db.execute("INSERT INTO project_index_memberships VALUES(?1,?2,?3)",params![m.project_id.to_string(),m.index_id.to_string(),number(m.revision)])?;}
-            put_scopes(db,m,None)?;
+            set_membership(db,m,*expected_scope_revision,*expected_membership_revision)?;
         }
         CatalogOperation::RemoveMembership{project_id:p,index_id:i,expected_scope_revision,expected_membership_revision}=>{
             remove_membership_references(db,p,i,expected_scope_revision,expected_membership_revision)?;
@@ -624,6 +618,80 @@ fn mutate_with_context(
     }
     Ok(())
 }
+fn create_project(db: &Connection, id: QueryProjectId, name: &str) -> Result<()> {
+    db.execute(
+        "INSERT INTO query_projects VALUES(?1,?2,1,1,1)",
+        params![id.to_string(), name],
+    )?;
+    Ok(())
+}
+
+fn set_membership(
+    db: &Connection,
+    m: &Membership,
+    expected_scope_revision: CatalogRevision,
+    expected_membership_revision: Option<CatalogRevision>,
+) -> Result<()> {
+    roots_ready(db, m)?;
+    changed(db.execute(
+        "UPDATE query_projects SET scope_revision=?1 WHERE id=?2 AND scope_revision=?3",
+        params![
+            number(expected_scope_revision.next()?),
+            m.project_id.to_string(),
+            number(expected_scope_revision)
+        ],
+    )?)?;
+    if let Some(old) = expected_membership_revision {
+        changed(db.execute("UPDATE project_index_memberships SET revision=?1 WHERE project_id=?2 AND index_id=?3 AND revision=?4",params![number(m.revision),m.project_id.to_string(),m.index_id.to_string(),number(old)])?)?;
+        db.execute(
+            "DELETE FROM project_index_scopes WHERE project_id=?1 AND index_id=?2",
+            params![m.project_id.to_string(), m.index_id.to_string()],
+        )?;
+    } else {
+        db.execute(
+            "INSERT INTO project_index_memberships VALUES(?1,?2,?3)",
+            params![
+                m.project_id.to_string(),
+                m.index_id.to_string(),
+                number(m.revision)
+            ],
+        )?;
+    }
+    put_scopes(db, m, None)
+}
+
+/// U103: the index set ordinary setup creates with its index, in the
+/// setup's own transaction: named after the index, one whole-source subtree
+/// scope per source root, through the same rows `create_project` and
+/// `set_membership` write. Its ID derives from the setup operation, so an
+/// exact retry names the same set.
+pub(super) fn create_setup_index_set(
+    db: &Connection,
+    operation: Incarnation,
+    name: &str,
+    index: IndexId,
+    sources: &[SourceRootId],
+) -> Result<QueryProjectId> {
+    let id = QueryProjectId::from_identity(operation);
+    let membership = Membership {
+        project_id: id,
+        index_id: index,
+        revision: CatalogRevision::INITIAL,
+        scope: sources
+            .iter()
+            .map(|source| ScopeAtom {
+                source_root_id: *source,
+                kind: PathScope::Subtree,
+                path: String::new(),
+            })
+            .collect(),
+    };
+    membership.validate()?;
+    create_project(db, id, name)?;
+    set_membership(db, &membership, CatalogRevision::INITIAL, None)?;
+    Ok(id)
+}
+
 fn fence(op: &CatalogOperation) -> bool {
     op.requires_authority_fence()
 }

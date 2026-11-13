@@ -30,7 +30,7 @@ export interface CatalogControl {
     catalogRetirementReview?(id:string):Promise<CatalogRetirementReview>;
     catalogStopTracking?(review:CatalogRetirementReview,valid:()=>boolean):Promise<CatalogObject>;
 }
-export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; evidenceEpoch?():number; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
+export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; evidenceEpoch?():number; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds?:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
 /** Window memory only; the shared native console owns durable intents and transport. No polling or source scanning. */
 export class IndexingCatalogController {
     private owner?: string;

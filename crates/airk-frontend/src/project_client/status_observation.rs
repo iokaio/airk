@@ -905,12 +905,19 @@ impl StatusOwner {
                             return Err(RetiredRequest.into());
                         }
                         self.accepting()?;
-                        let _ = error; // no evidence query was submitted
-                        let result = airk_mcp::unified::success(
-                            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown",
-                    "index_state":"unavailable","publication":null,"files":null,"chunks":null,
-                    "index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
-                        );
+                        // No evidence query was submitted. A catalog refusal
+                        // of read authority is reported as such, with the
+                        // index's current work (U103); it is not a worker
+                        // failure.
+                        let work = if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
+                            Some(
+                                airk_supervisor::runtime_metadata::status_work(&root, project)
+                                    .await,
+                            )
+                        } else {
+                            None
+                        };
+                        let result = airk_mcp::unified::success(unsubmitted_status(work));
                         return Ok(Snapshot {
                             authority: ticket.authority,
                             options: request_args,
@@ -1585,5 +1592,35 @@ mod ownership_tests {
         owner.close();
         assert!(owner.reply(&snapshot, None, false).is_err());
         Ok(())
+    }
+}
+
+/// The status body when no index query was submitted (`work` present: the
+/// catalog refused read authority, U103; absent: no worker was reached).
+fn unsubmitted_status(work: Option<serde_json::Value>) -> serde_json::Value {
+    match work {
+        Some(work) => serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown",
+            "index_state":"unknown","publication":null,"files":null,"chunks":null,
+            "index_error":{"code":"index_read_unavailable","message":"This index has no read authority for this selection: it belongs to no index set, or the selection does not include one. Make it readable in AIRK Admin (Index library) or select an index set that contains it."},
+            "work":work}),
+        None => serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown",
+            "index_state":"unavailable","publication":null,"files":null,"chunks":null,
+            "index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
+    }
+}
+
+#[cfg(test)]
+mod unsubmitted_status_tests {
+    #[test]
+    fn a_read_authority_refusal_is_reported_with_its_cause_and_work() {
+        let work = serde_json::json!({"progress":{"phase":"publishing","committed_changes":992}});
+        let body = super::unsubmitted_status(Some(work.clone()));
+        assert_eq!(body["index_state"], "unknown");
+        assert_eq!(body["index_error"]["code"], "index_read_unavailable");
+        assert_eq!(body["work"], work);
+        let body = super::unsubmitted_status(None);
+        assert_eq!(body["index_state"], "unavailable");
+        assert_eq!(body["index_error"]["code"], "index_worker_unavailable");
+        assert!(body.get("work").is_none());
     }
 }

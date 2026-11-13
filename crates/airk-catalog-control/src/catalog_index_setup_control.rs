@@ -219,7 +219,8 @@ fn execute_inner(
                 expected_source_revision: prepared.source_revision,
             };
             ControlResponse::CatalogIndexSetupApplied {
-                receipt: registry.complete_index_setup(
+                // U103: the new index is readable through its own index set.
+                receipt: registry.complete_index_setup_with_index_set(
                     caller,
                     &request.key,
                     request.identity()?,

@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { COMMAND_ROUTES } from '../explorerCommands';
-import { MANAGE_ACTIONS } from '../explorerContracts';
+import { MANAGE_ACTIONS, MANAGE_COMMANDS } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
 import { parseRoute, routeKey } from '../explorerRoutes';
 
@@ -48,4 +48,14 @@ test('the split command set: guidance, agent connections, Explorer and Workbench
         assert.equal(properties[retired], undefined, retired);
     }
     assert.ok(!manifest.files.includes('native/**'), 'the VSIX carries no native runtime');
+});
+
+test('every command the Explorer may open is one the extension contributes and registers', () => {
+    // Reviewed list: Management's command buttons (explorerContracts MANAGE_COMMANDS).
+    assert.deepEqual([...MANAGE_COMMANDS], ['airk.setupAgent', 'airk.reconnectAgents', 'airk.manageVscodeMcp', 'airk.showExtensionOutput']);
+    const registrations = source('serviceExtension.ts');
+    for (const command of MANAGE_COMMANDS) {
+        assert.ok(contributed.has(command), `${command} is contributed`);
+        assert.match(registrations, new RegExp(`\\b${command.slice('airk.'.length)}: `), `${command} is registered`);
+    }
 });

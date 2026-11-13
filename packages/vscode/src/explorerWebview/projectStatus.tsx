@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// Read-only project status shared by Overview and the Explorer shell. Every
-// action that changes a project, a job or the service is in AIRK Admin.
+// Project status shared by Overview and the Explorer shell. The everyday index
+// actions (index now, pause/resume, watch on/off, retry and cancel a job) run
+// here as `airkctl` commands (U103); setup, sources, policy, sets, storage and
+// the service stay in AIRK Admin.
 import { useState } from 'preact/hooks';
 import { Notice, noticeKey } from './notices';
-import type { AgentConfigAlerts, AgentConfigFinding, FactRow, ManagedProject, ProjectSummary, StatusSummary } from '../explorerContracts';
+import type { AgentConfigAlerts, AgentConfigFinding, FactRow, ManagedProject, ProjectSummary, StatusSummary, WorkAction } from '../explorerContracts';
 import { request } from './api';
 import { CompleteNativeResponse, CopyDetails, Facts } from './components';
 import { ago, duration, observed, shortToken } from './format';
@@ -12,17 +14,57 @@ import { AdminButton } from './adminLinks';
 
 function Rows(props: { rows: readonly FactRow[]; hideUnobserved?: boolean }) { return <Facts rows={props.rows.filter(([, value]) => !props.hideUnobserved || value.toLowerCase() !== 'not observed').map(([name, value]) => [name, value])} />; }
 
-/** Read-only project health; actions that change a project are in AIRK Admin (U6, U97). */
+/** Project health. Resume and Retry job run here (WorkActions); other repairs are in AIRK Admin (U6, U97, U103). */
 export function ProjectHealth(props: { entry: ManagedProject; compact?: boolean }) {
     const { entry } = props, health = entry.health;
     // Ordinary live work is explained by the adjacent progress card. Keep failures,
     // pauses, recovery and waits prominent instead of repeating a generic running banner.
     if (props.compact && health.routineWork) { return null; }
+    const local = health.action === 'resume' || health.action === 'retryJob';
     return <section class={`project-health health-${health.severity}`} aria-label={`${entry.summary.name} health`}>
         <div class="section-head"><h3>{health.title}</h3><CopyDetails section="health" project={entry.summary.project} /></div><p>{health.detail}</p>
-        {(health.action || health.reviewTab || health.severity === 'error') && <div class="actions">
+        {local && <p class="muted">Use {health.action === 'resume' ? 'Resume' : 'Retry'} in Index actions below.</p>}
+        {!local && (health.action || health.reviewTab || health.severity === 'error') && <div class="actions">
             <AdminButton page={health.reviewTab === 'repair' ? 'recovery' : health.reviewTab === 'logs' || !health.action ? 'logs' : 'activity'}
                 label={health.reviewTab === 'repair' ? 'Review recovery in AIRK Admin' : health.action && health.actionLabel ? `${health.actionLabel} in AIRK Admin` : 'Review logs in AIRK Admin'} choose={false} />
+        </div>}
+    </section>;
+}
+
+/** The buttons one index offers now (U103): index now, pause or resume, watch on or off, and
+ * retry or cancel for its current, queued or failed job. Unknown state offers both directions. */
+export function workActionChoices(project: Pick<ProjectSummary, 'paused' | 'watching' | 'jobId' | 'jobState' | 'pendingJobId' | 'pendingJobState'>): { action: WorkAction; label: string; job?: string }[] {
+    const choices: { action: WorkAction; label: string; job?: string }[] = [{ action: 'index', label: 'Index now' }];
+    if (project.paused !== true) { choices.push({ action: 'pause', label: 'Pause' }); }
+    if (project.paused !== false) { choices.push({ action: 'resume', label: 'Resume' }); }
+    if (project.watching !== true) { choices.push({ action: 'watch_on', label: 'Turn watching on' }); }
+    if (project.watching !== false) { choices.push({ action: 'watch_off', label: 'Turn watching off' }); }
+    if (project.jobId && (project.jobState === 'running' || project.jobState === 'pending')) { choices.push({ action: 'cancel', label: 'Cancel current job', job: project.jobId }); }
+    if (project.jobId && (project.jobState === 'failed' || project.jobState === 'canceled')) { choices.push({ action: 'retry', label: 'Retry job', job: project.jobId }); }
+    if (project.pendingJobId && project.pendingJobId !== project.jobId) { choices.push({ action: 'cancel', label: 'Cancel queued job', job: project.pendingJobId }); }
+    return choices;
+}
+
+interface ActionOutcome { ok?: boolean; argv?: string[]; class?: string; exitCode?: number; error?: { code?: string; message?: string }; result?: unknown; stdout?: string; stderr?: string }
+/** Everyday actions on the selected index, each one `airkctl` command; the complete native
+ * outcome (refused or not) stays available below the buttons. */
+export function WorkActions(props: { project: ProjectSummary; disabled?: boolean }) {
+    const [busy, setBusy] = useState(false), [outcome, setOutcome] = useState<{ label: string; value?: ActionOutcome; failure?: string }>();
+    const run = async (choice: { action: WorkAction; label: string; job?: string }) => {
+        setBusy(true); setOutcome(undefined);
+        try { setOutcome({ label: choice.label, value: await request<ActionOutcome>('work.action', { action: choice.action, project: props.project.project, ...(choice.job ? { job: choice.job } : {}) }) }); }
+        catch (failure) { setOutcome({ label: choice.label, failure: failure instanceof Error ? failure.message : String(failure) }); }
+        finally { setBusy(false); }
+    };
+    const value = outcome?.value;
+    return <section class="card work-actions" aria-label="Index actions">
+        <h2>Index actions</h2>
+        <div class="actions">{workActionChoices(props.project).map(choice => <button type="button" key={`${choice.action}:${choice.job ?? ''}`} class={choice.action === 'index' ? '' : 'ghost'}
+            disabled={busy || props.disabled} onClick={() => { void run(choice); }}>{choice.label}</button>)}</div>
+        {busy && <p role="status">Sending…</p>}
+        {outcome && <div role="status">
+            <p>{outcome.label}: {outcome.failure ? outcome.failure : value?.ok ? 'done' : `${value?.class ?? 'failed'}${value?.error?.code ? ` (${value.error.code})` : ''}${value?.error?.message ? `: ${value.error.message}` : ''}`}</p>
+            {value && <CompleteNativeResponse value={value as Record<string, unknown>} />}
         </div>}
     </section>;
 }
@@ -106,7 +148,7 @@ export function AgentConfigAlert(props: { alerts: AgentConfigAlerts; showDetails
     const [outcome, setOutcome] = useState<string>();
     const reconnect = async () => { try { await request('manage.command', { command: 'airk.reconnectAgents' }); } catch (failure) { setOutcome(failure instanceof Error ? failure.message : String(failure)); } };
     const agents = [...new Set(alerts.findings.map(finding => finding.label))].join(', ');
-    return <Notice global noticeKey={noticeKey('agent-config-alert', alerts.digest)} class="card" role="alert">
+    return <Notice global condition={false} noticeKey={noticeKey('agent-config-alert', alerts.digest)} class="card" role="alert">
         <h1>{alerts.total ? 'Coding agents cannot reach AIRK' : 'AIRK Reconnect results'}</h1>
         {alerts.total > 0 && <p>{alerts.total === 1 ? 'One AIRK entry' : `${alerts.total} AIRK entries`} in {agents || 'agent'} configuration {alerts.total === 1 ? 'needs' : 'need'} attention. {alerts.findings[0] ? agentFindingExplanation(alerts.findings[0]) : ''}</p>}
         {alerts.results?.length ? <ul>{alerts.results.map(result => <li key={`${result.file}\u0000${result.serverKey}`}><strong>{result.label}</strong> <code class="path">{result.file}</code>: {result.status.split('_').join(' ')}{result.detail ? ` (${result.detail})` : ''}{result.hostAction ? ` ${result.hostAction}` : ''}</li>)}</ul> : null}

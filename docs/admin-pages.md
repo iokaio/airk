@@ -60,7 +60,17 @@ sets and grants, with their sources, memberships, policy and split state.
   never entered, existing index folders marked. The data location defaults to
   a folder named after the collection inside the installation's data
   location; the setup creates it. The service's full review is shown, then
-  **Create index** applies exactly that review.
+  **Create index** applies exactly that review. Setup also creates an index
+  set named after the index (1.8.34, U103), so agents and the Explorer can
+  read it at once.
+- **Make readable** (1.8.34): an index that belongs to no index set (created
+  before 1.8.34) gets the set named after it, created or reused, with every
+  enabled source root, through the same preview and apply as **Index sets**.
+- **Indexing progress** (1.8.34, `indexes.progress`): on Overview and in an
+  index's detail, the running job's phase, files committed of files found,
+  publications, elapsed time, stalled and paused flags, and the pending and
+  queued jobs; refreshed about every 2 seconds while work runs, with the
+  complete result kept.
 - **Index sets:** create, rename, add or remove member indexes, delete.
 - **Index changes:** rename, source changes, policy resume, split and retire.
 - **Grants:** draft and revoke.
@@ -127,7 +137,7 @@ and searches through the same canonical handlers as `airkctl` and VS Code.
 **Not yet served** (the API answers `not_yet_served`): the live event
 stream. Indexed evidence is always shown as text.
 
-**Not in 1.8.31–1.8.33** (U102; planned for a later candidate):
+**Not in 1.8.31–1.8.34** (U102; planned for a later candidate):
 
 - the Overview's version, activity and leftovers;
 - plans on the Activity page;

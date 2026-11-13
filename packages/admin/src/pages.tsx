@@ -3,6 +3,7 @@
 // shows complete native results as text.
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { IndexSelect, useIndexes } from './activity';
 import { reviewedCall } from './api';
 import { body, isDigest, isIncarnation, MAX_INDEX_LIST_LIMIT, MAX_PAGE_LIMIT, OPS } from './operations';
 import {
@@ -17,6 +18,37 @@ import {
   resultOf,
   useCall,
 } from './render';
+import { ProgressPanel } from './progress';
+
+/** U103: live progress of one registered index, chosen from the catalog names. */
+function OverviewProgress(): JSX.Element {
+  const names = useIndexes();
+  const usable = names.indexes.filter((index) => index.registered && !index.retired);
+  const [binding, setBinding] = useState('');
+  useEffect(() => {
+    void names.reload();
+  }, []);
+  const chosen = usable.some((index) => index.binding === binding) ? binding : (usable[0]?.binding ?? '');
+  const loading = names.catalog.phase === 'pending' || names.projects.phase === 'pending';
+  return (
+    <Panel title="Indexing progress">
+      <div class="row">
+        <IndexSelect label="Index" indexes={usable} value={chosen} onChange={setBinding} />
+        <button type="button" class="secondary" disabled={loading} onClick={() => void names.reload()}>
+          Reload index list
+        </button>
+      </div>
+      {names.partial ? (
+        <p class="muted">Not every index could be listed; the list may be incomplete.</p>
+      ) : null}
+      {chosen === '' ? (
+        <p class="muted">{loading ? 'Loading indexes…' : 'No registered index to show.'}</p>
+      ) : (
+        <ProgressPanel binding={chosen} />
+      )}
+    </Panel>
+  );
+}
 
 export function Overview(): JSX.Element {
   const [health, runHealth] = useCall();
@@ -39,6 +71,7 @@ export function Overview(): JSX.Element {
         </button>
         <Outcome state={health} />
       </Panel>
+      <OverviewProgress />
       <Panel title="Indexes">
         <div class="row">
           <Field

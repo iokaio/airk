@@ -7,6 +7,9 @@ import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import * as vm from 'node:vm';
 import test from 'node:test';
+
+/** Values built inside the webview's VM context, as plain objects of this realm. */
+const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 import { buildSync } from 'esbuild';
 
 const directory = path.resolve(__dirname, '../../src/explorerWebview');
@@ -290,11 +293,83 @@ test('Search scope checkboxes apply explicit indexes and sets including an empty
     assert.equal(f.sent.some(message=>/grant|context/.test(message.type)),false);
 });
 
-test('Search scope hides internal support sets and marks edited choices as unapplied', async () => {
-    const hidden='prj_'+'99'.repeat(16);
-    const f=screen('window',{searchScope:{indexes:[indexValue],projects:[projectValue,{id:hidden,name:'internal'}],selectedIndexIds:[],selectedProjectIds:[],managedProjectIds:[hidden],active:true}});
+test('Search scope lists every index set and marks edited choices as unapplied', async () => {
+    // U103: the never-populated managedProjectIds filter is gone; every listed index set is a choice.
+    const other='prj_'+'99'.repeat(16);
+    const f=screen('window',{searchScope:{indexes:[indexValue],projects:[projectValue,{id:other,name:'Other set'}],selectedIndexIds:[],selectedProjectIds:[],active:true}});
     f.render();await f.flush();let tree=f.render();
-    assert.doesNotMatch(text(nodes(tree).filter(node=>node.type==='fieldset')),/internal/);assert.match(text(tree),/Selection active/);
+    assert.match(text(nodes(tree).filter(node=>node.type==='fieldset')),/Other set/);assert.match(text(tree),/Selection active/);
     nodes(tree).find(node=>node.type==='input'&&node.props.type==='checkbox').props.onChange({currentTarget:{checked:true}});
     tree=f.render();assert.match(text(tree),/Changes not applied/);assert.doesNotMatch(text(tree),/Selection active/);
+});
+
+test('Apply is enabled only for a changed, valid selection; an index alone needs an index set (U103)', async () => {
+    const { scopeApplyState } = webview('indexing.tsx', {}, exports => exports).exports;
+    const sets = { [indexId]: [projectId] }, applied = { appliedIndexes: [], appliedProjects: [projectId], indexSets: sets, indexSetsComplete: true };
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [], projects: [projectId] })), { changed: false, valid: true, enabled: false, unreadable: [], outside: [] }, 'nothing changed');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [indexId], projects: [projectId] })), { changed: true, valid: true, enabled: true, unreadable: [], outside: [] });
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [indexId], projects: [] })), { changed: true, valid: true, enabled: true, unreadable: [], outside: [] }, 'an index alone with a set is valid');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [secondId], projects: [] })), { changed: true, valid: false, enabled: false, unreadable: [secondId], outside: [] }, 'an index in no set');
+    assert.deepEqual(plain(scopeApplyState({ ...applied, indexes: [secondId], projects: [projectId] })), { changed: true, valid: false, enabled: false, unreadable: [], outside: [secondId] });
+    assert.deepEqual(plain(scopeApplyState({ indexes: [secondId], projects: [], appliedIndexes: [], appliedProjects: [], indexSetsComplete: false })),
+        { changed: true, valid: true, enabled: true, unreadable: [], outside: [] }, 'unknown memberships leave validation to the service');
+    assert.deepEqual(plain(scopeApplyState({ indexes: [], projects: [], appliedIndexes: [], appliedProjects: [] })), { changed: false, valid: true, enabled: false, unreadable: [], outside: [] }, 'nothing checked and nothing applied');
+});
+
+test('checking an index that is in no index set disables Apply and offers Make readable for it', async () => {
+    const f=screen('window',{searchScope:{indexes:[indexValue,secondValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],active:false,indexSets:{[indexId]:[projectId]},indexSetsComplete:true,responses:[]}});
+    let tree=f.render();await f.flush();tree=f.render();
+    const apply=()=>button(f.render(),/^Apply selection$/);
+    assert.equal(apply().props.disabled,true,'nothing changed');
+    assert.match(text(tree),/In no index set: not readable yet/);
+    const box=(label:string)=>nodes(nodes(f.render()).find(node=>node.type==='label'&&text(node).includes(label))).find(node=>node.type==='input');
+    box('Second index').props.onChange({currentTarget:{checked:true}});
+    tree=f.render();
+    assert.equal(apply().props.disabled,true,'a set-less index cannot be applied');
+    const readable=component(tree,'AdminButton').find(node=>node.props.index===secondId);
+    assert.ok(readable); assert.equal(readable.props.page,'index-library'); assert.equal(readable.props.label,'Make readable in AIRK Admin');
+    assert.doesNotMatch(text(tree),/Choose at least one index set/);
+    box('Second index').props.onChange({currentTarget:{checked:false}});box('Application index').props.onChange({currentTarget:{checked:true}});
+    assert.equal(apply().props.disabled,false,'an index alone that a set holds can be applied');
+});
+
+test('Refresh choices is suggested only while it is enabled, and Dismiss only with loaded recommendations', async () => {
+    const offline=screen('window',{},{connection:'disconnected'});const tree=offline.render();await offline.flush();
+    assert.doesNotMatch(text(offline.render()),/Use Refresh choices to retry/);
+    assert.equal(button(tree,/Keep this layout \/ Dismiss/),undefined);
+    const loaded=screen('window',{recommendations:{schema:'airk.recommendations/1',selected:{},cards:[],available:[],omitted_index_ids:[],observation:{source:'saved_metadata'},observed_unix_ms:1}});loaded.render();await loaded.flush();
+    assert.ok(button(loaded.render(),/Keep this layout \/ Dismiss/));
+});
+
+test('Index actions send the selected index and the exact job for retry and cancel', async () => {
+    const project={project:'cd'.repeat(32),name:'demo',collection:'demo',root:'/src',current:true,paused:false,watching:true,jobId:'ef'.repeat(32),jobState:'failed',pendingJobId:'12'.repeat(32),pendingJobState:'pending'};
+    const f=webview('projectStatus.tsx',{},exports=>exports.WorkActions({project,disabled:false}));
+    const tree=f.render();
+    assert.deepEqual(nodes(tree).filter(node=>node.type==='button').map(node=>text(node)),['Index now','Pause','Turn watching off','Retry job','Cancel queued job']);
+    for(const label of ['Index now','Pause','Turn watching off','Retry job','Cancel queued job']){button(f.render(),new RegExp(`^${label}$`)).props.onClick();await f.flush();}
+    assert.deepEqual(f.sent.map(fields),[
+        {type:'work.action',action:'index',project:project.project},{type:'work.action',action:'pause',project:project.project},
+        {type:'work.action',action:'watch_off',project:project.project},{type:'work.action',action:'retry',project:project.project,job:project.jobId},
+        {type:'work.action',action:'cancel',project:project.project,job:project.pendingJobId}]);
+    const choices=webview('projectStatus.tsx',{},exports=>exports).exports.workActionChoices;
+    assert.deepEqual(plain(choices({paused:true,watching:false,jobId:'ef'.repeat(32),jobState:'running'}).map((choice:any)=>[choice.action,choice.job ?? null])),
+        [['index',null],['resume',null],['watch_on',null],['cancel','ef'.repeat(32)]]);
+});
+
+test('Management › Usage reads the usage report of the selected index and renders it with the complete response', async () => {
+    const report={ok:true,argv:['usage','report','--days','7','--format','json','--service-project','cd'.repeat(32),'--output','json'],class:'success',exitCode:0,
+        result:{status:'usage_document',document:{days:7,requests:42,returned_bytes:9000,clients:{explorer:30,agents:12}}}};
+    const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',selectedProject:'cd'.repeat(32),projects:[{project:'cd'.repeat(32),name:'demo'}],features:{}};
+    const f=webview('manageViews.tsx',state,exports=>exports.UsageScreen({state,route:{workspace:'manage',tab:'usage'},go(){},publications:[]}));
+    f.hold('work.usage');f.render();await f.flush();
+    assert.deepEqual(f.sent.map(fields),[{type:'work.usage',days:7}]);
+    f.release('work.usage',report);await f.flush();
+    const tree=f.render(),shown=text(tree);
+    assert.match(shown,/Read complete/);
+    assert.deepEqual(plain(component(tree,'Facts')[0].props.rows),[['status','usage_document'],['document.days','7'],['document.requests','42'],['document.returned_bytes','9000'],['document.clients.explorer','30'],['document.clients.agents','12']]);
+    const complete=component(tree,'CompleteNativeResponse');assert.equal(complete.length,1);assert.deepEqual(complete[0].props.value,report);
+    assert.equal(component(tree,'AdminHandoffScreen').length,0);
+    assert.ok(component(tree,'AdminButton').some(node=>node.props.page==='usage'),'usage settings stay in AIRK Admin');
+    const workspace=webview('workspaces.tsx',{},exports=>exports).exports.SCREENS;
+    assert.equal(workspace['manage/usage'].name,'UsageScreen');assert.equal(workspace['manage/activity'].name,'ActivityScreen');assert.equal(workspace['manage/storage'].name,'AdminHandoffScreen');
 });

@@ -128,10 +128,12 @@ For a relationship investigation, a returned type/impl ID may provide bounded as
 - [airkctl info](#airkctl-info)
 - [airkctl init](#airkctl-init)
 - [airkctl inspect](#airkctl-inspect)
+- [airkctl jobs](#airkctl-jobs)
 - [airkctl model-catalog](#airkctl-model-catalog)
 - [airkctl outline](#airkctl-outline)
 - [airkctl parse](#airkctl-parse)
 - [airkctl pause](#airkctl-pause)
+- [airkctl progress](#airkctl-progress)
 - [airkctl projects](#airkctl-projects)
 - [airkctl read](#airkctl-read)
 - [airkctl refs](#airkctl-refs)
@@ -579,6 +581,18 @@ Usage: airkctl inspect [OPTIONS]
 
 **Implementation:** [journal.rs](../crates/airkctl/src/journal.rs). Full options: [parser reference](cli-reference.md#airkctl-inspect).
 
+## airkctl jobs
+
+**Purpose:** Read, retry or cancel one job by its ID.
+
+**Behavior and developer use:** `jobs get ID` prints the job record (`Job`); `jobs retry ID` retries a failed job with a fresh request key (`Retry`; not a saved client request, so a lost reply is an unknown outcome to check with `jobs get`); `jobs cancel ID` cancels a pending or running job (`Cancel`). The Explorer's job actions run these commands through the editor session (U103).
+
+```text
+Usage: airkctl jobs [OPTIONS] <COMMAND>
+```
+
+**Implementation:** [cli.rs](../crates/airkctl/src/cli.rs), [journal.rs](../crates/airkctl/src/journal.rs). Full options: [parser reference](cli-reference.md#airkctl-jobs).
+
 ## airkctl model-catalog
 
 **Purpose:** Print the offline model catalog and the CPU choice for this host
@@ -633,6 +647,18 @@ Usage: airkctl pause [OPTIONS]
 ```
 
 **Implementation:** [cli.rs](../crates/airkctl/src/cli.rs). Full options: [parser reference](cli-reference.md#airkctl-pause).
+
+## airkctl progress
+
+**Purpose:** Print the project's live indexing progress: the running job's phase and counts, pending and queued jobs, and pause state.
+
+**Behavior and developer use:** Prints the service's `Progress` observation unchanged: the running job's phase, captured/extracted/prepared/committed counts, publications, elapsed times, stalled and paused flags, the pending and queued jobs and the project's pause state. The admin pages (`indexes.progress`) and the Explorer read the same observation. It needs no read authority, so it works while an index is being built or before it belongs to an index set.
+
+```text
+Usage: airkctl progress [OPTIONS]
+```
+
+**Implementation:** [cli.rs](../crates/airkctl/src/cli.rs). Full options: [parser reference](cli-reference.md#airkctl-progress).
 
 ## airkctl projects
 
@@ -1216,9 +1242,9 @@ Usage: airkctl version [OPTIONS]
 
 ## airkctl watch
 
-**Purpose:** Turn native source watching on or off for the project (on keeps the index current after edits)
+**Purpose:** Turn native source watching on or off for the project (on keeps the index current after edits), or print its watch status.
 
-**Behavior and developer use:** Changes native source watching for this project. On keeps watching independently of editor lifetime; it does not register OS login startup.
+**Behavior and developer use:** `on`/`off` change native source watching for this project. On keeps watching independently of editor lifetime; it does not register OS login startup. `status` prints the service's `Watch` observation unchanged.
 
 ```text
 Usage: airkctl watch [OPTIONS] <MODE>

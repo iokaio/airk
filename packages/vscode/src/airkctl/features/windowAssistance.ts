@@ -14,6 +14,7 @@ import type { ExplorerHandoff } from '../../explorerContracts';
 import { HANDOFF_CONTENT_BYTES, HANDOFF_TTL_MS } from '../../explorerHandoffs';
 import type { DraftClient, Submission } from '../../explorerSuggestions';
 import type { ClientEvent } from '../session';
+import { LIVE_TOPICS } from './liveStatus';
 
 export const ASSISTANCE_CAPABILITY = 'assistance/1';
 export const HANDOFF_CAPABILITY = 'handoff/1';
@@ -41,13 +42,21 @@ export class WindowAssistance {
 
     available(): boolean { return this.capabilities()?.includes(ASSISTANCE_CAPABILITY) === true; }
 
-    /** Subscribe to this window's drafts once per session child (only with `assistance/1`). */
+    /** The topics this window subscribes to: live `status` and `jobs` (U103) always, `assistance`
+     * drafts only with `assistance/1`; none before the session answered `hello`. */
+    topics(): EventTopic[] | undefined {
+        const capabilities = this.capabilities();
+        if (!capabilities) { return undefined; }
+        return capabilities.includes(ASSISTANCE_CAPABILITY) ? ['assistance', ...LIVE_TOPICS] : [...LIVE_TOPICS];
+    }
+    /** Subscribe once per session child to the window's events (drafts only with `assistance/1`). */
     start(): Promise<void> {
-        if (this.subscribed || !this.available()) { return Promise.resolve(); }
-        this.subscribing ??= this.session.subscribe(['assistance']).then(outcome => {
+        const topics = this.topics();
+        if (this.subscribed || !topics) { return Promise.resolve(); }
+        this.subscribing ??= this.session.subscribe(topics).then(outcome => {
             if (outcome.status === 'subscribed') { this.subscribed = true; return; }
-            this.log(`AIRK: Explorer Assistance drafts are unavailable (${outcome.status === 'refused' ? outcome.code : outcome.status}).`);
-        }, error => { this.log(`AIRK: Explorer Assistance subscription failed: ${error instanceof Error ? error.message : String(error)}`); })
+            this.log(`AIRK: session events (${topics.join(', ')}) are unavailable (${outcome.status === 'refused' ? outcome.code : outcome.status}).`);
+        }, error => { this.log(`AIRK: the session event subscription failed: ${error instanceof Error ? error.message : String(error)}`); })
             .finally(() => { this.subscribing = undefined; });
         return this.subscribing;
     }

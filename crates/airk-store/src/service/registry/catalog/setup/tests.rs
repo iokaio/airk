@@ -894,3 +894,107 @@ fn unsupported_native_alias_shapes_refuse_before_any_setup_reservation() -> Resu
     assert_eq!(registry.connection.total_changes(), before);
     Ok(())
 }
+
+/// U103: setup through `complete_index_setup_with_index_set` leaves the new
+/// index readable through one index set named after it, created exactly once.
+#[test]
+fn setup_with_index_set_creates_one_whole_source_set_exactly_once() -> Result<()> {
+    let (_temp, mut registry, request) = fixture()?;
+    let reserved = registry.reserve_index_setup(&request)?;
+    let prepared = registry.record_index_preparation(
+        request.caller,
+        &request.key,
+        reserved.request_digest,
+        &native(&reserved, reserved.catalog_revision)?,
+    )?;
+    let finish = completion(&prepared, prepared.catalog_revision);
+    let ready = registry.complete_index_setup_with_index_set(
+        request.caller,
+        &request.key,
+        reserved.request_digest,
+        &finish,
+    )?;
+    assert_eq!(ready.stage, SetupStage::Ready);
+    let expected_set = format!("prj_{}", ready.operation_id);
+    type ProjectRow = (String, String, i64, i64, i64);
+    let projects = |registry: &ServiceRegistry| -> Result<Vec<ProjectRow>> {
+        let mut statement = registry.connection.prepare(
+            "SELECT id,name,definition_revision,scope_revision,defaults_revision FROM query_projects ORDER BY id",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    };
+    assert_eq!(
+        projects(&registry)?,
+        vec![(expected_set.clone(), "Reviewed index".to_owned(), 1, 2, 1)]
+    );
+    let membership: (String, String, i64) = registry.connection.query_row(
+        "SELECT project_id,index_id,revision FROM project_index_memberships",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        membership,
+        (expected_set.clone(), ready.index_id.to_string(), 1)
+    );
+    let mut statement = registry.connection.prepare(
+        "SELECT project_id,index_id,source_id,kind,path FROM project_index_scopes ORDER BY source_id",
+    )?;
+    let scopes = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    let mut sources: Vec<String> = ready.source_ids.iter().map(ToString::to_string).collect();
+    sources.sort();
+    assert_eq!(
+        scopes,
+        sources
+            .iter()
+            .map(|source| (
+                expected_set.clone(),
+                ready.index_id.to_string(),
+                source.clone(),
+                "subtree".to_owned(),
+                String::new()
+            ))
+            .collect::<Vec<_>>()
+    );
+    // An exact retry answers the completed receipt and creates nothing more.
+    assert_eq!(
+        registry.complete_index_setup_with_index_set(
+            request.caller,
+            &request.key,
+            reserved.request_digest,
+            &finish,
+        )?,
+        ready
+    );
+    assert_eq!(projects(&registry)?.len(), 1);
+    assert_eq!(
+        registry
+            .connection
+            .query_row("SELECT count(*) FROM index_access_grants", [], |row| row
+                .get::<_, i64>(0))?,
+        0,
+        "the set grants nothing by itself"
+    );
+    Ok(())
+}

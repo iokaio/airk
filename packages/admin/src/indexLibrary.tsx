@@ -9,7 +9,7 @@
 // Fragment routes (`#index-library?root=|index=|set=`) only prefill; they
 // never start a call that changes anything.
 import type { ComponentChildren, JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { reviewedCall, reviewOf } from './api';
 import {
   body,
@@ -25,6 +25,7 @@ import {
   type SourceMutationSelection,
 } from './operations';
 import { browse, FolderPicker, joinPath } from './folderPicker';
+import { ProgressPanel } from './progress';
 import { Confirm, Field, JsonBlock, list, Outcome, Panel, resultOf, Text, useCall, type CallState } from './render';
 
 // ---------------------------------------------------------------------------
@@ -1053,6 +1054,294 @@ function SetDetail(props: {
 }
 
 // ---------------------------------------------------------------------------
+// Make readable (U103): an index outside every index set gets a set named after
+// it and a whole-source membership, through the same catalog.preview →
+// catalog.apply review the Index sets panel uses. One click runs both reviewed
+// changes; neither needs a typed confirmation in that panel either.
+
+const READ_THROUGH_SET = 'Agents and the Explorer read an index through an index set.';
+/** Index-set pages read while looking for a set with the index's name. */
+const MAX_SET_PAGES = 16;
+
+/** The refusal code of a failed call, for the step's message. */
+function codeOf(state: CallState): string {
+  if (state.phase !== 'done') return 'not_finished';
+  switch (state.result.kind) {
+    case 'failed':
+      return state.result.envelope.error.code;
+    case 'transport':
+      return 'transport';
+    case 'no_session':
+      return 'no_session';
+    case 'ok':
+      return 'ok';
+  }
+}
+
+function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged: () => void }): JSX.Element {
+  const indexId = text(props.index.id);
+  const name = text(props.index.name);
+  const [sources, runSources] = useCall();
+  const [sets, runSets] = useCall();
+  const [createPreview, runCreatePreview] = useCall();
+  const [createApply, runCreateApply] = useCall();
+  const [setRead, runSetRead] = useCall();
+  const [memberPreview, runMemberPreview] = useCall();
+  const [memberApply, runMemberApply] = useCall();
+  const [receipt, runReceipt] = useCall();
+  const [steps, setSteps] = useState<string[]>([]);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [finished, setFinished] = useState(false);
+  const [tokens, setTokens] = useState<{ create: string | null; member: string | null }>({
+    create: null,
+    member: null,
+  });
+  // The newest run wins; an index change or unmount drops older answers.
+  const ticket = useRef(0);
+  useEffect(
+    () => () => {
+      ticket.current++;
+    },
+    [indexId],
+  );
+
+  const go = async (): Promise<void> => {
+    const mine = ++ticket.current;
+    const live = (): boolean => mine === ticket.current;
+    setRunning(true);
+    setSteps([]);
+    setProblem(null);
+    setFinished(false);
+    setTokens({ create: null, member: null });
+    const note = (line: string): void => setSteps((current) => [...current, line]);
+    const stop = (why: string): void => {
+      if (live()) setProblem(why);
+    };
+    try {
+      // 1. Every enabled source root of the index, whole.
+      const sourceResult = await runSources(OPS.catalogPage, body.catalogPage('sources', { indexId }, null, null));
+      if (!live()) return;
+      const sourcePage = sourceResult.kind === 'ok' ? rec(rec(sourceResult.envelope.result)?.page) : null;
+      let revision = num(sourcePage?.revision);
+      if (sourcePage === null || revision === null) return stop("The index's sources could not be read.");
+      if (sourcePage.continuation !== null && sourcePage.continuation !== undefined) {
+        return stop('The index has more source roots than one catalog page; add it to an index set with airkctl.');
+      }
+      const scope: ScopeAtom[] = arr(sourcePage.items)
+        .map(itemOf)
+        .filter((item): item is Item => item !== null && item.kind === 'source')
+        .filter((item) => item.value.enabled === true && str(item.value.index_id) === indexId)
+        .map((item) => ({ source_root_id: text(item.value.id), kind: 'subtree', path: '' }));
+      if (scope.length === 0) return stop('The index has no enabled source root, so a membership would grant nothing.');
+      note(`Read ${scope.length} enabled source root${scope.length === 1 ? '' : 's'} at catalog revision ${revision}.`);
+
+      // 2. Only an empty index set named after the index is reused: one an
+      //    interrupted Make readable left behind. A set that already holds
+      //    indexes (another index's own set may share the name) is never merged.
+      let after: unknown = null;
+      let pages = 0;
+      const named: Rec[] = [];
+      do {
+        const setResult = await runSets(OPS.catalogPage, body.catalogPage('projects', {}, after, revision));
+        if (!live()) return;
+        const page = setResult.kind === 'ok' ? rec(rec(setResult.envelope.result)?.page) : null;
+        if (page === null) return stop('The index sets could not be read.');
+        for (const item of arr(page.items).map(itemOf)) {
+          if (item !== null && item.kind === 'project' && str(item.value.name) === name) named.push(item.value);
+        }
+        after = page.continuation ?? null;
+        pages++;
+      } while (after !== null && pages < MAX_SET_PAGES);
+      let found: Rec | null = null;
+      for (const candidate of named) {
+        const members = await runSets(
+          OPS.catalogPage,
+          body.catalogPage('memberships', { projectId: text(candidate.id) }, null, revision),
+        );
+        if (!live()) return;
+        const page = members.kind === 'ok' ? rec(rec(members.envelope.result)?.page) : null;
+        if (page === null) return stop('The index sets could not be read.');
+        if (arr(page.items).length === 0 && (page.continuation === null || page.continuation === undefined)) {
+          found = candidate;
+          break;
+        }
+      }
+
+      // 3. Otherwise a new set with the index's name.
+      let projectId: string;
+      if (found !== null) {
+        projectId = text(found.id);
+        note(`Using the empty index set "${name}" (${projectId}) left by an earlier attempt.`);
+      } else {
+        projectId = newProjectId();
+        const method = previewOf(revision, { operation: 'create_project', id: projectId, name });
+        const preview = await runCreatePreview(OPS.catalogPreview, method);
+        if (!live()) return;
+        const token = reviewOf(preview);
+        const staged = preview.kind === 'ok' ? fromPreview(rec(preview.envelope.result) ?? {}, method) : null;
+        if (token === null || staged === null) {
+          return stop(`The review of a new index set "${name}" was refused or incomplete.`);
+        }
+        setTokens((current) => ({ ...current, create: token }));
+        const applied = await runCreateApply(
+          OPS.catalogApply,
+          reviewedCall(body.catalogApply(staged.request, staged.previewDigest), token, null),
+        );
+        if (!live()) return;
+        if (applied.kind !== 'ok') return stop(`Creating the index set "${name}" did not complete.`);
+        note(`Created the index set "${name}" (${projectId}).`);
+      }
+
+      // 4. The set's current scope revision.
+      const detailResult = await runSetRead(
+        OPS.catalogDetail,
+        body.catalogDetail({ kind: 'project', id: projectId }, null),
+      );
+      if (!live()) return;
+      const detail = detailResult.kind === 'ok' ? rec(rec(detailResult.envelope.result)?.detail) : null;
+      const project = itemOf(detail?.item);
+      const scopeRevision = project !== null && project.kind === 'project' ? num(project.value.scope_revision) : null;
+      revision = num(detail?.revision);
+      if (scopeRevision === null || revision === null) return stop('The index set could not be read back.');
+
+      // 5. The whole-source membership (a first membership has revision 1).
+      const method = previewOf(revision, {
+        operation: 'set_membership',
+        membership: { project_id: projectId, index_id: indexId, revision: 1, scope },
+        expected_scope_revision: scopeRevision,
+        expected_membership_revision: null,
+      });
+      const preview = await runMemberPreview(OPS.catalogPreview, method);
+      if (!live()) return;
+      const token = reviewOf(preview);
+      const staged = preview.kind === 'ok' ? fromPreview(rec(preview.envelope.result) ?? {}, method) : null;
+      if (token === null || staged === null) return stop('The review of the membership was refused or incomplete.');
+      setTokens((current) => ({ ...current, member: token }));
+      const applied = await runMemberApply(
+        OPS.catalogApply,
+        reviewedCall(body.catalogApply(staged.request, staged.previewDigest), token, null),
+      );
+      if (!live()) return;
+      if (applied.kind !== 'ok') return stop('Adding the index to the index set did not complete.');
+      note(`Added the index to "${name}" with every enabled source root, whole.`);
+      setFinished(true);
+      props.onChanged();
+    } finally {
+      if (live()) setRunning(false);
+    }
+  };
+
+  const outcomeUnknown =
+    failedCode(createApply) === 'service_request_outcome_unknown' ||
+    failedCode(memberApply) === 'service_request_outcome_unknown';
+  const calls: [string, CallState][] = [
+    ['Sources', sources],
+    ['Index sets', sets],
+    ['New index set: review', createPreview],
+    ['New index set: apply', createApply],
+    ['Index set read back', setRead],
+    ['Membership: review', memberPreview],
+    ['Membership: apply', memberApply],
+    ['Receipt', receipt],
+  ];
+  const started = calls.some(([, state]) => state.phase !== 'idle');
+  const failedStep = calls.find(([, state]) => state.phase === 'done' && state.result.kind !== 'ok');
+  return (
+    <div class="make-readable">
+      <p>{READ_THROUGH_SET}</p>
+      {props.memberCount === null ? (
+        <p class="muted">Reading the index sets that contain it…</p>
+      ) : props.memberCount > 0 ? (
+        <p class="muted">
+          It belongs to {props.memberCount} index set{props.memberCount === 1 ? '' : 's'}, so it is readable.
+        </p>
+      ) : (
+        <>
+          <p>
+            This index belongs to no index set. Make readable creates an index set named{' '}
+            <strong>
+              <Text value={name} />
+            </strong>{' '}
+            (an empty one left by an earlier attempt is reused) and adds this index with every enabled source root, whole. Each change is
+            previewed by the service and applied exactly as previewed; the complete results are below.
+          </p>
+          <button type="button" disabled={running} onClick={() => void go()}>
+            Make readable
+          </button>
+        </>
+      )}
+      {steps.length > 0 || running ? (
+        <ul class="summary-lines" role="status" aria-live="polite">
+          {steps.map((line, i) => (
+            <li key={i}>
+              <Text value={line} />
+            </li>
+          ))}
+          {running ? <li class="muted">Working…</li> : null}
+        </ul>
+      ) : null}
+      {problem !== null ? (
+        <p class="error" role="alert">
+          <Text value={problem} />
+          {failedStep !== undefined ? (
+            <>
+              {' '}
+              ({failedStep[0]}: <code><Text value={codeOf(failedStep[1])} /></code>)
+            </>
+          ) : null}{' '}
+          Running Make readable again reuses an index set it already created.
+        </p>
+      ) : null}
+      {finished ? (
+        <p>
+          The index is readable through the index set <Text value={`"${name}"`} />.
+        </p>
+      ) : null}
+      <ReviewHint state={createApply} confirm={null} onReviewAgain={() => void go()} />
+      <ReviewHint state={memberApply} confirm={null} onReviewAgain={() => void go()} />
+      {finished || outcomeUnknown ? (
+        <div class="row">
+          {tokens.create !== null ? (
+            <button
+              type="button"
+              class="secondary"
+              onClick={() => void runReceipt(OPS.catalogReceipt, reviewedCall(body.catalogReceipt(), tokens.create))}
+            >
+              Read index set receipt
+            </button>
+          ) : null}
+          {tokens.member !== null ? (
+            <button
+              type="button"
+              class="secondary"
+              onClick={() => void runReceipt(OPS.catalogReceipt, reviewedCall(body.catalogReceipt(), tokens.member))}
+            >
+              Read membership receipt
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <ReviewHint state={receipt} confirm={null} onReviewAgain={() => void go()} />
+      {started ? (
+        <details class="complete" open={failedStep !== undefined}>
+          <summary>Make readable: complete results</summary>
+          {calls
+            .filter(([, state]) => state.phase !== 'idle')
+            .map(([label, state]) => (
+              <div key={label}>
+                <h4>{label}</h4>
+                <Outcome state={state} />
+              </div>
+            ))}
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // Index detail: rename, sources, retire, policy, split.
 
 function SourceChange(props: { index: Rec; revision: number; onApplied: () => void }): JSX.Element {
@@ -1572,9 +1861,17 @@ function IndexDetail(props: {
 }): JSX.Element {
   const [detail, runDetail] = useCall();
   const [newName, setNewName] = useState('');
+  const [memberCount, setMemberCount] = useState<number | null>(null);
   const load = (): void => void runDetail(OPS.catalogDetail, body.catalogDetail({ kind: 'index', id: props.id }, null));
   useEffect(load, [props.id, props.reload]);
-  const d = rec(okResult(detail)?.detail);
+  useEffect(() => setMemberCount(null), [props.id]);
+  // While a reload of the same index is pending, the last loaded details stay
+  // shown, so the panels below (progress, running reviews) keep their state.
+  const lastGood = useRef<{ id: string; detail: Rec } | null>(null);
+  const loaded = rec(okResult(detail)?.detail);
+  if (loaded !== null) lastGood.current = { id: props.id, detail: loaded };
+  const d =
+    loaded ?? (detail.phase === 'pending' && lastGood.current?.id === props.id ? lastGood.current.detail : null);
   const item = itemOf(d?.item);
   const index = item !== null && item.kind === 'index' ? item.value : null;
   const revision = num(d?.revision);
@@ -1612,12 +1909,17 @@ function IndexDetail(props: {
             indexId={props.id}
             reload={props.reload}
             onRevision={props.onRevision}
+            onItems={(items) => setMemberCount(items.length)}
             empty="It is not a member of any index set."
           />
           {index.tombstone === true ? (
             <p class="muted">This index is retired; it can no longer be changed.</p>
           ) : (
             <>
+              <h3>Make readable</h3>
+              <MakeReadable index={index} memberCount={memberCount} onChanged={props.onChanged} />
+              <h3>Indexing progress</h3>
+              <ProgressPanel binding={text(rec(index.backing)?.binding)} />
               <h3>Rename</h3>
               <div class="row">
                 <Field label="New name" wide value={newName} onInput={setNewName} />

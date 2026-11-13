@@ -626,8 +626,70 @@ enum Relay {
     Brokerage,
 }
 
+/// The reviewed operation table (contracts §4.3); its `session` column decides
+/// what the `control` relay forwards (§3.8, U103).
+const OPERATION_TABLE: &str = include_str!("../../../../fixtures/split/i3/admin_operations.json");
+
+/// The `ControlMethod` names (`PascalCase`, as the table spells them) whose row
+/// lists the `session` surface. An unreadable table forwards nothing.
+fn session_methods() -> &'static std::collections::BTreeSet<String> {
+    static METHODS: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    METHODS.get_or_init(|| {
+        let Ok(table) = serde_json::from_str::<Value>(OPERATION_TABLE) else {
+            return Default::default();
+        };
+        table["operations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row["surfaces"]
+                    .as_array()
+                    .is_some_and(|surfaces| surfaces.iter().any(|surface| surface == "session"))
+            })
+            .filter_map(|row| row["method"].as_str().map(str::to_owned))
+            .collect()
+    })
+}
+
+/// Reviewed table spellings that differ from the variant's own name: the
+/// scoped native evidence read (`evidence.native_read_scoped`) is the
+/// `NativeRead` variant.
+const TABLE_SPELLINGS: &[(&str, &str)] = &[("NativeRead", "NativeReadScoped")];
+
+/// The table's spelling of a variant name.
+fn table_spelling(variant: String) -> String {
+    TABLE_SPELLINGS
+        .iter()
+        .find(|(name, _)| *name == variant)
+        .map_or(variant, |(_, spelled)| (*spelled).to_owned())
+}
+
+/// The table's spelling of a method: its externally tagged serde name in
+/// `PascalCase` (`catalog_page` → `CatalogPage`), then [`TABLE_SPELLINGS`].
+fn method_name(method: &ControlMethod) -> Option<String> {
+    let encoded = serde_json::to_value(method).ok()?;
+    let tag = match &encoded {
+        Value::String(tag) => tag.as_str(),
+        Value::Object(fields) if fields.len() == 1 => fields.keys().next()?.as_str(),
+        _ => return None,
+    };
+    Some(table_spelling(
+        tag.split('_')
+            .map(|word| {
+                let mut letters = word.chars();
+                letters.next().map_or_else(String::new, |first| {
+                    first.to_ascii_uppercase().to_string() + letters.as_str()
+                })
+            })
+            .collect(),
+    ))
+}
+
 /// The `control` relay carries metadata only (§3.7, §3.8, §2.5): no
-/// connection grant, upgrade checkpoint, enrollment or lease-bearing method.
+/// connection grant, upgrade checkpoint, enrollment or lease-bearing method,
+/// and only the methods whose operation-table row lists `session` (U103).
 fn relay_rule(method: &ControlMethod) -> Relay {
     use ControlMethod as M;
     match method {
@@ -648,7 +710,13 @@ fn relay_rule(method: &ControlMethod) -> Relay {
         // admin session, which a window session never is.
         | M::AdminLaunchCode {}
         | M::AdminScopeGrant { .. } => Relay::Refuse,
-        _ => Relay::Forward,
+        // W5 belongs to the window plane (contracts §2.5,
+        // `fixtures/split/i1/window_plane.json`), not to the operation table.
+        M::AssistanceWindows {} => Relay::Forward,
+        _ if method_name(method).is_some_and(|name| session_methods().contains(&name)) => {
+            Relay::Forward
+        }
+        _ => Relay::Refuse,
     }
 }
 

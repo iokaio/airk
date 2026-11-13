@@ -6,7 +6,7 @@
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { SCOPE_PAGE_BYTES, WINDOW_SCOPE_KEY, WindowScope, windowScopeKey, type ScopeSession } from '../airkctl/features/windowScope';
+import { SCOPE_PAGE_BYTES, WINDOW_SCOPE_CLEARED_KEY, WINDOW_SCOPE_KEY, WindowScope, windowScopeKey, type ScopeSession } from '../airkctl/features/windowScope';
 import { WindowAssistance, WindowHandoffs } from '../airkctl/features/windowAssistance';
 import { AirkctlToolSession, readFailureCode, selectionArguments, ToolCallError } from '../airkctl/tools';
 import { EvidenceClient } from '../explorerEvidence';
@@ -35,6 +35,11 @@ function session(revision: () => number, outcomes: { select?: (selection: any) =
             if (request.kind === 'memberships') {
                 // An empty-scope membership grants no read authority and is left out of the derived indexes.
                 if (request.project_id === prj(1)) { return request.after ? page(r, [membership(1, 2), membership(1, 3, [])]) : page(r, [membership(1, 1)], cursor('memberships', r, idx(1), { project_id: prj(1) })); }
+                // By index (U103): idx 1 and 2 are read through set 1; idx 3's only membership has an empty scope.
+                if (request.index_id === idx(1)) { return page(r, [membership(1, 1)]); }
+                if (request.index_id === idx(2)) { return page(r, [membership(1, 2)]); }
+                if (request.index_id === idx(3)) { return page(r, [membership(1, 3, [])]); }
+                if (request.index_id === null && request.project_id === null) { return page(r, [membership(1, 1), membership(1, 2), membership(1, 3, [])]); }
                 return page(r, []);
             }
             throw new Error('unexpected control');
@@ -86,7 +91,9 @@ test('apply sends exactly one scope_select frame with the set members at the rea
     assert.match(spec.service!.project, /^[0-9a-f]{64}$/);
     // Narrowing to an index outside the chosen sets is refused before any frame.
     await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [prj(1)] }), (error: any) => error.code === 'window_scope_index_outside_sets');
-    await assert.rejects(scope.applySearchScope({ index_ids: [idx(1)], project_ids: [] }), (error: any) => error.code === 'window_scope_project_required');
+    // An index alone is read through the sets that hold it (U103); an index in no set is refused with Make readable.
+    await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [] }), (error: any) => error.code === 'window_scope_index_not_readable'
+        && /Make it readable in AIRK Admin/.test(error.message) && error.nativeResponse.index_ids[0] === idx(9));
     assert.equal(s.selects.length, 1);
     await scope.applySearchScope({ index_ids: [], project_ids: [] });
     assert.deepEqual(s.releases, [1]); assert.equal(scope.active, false);
@@ -181,12 +188,16 @@ test('assistance drafts are subscribed only with assistance/1, fed to the Inbox 
     const fake = { subscribe: async (topics: string[]) => { frames.push({ subscribe: { topics } }); return { status: 'subscribed', cursor: {} } as any; },
         assistanceAck: async (through: number) => { frames.push({ assistance_ack: { through } }); return { status: 'acknowledged' } as any; } };
     const store = new SuggestionStore({ binding: () => 'b', revisions: () => ({}), publication: () => undefined, ttlMs: () => 3_600_000 });
-    let capabilities = ['session/2'];
+    let capabilities: string[] | undefined;
     const assistance = new WindowAssistance(fake, () => capabilities, store);
-    await assistance.start(); assert.deepEqual(frames, [], 'no subscription without assistance/1');
+    await assistance.start(); assert.deepEqual(frames, [], 'nothing is subscribed before the session answered hello');
+    capabilities = ['session/2'];
+    await assistance.start();
+    assert.deepEqual(frames, [{ subscribe: { topics: ['status', 'jobs'] } }], 'live status and job events without assistance/1 (U103)');
+    await assistance.event({ kind: 'session_lost', code: 'session_closed' }); frames.length = 0;
     capabilities = ['session/2', 'assistance/1'];
     await assistance.start(); await assistance.start();
-    assert.deepEqual(frames, [{ subscribe: { topics: ['assistance'] } }], 'one subscription per session child');
+    assert.deepEqual(frames, [{ subscribe: { topics: ['assistance', 'status', 'jobs'] } }], 'one subscription per session child');
     const draft = (sequence: number, key: string) => ({ kind: 'assistance_draft', cursor: {} as any, draft: { sequence, draft_id: 'aa'.repeat(16), kind: 'search',
         draft: { schema_version: '1.0', idempotency_key: key, title: 'Find it', draft: { query: 'original' } } } }) as any;
     await assistance.event(draft(1, 'first'));
@@ -197,7 +208,7 @@ test('assistance drafts are subscribed only with assistance/1, fed to the Inbox 
     assert.deepEqual(frames.slice(1), [{ assistance_ack: { through: 1 } }, { assistance_ack: { through: 2 } }, { assistance_ack: { through: 3 } }],
         'a repeat is not acknowledged twice; an unsupported draft is acknowledged so the queue moves');
     await assistance.event({ kind: 'session_lost', code: 'session_closed' });
-    await assistance.start(); assert.deepEqual(frames.at(-1), { subscribe: { topics: ['assistance'] } }, 'a new session child subscribes again');
+    await assistance.start(); assert.deepEqual(frames.at(-1), { subscribe: { topics: ['assistance', 'status', 'jobs'] } }, 'a new session child subscribes again');
 });
 
 test('a handoff is published through the window with only the reviewed text and its identity', async () => {
@@ -219,6 +230,112 @@ test('Recommendations and agent search drafts select their scope after reading t
     await scope.selectIds([prj(1)], [idx(1)]);
     assert.deepEqual(s.controls.slice(2, 4).map(method => [method.catalog_page.request.kind, method.catalog_page.request.expected_catalog_revision]), [['indexes', null], ['projects', 5]]);
     assert.deepEqual(s.selects, [{ namespace, expected_catalog_revision: 5, index_ids: [idx(1)], project_ids: [prj(1)] }]);
-    await assert.rejects(scope.selectIds(undefined, [idx(1)]), (error: any) => error.code === 'window_scope_project_required');
+    // U103: an index alone resolves to the index sets that hold it; only the index is shown checked.
+    await scope.selectIds(undefined, [idx(2)]);
+    assert.deepEqual(s.selects.at(-1), { namespace, expected_catalog_revision: 5, index_ids: [idx(2)], project_ids: [prj(1)] });
+    assert.deepEqual(scope.searchScopeSelection(), { index_ids: [idx(2)], project_ids: [], active: true });
+    await assert.rejects(scope.selectIds(undefined, [idx(3)]), (error: any) => error.code === 'window_scope_index_not_readable', 'an empty-scope membership is no index set');
+    await assert.rejects(scope.selectIds(undefined, undefined), (error: any) => error.code === 'window_scope_project_required');
+    assert.equal(s.selects.length, 2);
+});
+
+test('applying an index set alone grants its members but checks only the set; index sets of every index are read once', async () => {
+    const s = session(() => 7), scope = new WindowScope(s.fake, ready, memento(), base);
+    await scope.readSearchScope();
+    await scope.applySearchScope({ project_ids: [prj(1)], index_ids: [] });
+    assert.deepEqual(s.selects, [{ namespace, expected_catalog_revision: 7, index_ids: [idx(1), idx(2)], project_ids: [prj(1)] }]);
+    assert.deepEqual(scope.searchScopeChoices()!.selectedIndexIds, [], 'member indexes are not shown as chosen');
+    assert.deepEqual(scope.searchScopeChoices()!.selectedProjectIds, [prj(1)]);
+    s.controls.length = 0;
+    await scope.readIndexSets();
+    assert.deepEqual(s.controls, [{ catalog_page: { request: { kind: 'memberships', index_id: null, project_id: null, after: null, expected_catalog_revision: 7, limit: 16, max_bytes: 49152 } } }]);
+    const choices = scope.searchScopeChoices()!;
+    assert.deepEqual(choices.indexSets, { [idx(1)]: [prj(1)], [idx(2)]: [prj(1)] }, 'an empty-scope membership grants no read authority');
+    assert.equal(choices.indexSetsComplete, true);
+    assert.equal(choices.responses.length, 3, 'the complete memberships response is kept with the choices');
+});
+
+// U103: the window's own index without a chosen scope.
+const workspace = 'be'.repeat(32);
+function autoSession(options: { sets: boolean; revision?: () => number; listed?: boolean }) {
+    const controls: any[] = [], selects: any[] = [], releases: number[] = [];
+    const indexRow = { kind: 'index', value: { id: idx(4), name: 'Workspace index', tombstone: false, definition_revision: 1, source_revision: 1,
+        backing: { binding: workspace, root: '/src/w', data_root: '/data/w', collection: 'w' } } };
+    const fake: ScopeSession = {
+        control: async (method: any) => {
+            controls.push(structuredClone(method));
+            const request = method.catalog_page.request, r = options.revision?.() ?? 7;
+            if (request.kind === 'indexes') { return page(r, options.listed === false ? [index(1)] : [index(1), indexRow]); }
+            if (request.kind === 'projects') { return page(r, [project(5)]); }
+            if (request.kind === 'memberships') {
+                if (request.index_id === idx(4)) { return page(r, options.sets ? [membership(5, 4)] : []); }
+                if (request.project_id === prj(5)) { return page(r, options.sets ? [membership(5, 4)] : []); }
+                return page(r, []);
+            }
+            throw new Error('unexpected control');
+        },
+        scopeSelect: async selection => { selects.push(structuredClone(selection)); return { status: 'scope', scope_identity: 'cd'.repeat(32), catalog_revision: selection.expected_catalog_revision, expires_at_ms: 99 } as any; },
+        scopeRelease: async () => { releases.push(1); return { status: 'scope_released' } as any; },
+    };
+    return { fake, controls, selects, releases };
+}
+const requested = (controls: any[]) => controls.map(method => { const request = method.catalog_page.request; return [request.kind, request.index_id, request.project_id, request.expected_catalog_revision]; });
+
+test('without a chosen scope the workspace index is granted once through the index sets that hold it, and again only after the catalog changed', async () => {
+    let revision = 7;
+    const store = memento(), s = autoSession({ sets: true, revision: () => revision }), scope = new WindowScope(s.fake, ready, store, base);
+    await scope.ensureDefault(workspace);
+    assert.deepEqual(requested(s.controls), [['indexes', null, null, null], ['memberships', idx(4), null, 7], ['memberships', null, prj(5), 7]]);
+    assert.deepEqual(s.selects, [{ namespace, expected_catalog_revision: 7, index_ids: [idx(4)], project_ids: [prj(5)] }]);
+    assert.deepEqual(scope.readRoute(), { state: 'scope', automatic: true, indexId: idx(4), indexName: 'Workspace index' });
+    assert.equal(scope.active, true);
+    assert.equal(store.values.has(WINDOW_SCOPE_KEY), false, 'an automatic scope is never remembered as a user choice');
+    await scope.ensureDefault(workspace);
+    assert.equal(s.selects.length, 1, 'the same revision and sets are not granted again');
+    revision = 8;
+    await scope.ensureDefault(workspace);
+    assert.deepEqual(s.selects.at(-1), { namespace, expected_catalog_revision: 8, index_ids: [idx(4)], project_ids: [prj(5)] });
+});
+
+test('the automatic scope never replaces a scope the user applied or cleared, also in a later window', async () => {
+    const store = memento(), s = autoSession({ sets: true }), scope = new WindowScope(s.fake, ready, store, base);
+    await scope.readSearchScope();
+    await scope.applySearchScope({ project_ids: [prj(5)], index_ids: [] });
     assert.equal(s.selects.length, 1);
+    await scope.ensureDefault(workspace);
+    assert.equal(s.selects.length, 1, 'the applied choice is kept');
+    assert.deepEqual(scope.readRoute(), { state: 'scope', automatic: false });
+    await scope.applySearchScope({ project_ids: [], index_ids: [] });
+    assert.deepEqual(s.releases, [1]);
+    assert.equal(store.values.get(WINDOW_SCOPE_CLEARED_KEY), true);
+    await scope.ensureDefault(workspace);
+    assert.equal(s.selects.length, 1, 'a cleared scope stays cleared');
+    assert.deepEqual(scope.readRoute(), { state: 'cleared' });
+    const later = autoSession({ sets: true }), reopened = new WindowScope(later.fake, ready, store, base);
+    await reopened.ensureDefault(workspace);
+    assert.deepEqual([later.selects.length, later.controls.length], [0, 0], 'the cleared choice is remembered for the workspace');
+    assert.deepEqual(reopened.readRoute(), { state: 'cleared' });
+    await reopened.readSearchScope(); await reopened.applySearchScope({ project_ids: [], index_ids: [idx(4)] });
+    assert.deepEqual(later.selects, [{ namespace, expected_catalog_revision: 7, index_ids: [idx(4)], project_ids: [prj(5)] }], 'a new choice ends the cleared state');
+    assert.equal(store.values.has(WINDOW_SCOPE_CLEARED_KEY), false);
+});
+
+test('an index in no index set is not readable: nothing is granted and the route names the cause; a project the catalog does not list keeps the binding route', async () => {
+    const s = autoSession({ sets: false }), scope = new WindowScope(s.fake, ready, memento(), base);
+    let changes = 0; scope.onDidChange(() => { changes++; });
+    await scope.ensureDefault(workspace);
+    assert.equal(s.selects.length, 0);
+    assert.equal(scope.active, false);
+    const route = scope.readRoute()!;
+    assert.equal(route.state, 'not_readable'); assert.equal(route.code, 'index_read_unavailable'); assert.equal(route.indexId, idx(4));
+    assert.match(route.message!, /Workspace index is in no index set/);
+    assert.deepEqual(scope.searchScopeSummary().route, route, 'the Explorer header and Overview read the same route');
+    assert.ok(changes >= 1);
+    const legacy = autoSession({ sets: true, listed: false }), unlisted = new WindowScope(legacy.fake, ready, memento(), base);
+    await unlisted.ensureDefault(workspace);
+    assert.deepEqual(unlisted.readRoute(), { state: 'binding' });
+    assert.equal(legacy.selects.length, 0);
+    const none = new WindowScope(legacy.fake, () => ['session/2'], memento(), base);
+    await none.ensureDefault(workspace);
+    assert.equal(none.readRoute(), undefined, 'without window-scope/1 nothing is resolved');
 });

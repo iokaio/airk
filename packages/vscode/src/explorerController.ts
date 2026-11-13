@@ -13,7 +13,7 @@ import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
 import { changesSince, checkCitations, inspect } from './explorerInspect';
 import { managementView, panelDetails } from './explorerManagement';
 import { originArgs, originatingResult, passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
-import { headline, statusSummary, scalarWithRetainedDetails } from './explorerStatus';
+import { headline, headlineWork, statusSummary, scalarWithRetainedDetails } from './explorerStatus';
 import { displayPath } from './explorerSource';
 import { exportStrategy, importPlan, importRecipe, importStrategy, listWorkspaceFiles, loadWorkspaceFile, dirtyAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
 import { renderPlan, RunResult, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
@@ -36,6 +36,8 @@ import type { AssistanceWindowStatus } from './explorerContracts';
 import type { SearchDraft } from './explorerDrafts';
 import { nativeSavedSourceState, readResultBody, verificationLabel } from './sourceVerification';
 import { ServiceError } from './serviceClient';
+import type { ReadRouteView, WorkAction } from './explorerContracts';
+import type { CommandOutcome } from './airkctl/features/liveStatus';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
@@ -57,7 +59,16 @@ export interface ExplorerHost {
     prepareWindowContext?(): Promise<void>;
     useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;
     readonly onDidChangeWindowContext?: vscode.Event<void>;
-    usage?(spec: LaunchSpec, valid: () => boolean): Promise<EmbeddedUsage>;
+    /** U103: `airkctl usage report` for one index of this window (complete native outcome). */
+    usage?(project: string, days: number): Promise<CommandOutcome>;
+    /** U103: this window's session status/job events and the service's recent log records. */
+    activity?(): Promise<{ events: Record<string, unknown>[]; eventsOmitted: boolean; logs: CommandOutcome }>;
+    /** U103: one everyday index action as an `airkctl` command (complete native outcome, refused or not). */
+    workAction?(action: WorkAction, project: string, job?: string): Promise<CommandOutcome>;
+    /** U103: how the selected index is read without a chosen scope; `not_readable` refuses reads. */
+    readRoute?(): ReadRouteView | undefined;
+    /** U103: the Explorer selected this project; its index is read under the automatic scope. */
+    followProject?(project: string | undefined): void;
     readonly extensionUri: vscode.Uri;
     readonly version: string;
     extensionUpdate?(): ExplorerViewState['extensionUpdate'];
@@ -108,6 +119,8 @@ export interface WindowScopeHost {
     searchScopeChoices(): CatalogView['searchScope'] | undefined;
     searchScopeSummary(): SearchScopeSummary;
     readSearchScope(kind?: 'indexes' | 'projects', next?: boolean): Promise<unknown>;
+    /** Which index sets hold each index (U103: Apply checks an index-only pick before sending it). */
+    readIndexSets?(): Promise<void>;
     applySearchScope(selection: Record<string, unknown>): Promise<Record<string, unknown>>;
     clearSearchScope(): Promise<void>;
     onDidChange(listener: () => void): { dispose(): void };
@@ -119,11 +132,6 @@ const DISMISSED_NOTICES_LIMIT = 512;
 function validNoticeKey(key: unknown): key is string {
     return typeof key === 'string' && key.length > 0 && key.length <= 8192
         && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(key) && new TextEncoder().encode(key).length <= 8192;
-}
-export interface EmbeddedUsage {
-    view(): { html: string };
-    action(message: unknown): Promise<{ html: string }>;
-    dispose(): void;
 }
 const RECIPE_LIMIT = 50;
 interface ContextObservation {
@@ -317,8 +325,8 @@ export class ExplorerController implements vscode.Disposable {
             }
         }
         for (const listener of this.snapshotListeners) { listener(state); }
-        const { word } = headline(state.connection, state.status, state.projects.length);
         const project = state.projects.find(entry => entry.project === state.selectedProject);
+        const { word } = headline(state.connection, state.status, state.projects.length, headlineWork(project, state.searchScope?.route ?? this.host.readRoute?.()));
         this.host.setStatusBar(`AIRK: ${word}`, project ? `AIRK Explorer · ${project.name} · ${word}` : `AIRK Explorer · ${word}`);
     }
 
@@ -341,6 +349,7 @@ export class ExplorerController implements vscode.Disposable {
     private select(project: string | undefined): void {
         if (project === this.selected) { return; }
         this.selected = project;
+        this.host.followProject?.(project);
         this.selectedSpecIdentity=JSON.stringify(this.host.specs().find(spec=>spec.service?.project===project));
         this.selectionEpoch++;
         this.indexing.clearEvidenceRecommendations();
@@ -544,9 +553,16 @@ export class ExplorerController implements vscode.Disposable {
         if(native&&this.host.nativeExecutionEnabled?.()===false)throw new NativeExecutionDisabled();
     }
 
+    /** An index in no index set is not read through the refused binding route (U103). */
+    private notReadable(): ReadRouteView | undefined {
+        const route = this.host.readRoute?.();
+        return route?.state === 'not_readable' && !this.host.windowScope?.identity() ? route : undefined;
+    }
     /** The evidence session for the selected project, created lazily. */
     protected session(): EvidenceClient {
         this.requireAuthorization(true);
+        const unreadable = this.notReadable();
+        if (unreadable) { throw new EvidenceFailure(explorerError('index_read_unavailable', unreadable.message ?? 'This index is in no index set. Make it readable in AIRK Admin.')); }
         const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
         if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
         if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version,{resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)}); }
@@ -582,6 +598,8 @@ export class ExplorerController implements vscode.Disposable {
         const epoch = this.selectionEpoch;
         const spec = this.host.specs().find(entry => entry.service?.project === project);
         if (!project || !this.host.trusted() || !spec) { return Promise.resolve(); }
+        // Not readable (no index set): the Overview names the cause; no refused read is sent.
+        if (this.notReadable()) { return Promise.resolve(); }
         const binding = JSON.stringify(spec), generation = this.panel.generation;
         const identity = this.control.observationIdentity;
         const settings = this.detailSettingsKey(project);
@@ -652,7 +670,7 @@ export class ExplorerController implements vscode.Disposable {
             const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
             // Using recommended advice and applying an agent search draft select the window search
             // scope themselves, which starts a new evidence epoch; their own committed outcome stands.
-            const managementOrLocal=['admin.open','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
+            const managementOrLocal=['admin.open','manage.command','work.action','work.usage','work.activity','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -705,6 +723,7 @@ export class ExplorerController implements vscode.Disposable {
             case 'indexing.scope.read': {
                 const scope=this.scopeHost();
                 await this.scopeWork(()=>scope.readSearchScope(message.kind,message.next));
+                if(!message.next||!this.host.windowScope?.searchScopeChoices()?.indexSets)await scope.readIndexSets?.();
                 return this.indexingView();
             }
             // Nothing selected releases the scope (the Overview and Search "Clear"); reads return to the selected project.
@@ -806,8 +825,28 @@ export class ExplorerController implements vscode.Disposable {
             case 'manage.command': {
                 this.requireAuthorization();
                 const command=(message as WebviewMessageOf<'manage.command'>).command;
-                const result=await vscode.commands.executeCommand(command, ...(command==='airk.verifyMcp'?[this.selected]:[]));
-                return command==='airk.httpIssuerRotationStatus'||command==='airk.rotateHttpIssuer'?result:undefined;
+                return (await vscode.commands.executeCommand(command)) ?? undefined;
+            }
+            // U103: everyday actions on the selected index; the complete native outcome returns, refused or not.
+            case 'work.action': {
+                this.requireAuthorization(true);
+                if(!this.host.workAction)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Index actions are not available in this window.'));
+                if(!this.host.specs().some(spec=>spec.service?.project===message.project))throw new EvidenceFailure(explorerError('NO_PROJECT'));
+                if((message.action==='retry'||message.action==='cancel')&&!message.job)throw new EvidenceFailure(explorerError('INVALID_MESSAGE','Choose the job to retry or cancel.'));
+                const outcome=await this.host.workAction(message.action,message.project,message.job);
+                this.publish();
+                if(this.panel.open)void this.loadStatus();
+                return outcome;
+            }
+            case 'work.usage': {
+                this.requireAuthorization(true);
+                if(!this.host.usage)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Usage is not available in this window.'));
+                return this.host.usage(this.requireProject(),message.days);
+            }
+            case 'work.activity': {
+                this.requireAuthorization(true);
+                if(!this.host.activity)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Activity is not available in this window.'));
+                return this.host.activity();
             }
             case 'search.form': {
                 const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks } = message;

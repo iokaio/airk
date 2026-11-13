@@ -136,6 +136,13 @@ export interface ProjectSummary {
     readonly jobKind?: string;
     readonly phase?: string;
     readonly observedAt?: number;
+    /** Current or latest job and the queued job of the native Progress read (U103). */
+    readonly jobId?: string;
+    readonly pendingJobId?: string;
+    readonly pendingJobState?: string;
+    /** Counters of the sampled attempt (`WorkProgress.committed_changes` / `captured_files`). */
+    readonly committedChanges?: number;
+    readonly capturedFiles?: number;
 }
 
 /** Published readiness of the bound project from airk_status; absent fields stay unknown. */
@@ -169,6 +176,12 @@ export interface StatusSummary {
     readonly runtimeVersions?: readonly FactRow[];
     readonly workPhase?: string;
     readonly workPaused?: boolean;
+    /** Job state and counters of the status reply's `work.progress` observation. */
+    readonly workJobState?: string;
+    readonly workCommitted?: number;
+    readonly workCaptured?: number;
+    /** The complete native `work` observation (for example with `index_read_unavailable`). */
+    readonly work?: Record<string, unknown>;
     readonly observedAt: number;
     /** Independent time for retained runtime/configuration details; not scalar cache age. */
     readonly detailsObservedAt?: number;
@@ -236,6 +249,21 @@ export interface SearchScopeSummary {
     readonly projectIds?: readonly string[];
     readonly scopeIdentity?: string;
     readonly catalogRevision?: number;
+    /** How Explorer reads this window's index when no scope was chosen (U103). Absent until resolved. */
+    readonly route?: ReadRouteView;
+}
+
+/** The read route of this window's index. `scope`: under a window scope (chosen, or automatic for
+ * the workspace index); `binding`: a project the catalog does not list (legacy); `not_readable`:
+ * the index is in no index set, so reads need "Make readable" in AIRK Admin; `cleared`: the user
+ * cleared the scope; `failed`: the catalog could not be read (code kept). */
+export interface ReadRouteView {
+    readonly state: 'checking' | 'scope' | 'binding' | 'not_readable' | 'cleared' | 'failed';
+    readonly automatic?: boolean;
+    readonly indexId?: string;
+    readonly indexName?: string;
+    readonly code?: string;
+    readonly message?: string;
 }
 
 /** One Inbox card. Duplicates by destination and title collapse into one card with a count. */
@@ -556,8 +584,11 @@ export const MANAGE_ACTIONS = [
     'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent',
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
-export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.reconnectAgents', 'airk.verifyMcp', 'airk.manageVscodeMcp', 'airk.installCli', 'airk.openTools', 'airk.chooseStorage',
-    'airk.indexMode', 'airk.usage', 'airk.logs', 'airk.showExtensionOutput', 'airk.httpIssuerRotationStatus', 'airk.rotateHttpIssuer'] as const;
+/** Only commands the extension registers and contributes (serviceExtension.ts, package.json). */
+export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.reconnectAgents', 'airk.manageVscodeMcp', 'airk.showExtensionOutput'] as const;
+/** Everyday index actions the Explorer offers (U103), each one `airkctl` command through the window session. */
+export const WORK_ACTIONS = ['index', 'pause', 'resume', 'watch_on', 'watch_off', 'retry', 'cancel'] as const;
+export type WorkAction = typeof WORK_ACTIONS[number];
 
 /** One Explorer help topic, compiled from src/explorerHelp at build time and versioned with the VSIX. */
 export interface HelpTopic {
@@ -759,6 +790,12 @@ export const WEBVIEW_MESSAGES = {
     'indexing.scope.apply': { selection:{kind:'json',max:4096},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
+    /** U103: one everyday action on the selected index; `job` names the job for retry and cancel. */
+    'work.action': { action: { kind: 'enum', values: WORK_ACTIONS }, project: PROJECT, job: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/, optional: true } },
+    /** U103: `airkctl usage report` for the selected index (complete native result). */
+    'work.usage': { days: { kind: 'int', min: 1, max: 365 } },
+    /** U103: recent activity: this window's session status/job events and `airkctl service logs`. */
+    'work.activity': {},
     /** Read-only index library (U97): one native catalog read through the window's airkctl session. */
     'library.read': {
         method: { kind: 'enum', values: LIBRARY_METHODS },
@@ -826,7 +863,7 @@ const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessa
     'notice.dismiss',
     'indexing.scope.apply', 'indexing.recommendations.use', 'indexing.recommendations.copy',
     'strategy.run.export', 'details.copy', 'clipboard.write',
-    'manage.command', 'planner.saveInWorkspace', 'planner.exportJSON',
+    'manage.command', 'work.action', 'planner.saveInWorkspace', 'planner.exportJSON',
     'strategy.export', 'studio.save', 'suggestions.resolve',
     'suggestions.applied', 'suggestions.discardAll', 'handoff.share',
     'recipes.save', 'recipes.delete', 'recipes.export',

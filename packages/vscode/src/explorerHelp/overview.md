@@ -10,6 +10,12 @@ related_airk_help: index-health, freshness, service
 
 The Overview shows the selected project and its published index. The status pill in the header and the status bar show one word for the worst current condition.
 
+The pill names a known cause: **indexing 992/2,016 files** (committed of captured files in the running attempt; **indexing…** when the counts are not reported), **paused**, or **not readable: no index set** when the index belongs to no index set. **index unavailable** means the service reported no readable publication without another cause.
+
+Without a chosen search scope, the window reads its folder's index automatically through the index sets that hold it. An index in no index set is not readable yet: the Overview says so and offers **Make readable in AIRK Admin**; indexing continues meanwhile.
+
+**Index actions** run the everyday actions on the selected index: Index now, Pause or Resume, Turn watching on or off, and Retry or Cancel a job. Each shows its native result.
+
 **In your index** leads with saved files, text chunks, vectors and semantic file coverage. **Working now** shows the current attempt separately, using source, semantic or cleanup counters as appropriate. A new attempt cannot reset the saved index totals. Cleanup is an explicit stage; semantic preparation can advance before a batch is published. Updates are automatic, and Copy details retains publication identity and observation times. Project identities and model settings are under **Project and semantic settings**.
 
 ## What the rows mean

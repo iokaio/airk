@@ -22,10 +22,10 @@ export function SearchScreen(props: ScreenProps) {
     const input = useRef<HTMLInputElement>(null);
     const vectorsOff = status?.semantic !== 'unavailable' && (status?.vectorsEnabled === false || status?.semantic === 'disabled');
     const vectorReason = status?.semantic === 'unavailable' ? 'The semantic pipeline for saved predecessor evidence is unavailable. This is not a vector opt-out; source and lexical evidence have separate availability. Review the complete native compatibility details.'
-        : vectorsOff ? 'Semantic search is turned off for this project. Enable vectors in Management › Indexing.'
+        : vectorsOff ? 'Semantic search is turned off for this index. Enable vectors for it in AIRK Admin › Index library.'
         : status?.semantic === 'pending' ? 'The semantic index is building; semantic results may be empty or unavailable until vectors are published.'
         : status?.semantic === 'partial' ? 'Semantic coverage is partial. Search uses the vectors published so far.'
-        : status?.semantic === 'failed' ? 'Semantic indexing failed. Check Management › Indexing for the failure; semantic results may be unavailable or incomplete.' : '';
+        : status?.semantic === 'failed' ? 'Semantic indexing failed. Check Management › Activity or the index in AIRK Admin › Index library for the failure; semantic results may be unavailable or incomplete.' : '';
     const canSearch = props.state.connection === 'ready' || props.state.connection === 'degraded';
 
     const run = async (next: Form) => {
