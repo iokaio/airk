@@ -39,9 +39,12 @@ GROUPS = {
 }
 GROUPS["native-libraries"] = GROUPS["native"]
 SUMMARY = re.compile(r"(?:test result:.*|Summary \[.*|Starting \d+ tests?.*|# tests \d+|# pass \d+"
-                     r"|# fail \d+|Ran \d+ tests? in .*)")
+                     r"|# fail \d+|ℹ (?:tests|pass|fail) \d+|Ran \d+ tests? in .*)")
 SELECTED = (re.compile(r"Starting (\d+) tests?"), re.compile(r"# tests (\d+)"),
-            re.compile(r"Ran (\d+) tests? in"), re.compile(r"running (\d+) tests?"))
+            re.compile(r"Ran (\d+) tests? in"), re.compile(r"running (\d+) tests?"),
+            re.compile(r"^\s*ℹ tests (\d+)\s*$", re.MULTILINE))
+NEXTEST_START = re.compile(r"^\s*Starting (\d+) tests? across \d+ binar(?:y|ies)\b")
+NEXTEST_END = re.compile(r"^\s*Summary \[")
 
 
 def digest(path):
@@ -82,7 +85,23 @@ def observe(groups, root=ROOT):
 
 def selected_tests(log_text):
     """Return the selected-test count a recognized runner printed, or None."""
-    counts = [int(match) for pattern in SELECTED for match in pattern.findall(log_text)]
+    counts, outside = [], []
+    in_nextest = False
+    for line in log_text.splitlines():
+        if in_nextest:
+            # A failed Nextest child prints its libtest banner inside this
+            # block. It belongs to the selection already recorded at START.
+            if NEXTEST_END.match(line):
+                in_nextest = False
+            continue
+        start = NEXTEST_START.match(line)
+        if start:
+            counts.append(int(start.group(1)))
+            in_nextest = True
+        else:
+            outside.append(line)
+    remaining = "\n".join(outside)
+    counts.extend(int(match) for pattern in SELECTED for match in pattern.findall(remaining))
     return sum(counts) if counts else None
 
 

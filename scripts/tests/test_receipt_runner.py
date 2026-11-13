@@ -17,6 +17,24 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class SelectedTests(unittest.TestCase):
+    def test_nextest_failure_output_does_not_add_captured_child_selections(self):
+        log = ("    Starting 4 tests across 2 binaries (81 tests skipped)\n"
+               "  stdout ---\n    running 1 test\n    running 1 test\n"
+               "    running 1 test\n"
+               "     Summary [0.55s] 4 tests run: 1 passed, 3 failed\n")
+        self.assertEqual(RUNNER.selected_tests(log), 4)
+
+    def test_mixed_runner_blocks_keep_their_own_selections(self):
+        log = ("running 2 tests\n"
+               "    Starting 4 tests across 2 binaries\n"
+               "    running 1 test\n"
+               "     Summary [0.55s] 4 tests run: 1 passed, 3 failed\n"
+               "Ran 3 tests in 0.01s\n# tests 5\n")
+        self.assertEqual(RUNNER.selected_tests(log), 14)
+
+    def test_node_spec_reporter_records_its_selection(self):
+        self.assertEqual(RUNNER.selected_tests("ℹ tests 99\nℹ pass 87\nℹ fail 12\n"), 99)
+
     def test_recognizes_runner_summaries(self):
         self.assertEqual(RUNNER.selected_tests("    Starting 5 tests across 1 binary"), 5)
         self.assertEqual(RUNNER.selected_tests("# tests 580\n# pass 576"), 580)

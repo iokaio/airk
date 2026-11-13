@@ -98,6 +98,63 @@
   the independently authored outcome fixture may land contract-first. Receipt
   lookup after the failed assertion is not yet a passing qualification result.
   Source-reviewed generated-mutation recovery still awaits D8 approval.
+- Contract-first milestone committed/pushed as `688d7906`; configured human
+  DCO verified. R01 handler/consumer work may now begin. Own only native
+  CLI/manage/config and existing external tests/session/subprocess test target,
+  extension agents wrapper/composition/capability requirements and named tests,
+  plus required generated CLI help/reference after implementation. Preserve
+  initially reviewed removal rows across confirmation/repair; post-repair new,
+  newly stale or changed rows do not expand selection. Prevalidate the whole
+  native selector batch, then reclassify live source inside each existing edit
+  closure; no lock/atomic multi-file transaction claim. Retain partial receipts
+  and every action error. Missing capability refuses selected removal without
+  broad fallback. Canonical native handlers, actual CLI subprocess and actual
+  session invoker must observe identical supported selectors/results.
+  Prepare one coherent regression batch before production correction. A small
+  source-derived composition observation may execute the actual extension
+  method body with injected UI/native runners; no renderer parity claim.
+  T0 primary: named native config/manage/session plus subprocess cases; one
+  pinned TypeScript compile and agent/discovery selection. Generated help and
+  input catalogs stay synchronized. No installed-editor or broad platform run.
+- R19a observation results: pinned TypeScript typecheck passes; source capture
+  from `625c1766` SHA-256
+  `2cd4024bc86cb35cf4b43936bd5653beeb507c85e22534621514233eeb45383d`
+  reproduces the original bodies and value parsers (only source CRLF/LF is
+  normalized for that comparison). `p1-r19a-before` and `p1-r19a-after` each
+  select the same 5/5 passing literal serial callback goldens; no output
+  normalization. `p1-r19-before` selects 8/8 failing delayed-state cases through
+  the actual moved procedures. These are state-logic observations, not DOM or
+  native response-shape qualification. No guard/correction landed in the seam.
+  Pinned Admin bundle generation and canonical asset check pass; inventory
+  `4a95d372f76e80bf65c3acb81e7ede206998bca8c91c7cf0fdd888221fe737cc`,
+  bundle `2676751de1b9d1108905840bde14b161382edaa5d8ab9bd9dad8bd55ad13ac7d`,
+  receipt `artifacts/advanced-split/admin-assets-r19a.json`. `p1-r19a-embedded`
+  recompiles the affected embedded bytes (Cargo 31.27 s, receipt 32.41 s),
+  1 selected/pass, 72 filtered out; inputs unchanged. No runtime/VSIX build.
+- R01 diagnostic results: pinned TypeScript compilation passes;
+  `p1-r01-compose-before` selects 6/6 failing actual-method composition cases.
+  `p1-r01-native-before` canonical Nextest summary selects 4, 1 pass/3 fail
+  on unsupported `--entry`. The negative parser refusal is not yet proof of
+  selector prevalidation. Native CLI/session and composition evidence are
+  distinguished; all input groups stayed unchanged.
+- Required receipt-parser correction, bounded to `scripts/dev/receipt_runner.py`
+  and its existing tests: the last receipt says 7 selected because it counts
+  three captured child-libtest banners in addition to Nextest's actual 4.
+  Retain that receipt/log and the canonical correction above. Earlier Node
+  spec output also lacked a parsed count. Add sibling Python cases for nested
+  Nextest failure output, independent mixed-runner blocks and Node spec counts;
+  reproduce them once, then fix only counting. Do not rerun native artifacts
+  for this reporting-only change or redesign the harness. Primary owns this
+  correction and its scoped Python validation.
+- Receipt correction evidence: the six `SelectedTests` cases reproduce all
+  three new failures (7 instead of 4, 15 instead of 14, missing spec count).
+  After a separate explicit source review, the complete receipt-runner module
+  passes 9/9 tests. Nextest's outer selection now owns captured child output;
+  standalone mixed-runner blocks retain their counts and Node spec is parsed.
+  Re-reading unchanged retained logs with the corrected parser observes 4 for
+  `p1-r01-native-before` and 99 for `p1-r02-before`. Original receipts and logs
+  remain untouched; no native/extension test was rerun for this harness fix.
+  Commit this reporting correction separately from R19's structural seam.
 
 - P0 milestone committed as `235d76be` with configured human DCO verified.
   Push was initially refused by automatic review because destination approval
