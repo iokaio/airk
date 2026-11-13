@@ -110,7 +110,7 @@ reports `configuration_required` without an installed grant. A changed authority
 expires the page; it never restarts against broader scope.
 
 **Implementation:** [selected catalog](../crates/airk-mcp/src/combined.rs),
-[native owner](../crates/airk-cli/src/combined_frontend.rs), and
+[native owner](../crates/airk-frontend/src/combined_frontend.rs), and
 [actual-process tests](../crates/airk-cli/tests/combined_reads.rs).
 The [single-index handler](../crates/airk-kernel/src/scoped_reads.rs) and
 [configured-binding adapter](../crates/airk-mcp/src/unified.rs) retain their
@@ -152,7 +152,7 @@ Deadline cancellation of setup admission retains its typed expiry through the sh
 }
 ```
 
-**Implementation:** [status_observation.rs](../crates/airk-cli/src/project_client/status_observation.rs). **Contract/regression evidence:** [unified.rs](../crates/airk-mcp/src/unified.rs).
+**Implementation:** [status_observation.rs](../crates/airk-frontend/src/project_client/status_observation.rs). **Contract/regression evidence:** [unified.rs](../crates/airk-mcp/src/unified.rs).
 
 ## diagnostics
 
@@ -170,7 +170,7 @@ Deadline cancellation of setup admission retains its typed expiry through the sh
 }
 ```
 
-**Implementation:** [runtime_metadata.rs](../crates/airk-cli/src/runtime_metadata.rs). **Contract/regression evidence:** [local.rs](../crates/airk-mcp/src/local.rs).
+**Implementation:** [runtime_metadata.rs](../crates/airk-supervisor/src/runtime_metadata.rs). **Contract/regression evidence:** [local.rs](../crates/airk-mcp/src/local.rs).
 
 ## capabilities
 

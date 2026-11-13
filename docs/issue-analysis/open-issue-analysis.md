@@ -64,12 +64,12 @@ see #67) works on the same machine.
 ### Root cause analysis
 
 **The stable launcher is a copy of the sealed bundle executable.**
-[`prepare_launcher`](../../crates/airk-cli/src/runtime_install.rs#L1089-L1135)
+[`prepare_launcher`](../../crates/airk-installer/src/runtime_install.rs#L1089-L1135)
 copies the approved payload's main executable (`AIRK.app/Contents/MacOS/airk`)
-byte for byte to [`launcher_path`](../../crates/airk-cli/src/runtime_install.rs#L775-L780)
+byte for byte to [`launcher_path`](../../crates/airk-installer/src/runtime_install.rs#L775-L780)
 (`<install>/airk-launcher`), sets mode 0700 and records its digest in
 `launcher.json`. The launcher then runs as `airk runtime launch --install-dir …`
-([`RuntimeCommand::Launch`](../../crates/airk-cli/src/runtime_install.rs#L309-L314))
+([`RuntimeCommand::Launch`](../../crates/airk-installer/src/runtime_install.rs#L309-L314))
 and forwards to the selected payload. The extension, agent configurations and
 the universal launcher all enter through this file (release 1.5.0 record,
 [docs/releases/release-1.5.0.md](../releases/release-1.5.0.md) lines 43 and 69).
@@ -96,7 +96,7 @@ and [docs/release-verification.md](../release-verification.md) line 52 records
 macOS packages and installed-editor behavior as "not verified".
 
 **Every integrity check then correctly refuses the workaround.**
-[`safe_file`](../../crates/airk-cli/src/runtime_install.rs#L631-L641) rejects
+[`safe_file`](../../crates/airk-installer/src/runtime_install.rs#L631-L641) rejects
 symlinks and hard links (`nlink == 1`), the extension's CLI installer applies
 the same rule ([cliInstall.ts:252](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/cliInstall.ts#L252)),
 and the bootstrap refuses an unverified payload
@@ -281,21 +281,21 @@ while the helper was available.
 
 **1. Automatic helper restart stops after three failures and only an explicit
 Start resets the budget.** The supervisor's in-memory
-[`PoolRecovery`](../../crates/airk-cli/src/project_supervisor.rs#L381-L408)
+[`PoolRecovery`](../../crates/airk-supervisor/src/project_supervisor.rs#L381-L408)
 admits a restart only while `attempts < 3` and not suppressed. Every helper
 failure site (`Pool::exited` at
-[project_supervisor.rs:937](../../crates/airk-cli/src/project_supervisor.rs#L937),
+[project_supervisor.rs:937](../../crates/airk-supervisor/src/project_supervisor.rs#L937),
 start failure at
-[line 988](../../crates/airk-cli/src/project_supervisor.rs#L988) and control
+[line 988](../../crates/airk-supervisor/src/project_supervisor.rs#L988) and control
 renewal failure at
-[line 1112](../../crates/airk-cli/src/project_supervisor.rs#L1112)) calls
+[line 1112](../../crates/airk-supervisor/src/project_supervisor.rs#L1112)) calls
 [`ServiceRegistry::recovery_failed("helper", …)`](../../crates/airk-store/src/service/registry/recovery.rs#L532-L557),
 which persists `failures = min(failures + 1, 3)` and a bounded delay of 1 to 8
 seconds. While no pool exists, the loop reloads that row every iteration
-([line 770](../../crates/airk-cli/src/project_supervisor.rs#L770)) so the cap
+([line 770](../../crates/airk-supervisor/src/project_supervisor.rs#L770)) so the cap
 survives in-memory state. The only code that deletes the helper row is the
 `StartEmbedding` control message
-([line 1317](../../crates/airk-cli/src/project_supervisor.rs#L1317)); the
+([line 1317](../../crates/airk-supervisor/src/project_supervisor.rs#L1317)); the
 Management **Retry semantic indexing** action reaches the same path through
 `start_embedding`
 ([serviceConsoleController.ts:736-739](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceConsoleController.ts#L736-L739)).
@@ -315,7 +315,7 @@ records). Ask the tester whether Start or Retry was used in that window.
 
 **2. The helper keeps exiting, and the service records no reason.** All three
 failure sites call `log.record(LogKind::ModelFailed, None, None)` with no code,
-although [`Log::record_code`](../../crates/airk-cli/src/service_logs.rs#L423)
+although [`Log::record_code`](../../crates/airk-host/src/service_logs.rs#L423)
 exists and `LogRecord.code` is already part of the schema
 ([service_logs.rs:43](../../crates/airk-core/src/service_logs.rs#L43)). No
 `model_started` record exists, so successful automatic restarts are invisible
@@ -324,8 +324,8 @@ worth testing:
 
 - *Renewal misclassified as helper failure.* Every 30 seconds the supervisor
   renews each worker's pool grant
-  ([lines 1082-1112](../../crates/airk-cli/src/project_supervisor.rs#L1082-L1112)).
-  [`Pool::renew`](../../crates/airk-cli/src/embedding_pool_process.rs#L210-L224)
+  ([lines 1082-1112](../../crates/airk-supervisor/src/project_supervisor.rs#L1082-L1112)).
+  [`Pool::renew`](../../crates/airk-inference/src/embedding_pool_process.rs#L210-L224)
   treats any reply other than `Renewed` within 3 seconds as failure, and the
   supervisor then drops a possibly healthy helper. The helper answers
   `Failed` when it has no live, unexpired grant for that exact worker
@@ -351,7 +351,7 @@ coverage. The vector branch is then mandatory:
 [`vector_candidates`](../../crates/airk-kernel/src/current/search.rs#L512-L528)
 embeds the query through the worker's remote model session, which returns
 `HelperUnavailable` from
-[`Hub::client`](../../crates/airk-cli/src/embedding_pool_client.rs#L350-L428)
+[`Hub::client`](../../crates/airk-inference/src/embedding_pool_client.rs#L350-L428)
 while no pool access exists. The lexical branch has already been computed at
 that point and is discarded. An explicit `--mode lexical` succeeds because the
 vector branch is skipped.
@@ -391,7 +391,7 @@ at 19:25:28 was in fact deferred and retained pending by
 it resumed on the same receipt at attempt 2 once a pool existed. The process
 log still records it as `job_failed`, which is what the tester read. The
 22-minute wait is entirely explained by item 1: `check_recovery_conditions`
-([project_supervisor.rs:533-566](../../crates/airk-cli/src/project_supervisor.rs#L533-L566))
+([project_supervisor.rs:533-566](../../crates/airk-supervisor/src/project_supervisor.rs#L533-L566))
 polls every second and resumes within about 30 seconds of a pool appearing.
 
 ### Recommendations
@@ -478,7 +478,7 @@ remaining cases legible.
   [crates/airk-cli/tests/mcp.rs](../../crates/airk-cli/tests/mcp.rs), the CLI
   JSON path and `airk_parse` execute (per the parity rule in CLAUDE.md).
 - Supervisor unit tests next to the existing
-  [`helper_recovery_is_bounded_and_manual_stop_remains_stopped` test](../../crates/airk-cli/src/project_supervisor.rs#L2018-L2047):
+  [`helper_recovery_is_bounded_and_manual_stop_remains_stopped` test](../../crates/airk-supervisor/src/project_supervisor.rs#L2018-L2047):
   successful start resets the budget; exhausted budget becomes due after the
   cool-off; explicit Stop still suppresses.
 - Store test for `recovery_observations` showing `recovered` after
@@ -515,15 +515,15 @@ with a 30-second soft deadline
 [`resume_current_enrichment_batches_bounded`](../../crates/airk-kernel/src/current/enrichment.rs#L813-L822)).
 After each turn the worker sets `semantic_pending` while readiness is
 `Pending` or `Partial`
-([project_worker.rs:1150-1160](../../crates/airk-cli/src/project_worker.rs#L1150-L1160)).
+([project_worker.rs:1150-1160](../../crates/airk-supervisor/src/project_worker.rs#L1150-L1160)).
 The supervisor loop (250 ms cadence) then calls
 [`due_background_jobs`](../../crates/airk-store/src/service/registry/background.rs#L121-L140)
 and enqueues the next vectors continuation
-([project_supervisor.rs:1371-1382](../../crates/airk-cli/src/project_supervisor.rs#L1371-L1382)),
+([project_supervisor.rs:1371-1382](../../crates/airk-supervisor/src/project_supervisor.rs#L1371-L1382)),
 and only afterwards calls
 [`due_source_projects`](../../crates/airk-store/src/service/registry/watch.rs#L150-L166)
 to enqueue source reconciliation
-([lines 1388-1397](../../crates/airk-cli/src/project_supervisor.rs#L1388-L1397)).
+([lines 1388-1397](../../crates/airk-supervisor/src/project_supervisor.rs#L1388-L1397)).
 Both queries admit a project only when it has no pending or running job
 (the `NOT EXISTS(… service_jobs … state IN ('pending','running') …)` clause,
 with an exception only for automatic audits). Because the continuation is
@@ -772,7 +772,7 @@ and rethrows, which is what produces the modal. `package.json` declares
 clause; the only four `when` rules are `false` for tree commands. The
 Explorer views already render the right sentence
 ([overview.tsx:46](../../packages/vscode/src/explorerWebview/overview.tsx#L46),
-[manage.tsx:44](../../packages/vscode/src/explorerWebview/manage.tsx#L44)), and
+[manage.tsx:44](https://github.com/iokaio/airk/blob/9e1bf9c0c9500570808a9f0d4ac9cbf41843170f/packages/vscode/src/explorerWebview/manage.tsx#L44)), and
 [`onDidGrantWorkspaceTrust`](../../packages/vscode/src/serviceExtension.ts#L1101)
 already resumes installation when trust is granted.
 
@@ -826,7 +826,7 @@ and accepts a missing leaf. The extension never hits this: it reserves the
 project and then runs `service prepare-storage`
 ([serviceBootstrap.ts:447](https://github.com/iokaio/airk/blob/a6caa821/packages/vscode/src/serviceBootstrap.ts#L447)),
 which creates the reserved directory chain with mode 0700
-([service_registration.rs:13-60](../../crates/airk-cli/src/service_registration.rs#L13-L60))
+([service_registration.rs:13-60](../../crates/airk-host/src/service_registration.rs#L13-L60))
 after re-validating the planned identity. That step is documented in
 [docs/service-project-setup.md](../service-project-setup.md) line 14 and in
 the CLI reference, but the headless quick start in

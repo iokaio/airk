@@ -40,7 +40,7 @@ the same commit, as a reviewed diff.
   imports it from `native_process`. `MAX_CONFIG` moved with
   `execute_with_timeout`, which bounds input by it; `service_manager` imports
   it. The `manager_command` tests stay in `service_manager::tests`. Contract:
-  [`native_command/CONTRACT.md`](../../crates/airk-cli/src/native_command/CONTRACT.md).
+  [`native_command/CONTRACT.md`](../../crates/airk-host/src/native_command/CONTRACT.md).
 
 ## S7.2 CLI layout: `install_layout` leaf
 
@@ -88,7 +88,7 @@ the same commit, as a reviewed diff.
 
   The tests stayed in `runtime_install::layout`.
   Call sites: `python scripts/dev/s7_2_install_layout.py --check`. Contract:
-  [`install_layout/CONTRACT.md`](../../crates/airk-cli/src/install_layout/CONTRACT.md).
+  [`install_layout/CONTRACT.md`](../../crates/airk-host/src/install_layout/CONTRACT.md).
 
 ## S7.3 Supervisor and catalog control: `checkpoint_fence` read leaf
 
@@ -111,7 +111,7 @@ the same commit, as a reviewed diff.
   `runtime_install/legacy_maintenance` (`fence_operation`) also moved to the
   leaf. The tests stayed in `service_runtime::checkpoint`. Call sites:
   `python scripts/dev/s7_3_checkpoint_fence.py --check`. Contract:
-  [`checkpoint_fence/CONTRACT.md`](../../crates/airk-cli/src/checkpoint_fence/CONTRACT.md).
+  [`checkpoint_fence/CONTRACT.md`](../../crates/airk-host/src/checkpoint_fence/CONTRACT.md).
   Exact fence bytes were identical before and after. The written fence is
   hashed with its temporary control path replaced by `"<control>"`:
 

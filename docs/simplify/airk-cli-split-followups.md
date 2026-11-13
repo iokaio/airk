@@ -114,6 +114,19 @@ under `airk-https` means updating all of the following in one step:
 
 The digest check must still pass against the moved bundle.
 
+### F5. Unused dependencies of the split crates
+
+`extract_crate.py` gave each new crate the dependency set of the old `airk-cli`, reduced only to
+workspace crates that come earlier in the order. As a result, `scripts/dev/boundary-exceptions.json`
+allows edges that may have no user. For example, `airk-host` lists `airk-kernel`, `airk-mcp` and
+`airk-retrieval`.
+
+**Steps.** For each crate, remove each workspace and external dependency that no source references,
+prove it with a clean Clippy run in both configurations, and shrink the allowed edges in the same
+change.
+
+**Done when:** every allowed edge of the ten crates has at least one user.
+
 ## Rules for this work
 
 - Keep each change structural: moves, visibility and boundaries only, with no behavior change and

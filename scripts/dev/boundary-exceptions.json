@@ -4,7 +4,63 @@
   "crate_edges": {
     "note": "Allowed normal (non-dev, non-build) dependencies between workspace crates, seeded from the edges present when the gate was introduced. Adding an edge is a reviewed diff against docs/architecture.md and docs/simplify-plan.md section 4.1.",
     "allowed": {
+      "airk-catalog-control": [
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ],
       "airk-cli": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-frontend",
+        "airk-host",
+        "airk-https",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-service",
+        "airk-store",
+        "airk-supervisor"
+      ],
+      "airk-core": [],
+      "airk-endpoint": [
+        "airk-core",
+        "airk-host",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ],
+      "airk-frontend": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store",
+        "airk-supervisor"
+      ],
+      "airk-host": [
         "airk-core",
         "airk-ipc",
         "airk-kernel",
@@ -13,10 +69,49 @@
         "airk-retrieval",
         "airk-store"
       ],
-      "airk-core": [],
+      "airk-https": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-frontend",
+        "airk-host",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store",
+        "airk-supervisor"
+      ],
+      "airk-inference": [
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ],
       "airk-ingest": [
         "airk-core",
         "airk-process"
+      ],
+      "airk-installer": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
       ],
       "airk-ipc": [
         "airk-core"
@@ -35,8 +130,39 @@
       "airk-retrieval": [
         "airk-core"
       ],
+      "airk-service": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-frontend",
+        "airk-host",
+        "airk-https",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store",
+        "airk-supervisor"
+      ],
       "airk-store": [
         "airk-core"
+      ],
+      "airk-supervisor": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
       ],
       "airkctl": [
         "airk-core",
@@ -47,38 +173,13 @@
   },
   "module_cycles": {
     "note": "Ratchet baseline of top-level module cycles per library crate. A module may leave a cycle without review; joining a cycle, a new cycle or a merge of cycles fails.",
-    "airk-cli": [
+    "airk-catalog-control": [
       [
         "catalog_admission",
-        "catalog_coordinator",
-        "project_supervisor"
-      ],
-      [
-        "combined_frontend",
-        "console_client",
-        "http_backend",
-        "native_admin_connections",
-        "project_client",
-        "runtime_install",
-        "runtime_metadata",
-        "service_frontend",
-        "service_management",
-        "service_manager",
-        "service_runtime",
-        "unified_mcp",
-        "universal_launcher",
-        "usage_client"
-      ],
-      [
-        "embedding_pool_bootstrap",
-        "embedding_pool_process",
-        "unix_guardian"
-      ],
-      [
-        "process_roles",
-        "runtime_pair"
+        "catalog_coordinator"
       ]
     ],
+    "airk-cli": [],
     "airk-core": [
       [
         "binding",
@@ -115,6 +216,27 @@
         "extraction",
         "location",
         "retention"
+      ]
+    ],
+    "airk-endpoint": [],
+    "airk-frontend": [
+      [
+        "project_client",
+        "usage_client"
+      ]
+    ],
+    "airk-host": [
+      [
+        "process_roles",
+        "runtime_pair"
+      ]
+    ],
+    "airk-https": [],
+    "airk-inference": [
+      [
+        "embedding_pool_bootstrap",
+        "embedding_pool_process",
+        "unix_guardian"
       ]
     ],
     "airk-ingest": [
@@ -163,6 +285,14 @@
         "policy_ignore"
       ]
     ],
+    "airk-installer": [
+      [
+        "control_client",
+        "runtime_install",
+        "service_manager",
+        "universal_launcher"
+      ]
+    ],
     "airk-ipc": [],
     "airk-kernel": [
       [
@@ -200,6 +330,12 @@
         "vector"
       ]
     ],
+    "airk-service": [
+      [
+        "service_runtime",
+        "setup_role"
+      ]
+    ],
     "airk-store": [
       [
         "blobs",
@@ -222,16 +358,10 @@
         "vector_cache"
       ]
     ],
+    "airk-supervisor": [],
     "airkctl": []
   },
   "module_honesty": [
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/tests/catalog_upgrade.rs",
-      "value": "common/read_retry.rs",
-      "reason_class": "multi-declaration",
-      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
-    },
     {
       "kind": "path",
       "file": "crates/airk-cli/tests/combined_reads.rs",
@@ -280,20 +410,6 @@
       "value": "combined_reads/split.rs",
       "reason_class": "integration-test-root-child",
       "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
-    },
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/tests/combined_reads.rs",
-      "value": "common/http.rs",
-      "reason_class": "multi-declaration",
-      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
-    },
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/tests/combined_reads.rs",
-      "value": "common/read_retry.rs",
-      "reason_class": "multi-declaration",
-      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
     },
     {
       "kind": "path",

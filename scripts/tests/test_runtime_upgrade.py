@@ -535,13 +535,13 @@ class UpgradeFixtureOwnershipTests(unittest.TestCase):
             health = {"status":"health","observation":{"runtime_sha256":"a"*64,"executable_sha256":execution,"instance":"b"*32,"process_id":123}}
             # Match the actual Clap RuntimeCommand catalog and deny_unknown_fields
             # lifecycle Input, rather than blessing an invented mocked subcommand.
-            native = Path(__file__).parents[2] / "crates/airk-cli/src"
+            native = Path(__file__).parents[2] / "crates/airk-installer/src"
             runtime = (native / "runtime_install.rs").read_text(encoding="utf-8").split("pub enum RuntimeCommand {", 1)[1].split("\n}", 1)[0]
             commands = {re.sub(r"(?<!^)(?=[A-Z])", "-", value).lower()
                 for value in re.findall(r"^    ([A-Z][A-Za-z]+)\s*(?:\{|,)", runtime, re.MULTILINE)}
             self.assertIn("lifecycle", commands)
             self.assertNotIn("stop", commands)
-            lifecycle = (native / "runtime_install" / "lifecycle.rs").read_text(encoding="utf-8").split("pub(super) struct Input {", 1)[1].split("\n}", 1)[0]
+            lifecycle = (native / "runtime_install" / "lifecycle.rs").read_text(encoding="utf-8").split("pub struct Input {", 1)[1].split("\n}", 1)[0]
             fields = set(re.findall(r"^    ([a-z_]+):", lifecycle, re.MULTILINE))
             self.assertEqual(fields, {"caller", "key", "action", "expected_instance", "runtime", "force"})
             calls = []

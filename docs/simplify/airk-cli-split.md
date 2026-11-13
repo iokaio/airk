@@ -10,7 +10,7 @@ records each step.
 The work that remains after the 1.8.31 installers are tested is listed in
 [airk-cli-split-followups.md](airk-cli-split-followups.md): installation lookups
 out of `airk-installer`, `runtime_metadata` below the supervisor, component
-contracts, and the admin bundle location.
+contracts, the admin bundle location and unused dependencies.
 
 ## Why
 

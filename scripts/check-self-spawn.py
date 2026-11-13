@@ -35,18 +35,18 @@ ALLOWED = {
 # Each is reported on every run and must be deleted by its owner; it is not
 # permission to add another.
 LEGACY_PENDING = {
-    ("crates/airk-cli/src/embedding_client.rs", "spawn"):
+    ("crates/airk-inference/src/embedding_client.rs", "spawn"):
         "paired 1.8.14 payload's airk-embed helper; verify_helper refuses a single "
         "executable (installer/inference owner)",
-    ("crates/airk-cli/src/runtime_install/commands.rs", "run_with"):
+    ("crates/airk-cli/src/runtime_commands.rs", "run_with"):
         "paired-payload `runtime foreground` forwarding; a single executable serves "
         "directly (installer owner)",
-    ("crates/airk-cli/src/unix_guardian/shared.rs", "serve"):
+    ("crates/airk-inference/src/unix_guardian/shared.rs", "serve"):
         "Unix shared provider guardian for paired legacy inference; removed with the "
         "process roles (step H10)",
-    ("crates/airk-cli/src/unix_guardian/shared.rs", "spawn"):
+    ("crates/airk-inference/src/unix_guardian/shared.rs", "spawn"):
         "Unix shared provider guardian start; removed with the process roles (step H10)",
-    ("crates/airk-cli/src/unix_guardian.rs", "spawn"):
+    ("crates/airk-inference/src/unix_guardian.rs", "spawn"):
         "Unix process-guardian of a child-process project owner (`airk project-worker`); "
         "the service's in-process owners never start it; removed with the roles (step H10)",
 }
@@ -59,15 +59,15 @@ LEGACY_PENDING = {
 # external (a program that is not AIRK), primitive (starts what its caller
 # built; the caller is listed separately).
 STARTS = {
-    ("crates/airk-cli/src/embedding_client.rs", "spawn"):
+    ("crates/airk-inference/src/embedding_client.rs", "spawn"):
         "legacy: paired airk-embed helper; verify_helper refuses a single executable",
-    ("crates/airk-cli/src/embedding_pool_process.rs", "start_from_main"):
+    ("crates/airk-inference/src/embedding_pool_process.rs", "start_from_main"):
         "legacy: paired pool helper; runtime_pair::verify_helper refuses a single executable",
-    ("crates/airk-cli/src/embedding_pool_process/owned.rs", "spawn"):
+    ("crates/airk-inference/src/embedding_pool_process/owned.rs", "spawn"):
         "primitive: legacy paired pool helper start (callers build the helper command)",
-    ("crates/airk-cli/src/embedding_pool_process/shared.rs", "spawn"):
+    ("crates/airk-inference/src/embedding_pool_process/shared.rs", "spawn"):
         "legacy: shared guarded pool helper in a named job (paired payloads only)",
-    ("crates/airk-cli/src/explorer_assistance.rs", "command"):
+    ("crates/airk-endpoint/src/explorer_assistance.rs", "command"):
         "external: VS Code's own JavaScript runtime for the Explorer Assistance server "
         "named by an extension-written, hash-checked descriptor; not an airk process",
     ("crates/airk-process/src/bounded_command.rs", "execute_native_observation"):
@@ -78,14 +78,14 @@ STARTS = {
         "primitive: the bounded native command runner (no shell, output and time limits)",
     ("crates/airk-process/src/bounded_command.rs", "spawn"):
         "primitive: std spawn without error dialogs; callers build the command",
-    ("crates/airk-cli/src/manual_start.rs", "airkctl"):
+    ("crates/airk-installer/src/manual_start.rs", "airkctl"):
         "external: the airkctl installed beside airk, for `airk` with no or user-style "
         "arguments (split plan §5.1, U94); airkctl verifies the installation and admits "
         "the service-detached role",
     ("crates/airkctl/src/admin.rs", "browse"):
         "external: the desktop's default handler (`cmd /C start`, `open`, `xdg-open`) for "
         "`airkctl admin open`'s owner-only redirect file; the launch code is never an argument",
-    ("crates/airk-cli/src/setup_role/effects.rs", "start"):
+    ("crates/airk-service/src/setup_role/effects.rs", "start"):
         "external: the installed airkctl `service start` from the setup role's start step "
         "(U94: one start implementation); setup waits for it",
     ("crates/airkctl/src/uninstall.rs", "spawn_setup"):
@@ -96,41 +96,41 @@ STARTS = {
         "(`airkctl agents launch`, U91); not an airk process",
     ("crates/airk-process/src/detached.rs", "spawn_detached"):
         "primitive: detached Windows service start that inherits no handles",
-    ("crates/airk-cli/src/runtime_install.rs", "self_test_observation"):
+    ("crates/airk-installer/src/runtime_install.rs", "self_test_observation"):
         "one-shot: installer `runtime self-test` child of a staged image, awaited with a deadline",
-    ("crates/airk-cli/src/runtime_install.rs", "start_with_observation_clock"):
+    ("crates/airk-installer/src/runtime_install.rs", "start_with_observation_clock"):
         "service: on-demand `serve` only when login registration was refused; the "
         "single-instance lease refuses a second resident",
-    ("crates/airk-cli/src/runtime_install/activation/catalog_upgrade/authority.rs", "qualify"):
+    ("crates/airk-installer/src/runtime_install/activation/catalog_upgrade/authority.rs", "qualify"):
         "one-shot: candidate `runtime catalog-authority-probe`, awaited",
-    ("crates/airk-cli/src/runtime_install/commands.rs", "run_with"):
+    ("crates/airk-cli/src/runtime_commands.rs", "run_with"):
         "legacy: paired-payload `runtime foreground` forwarding and helper identity check",
-    ("crates/airk-cli/src/service_manager.rs", "check_executable_identity"):
+    ("crates/airk-installer/src/service_manager.rs", "check_executable_identity"):
         "one-shot: `<helper> --version` identity check of a paired helper, bounded",
-    ("crates/airk-cli/src/service_manager.rs", "launchctl"):
+    ("crates/airk-installer/src/service_manager.rs", "launchctl"):
         "external: /bin/launchctl through the bounded native command runner",
-    ("crates/airk-cli/src/service_manager.rs", "query"):
+    ("crates/airk-installer/src/service_manager.rs", "query"):
         "external: Windows PowerShell scheduled-task query, bounded, task identity as data",
-    ("crates/airk-cli/src/service_manager.rs", "schtasks"):
+    ("crates/airk-installer/src/service_manager.rs", "schtasks"):
         "external: schtasks.exe through the bounded native command runner",
-    ("crates/airk-cli/src/service_manager.rs", "systemctl"):
+    ("crates/airk-installer/src/service_manager.rs", "systemctl"):
         "external: /usr/bin/systemctl --user through the bounded native command runner",
-    ("crates/airk-cli/src/service_manager_macos.rs", "invoke"):
+    ("crates/airk-installer/src/service_manager_macos.rs", "invoke"):
         "one-shot: the verified Mac login target's `runtime` login status/register/"
         "unregister command, bounded",
     ("crates/airk-cli/src/standalone_setup/launch.rs", "launch_client"):
         "external: `airk setup --launch` runs the chosen coding client in the user's "
         "terminal and waits for it",
-    ("crates/airk-cli/src/universal_launcher.rs", "run"):
+    ("crates/airk-installer/src/universal_launcher.rs", "run"):
         "one-shot: the universal launcher forwards a typed command to the selected "
         "installation and waits for it",
-    ("crates/airk-cli/src/unix_guardian.rs", "serve"):
+    ("crates/airk-inference/src/unix_guardian.rs", "serve"):
         "legacy: Unix process-guardian provider start for a child-process owner (step H10)",
-    ("crates/airk-cli/src/unix_guardian.rs", "spawn"):
+    ("crates/airk-inference/src/unix_guardian.rs", "spawn"):
         "legacy: Unix process-guardian start for a child-process owner (step H10)",
-    ("crates/airk-cli/src/unix_guardian/shared.rs", "serve"):
+    ("crates/airk-inference/src/unix_guardian/shared.rs", "serve"):
         "legacy: Unix shared provider guardian for paired inference (step H10)",
-    ("crates/airk-cli/src/unix_guardian/shared.rs", "spawn"):
+    ("crates/airk-inference/src/unix_guardian/shared.rs", "spawn"):
         "legacy: Unix shared provider guardian start (step H10)",
     ("crates/airk-ingest/src/pdf_worker.rs", "extract_inner"):
         "pdf: the one isolated PDF parser child",

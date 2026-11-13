@@ -53,7 +53,7 @@ pre-split installer flow described in the rest of this page
   installed `airkctl`, and applies certificate trust with consent. Uninstall
   removes login startup, owned trust, the pointer and the record; index data
   is deleted only on an explicit purge. Details:
-  [`setup_role/CONTRACT.md`](../crates/airk-cli/src/setup_role/CONTRACT.md).
+  [`setup_role/CONTRACT.md`](../crates/airk-service/src/setup_role/CONTRACT.md).
 - **Login startup** runs `airk __airk_role service-login --install-id <id>`,
   admitted only for the pointer's installation and the record's exact image.
 - **`airkctl service uninstall --yes [--purge-indexes]`** writes an
@@ -507,7 +507,7 @@ adoption's withdrawal is settled first (see above); changed file identities and
 unknown entries require recovery rather than silent inventory widening. Final real predecessor, process, Windows and Mac acceptance
 remain separate qualification gates recorded in the working release ledger.
 
-The source owners are [runtime verification](../crates/airk-cli/src/runtime_install.rs),
+The source owners are [runtime verification](../crates/airk-installer/src/runtime_install.rs),
 [the native builder](../scripts/build-service-runtime.py), and
 [extension verification](../packages/vscode/src/airkctl/verify.ts).
 
@@ -611,9 +611,9 @@ An internal AIRK HTTPS check does not qualify that external host. Client formats
 protected VS Code input resolution, remote/container limits and actual connection
 checks are documented in [agent integration](agent-integration.md).
 
-The source owners are [HTTP setup](../crates/airk-cli/src/runtime_http_commands.rs),
-[private identity/credential storage](../crates/airk-cli/src/http_endpoint.rs) and
-[owned trust](../crates/airk-cli/src/http_endpoint/trust.rs).
+The source owners are [HTTP setup](../crates/airk-https/src/runtime_http_commands.rs),
+[private identity/credential storage](../crates/airk-endpoint/src/http_endpoint.rs) and
+[owned trust](../crates/airk-endpoint/src/http_endpoint/trust.rs).
 Issuer replacement uses an explicit receipt-backed prepare/trust/commit/finalize
 transaction, with prepared-only abort and an ordinary 24-hour overlap. Expiry
 does not remove trust automatically. See [issuer rotation](local-https-api.md#explicit-issuer-rotation)
@@ -650,8 +650,8 @@ completion. Original request keys, publications and source bytes remain intact.
 
 Resume and rollback use the same operation/selection fences and actual durable
 outcome; they do not submit an uncertain mutation again. The implementation is in
-[checkpointed activation](../crates/airk-cli/src/runtime_install/activation/checkpoint.rs) and
-[service checkpointing](../crates/airk-cli/src/service_runtime/checkpoint.rs).
+[checkpointed activation](../crates/airk-installer/src/runtime_install/activation/checkpoint.rs) and
+[service checkpointing](../crates/airk-service/src/service_runtime/checkpoint.rs).
 Actual predecessor/version/OS campaign coverage remains a release gate.
 
 ## Registry 13 and downgrade compatibility

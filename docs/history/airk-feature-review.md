@@ -757,8 +757,8 @@ Linux x64, macOS ARM64 and macOS x64.
 
 - **What is embedded.** The executable embeds the target's MiniLM weights,
   tokenizer and configuration, checked by digest at build time
-  ([`build.rs`](../../crates/airk-cli/build.rs),
-  [`bundled_assets.rs`](../../crates/airk-cli/src/bundled_assets.rs)). It also links
+  ([`build.rs`](../../crates/airk-https/build.rs),
+  [`bundled_assets.rs`](../../crates/airk-host/src/bundled_assets.rs)). It also links
   ONNX Runtime CPU 1.22.1 statically.
 - **What is gone.** There is no `airk-embed` helper, no separately deployed ORT
   library and no launcher.
@@ -768,7 +768,7 @@ Linux x64, macOS ARM64 and macOS x64.
 - **Role copies are historical.** Copied role executables (`airk-service`,
   `airk-index`, `airk-source`) belong only to predecessor two-image payloads; the
   schema-2 single image refuses alias files
-  ([`process_roles.rs`](../../crates/airk-cli/src/process_roles.rs)).
+  ([`process_roles.rs`](../../crates/airk-host/src/process_roles.rs)).
 - **macOS.** The main executable stays inside its sealed, signed `AIRK.app`
   bundle and is never copied out of it, which preserves the fixes for issues #66
   and #67.
@@ -814,7 +814,7 @@ What is distinctive is that **proofs cannot be faked**:
   forge one.
 - The code states that "an in-process barrier can never manufacture a
   process-reap fact"
-  ([`service_inference.rs`](../../crates/airk-cli/src/service_inference.rs)).
+  ([`service_inference.rs`](../../crates/airk-inference/src/service_inference.rs)).
 - Old helper drain tickets can still be decoded for migration, but are never
   accepted as in-process proofs.
 - A caller that times out does not abort an FFI computation. Capacity stays
@@ -834,7 +834,7 @@ service, which is then recovered by its OS manager.
 - **Address.** The listener binds IPv4 loopback only, at
   `https://127.0.0.1:57421/mcp` by default
   ([`service_http.rs`](../../crates/airk-core/src/service_http.rs),
-  [`http_endpoint.rs`](../../crates/airk-cli/src/http_endpoint.rs)). It never binds
+  [`http_endpoint.rs`](../../crates/airk-endpoint/src/http_endpoint.rs)). It never binds
   `0.0.0.0`, `::` or a hostname. IPv6 is off.
 - **When the port is taken.** If the preferred or saved port returns
   `AddrInUse`, the service binds port 0 and **keeps that socket** through TLS
@@ -856,7 +856,7 @@ service, which is then recovered by its OS manager.
 ### 12.2 TLS identity
 
 Each installation creates its own private CA
-([`http_endpoint_tls.rs`](../../crates/airk-cli/src/http_endpoint/tls.rs)):
+([`http_endpoint_tls.rs`](../../crates/airk-endpoint/src/http_endpoint/tls.rs)):
 
 | Certificate | Key and lifetime | Constraints |
 | --- | --- | --- |
@@ -874,7 +874,7 @@ roots stay in place**. Nothing ever disables validation.
 
 | Client | Mechanism | Evidence |
 | --- | --- | --- |
-| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../../crates/airk-cli/src/http_endpoint/trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
+| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../../crates/airk-endpoint/src/http_endpoint/trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
 | Claude Code | Additive `NODE_EXTRA_CA_CERTS` bundle | Claude 2.1.118 passed scoped reads, reconnect, additive trust and wrong-issuer rejection on Windows debug |
 | Codex | `CODEX_CA_CERTIFICATE` bundle and `bearer_token_env_var` | A real Codex experiment confirmed the local CA is trusted and an untrusted issuer is rejected before HTTP |
 | Linux OS trust | Unsupported in 1.8.14; needs an administrator | Documented limitation |
@@ -887,7 +887,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 
 ### 12.4 Credentials
 
-[`http_endpoint_store.rs`](../../crates/airk-cli/src/http_endpoint/store.rs):
+[`http_endpoint_store.rs`](../../crates/airk-endpoint/src/http_endpoint/store.rs):
 
 - **One bearer credential per reviewed client connection.** It is random, at
   least 256 bits, in the form `airk1.<connection_id>.<64 hex>`, and can be revoked
@@ -905,7 +905,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 
 ### 12.5 Gateway defences
 
-[`http_gateway.rs`](../../crates/airk-cli/src/http_gateway.rs):
+[`http_gateway.rs`](../../crates/airk-https/src/http_gateway.rs):
 
 - **Host.** The Host header must be exactly the allowed value. A missing,
   duplicated or wrong Host gets `host_refused`, which blocks DNS rebinding.
@@ -943,7 +943,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 ### 12.7 Issuer rotation
 
 Rotation is a phased, receipt-backed migration
-([`http_endpoint_rotation.rs`](../../crates/airk-cli/src/http_endpoint/rotation.rs)):
+([`http_endpoint_rotation.rs`](../../crates/airk-endpoint/src/http_endpoint/rotation.rs)):
 
 1. prepare, which starts a 24-hour overlap;
 2. publish bundles;
@@ -965,13 +965,13 @@ lifecycle qualification is pending.
 
 The OS manager starts the approved image directly. No launcher, foreground
 wrapper or shell sits in between
-([`service_manager.rs`](../../crates/airk-cli/src/service_manager.rs)).
+([`service_manager.rs`](../../crates/airk-installer/src/service_manager.rs)).
 
 - **Windows.** A user-owned Task Scheduler entry, with no administrator service.
 - **Linux.** A `systemctl --user` unit. libsystemd is loaded only from protected
   OS paths.
 - **macOS.** The signed `SMAppService` login-item adapter
-  ([`service_manager_macos.m`](../../crates/airk-cli/src/service_manager_macos.m)).
+  ([`service_manager_macos.m`](../../crates/airk-installer/src/service_manager_macos.m)).
   `RequiresApproval`, revoked approval and unverifiable jobs are reported as
   separate states.
 - **IPC peer checks.** On Unix the peer UID must equal `geteuid()`. On Windows the
@@ -987,7 +987,7 @@ An upgrade stages, quiesces, checkpoints, stops, replaces and restarts the
 service. It does not do a live cutover.
 
 - **Upgrade journal** (`upgrade-journal.json`,
-  [`runtime_checkpoint.rs`](../../crates/airk-cli/src/runtime_install/activation/checkpoint.rs)). It is
+  [`runtime_checkpoint.rs`](../../crates/airk-installer/src/runtime_install/activation/checkpoint.rs)). It is
   digest-chained and saved with compare-and-set. Its stages are:
   1. `StagedVerified`
   2. `Quiescing`
@@ -1318,7 +1318,7 @@ Commits, pushes, PRs and publication remain unauthorised.
 These are observations only. No source or documentation outside this file was
 changed.
 
-1. [`explorerWebview/manage.tsx:467`](../../packages/vscode/src/explorerWebview/manage.tsx)
+1. [`explorerWebview/manage.tsx:467`](https://github.com/iokaio/airk/blob/9e1bf9c0c9500570808a9f0d4ac9cbf41843170f/packages/vscode/src/explorerWebview/manage.tsx)
    says "One connection provides 27 tools". The unified catalog and the README
    have 29.
 2. Two doc comments still say DiskANN's mutable provider is "not selected by the

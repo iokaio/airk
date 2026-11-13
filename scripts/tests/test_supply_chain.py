@@ -42,7 +42,7 @@ class SourcePolicyTests(unittest.TestCase):
         self.assertEqual(result["packages"], result["registry_packages"] + result["git_packages"])
         self.assertEqual(result["git_packages"], 2)
         # The nine airk-* crates (airk-ipc since split plan G6) plus airkctl (C4a).
-        self.assertEqual(result["first_party_packages"], 10)
+        self.assertEqual(result["first_party_packages"], 19)
         self.assertFalse(result["baseline_is_security_audit"])
 
     def test_changed_git_revision_url_and_registry_checksum_require_review(self):

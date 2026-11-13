@@ -129,6 +129,9 @@ UNRESOLVED_OK = {
     # scripts/build-downloads.py copies these images beside the built page.
     ("site/index.html", "./images/workbench-1.7.1-results.png"),
     ("site/index.html", "./images/explorer-1.7.1.png"),
+    # packages/admin/build.mjs replaces these placeholders with the hashed bundle names.
+    ("packages/admin/src/index.html", "{{APP_CSS}}"),
+    ("packages/admin/src/index.html", "{{APP_JS}}"),
 }
 
 # History records added by later reviewed steps rather than moved by this

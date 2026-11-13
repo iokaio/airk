@@ -527,4 +527,4 @@ Links refer to the reviewed worktree. Existing dated research remains historical
 [S10]: ../../crates/airk-ingest/src/tables.rs
 [S11]: ../../crates/airk-ingest/src/adapters/profile.rs
 [S12]: ../architecture.md
-[S13]: ../../crates/airk-cli/src/tools.rs
+[S13]: https://github.com/iokaio/airk/blob/5adb4677dbfe90952d324a8daadc87042250e0ef/crates/airk-cli/src/tools.rs

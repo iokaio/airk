@@ -132,7 +132,7 @@ See the [pilot report](contract-generation-pilot.md).
 ## 6. S1.4: in-place untangling (before and after)
 
 The module contract is
-[`install_files/CONTRACT.md`](../../crates/airk-cli/src/install_files/CONTRACT.md).
+[`install_files/CONTRACT.md`](../../crates/airk-host/src/install_files/CONTRACT.md).
 The rewrite is re-verifiable with
 `python scripts/dev/s1_4_install_files.py --check`.
 

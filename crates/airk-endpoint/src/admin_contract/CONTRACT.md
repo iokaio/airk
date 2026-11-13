@@ -5,7 +5,7 @@ the browser adapter (split plan §7; [contracts](../../../../docs/split/contract
 §4, amended by §4.11 and the adopted
 [security review](../../../../docs/split/security-review-i3.md)). Contract step
 C5: types, pure decisions and fixtures only. Its one consumer is the Phase 5
-handler [`admin_plane`](../admin_plane/CONTRACT.md).
+handler [`admin_plane`](../../../airk-https/src/admin_plane/CONTRACT.md).
 
 ## Interface
 
