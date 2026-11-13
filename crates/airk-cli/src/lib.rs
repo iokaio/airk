@@ -22,13 +22,11 @@ pub use airk_host::embedding_pool_protocol;
 pub use airk_inference::embedding_client;
 pub use airk_inference::embedding_pool_bootstrap;
 pub use airk_inference::embedding_pool_client;
-pub(crate) use airk_inference::embedding_pool_process;
 mod http_backend;
 pub use airk_endpoint::http_endpoint;
 mod http_gateway;
-#[cfg(feature = "local-inference")]
-pub(crate) use airk_inference::inference_completion_ledger;
-#[cfg(feature = "local-inference")]
+// Only the gateway's inference-owner tests use the engine through this path.
+#[cfg(all(test, feature = "local-inference"))]
 pub(crate) use airk_inference::inference_engine;
 /// The local transport lives in `airk-ipc` (split G6); `ipc` keeps the old path.
 pub use airk_ipc as ipc;
@@ -40,9 +38,8 @@ pub(crate) use airk_catalog_control::registry_console;
 pub(crate) use airk_host::read_attempt;
 /// Private role admission (split plan §5.1, step 3.0).
 pub mod role_admission;
-mod runtime_metadata;
 pub use airk_host::runtime_pair;
-pub(crate) use airk_inference::service_inference;
+pub(crate) use airk_supervisor::runtime_metadata;
 pub mod service_configuration;
 pub mod service_frontend;
 /// Phase 7: the private `setup` and `service-login` roles (I4 writer).
@@ -60,17 +57,13 @@ pub mod standalone_setup;
 pub mod tool_call;
 /// M2 tool catalog documents (split step 3a.1).
 pub mod tool_catalog;
-mod worker_host;
-mod worker_scope;
-mod worker_transport;
 
 pub use airk_host::bundled_assets;
-pub mod derived_worker;
+pub use airk_supervisor::derived_worker;
 pub mod project_client;
 pub use airk_host::project_protocol;
-mod project_supervisor;
-pub mod project_worker;
-mod project_worker_split;
+pub(crate) use airk_supervisor::project_supervisor;
+pub use airk_supervisor::project_worker;
 
 pub(crate) use airk_host::service_resource_policy;
 
@@ -89,22 +82,20 @@ pub use airk_installer::service_manager;
 pub(crate) use airk_host::checkpoint_fence;
 /// The native upgrade checkpoint packet and fence writers (split step 2b).
 pub(crate) use airk_host::checkpoint_packet;
-pub(crate) use airk_host::child_job;
 
 pub(crate) use airk_host::native_process;
 /// Native read result classification shared by clients and tests (split step 2b).
 pub(crate) use airk_host::native_read_result;
-pub(crate) use airk_host::process_diagnostics;
 pub(crate) use airk_host::process_roles;
 
 pub use airk_host::source_protocol;
 
-pub mod source_worker;
+pub use airk_supervisor::source_worker;
 
-mod source_supervisor;
 pub(crate) use airk_host::user_paths;
 #[cfg(unix)]
 pub use airk_inference::unix_guardian;
+pub(crate) use airk_supervisor::source_supervisor;
 
 pub use airk_host::cli_io;
 pub mod client_requests;

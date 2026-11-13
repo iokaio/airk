@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "airk-supervisor"
+description = "AIRK service: the supervisor part of the former airk-cli crate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model", "airk-host/local-inference", "airk-endpoint/local-inference", "airk-inference/local-inference", "airk-catalog-control/local-inference", "airk-installer/local-inference"]
+bundled-model = []
+parser-training = []
+# Test helpers for the tests of crates built on this one (never production).
+test-support = ["airk-host/test-support", "airk-endpoint/test-support", "airk-inference/test-support", "airk-catalog-control/test-support", "airk-installer/test-support"]
+
+[dependencies]
+airk-host.workspace = true
+airk-endpoint.workspace = true
+airk-inference.workspace = true
+airk-catalog-control.workspace = true
+airk-installer.workspace = true
+airk-core.workspace = true
+airk-ipc.workspace = true
+airk-process.workspace = true
+airk-kernel.workspace = true
+airk-mcp.workspace = true
+airk-store.workspace = true
+airk-retrieval = { workspace = true, default-features = false }
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "sync"] }
+tempfile.workspace = true
+sha2.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+ring.workspace = true
+rcgen.workspace = true
+schemars = "1.2.2"
+x509-parser.workspace = true
+subtle.workspace = true
+time.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+airk-host = { workspace = true, features = ["test-support"] }
+airk-endpoint = { workspace = true, features = ["test-support"] }
+airk-inference = { workspace = true, features = ["test-support"] }
+airk-catalog-control = { workspace = true, features = ["test-support"] }
+airk-installer = { workspace = true, features = ["test-support"] }
+hyper = { workspace = true, features = ["client"] }
+airk-ingest.workspace = true
+rusqlite.workspace = true
+tokio = { workspace = true, features = ["process", "test-util"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_System_IO", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_RemoteDesktop", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_SystemServices", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Console"] }

@@ -98,7 +98,6 @@
    "combined_frontend",
    "console_client",
    "project_client",
-   "read_attempt_client",
    "service_frontend",
    "session",
    "tool_call",

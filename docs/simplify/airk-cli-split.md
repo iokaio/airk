@@ -348,3 +348,20 @@ platform files (`runtime_macos_login.rs`, `service_manager_{linux,macos}.rs`) an
 - Clippy, default and `local-inference`: pass.
 - Library tests are identical by identity: default 1070, `local-inference` 1109.
 - `airk-installer`'s own 414 tests run in 42 s.
+
+## Step 3f: `airk-supervisor` extracted (12 November 2026)
+
+10 modules (38 files) moved into `crates/airk-supervisor`. No test helpers needed `test-support`.
+
+- **Deleted.** Nine `pub(crate) use` re-exports in `airk-cli` had no user left (a clean compile is the
+  evidence): `embedding_pool_process`, `service_inference`, `inference_completion_ledger`,
+  `worker_host`, `worker_scope`, `worker_transport`, `project_worker_split`, `child_job`,
+  `process_diagnostics`.
+- **Narrowed.** `inference_engine`'s re-export is now `cfg(all(test, feature = "local-inference"))`;
+  only the gateway's inference-owner tests use it.
+
+**Evidence.**
+
+- Clippy, default and `local-inference`: pass.
+- Library tests are identical by identity: default 1070, `local-inference` 1109.
+- `airk-supervisor`'s own 84 tests run in 54 s.
