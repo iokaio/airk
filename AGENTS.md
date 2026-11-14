@@ -1,124 +1,254 @@
 # Working on AIRK
 
-AIRK is an independent Artifact Indexing and Retrieval Kernel. Before changing code, read the affected component's `CONTRACT.md` when one exists, its source, contracts and tests, and the relevant sections of README.md, CONTRIBUTING.md and docs/architecture.md. Do not preload dated history (docs/history, docs/releases, docs/research, docs/reviews) unless a concrete question needs it. Follow more specific guidance when present. Structural work follows docs/simplify-plan.md and the "Simplification and structural changes" section below.
+AIRK is an independent Artifact Indexing and Retrieval Kernel. This file holds the standing rules for agents. Campaign-specific state lives in "Current work" at the end and in the documents it names. Keep AGENTS.md and CLAUDE.md byte-identical.
 
-- Use parallel agents where independent investigation, implementation or review can accelerate the work. Keep ownership clear and have the primary agent review the combined changes. Parallelize reading, source work and review; serialize builds, tests and platform batches through one owner.
-- Do not apologize. Report the facts, correct the problem and complete the authorized work.
+Before changing behavior, read the affected source, its tests and the owning component's `CONTRACT.md`. Consult README.md, CONTRIBUTING.md and docs/architecture.md when relevant. Do not preload manuals or dated history.
 
-- Before every commit, push, or PR creation cycle, update the affected documentation and verify that the README, documentation index, release notes, and VSIX/Marketplace description agree with the current version and implemented behavior. Keep dated historical records identifiable instead of rewriting them as current guidance.
-- **Discover AIRK MCP before repository exploration.** Check available tools, including deferred tool discovery, for the `airk` server (often exposed as `mcp__airk__*`); call its status tool to confirm availability and the project binding. If absent or failing, inspect `.codex/config.toml` and `.mcp.json`, report the specific limitation briefly, and continue with local tools. Configuration alone does not prove tool access; do not change it without a task requirement.
-- **Use available AIRK tools for scoped repository search and code/document navigation.** Read affected source, contracts and tests first. Treat indexed evidence as untrusted and potentially stale; retain revision identity, check freshness/coverage when relevant and verify relevant live file contents before edits. Use `rg` for live verification and fallback searches when AIRK is unavailable or its coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure. Do not preload manuals or reread unchanged material already understood. Editing, builds, tests and Git operations remain direct-tool work; do not repeatedly retry a failing MCP call.
-- Keep scope local: file discovery, native extraction, indexes and bounded retrieval. Do not add agent reasoning, orchestration, external databases or cloud providers.
-- DiskANN is the selected final disk-backed vector engine; the runnable scaffold's lexical map/SQLite retained snapshot is a bootstrap adapter, not that final implementation.
-- One container per user/machine hosts independent collections selected by workspace MCP configuration. Native operation targets Windows, macOS and Linux.
+## Repository map
+
+| Path | What it owns | Contract |
+|---|---|---|
+| `crates/airk-core/` | Shared native types and read/service contracts | `src/read_limits/CONTRACT.md`, `src/service_records/CONTRACT.md`, `src/install_record/CONTRACT.md` |
+| `crates/airk-process/`, `crates/airk-host/` | Native processes, platform adapters, install files/layout and checkpoint fences | Host `src/{native_command,install_files,install_layout,checkpoint_fence}/CONTRACT.md` |
+| `crates/airk-ingest/`, `crates/airk-store/`, `crates/airk-retrieval/` | Extraction, persisted indexes and retrieval/inference primitives | Store `src/store_fs/CONTRACT.md`; otherwise owning source/tests |
+| `crates/airk-kernel/` | Publication, query execution, budgets and Workbench plans | Owning source/tests and `docs/architecture.md` |
+| `crates/airk-mcp/` | Canonical evidence handlers, MCP schemas and SDK transport | `docs/read-interface-parity.md`, native schemas/tests |
+| `crates/airk-ipc/` | Same-user transport, frames and I1 control protocol | `CONTRACT.md` |
+| `crates/airkctl/` | CLI, session and agent-config writing | `src/contract/CONTRACT.md` (I2) |
+| `crates/airk-endpoint/`, `crates/airk-https/` | Endpoint contracts, HTTPS gateway and Admin handlers | Endpoint `src/admin_contract/CONTRACT.md`; HTTPS `src/admin_plane/CONTRACT.md` (I3) |
+| `crates/airk-catalog-control/`, `crates/airk-frontend/` | Catalog mutations and service-side client/read adapters | Owning source/tests; I1/I2/I3 where crossed |
+| `crates/airk-inference/`, `crates/airk-supervisor/` | Inference lifetime and in-process workers | Owning source/tests and `docs/process-model.md` |
+| `crates/airk-installer/`, `crates/airk-service/`, `crates/airk-cli/` | Installation, resident service/setup and thin `airk` executable | Service `src/setup_role/CONTRACT.md`; Core install-record contract |
+| `packages/vscode/` | VS Code host, Explorer and Workbench | I2 plus `docs/split/contracts.md` |
+| `packages/admin/` | Browser/Admin presentation and shared UI workflows | I3 plus `docs/split/contracts.md` |
+| `scripts/`, `.github/workflows/` | Checks, packaging, installers and release workflows | `CONTRIBUTING.md`, `docs/ci-and-builds.md`, script tests |
+| `temp/`, `.airk/` and private fixture/state subpaths under `artifacts/` (listed in Current work) | Local scratch and private/index state. Never staged, packaged or published. | none |
+
+Contract paths in the table are relative to their named crate. Dependency direction: clients/transports call owning service/kernel APIs; kernel uses ingest/store/retrieval, which use Core contracts. Core and process foundations have no AIRK dependencies. Exact edges live in Cargo manifests and `scripts/dev/boundary-exceptions.json`; architectural rationale is in docs/architecture.md.
+
+## Commands
+
+Run from the repository root with pinned toolchains and provisioned inputs. Select the affected crate/features/tests; these commands are a menu, not a mandatory full run for every edit.
+
+| Purpose | Command |
+|---|---|
+| Format / verify | `cargo fmt --all`; `cargo fmt --all -- --check` |
+| Scoped Rust check (Clippy) | `python scripts/dev-check.py -p <crate>` plus needed features/targets |
+| Scoped tests | `cargo nextest run --profile ci -p <crate> --locked --timings -E '<test expression>'` (add required features/target directory) |
+| Integration preflight | `python scripts/check-service-clients.py --runtime-dir <matched-debug-pair-dir> --files 16 --model --report <receipt.json>` |
+| Doctests | `cargo test --doc --workspace --locked --timings` |
+| Extension type check / build | `npm run compile --prefix packages/vscode`; tests: `npm test --prefix packages/vscode` |
+| Admin build / verify / tests | `npm run build --prefix packages/admin`; `npm run check --prefix packages/admin`; `npm test --prefix packages/admin` |
+| Read-surface parity | Use the [per-surface selections](docs/read-interface-parity.md#current-per-surface-selections) for CLI/session, MCP, Admin and Workbench |
+| Final workspace gate | `cargo clippy --workspace --all-targets --all-features --locked --timings -- -D warnings`, then `cargo test --workspace --all-features --locked --timings` |
+| Package tested native pair | `python scripts/package-native.py --target <native-target> --runtime-dir <tested-pair-dir> --output artifacts/<fresh-output>` |
+| Package compiled universal VSIX | `python scripts/package-extension.py --channel stable --output artifacts/<fresh-output>` |
+| Repository / whitespace checks | `pwsh -NoProfile -File scripts/check-repo.ps1`; `git diff --check` |
+
+Nextest is pinned to `0.9.148`; the `ci` profile disables retries and excludes long campaigns by default. Final qualification restores excluded campaigns with `--ignore-default-filter` when using Nextest and runs doctests separately.
+
+Build the matched debug pair with `python scripts/build-service-runtime.py --destination <matched-debug-pair-dir> --profile debug` after provisioning model/static ORT inputs and sealing Admin assets. See [required qualification](CONTRIBUTING.md#required-qualification) and [split build order](docs/ci-and-builds.md). The builder stages matching `airk`/`airkctl` images and metadata; do not mix binaries from separate builds. Packaging consumes tested artifacts; full local build wrappers are in CONTRIBUTING.md.
+
+Do not run `cargo check` before an equivalent Clippy run; it compiles the same code twice.
+
+## Definition of done
+
+Select checks by changed behavior and the claim being made, using the owning contract, actual callers and active plan. Confirm selectors/features against live source. Combine applicable rows; broaden only for changed dependencies, unexplained failures or uncovered acceptance criteria. This is a selection aid, not an approval gate.
+
+| Change | Checks | What it proves |
+|---|---|---|
+| Prose or agent instructions | Relevant content/links, repository check and whitespace; repository check enforces AGENTS/CLAUDE hash equality | Documentation consistency, not runtime behavior |
+| Rust in one crate | Format, scoped dev-check and focused regressions, including refusal/recovery; report selected count | Selected crate behavior in the tested configuration |
+| Platform-only Rust | Scoped Clippy first on that platform, then affected regressions | Changed platform path only |
+| Component interface/state/invariants/lock order/test commands | Applicable checks plus owning CONTRACT.md update | Contract and implementation remain aligned |
+| Shared native contract | Reviewed contract and fixtures landed before consumers; affected consumer checks | Agreed shape/semantics and exercised consumers |
+| Structural move | Exact bytes for digested/persisted formats, parsed equality elsewhere; unchanged test identities/assertions; rerunnable script for large moves; affected embedded/package checks | Preserved behavior at measured boundaries |
+| CLI/session, Admin, Workbench or MCP reads | [Per-surface selections](docs/read-interface-parity.md#current-per-surface-selections), full-result/input comparisons through canonical handlers and affected real transports; document inapplicable operations | Equivalent exercised inputs/results; mocks alone do not qualify transport parity |
+| Frontend callback/view | Typecheck, affected behavior tests, regenerated asset verification; embedded/package consumer checks when qualifying an artifact | UI logic; artifact checks additionally cover shipped bytes |
+| Harness/script | Focused script tests and affected consumers; no unrelated native rebuild | Harness behavior, not fresh native qualification |
+| Installer, persistence or process ownership | Cheap failure/recovery regressions, then affected real process/platform/artifact checks on reviewed inputs | Ownership/recovery at the exercised boundary |
+| Release or platform outcome | Final workspace gate, doctests, runtime/package checks and active plan's qualification campaigns | Only the qualified platforms/artifacts; scoped passes do not replace final gates |
+
+## Authority
+
+Do without asking:
+
+- Complete the authorized outcome end to end, across approved component and milestone boundaries. Progress updates and agent handoffs are not approval gates.
+- Make routine implementation, diagnostic, regression, documentation and validation choices.
+- Continue in-scope corrections after failures. A failed-run count does not require reapproval.
+- Commit and push reviewed milestones within the branch/remote scope recorded in Current work.
+
+Ask first:
+
+- A genuinely unresolved user-owned decision, or a material scope expansion.
+- A new crate, unless the active plan already approves it and its extraction criteria are met.
+- A change to wire shapes, digest inputs or persisted formats without a recorded contract decision.
+- Anything requiring human consent.
+
+Never without explicit authorization for that action: publish, deploy, merge, open a PR, or message other people.
+
+While one dependency is blocked, continue independent work. Keep unrelated improvements out of the patch. Preserve unfinished and unrelated work in the tree.
+
+Report facts, correct problems and continue. Do not apologize, invent approvals or claim results you did not observe.
+
+## Product invariants
+
 - Preserve collection/root isolation, indexed revision identity, original document locations, budgets, failure reporting and source read-only behavior.
-- **Keep CLI, Workbench and MCP in parity.** Equivalent CLI, Workbench and MCP reads must share the canonical implementation and retain the same complete result data and supported inputs, including status/configuration, provenance, readiness, coverage, continuations and error/retry details. Every read-contract change must audit CLI tool calls/shell and equivalent convenience commands, MCP tools/aliases, and all affected Workbench commands, forms, structured details, JSON/Markdown copies and exports; never maintain a reduced parallel response or silently omit new fields. Add regression coverage comparing equivalent full results and input catalogs, excluding only documented transport identities/timing. Preserve scope, revision and budget checks; disclose truncation and explicitly selected subsets. Do not declare parity from renderer mocks alone: exercise the canonical native handlers and actual CLI/MCP transport paths where they add observations or reshape results.
-- Munarium, VCP and temp/ are inspiration only. Do not copy their implementation. Never stage, package, reproduce or publish temp/ or private/index state contents.
-- Preserve unrelated changes. Do not remove user work, weaken ignore patterns or alter identities to make checks pass. Do not publish, deploy or message others without authorization for that action.
-- Keep dependency direction in docs/architecture.md and, once approved, the allowed edges in docs/simplify-plan.md. Add adapters and modules inside the owning crate; extract a new crate only when it meets the extraction criteria in docs/simplify-plan.md §4.1 and the user has approved that extraction. Keep original source SPDX headers and dependency license notices.
-- Do not claim complete language understanding, resolved references, semantic search or cross-platform qualification without implementation and relevant evidence.
-- Run formatting, clippy, workspace tests, repository checks and whitespace checks from CONTRIBUTING.md. Record unavailable checks honestly.
-- Before creating a PR for new features or bug fixes, remind the user in Codex or Claude Code to manually increment the patch/build number (for example, 1.1.2 to 1.1.3). Keep native and extension versions and their lockfiles synchronized. Honor an already requested or completed version bump; do not increment it again for the same PR. Release-time version-bump PRs are a fallback, not a replacement for this reminder.
-- Keep AGENTS.md and CLAUDE.md byte-identical. Human DCO sign-offs belong to the authorized contributor; do not add agent signatures or invented approvals.
-- Every commit must include a DCO `Signed-off-by: Name <email>` trailer for the authorized human contributor. Use `git commit -s` with the contributor's configured identity and verify the trailer before considering the commit complete.
+- Never stage, package or publish `temp/`, `.airk/` and private fixture/state subpaths under `artifacts/` (listed in Current work). Package outputs under `artifacts/` are not automatically private state, but only verified distributable payloads may be published; never include fixtures, credentials, indexed source copies or live state.
+- Do not add unapproved cloud providers, external databases, sidecars or agent orchestration.
+- Munarium, VCP and `temp/` are inspiration. Do not copy their implementation.
+- Preserve unrelated user work, ignore patterns, source SPDX headers and dependency license notices.
+- Never alter identities or weaken a check to obtain a pass.
 
-## Simplification and structural changes
+### Read-surface parity
 
-docs/simplify-plan.md governs structural work: deletion, module moves, visibility, contract ownership, code generation, guardrails and crate extraction. Follow its tracks, milestones and review gates. Decisions its §9 lists as open belong to the user; do not start work that depends on one.
+airkctl CLI/session, Admin, Workbench and MCP reads go through one canonical implementation and must return equivalent results.
 
-- **Two tracks, never mixed in one change.** Release stabilization (Track R) is limited to resolving known blockers once the user authorizes that repair, evidence-backed deletion, the seams a blocker's root-cause note names, and the compatibility inventory. Everything else is restructuring (Track S). Do not resume the stopped installed-editor repair (docs/research/installer-stop-2026-11-09.md) without explicit authorization.
-- **One milestone at a time.** After Milestone S1 (compatibility inventory, smallest regression seams, one contract-generation pilot, one in-place untangling), stop and bring the results to the user before planning or starting later milestones.
-- **Delete only with evidence:** the code is not compiled; it has no caller after a clean compile and Clippy; or a reviewed compatibility-inventory row names a surviving owner whose tests pass. A "legacy" name is not evidence: predecessor discovery, source-selection capture, shutdown proof and resumable cleanup are live clean-break duties. Line counts are estimates, never exit criteria. Do not change the schema or persisted formats of existing `airk-state/1` installations without a schema-identity proof against retained fixtures or a user-approved new state contract.
-- **Structural steps preserve behavior.** Keep moves, renames, visibility and boundary changes separate from behavior changes. Capture golden outputs first and reproduce them: exact bytes for digested and persisted formats, parsed equality elsewhere, normalizing only documented transport identities and timing. Compare selected test identities and outcomes, not counts. Do not edit test assertions in a structural step. Generate large mechanical moves with a committed script that reviewers can re-run. Feature, embedded-asset and packaged-artifact changes still need checks at the affected artifact boundary.
-- **Untangle in place before extracting.** Give a cluster an owned module and facade inside its crate, move callers behind it in small groups and re-measure the module graph after each group.
-- **Module honesty.** Do not add `#[path]` mounts (except thin `*_windows`/`*_unix` platform switches), `include!` of Rust source, or files unreachable from a crate root. Default new items to private or `pub(crate)`; widen visibility only for a real external caller.
-- **Contracts first, one owner.** A change to a shared contract (Core types, control/read protocols, read descriptors, kernel hooks, generated mirrors) is its own step, reviewed and landed before the component work that consumes it. Do not add another hand-written TypeScript or Python mirror of a native contract; extend the owning Rust definition and its shared fixtures or decision cases. Generate mirrors only as far as the recorded pilot proved; keep semantic rules such as read-retry eligibility hand-written and tested against shared Rust-emitted cases. Change no wire shape, digest input or persisted format without the plan's D8 decision.
-- **Dispatch.** Keep exhaustive `match` on per-plane enums where it makes the compiler report a missing handler. Use registries only to remove duplicated catalogs (tool-name tables, schemas, help, intent vocabulary, counts); every registered operation needs exactly one handler, a declared authorization rule and a conformance applicability entry. Do not add feature-specific branches to generic paths (kernel indexing/publication, the worker job loop, MCP dispatch); add a hook for that purpose.
-- **Independent expectations.** Expected operation sets, schema fixtures and compatibility assertions are reviewed, checked-in values; never derive an expected value from the code under test. Do not add hand-copied versions or test/catalog counts to unrelated tests or prose.
-- **Determinism.** New decision logic takes an injected clock where its component has one. Do not add fixed sleeps to tests: advance a manual clock or wait for an observed event under a deadline. Quarantine a flaky test with owner, reason and expiry instead of retrying it or widening its deadline.
-- **Task scope.** Each delegated task owns one component and names its `CONTRACT.md` (when present), the files it may and may not edit, its T0 command, the golden outputs to reproduce and its "done when". An agent that needs a change outside its component stops and asks the integrator. Keep a behavior step to about 25 files and 1,500 changed lines, excluding generated output.
-- **Component contracts.** When a component has a `CONTRACT.md`, update it in the same change as any change to its interface, owned state, invariants, lock/fence order or test command.
-- **Measure, do not game.** Structural metrics (sizes, visibility, time reads, sleeps, vocabulary) inform review; they never justify cosmetic splitting, renaming or reshaping. Report outcome evidence (regression recurrence, expensive runs per accepted change) alongside structural results.
+- Preserve all supported inputs and result fields across commands, structured views, copies and exports. This includes provenance, readiness, coverage, continuations and error/retry details.
+- Disclose truncation and selected subsets.
+- Regressions compare full equivalent results and input catalogs, normalizing only documented transport identities and timing.
+- Exercise native handlers and the real transports wherever they reshape results. Renderer mocks alone do not establish parity.
 
-## Testing strategy, fixes and cost control
+## Contracts and structure
 
-Progress comes from finding defects with the cheapest check that can expose them, then using expensive runs once to confirm reviewed code. Builds, installed journeys, platform batches and CI are not the way to discover what is wrong. Repeating "patch the latest symptom, rebuild, rerun a long campaign" is the main source of wasted time in this project; stop and change approach when you notice it.
+- Shared native contracts have one owner, in Rust. Extend the Rust owner and use the approved generation pilot and Rust-emitted semantic cases. Do not add handwritten TypeScript or Python mirrors; they drift.
+- Existing `airk-state/1` formats need retained-fixture schema-identity proof, or an approved new state contract, before they change.
+- Keep behavior changes and mechanical restructuring in separate, distinguishable steps so each can be reviewed for what it is.
+- Add modules inside the owning crate. Untangle inside the crate before extracting. Keep new items private or `pub(crate)` unless an external caller needs them.
+- Do not add Rust `#[path]` mounts (thin platform switches excepted), `include!` of Rust source, or unreachable source files.
+- Keep exhaustive per-plane dispatch. Registries may consolidate duplicated catalogs, with one handler, one authorization rule and one conformance applicability per operation. Use owning hooks, not feature-specific branches, in generic indexing, worker or MCP paths.
+- Delete code only with evidence: it is uncompiled, it has no caller after a clean compile and Clippy, or a reviewed compatibility row names a tested surviving owner. A legacy-looking name is not evidence. Predecessor discovery, source selection, shutdown proof and resumable cleanup may still be live duties.
+- Test expectations must be independent of the code under test. Do not generate expected operation sets from implementation catalogs; such a test cannot fail when the catalog is wrong.
+- Line counts and cosmetic splitting are not completion criteria.
 
-### Scope and stopping rules
+## Validation
 
-- **Fix the requested outcome, then stop.** Before sustained work, record the acceptance criteria, smallest repair boundary, known blockers and exact intended validation in the existing task ledger. Keep small tasks lightweight; do not create extra planning documents or a broader hardening project.
-- **Bound the investigation.** Set an initial review checkpoint of at most 15 minutes unless the user specifies another budget. At that checkpoint, report the evidence, unresolved question and smallest next observation. Extend investigation only for a named acceptance blocker; do not silently add components, reviewers or successive general review rounds.
-- **Triage findings before adding work.** Classify each finding as a required blocker, a follow-up, or an unconfirmed hypothesis. Fix required blockers within the authorized scope. Put unrelated cleanup, refactoring, harness redesign and speculative hardening on the follow-up list. A manual installer request does not authorize turning the task into full release qualification. Report a material scope change before proceeding; request approval only when it exceeds existing authorization.
-- **Review assumptions before execution.** Review the complete affected flow and its tests together before compiling or running a campaign. Check real parser commands, required arguments, API bounds, read/write modes, ownership, process-exit evidence, clock semantics and complete response shapes. Test mocks and passing type checks do not establish those contracts. Do not interpret missing evidence as an empty or successful result.
-- **Finish one coherent correction.** Batch the known sibling regressions and production changes, review the combined diff, then freeze consumed inputs and the test selection. Stop exploration once the root cause and smallest complete correction are established. New findings do not automatically reopen the entire review or enlarge the patch.
-- **Use one defined validation/build sequence.** Order required gates from cheap to expensive, stop on failure, and reuse unchanged artifacts and passed evidence with their original identities. Do not repeat a broad suite, native build or installed journey for a change that only affects a narrower input. Do not add qualification campaigns without a concrete unresolved acceptance question. Required final gates remain required for the outcome being claimed.
-- **An unexpected failure is a stop signal.** Collect the complete batch, distinguish production defects from harness failures and missing prerequisites, and reassess the failure class before editing. Confirm the complete correction cheaply before another expensive attempt. If the failure requires work outside the fixed repair boundary, report that boundary and the minimal proposed change instead of starting another correction cycle automatically.
+Cheap first:
 
-### Mandatory correction cycle
+- Start with the cheapest useful diagnostic. Scoped tests, type checks and compiler diagnostics may guide investigation without a full investigation or ledger entry first.
+- Batch related regressions and compatible test configurations.
+- A filtered run must report its selected count. Zero selected is a failure.
+- Recheck only affected consumers during iteration. Reuse unchanged artifacts and passed evidence under their original identities.
 
-These rules apply to **all** checks, including T0 tests and compiler invocations. A cheap check is not permission to alternate tiny patches with test runs.
+Behavior defects:
 
-1. **Finish the code investigation first.** Collect the complete existing failure evidence, then trace the affected state flow and related callers. Record the root-cause hypothesis, invariants, failure/recovery boundaries and remaining uncertainty in the task ledger. Inspect applicable ownership, persistence, concurrency, budgets, cleanup, reload and platform paths together. Do not use successive test failures as a substitute for this review.
-2. **Batch the regressions.** Add the known sibling regressions together and run one scoped diagnostic batch to confirm the analyzed failure class. A passing hypothesis is not a reproduced defect. If evidence is insufficient, improve the smallest observation or test seam; do not guess a production fix or restart a long campaign.
-3. **Complete one coherent correction.** Finish the production changes, related callers, fixtures and regression coverage before another validation batch. Review types, signatures, fixture identities, consumed-input rosters and interruption paths before compiling. Do not run a compiler or test after each small edit.
-4. **Review and freeze before validation.** The primary agent reviews the combined source and all delegated changes against the recorded invariants. Freeze every consumed input, then perform one compilation and batched affected checks. Agents doing source work must not edit those inputs during the batch. Required independent review and T2/T3 gates still apply.
-5. **Collect, reassess, then correct.** On failure, collect the entire batch and audit all related diagnostics before editing. Prepare the complete next correction, review it, and only then repeat the affected batch. Do not fix the first reported line and immediately rerun. Reuse unaffected native artifacts and passed evidence with their original identities; never rebuild them for unrelated frontend, harness, fixture or documentation edits.
+- Trace the affected flow and its sibling callers. Keep a focused reproduction. Fix the whole known failure class, not the one instance.
+- Review the ownership, persistence, concurrency, recovery and platform boundaries the change touches.
+- Add a cheap seam when an expensive failure cannot otherwise be diagnosed locally.
 
-The task ledger must distinguish source-review findings, actual reproductions, passing hypotheses and qualification results. Anticipating defects from code is required work; testing confirms that work.
+Expensive runs (builds, installed journeys, qualification) confirm reviewed code. They are not the debugging loop.
 
-### Cost tiers
+- Review the combined change before an expensive run or corrective push. With delegated work, the primary agent reviews independently of the implementers. Working alone, do an explicit self-review and do not call it independent. Separately required security or contract reviews still apply.
+- Freeze consumed inputs for expensive runs; retain validation evidence as specified in Task ledger and reporting.
+- On failure, stop the batch and collect its diagnostics before correcting.
+- After a repeated failure, produce a revised diagnosis and cheap regression evidence before the next expensive attempt.
+- Never retry unchanged failed inputs until green, weaken assertions, widen limits or retries, or manufacture cleanup evidence.
 
-| Tier | Examples | Typical cost | Use |
-| --- | --- | --- | --- |
-| T0 | A batched named Node selection after one pinned local TypeScript compilation; scoped Python modules; a filtered Rust unit selection; static/contract checks | Seconds | Confirm a completed code investigation; follow the mandatory correction cycle |
-| T1 | Scoped `python scripts/dev-check.py -p <crate>`; workspace Clippy; mocked extension suite; full Python suite | About 1-2 minutes | Before handing a component back or requesting review |
-| T2 | Debug runtime build and VSIX; enabled-native extension suite; installed-editor journeys; actual client hosts; load campaigns; a Neo batch | 2-12 minutes each | Only to confirm reviewed code on frozen inputs |
-| T3 | Full workspace tests; optimized builds; Docker qualification; `scripts/ci-local.ps1`; hosted CI | 13-40 minutes each | Once per host, in a final ordered qualification ladder |
+Tests:
 
-### Find defects cheaply
+- Keep decision logic testable across hosts. Inject clocks and observers for deadlines and state transitions.
+- No fixed sleeps. Wait on observed events under a deadline.
+- Do not hide flakes with retries or relaxed limits. A quarantine needs an owner, a reason and an expiry.
+- Keep assertion-only tests outside production modules where practical, to avoid release recompilation.
 
-- Read the affected source, contracts, existing tests and retained failure evidence before running anything. Explain a failure from the code first; a run should confirm a stated hypothesis, not generate one.
-- After the code investigation, reproduce the known defects together in a T0 batch before the coherent correction, and keep those regressions. If a T2/T3 failure cannot be reproduced at T0/T1, add the smallest seam that makes the logic testable instead of iterating on the long run. Do not turn this requirement into a separate fix-and-test loop for every minor finding.
-- Keep decision logic testable on any host. Put classification, deadlines, state transitions, ownership/invalidation and retry eligibility in pure functions with injected observers and clocks, outside `cfg(target_os)` FFI modules, so Windows can exercise macOS/Linux logic. Keep the platform FFI layer thin.
-- Turn a recurring failure class into a cheap static or contract check. When the same class of failure appears a second time (missing container inputs, path length, fixture ACLs, Unix-only lint, unchecked clock assumptions), add the check that would have caught every instance before fixing the new one.
-- When source compiled only on another platform changed, the first step on that platform is scoped Clippy for the affected crate; stop the batch if it fails.
+## Build and host
 
-### Expensive runs confirm reviewed code
+Primary development host: Windows with PowerShell (`pwsh`); commands use PowerShell quoting and repository-relative paths except Mac Neo commands, whose shell is specified in Current work.
 
-Before any T2 or T3 run:
+- One Cargo owner at a time, covering builds and platform batches. Verify compiler descendants have exited before handing off.
+- Reuse the persistent checkout target or the existing isolated target (see Current work). Do not routinely `cargo clean` or replace warm targets on Windows; rebuilding them is slow.
+- Development incremental defaults: on for Windows, off elsewhere. Do not change release or CI policy to match local iteration.
+- Keep Cargo `--timings` for necessary builds and Clippy.
+- Reuse the pinned Nextest profiles and integration preflights from CONTRIBUTING.md.
+- Mac checks: see Current work for the host. Batch them over the existing SSH setup. Disk there is limited, so copy evidence outside the target and `cargo clean` after every batch, including failed ones.
 
-- The affected components pass their T0/T1 checks and the combined diff has been reviewed.
-- Inputs are frozen: nothing the run consumes is being edited. Record native, extension, harness and fixture identities separately, and abort if receipts show consumed inputs changed during the run.
-- Write down the exact command (reuse commands recorded in earlier receipts), the input identities, the expected result and the stop condition.
-- Order steps so the cheapest and most likely to fail run first, and stop at the first failure.
+## Parallel agents
 
-During and after:
+Use them when independent investigation, implementation or review helps. Give each clear file ownership and acceptance criteria. The primary agent reviews the combined change and may reassign work within the approved scope. Parallel agents edit and investigate; only the single Cargo owner builds.
 
-- Every filtered run must report its selected-test count. Zero selected tests is a failure, not a pass.
-- A change confined to a harness, script or fixture re-runs only the steps that consume it; do not rebuild native artifacts for it.
-- **Two strikes, then stop.** If a T2/T3 step fails twice for the same component, stop running. Write a root-cause note naming the wrong assumption and the missing cheap test, and bring it to the user before a third attempt.
-- Record each T2/T3 result in the task ledger with its receipt path when it is collected; do not let the ledger fall behind the receipts.
+## Navigation
 
-### Root cause and corrections
+- Once per session, discover the AIRK MCP tools and call status to confirm project binding. If they are absent or failing, say so briefly and use local tools. Do not retry repeatedly or change configuration to make discovery succeed. Inspect `.codex/config.toml` and `.mcp.json` only when diagnosing access.
+- Prefer AIRK tools for scoped indexed navigation. The index may be stale: keep the revision identity and verify the live file before editing.
+- Use `rg` for live verification and anything the index does not cover. Editing, builds, tests and Git use direct tools.
 
-- Fix the complete affected behavior, not only the latest failing test. Before a corrective commit or push, trace the root cause, audit related callers, shared contracts and platform paths, and review the combined change. For service or release failures, cover process ownership, managed installation and payload roots, worker admission/status, read retry and receipt contracts, test assumptions, CI selection and release provenance as applicable. Record the evidence and remaining uncertainty; do not expand into unrelated work.
-- Collect all relevant results from an existing run before preparing a correction. If a new failure appears, reassess the shared cause and sibling paths, then prepare one coherent correction. Do not immediately patch the latest symptom and restart the run.
-- When an approved plan records decisions as frozen (currently `docs/one-airk-completion-plan.md`, as superseded by `docs/upgrade-rebuild-fallback.md`, and the decisions recorded in `docs/simplify-plan.md` §9), follow them. Reopen one only with new evidence and the user's agreement, and do not start work the plan marks as awaiting a user decision.
-- Never make a check pass by weakening assertions, widening limits, queues or retries, relabeling skipped or failed coverage as passing, or restarting services to manufacture a cleanup receipt. Keep failed fixtures and incomplete cleanup receipts.
+## Task ledger and reporting
 
-### Cargo and host mechanics
+Record substantive work in the existing ledger (see Current work): outcome, decisions, blockers, validation scope/results and expensive-run receipt paths. Receipts retain exact commands, source/artifact identities and timings; Cargo records also include scope, target directory, incremental setting and elapsed time. Keep entries proportional; routine edits need no separate plan or checkpoint.
 
-- During local Rust iteration, format first and use scoped Clippy through `python scripts/dev-check.py -p <affected-crate>` with the needed features/targets. Do not run `cargo check` immediately before equivalent Clippy; Clippy already checks that configuration. Use `--workspace --all-features` only for an explicit broad pass. Scoped success does not satisfy required final workspace, lightweight-main, inference-helper, runtime, package or release gates.
-- Reuse one persistent Cargo target directory per checkout; use the existing isolated P10 target through `--target-dir` when applicable. Coordinate one Cargo owner among parallel agents: queue builds/Clippy/tests instead of competing for locks, CPU, memory or a shared target. Pause at a completed stage boundary and verify compiler descendants have exited before handing Cargo ownership to another runner. Independent source work and review can continue in parallel.
-- Local development Clippy enables incremental compilation on Windows and disables it on other hosts by default; `--incremental on|off` is an explicit per-run override. Keep this development choice out of release builds and checked-in profile/CI policy. Do not routinely run `cargo clean` on Windows or replace warm targets without a concrete cache/disk diagnosis.
-- Batch the required Mac Neo checks over the existing SSH setup, collect every result and timing report, then run `cargo clean` there after testing, including failed batches, because its drive space is limited. Retain needed evidence outside the cleaned target first. This Neo exception does not authorize routine cleanup elsewhere.
-- The next necessary build/Clippy run must retain Cargo `--timings` evidence and report its command, scope, target directory, incremental setting, elapsed time and result. Reuse observed timing reports when assessing a bottleneck; do not start speculative benchmark or broad-build campaigns merely to measure these workflow choices.
-- Coalesce tests with the same package, feature and target configuration into one scoped Cargo/Nextest invocation where practical; use the pinned Nextest CI profile for its documented routine selection. Before an optimized runtime freeze, run the actual affected process/transport integration preflight against a matched development pair when that can expose protocol/fixture failures sooner. Preserve the required final gates and collect each complete run before correcting source.
-- Place assertion-only regressions in existing external `#[cfg(test)]` modules where appropriate so editing tests does not invalidate production release compilation. Reuse an existing runtime only after verifying all production inputs and complete artifact seals are unchanged; retain its original compiled-source/build identity and record the current test-source identity separately. Never label reuse as a fresh build. P14 must restore the four routine excluded campaigns and run doctests; scoped or CI-profile passes do not replace them.
+At handoff distinguish findings, reproductions, hypotheses, passes and skipped/unavailable checks. State what the evidence proves and what remains unknown. Local success does not establish cross-platform qualification or unimplemented capabilities. Packaging produces a candidate; release completion requires the authorized release workflow and verified published outputs.
 
-### CI, review and reporting
+## Documentation, versions and commits
 
-- Do not use repeated PR pushes or expensive CI runs as the primary debugging loop. Reproduce locally where possible and finish the relevant local checks first. Use hosted diagnostics only for a specific unresolved platform question that cannot be answered locally, with the smallest useful test selection.
-- Keep routine CI lean as documented in CONTRIBUTING.md and docs/ci-and-builds.md. Avoid duplicated broad suites, speculative reruns and additional full diagnostic matrices. Full qualification remains opt-in when explicitly requested; restore individual routine gates when evidence justifies their cost. Preserve required release artifact and provenance checks.
-- Require a separate review of the complete diff and validation evidence before any T2/T3 run and before another corrective push. When work is delegated, the primary agent performs that review independently of the implementer. Without delegation, perform an explicit review pass after implementation; do not claim it was independently reviewed.
-- Report observed facts: what passed, what failed, what was not run and what remains unknown. Do not claim cross-platform success from local results, or say "nearly done" without evidence. For a release task, completion means the authorized merge and publication workflows succeeded and the published outputs were verified.
+- Update documentation affected by implemented behavior. Keep dated historical records identifiable as such.
+- Before a commit/push/PR cycle, check README, the documentation index, release notes and Marketplace/VSIX text against the current version and change. Edit only what is wrong.
+- Keep native and extension versions and lockfiles synchronized. Honor an approved or completed bump once per PR. Before a feature or fix PR, remind the user about the patch/build increment if it has not been handled.
+- Every commit uses the authorized human contributor's configured identity and `git commit -s`. Verify the DCO `Signed-off-by` trailer. Do not add agent signatures or invented approvals.
+
+## Glossary
+
+- **Receipt**: A retained result/evidence record tied to request, source or artifact identity; native operation receipts and local validation-run receipts have different owners.
+- **Qualification**: Evidence from the required runtime, transport, package and platform checks on identified inputs; compilation alone is insufficient.
+- **Plane**: A protocol/authority boundary, such as evidence reads, local control or browser Admin management.
+- **Fence order**: The owning contract's order of locks and revision/authority checks that prevents stale or unauthorized publication or delivery.
+- **Arbiter**: The approved optional local evidence-gathering/answer capability inside the existing service, bounded by the active plan.
+- **P10**: The Arbiter package in the advanced-split plan. Historical build receipts also used this name for a Cargo target; call that directory the **isolated target** in new records.
+- **Mac Neo**: The existing macOS arm64 SSH qualification/signing host; location and ignored connection configuration are in Current work.
+- **I1**: Same-user local IPC control request/frame contract owned by airk-ipc.
+- **I2**: airkctl caller contract: commands, exit/error/version documents and session protocol.
+- **I3**: Browser Admin HTTP envelope, authentication/admission and operation contract.
+- **Generation pilot**: The approved Rust schema-to-TypeScript generation path for I2/I3; semantic rules remain tested against Rust-emitted cases.
+- **Compatibility row**: A reviewed compatibility-inventory entry identifying retained behavior, its surviving owner and preservation evidence.
+- **Installed journey**: An end-to-end test against an installed product, including its actual host/process and cleanup behavior.
+- **Matched debug pair**: airk and airkctl built/staged together by the runtime builder with matching source, version, contract and artifact metadata.
+- **Isolated target**: The persistent Cargo build/cache directory assigned to this campaign; its path is in Current work.
+
+## Current work
+
+<!-- The only section expected to change between campaigns. Replace it when the campaign changes; do not accumulate history here. -->
+
+Active campaign: the advanced split.
+
+Delivery window: 14 November 2026 03:05 UTC through 15 November 2026 03:05 UTC,
+as directed by the user. Complete the whole plan on `feat/advanced-split`, with
+no PRs. This is an execution deadline, not permission to omit acceptance gates
+or report unfinished work as complete.
+
+Campaign execution rules:
+
+- Assign complete feature outcomes to parallel owners, including their tests,
+  documentation and recovery paths. Keep file ownership explicit; avoid repeated
+  investigation-only handoffs when implementation is authorized.
+- Record and review new contract/format decisions before dependent behavior.
+  Once that decision and its fixtures are frozen, consumer implementation does
+  not wait for a separate Git commit. Preserve contract-first ordering within
+  the eventual milestone commits; combine review and validation into coherent
+  feature batches instead of making every small step a commit gate.
+- Use cheap scoped diagnostics during implementation. Batch compatible checks
+  at integration points, freezing their actual consumed inputs. Reuse passed
+  evidence under its exact identity. Reserve full workspace, platform, installed
+  and published-artifact checks for reviewed integrated candidates.
+- Keep the critical path moving while another owner works. Review the whole
+  P0–P11 status at least every four hours, shift effort to unfinished acceptance
+  criteria. The revised cutoffs are 14 November 10:05 UTC for integrated source
+  and model inputs, 16:05 UTC for qualification, and 15 November 02:05 UTC for
+  publication and downloaded-byte verification, leaving one hour for recovery.
+  Move to qualification as soon as a coherent candidate is ready. Do not fill
+  the window with optional cleanup or treat the deadline as a waiver of checks.
+
+| Need | Source |
+|---|---|
+| Plan | docs/split/codex-plan.md |
+| Recorded decisions | docs/split/split-plan.md |
+| Progress ledger | docs/simplify/one-process-ledger.md |
+| Standing simplification decisions | docs/simplify-plan.md |
+
+- Precedence: later user instructions, then recorded approvals, then the plan text. Planning-only restrictions and gates already satisfied in those documents no longer apply.
+- Resume from the working tree, the ledger and the relevant receipts.
+- The advanced split's approved local Arbiter work follows its own boundaries in the plan.
+- DiskANN is the selected final disk-backed vector engine. The lexical/SQLite bootstrap storage is not that implementation; do not treat it as one.
+- The installed-editor repair is superseded. Ordinary split work does not resume it.
+- Authorized milestone commits/pushes: `feat/advanced-split` to `origin` (`https://github.com/iokaio/airk.git`); no force-push and no pushes to other branches.
+- Isolated build target: `artifacts/v190/p10-target`.
+- Mac host: Mac Neo; run command batches through POSIX `sh` over SSH. Checkout `~/code/airk`; connection details in ignored `artifacts/v190/neo-connection.local.json`.
+- Private artifact subpaths include `artifacts/one-process/native-fixtures*/`, `artifacts/editor-qualification/`, and any fixture/state/cache/data roots created under a campaign's artifacts directory. Treat credentials, indexed source copies and live state there as private regardless of directory name. Build targets and verified installer/VSIX/native-package output directories are separate; being under artifacts does not authorize staging or publication.

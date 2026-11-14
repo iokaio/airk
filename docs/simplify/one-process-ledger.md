@@ -3048,3 +3048,116 @@ expectation: missing schema is correctly an `isError` tool result, rather than
 a transport error. The corrected test requires full native refusal preservation,
 `isError: true` and exact missing-field diagnostics for schema and budget.
 Strict advertised inputs and all successful full-result comparisons remain.
+
+
+### 2026-11-14 — private asset producer matches strict no-alias consumer
+
+The real A6 service fixture refused the earlier materializer output before
+Ready because hardlinked assets violate OpenedDirectory's single-link guard
+(`delivery-08-native-goal-fixture-r2.log`; `native-harnesses/goal-fixture-cpu24-r2/native.log`).
+The producer now streams source bytes into exclusively-created independent files,
+checks source length/hash and distinct native file identity, flushes, and
+re-verifies every byte through the unchanged actual strict reader handle. No
+model/profile identity, math, qualification None or consumer guard changes.
+Historical R1 hardlinked outputs remain retained and are not repaired in place.
+A cheap fake-asset regression covers multi-chunk copying from a hardlinked source,
+strict consumer acceptance, destination/source identity independence, no overwrite
+and unchanged source/alias bytes after an independent destination edit. Primary
+compilation and focused execution are pending; no native/model run was started here.
+
+Primary self-review retained all strict consumer guards and reviewed the new
+exclusive-create, streaming hash, file-identity and reopen checks. Inference
+all-target/all-feature Clippy passed in 39.27s; the focused regression selected
+one test and passed in 0.02s (33.83s test build). Commands use the persistent
+`artifacts/v190/p10-target`, incremental enabled, and the verified static ORT
+environment. Logs: `receipts/delivery-09-copy-clippy.log` and
+`receipts/delivery-09-copy-regression.log` beneath the campaign artifacts root.
+Fresh native materialization uses retained `airk_inference-ebe82f1d404d089c.exe`;
+old R1 outputs remain unchanged. Service Ready is still pending.
+
+### 2026-11-14 — requested Windows disk recovery
+
+The user requested Cargo cleanup because drive space was running low. The
+release clean removed 6,938 files / 10.9 GiB. Full clean stopped first on a
+protected stale library, then in the actual owner context on the already-removed
+`CACHEDIR.TAG`. Both failures are retained; neither is described as a full clean.
+After retaining the three consumed native harnesses with hashes outside the
+target, the primary verified the exact workspace-contained incremental directory
+and removed it with native PowerShell. Free space rose from 355.57 GiB to
+828.98 GiB, about 473 GiB recovered. Subsequent builds and private copies consume
+some of that space; the observed free space before the new materialization was
+801.63 GiB. Provisioned ORT/model inputs and the separate default target's private
+fixture/model directories were preserved. Logs are
+`receipts/delivery-06-windows-{release-clean,full-clean,full-clean-owner-context,incremental-clean}.log`;
+retention inventory is `native-harnesses/delivery-06-before-clean/retention.json`.
+
+### 2026-11-14 — workspace gate exposes two configuration regressions
+
+The all-target/all-feature workspace Clippy gate passed in 48.47s. The subsequent
+workspace test gate stopped at Catalog Control: 105 passed and one failed because
+an older inherited-policy assertion expected marker 3 for a grouped request.
+Core's reviewed contract and Store's accepted transaction require marker 4 for
+grouping, including inherited policies; legacy ungrouped requests retain 3.
+The correction preserves all extraction/refusal/replay assertions, additionally
+checks grouping and marker 4 after reopening, and changes no production behavior.
+Scoped Clippy passed in 5.24s; all four split-control sibling tests passed in
+4.21s after a 15.25s test build. Logs are `receipts/delivery-09-grouped-contract-*`.
+
+The separate lightweight-main Clippy configuration exposed an evaluation hook
+that required `test-support` but referenced the module gated by `local-inference`.
+The hook now requires both features. Product CPU-profile selection, refusal of
+other precision and refusal of an unlisted graph remain checked in the same new
+test under both configurations: one selected and passed in each. Lightweight
+Clippy passed in 43.32s. Logs are `receipts/delivery-09-lightweight-clippy-r2.log`
+and `receipts/delivery-09-model-selection-{lightweight,native}.log`. All commands
+reuse the isolated target with incremental enabled and the verified static ORT
+environment. The original failed logs remain retained; workspace tests have not
+yet passed and are not replaced by these focused results.
+
+Fresh materialization R2 passed its one native test in 33.88s. Its evaluation
+inputs hash is `868810174d6c287502653d49ded5bddbfe3d1b8c43519bd97ae023c4797fd3d4`;
+all four profiles remain byte-identical to R1 and declared asset files are now
+single-linked with independent identities (lineage review `d92d035952bf3e2f294247e47ef95540d439c026a88ccd0671516bd550323b08`).
+Service fixture R3 then refused the shared parent permissions. A fresh R4 work
+child beneath an explicitly private parent reached actual Ready at 12:21:48 UTC,
+PID 29776, instance `eb07a81c9671418e1c6b596a6106fb74`, namespace
+`01cc96ca48eb3da2b550c8be2f9a78de`. The primary and a separate source reviewer
+verified executable/input/profile identities and native health. This is private
+experimental service readiness, not A6 task results or release qualification.
+
+### 2026-11-14 — integrated source milestones and first genuine matched pair
+
+Signed milestones `9191268c` (independent asset files), `409e3a93` (grouped split
+expectation and lightweight feature boundary), and `3e88b383` (101 public
+packaging/installer/bootstrap/Help/campaign custody files) are pushed only to
+the authorized branch. The exact 101-file staging roster excluded every private
+artifact. Primary review checked the combined authority, original-operation
+custody, signatures/provenance, complete inventories and source identity paths;
+separate owners reviewed their implementations and retained focused receipts.
+Installed journeys, production projections and final publication remain pending.
+
+The runtime builder's first attempt failed before Cargo because it expected the
+legacy static link descriptor. The documented adaptation binds ORT 1.30's
+genuine aggregate descriptor and its exact on-disk receipt, retains full verified
+input identity, and refuses mixed/tampered inputs. The focused adapter batch
+selected 35: 32 passed and three Mac-only checks skipped. No static input,
+archive, model or legal bytes were changed. Fresh matched debug pair R2 then
+passed its owning producer in 433.819s, including both executable builds,
+embedded-model/import checks, genuine Admin seal, full notices and final source
+and static-input checks. Receipt: `receipts/delivery-09-runtime-debug-r2.json`.
+Metadata SHA: `acc239e7dcec03cc8aa42e19c04e7e593c864ca49de8c5d4b911dc09f6fc0530`;
+service SHA: `63e7d3f616d57aa96549455b73caae70b6376c77946f901443f33a63c61edf43`;
+client SHA: `53fb8f49f2190ba6b497ab58a50d9fccc8b38d1905768723457c48d4bce5552a`.
+This is a local experimental candidate with the failed A1 encoder, not a release.
+
+Workspace Clippy R2 passed in 22.61s. Workspace tests R2 passed all 106 Catalog
+Control cases, then stopped in airk-cli on a role-table assertion and stack
+overflow in a source-scope observation test. Original diagnostics remain in
+`receipts/delivery-09-workspace-tests-r2.log`; this is not a passing workspace
+gate. The first actual Workbench harness attempt refused the pair before native
+launch because the native packager's legacy allowlist omitted three correctly
+staged trained-model legal companions. Both failure classes are under scoped
+diagnosis; no assertions, privacy guards, artifacts or limits are relaxed.
+Repository checks pass for 3,178 public files; dependency-boundary and archive
+checks pass. Archive checking required the actual checkout-owner context after
+the sandbox account's internal Git inventory was refused; both logs are retained.

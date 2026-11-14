@@ -23,7 +23,8 @@ The release is complete only when the approved release workflow and publication 
 | Planning ledger field | Record |
 | --- | --- |
 | Implementation authorization, 13 November | User requests implementation on a new `feat/advanced-split` branch from `feat/split`, with milestone commits/pushes and minimal targeted tests; extensive qualification follows implementation. This supersedes the document-only authorization of earlier planning rows. P0 also owns diagnosis and correction of AIRK MCP availability so implementation can use indexed navigation. Record actual recovery and remaining host/session limitations in the existing execution ledger; configuration alone is not proof of access. Existing contract/decision gates remain. |
-| Authorized edit now | Only `docs/split/codex-plan.md`. No production, tests, fixtures, configuration, other docs, versions or task-ledger files are changed by this planning task. No commit, push, installation, model acquisition or publication. |
+| End-to-end authorization, 13 November | User directs completion of this entire plan on `feat/advanced-split`, with no PRs, and authorizes what must be done to complete it. This supersedes earlier planning-only restrictions and additional user-approval gates for in-scope decisions/actions. Record concrete contract, state, trust, consent and qualification decisions before dependent consumers; required reviews, preservation invariants and proof gates remain. Implementation, models, platform qualification, documentation, branch milestone commits/pushes and release/publication verification remain part of the authorized outcome. Do not open a PR or move implementation work to another branch. |
+| Earlier document-only boundary / superseded | The initial planning task edited only `docs/split/codex-plan.md` and ran document checks. Its exclusions of production/tests/fixtures/configuration/other docs/versions/ledger, commits/pushes, installation, model acquisition and publication were planning-task restrictions; they do not restrict the subsequently authorized implementation campaign. |
 | Review baseline | Review of `feat/split` through `6fc3d3566217ae0af8a55f5c056cb3dc426b63d4`; its 1.8.34 artifacts were built from `71d5ca12234e8732c695bfaa373727469dc2568f`. Keep that evidence under those identities. |
 | Earlier planning observation / superseded | Planning began at `40298c6adaabdc9e14e769b30ae43cf00c8b8fa3`, with store/description and container changes still in progress. That is historical context, not the current implementation boundary. |
 | Current source and inherited evidence | HEAD `860dc4e620b65380d15f2373cb39e46a62c39df7`; candidate version 1.8.35. U105 Steps 1–7 and U106–U109 are committed (§1.1). Step 1's deliberate unserved paths were subsequently implemented. Retain original tests/build identities and results from the existing ledger; no product checks were rerun for this alignment. |
@@ -113,7 +114,7 @@ Preserve existing mixed-index/set, source-expansion, deduplication, empty/invali
 
 ### 3.2 Decisions to land before dependent implementation
 
-These are concrete proposed resolutions or evidence gates, not assumptions that approval has already occurred. Existing recorded approvals remain valid.
+These are concrete resolutions or evidence gates. The later end-to-end authorization permits completing the in-scope decisions without another user-approval checkpoint. Record each concrete choice and its reviewed contract before dependent implementation; do not treat authorization as completed review or qualification. Existing recorded approvals remain valid.
 
 | Decision | Proposed resolution and prerequisite |
 | --- | --- |
@@ -240,7 +241,7 @@ Freeze and compare a reviewed authority/input matrix: legacy grant-bound, W4 aut
 
 ### 6.1 Required P4 repair: default Workbench project reads use the window scope
 
-**Status: open implementation blocker.** This closes the investigation question in [the review's Workbench recommendation](codex-review.md#other-recommendations-and-unresolved-questions) with source confirmation and the user's supplied Claude reproduction from installed 1.8.35. It does not claim the fix or its regression has run. The failure affects evidence reads generally, including Workbench `/status`, which executes `airk_parse` with `schema: airk.parse.request/1`, `mode: execute` and `text: /status`; it is not a direct `status` call.
+**Status: caller correction implemented; native qualification remains a blocker.** The extension correction uses active W4 for ordinary Workbench entries and invalidates client/status/late results on implicit authority changes; the named four-file regression batch passes 81 selected tests. Actual adapter/session/canonical parity is still required below, and no installed-editor qualification is claimed. Current receipts and limitations are in the [execution ledger](../simplify/one-process-ledger.md). The baseline investigation in [the review's Workbench recommendation](codex-review.md#other-recommendations-and-unresolved-questions) used source confirmation and the user's supplied Claude reproduction from installed 1.8.35. The failure affected evidence reads generally, including Workbench `/status`, which executes `airk_parse` with `schema: airk.parse.request/1`, `mode: execute` and `text: /status`; it is not a direct `status` call.
 
 Reported installed evidence (13 November; retain the original report separately from future qualification receipts):
 
@@ -254,7 +255,7 @@ Reported installed evidence (13 November; retain the original report separately 
 
 The report also records membership in the `airk` index set with whole-root scope and matching service-log refusals at 13:01:37 and 13:01:43. Those observations were not independently rerun for this plan. Temporary workaround: choose **Search scope: airk** or an explicit named selection of `airk` in Workbench; neither closes this blocker.
 
-**Root cause and smallest repair boundary.** In [evidenceSelection](../../packages/vscode/src/airkctl/tools.ts), `openSelection` wins first, but an active window scope is otherwise honored only for `spec.windowScope` or the `airk-explorer` client. A plain `airk-workbench` project therefore emits `--service-project <binding>`. [ServiceExtension's transport factory](../../packages/vscode/src/serviceExtension.ts) already supplies current `windowScope.active` per call for both clients; [Workbench execution](../../packages/vscode/src/workbenchView.ts) sends the slash input to the native parser. The project route names no index set, so the reported catalog refusal is expected. Repair extension selection/caller handling; do not weaken native membership/read-authority checks or change a wire/persisted contract to make this read succeed.
+**Baseline root cause and repair boundary.** At the reviewed baseline, [evidenceSelection](../../packages/vscode/src/airkctl/tools.ts) let `openSelection` win first, but honored an active window scope otherwise only for `spec.windowScope` or the `airk-explorer` client. A plain `airk-workbench` project therefore emitted `--service-project <binding>`. [ServiceExtension's transport factory](../../packages/vscode/src/serviceExtension.ts) already supplied current `windowScope.active` per call for both clients; [Workbench execution](../../packages/vscode/src/workbenchView.ts) sends the slash input to the native parser. The project route named no index set, so the reported catalog refusal was expected. The correction changes extension selection/caller handling; native membership/read-authority checks and wire/persisted contracts remain authoritative.
 
 Required correction and invariants:
 
@@ -684,7 +685,13 @@ python -m unittest discover -s scripts/tests -v
 git diff --check
 ```
 
-Correct any stale command contract as its own reviewed harness change before running it. Provision verified model/static-ORT prerequisites through the documented owners; no silent dependency substitution. Required doctests, P14's four routine-excluded campaigns and applicable `scripts/ci-local.ps1` gates remain explicit final selections. Reuse pinned Nextest CI selection for routine work, with restored extracted-owner Windows/macOS and cold-client cases; selected identities, not counts, prove restored coverage. Full qualification remains an explicit release phase, not the discovery loop.
+Correct any stale command contract as its own reviewed harness change before running it. Provision verified model/static-ORT prerequisites through the documented owners; no silent dependency substitution. Required doctests and applicable `scripts/ci-local.ps1` gates remain explicit final selections under the current P11. Restore these three surviving routine-excluded campaigns with `--ignore-default-filter`:
+
+- `two_hundred_current_edits_reach_object_and_database_plateau`
+- `compact_measurements_compare_small_reads_from_large_catalog`
+- `manual_backlog_larger_than_one_page_advances_without_unprotected_deletion`
+
+The historical fourth, `measure_small_and_larger_sparse_catalog_edits`, retired with the uncalled sparse-catalog prototype in accepted R2 commit `69677a29`; preserve its [retirement decision](../history/v2-incremental-catalog-experiment.md), without inventing a fourth current campaign. [CONTRIBUTING](../../CONTRIBUTING.md) and the [build guidance](../ci-and-builds.md) record the surviving owners. Reuse pinned Nextest CI selection for routine work, with restored extracted-owner Windows/macOS and cold-client cases; selected identities, not counts, prove restored coverage. Full qualification remains an explicit release phase, not the discovery loop.
 
 Batch necessary Mac Neo work using the existing SSH setup, preserve receipts/timings outside its target and clean that target afterward even on failure. Do not routinely clean Windows or replace warm targets. Record unavailable hosts/checks as unknown; local Windows success is not macOS/Linux qualification.
 
