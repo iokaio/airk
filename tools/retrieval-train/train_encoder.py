@@ -17,25 +17,46 @@ def sha(data):
 
 
 def main():
-    import numpy as np
-    import torch
-    from safetensors.torch import load as load_tensors
-    from transformers import BertConfig, BertModel
-    from tokenizers import Tokenizer
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--additional-train", type=Path)
+    parser.add_argument("--training-recipe", choices=("paragraph-prefix-v1", "visible-prefix-mining-v1"),
+                        default="paragraph-prefix-v1")
+    parser.add_argument("--training-master", type=Path)
+    parser.add_argument("--training-seal", type=Path)
+    parser.add_argument("--training-seal-sha256")
     args = parser.parse_args()
+    execution = None
+    if args.training_recipe == "visible-prefix-mining-v1":
+        if args.training_master is None or args.training_seal is None or args.training_seal_sha256 is None:
+            parser.error("candidate requires frozen315 master and reviewed complete execution seal")
+        import training_execution as execution
+        execution.verify_seal(args.training_seal, args.training_seal_sha256, wait_for_gate=True)
+    import numpy as np
+    import torch
+    from safetensors.torch import load as load_tensors
+    from transformers import BertConfig, BertModel
+    from tokenizers import Tokenizer
+    if execution is not None:
+        execution.verify_torch_runtime(torch, args.training_seal)
     output = args.output.resolve()
     if output.exists() or not output.is_relative_to(ROOT / "artifacts"):
         parser.error("fresh private output required")
     retained = {path: path.read_bytes() for path in (Path(__file__), args.corpus, HERE / "a0-freeze.json",
         args.source / "config.json", args.source / "tokenizer.json", args.source / "model.safetensors")}
-    corpus = json.loads(retained[args.corpus])
     if sha(retained[args.corpus]) != "6e9d8ade6f799ed2a5e1903de69482db9fcd3cb1731a5fee4a504adede5fca6f":
         raise ValueError("unreviewed training corpus")
+    recipe = None
+    if args.training_recipe == "visible-prefix-mining-v1":
+        import training_recipe as recipe
+        import training_recipe_audit as recipe_source
+        retained[Path(recipe.__file__)] = Path(recipe.__file__).read_bytes()
+        retained[Path(recipe_source.__file__)] = Path(recipe_source.__file__).read_bytes()
+        corpus = recipe.train_only_corpus(retained[args.corpus])
+    else:
+        corpus = json.loads(retained[args.corpus])
     additional_count = 0
     if args.additional_train:
         retained[args.additional_train] = args.additional_train.read_bytes()
@@ -74,6 +95,8 @@ def main():
     train_tasks = [t for t in corpus["tasks"] if t["split"] == "train" and t["dataset"] in ("QASPER", "requests-original-docstrings")]
     train_groups = {t["source_group"] for t in train_tasks}
     allowed = sorted(d["id"] for d in documents.values() if d["source_group"] in train_groups and d["dataset"] in ("QASPER", "requests-original-docstrings"))
+    visible_documents = ({d: recipe.visible_prefix(tokenizer, documents[d]["text"]) for d in allowed}
+                         if recipe is not None else None)
     examples = []
     known_positives = {}
     for task in train_tasks:
@@ -83,11 +106,19 @@ def main():
             continue
         known_positives[task["id"]] = set(positives)
         query_words = set(task["question"].lower().split())
-        negatives = sorted((d for d in allowed if d not in positives), key=lambda d: (-len(query_words & set(documents[d]["text"].lower().split())), d))
+        if recipe is None:
+            negatives = sorted((d for d in allowed if d not in positives), key=lambda d: (-len(query_words & set(documents[d]["text"].lower().split())), d))
+        else:
+            negatives = recipe.negative_order(recipe.visible_prefix(tokenizer, task["question"]), allowed, positives, visible_documents)
         for positive in positives:
             examples.append({"task_id": task["id"], "question": task["question"], "positive": positive, "distractor": negatives[0]})
     if not examples:
         raise ValueError("no original human training positives")
+    if recipe is not None:
+        retained[args.training_master] = args.training_master.read_bytes()
+        if sha(retained[args.training_master]) != "314825dccad822874d3405305df789317c8e90a0a0e4cdcdb590acd27a555c48":
+            raise ValueError("frozen315 candidate training master changed")
+        recipe.assert_training_rows(examples, json.loads(retained[args.training_master]))
     output.mkdir(parents=True)
     snapshots = output / "input-snapshots"
     snapshots.mkdir()
@@ -149,6 +180,13 @@ def main():
         "input_seals": {str(p): sha(raw) for p,raw in retained.items()},
         "objective": "InfoNCE with in-batch and lexical hard distractors, batch8, temperature0.05, AdamW2e-5 weightdecay0.01,3epochs, FP32,256tokens; negatives are unjudged distractors, not claimed human irrelevant labels",
         "scope": "Actual training on original QASPER evidence annotations plus explicitly approved historical original developer documentation pairs if requested. Mechanical docstring associations are not independent human context/sufficiency gold. No Hotpot or held-out questions/passages used for mining/training. Development-only checkpoint selection and export precede final evaluation; not a promoted model."}
+    if recipe is not None:
+        report["schema"] = "airk.development-minilm-training/2"
+        report["training_recipe"] = "visible-prefix-mining-v1"
+        report["mining_input"] = "Exact configured256-token visible query/passage prefixes; tokenizer state and actual encoded training inputs unchanged"
+        report["training_master_sha256"] = sha(retained[args.training_master])
+        report["training_seal_sha256"] = args.training_seal_sha256
+        execution.verify_seal(args.training_seal, args.training_seal_sha256)
     (output / "receipt.json").write_text(json.dumps(report,indent=2)+"\n")
     print(json.dumps({"training_examples":len(examples),"elapsed_seconds":report["elapsed_seconds"],"peak_cuda_allocated_bytes":report["peak_cuda_allocated_bytes"]}))
 

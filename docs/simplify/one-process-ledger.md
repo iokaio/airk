@@ -3481,3 +3481,52 @@ or final evaluation ran in this checkpoint. Source writers resumed afterward;
 later task-policy receipt and whole-summary refinements need their own checks.
 Actual joint Kernel execution, full learned transport parity and qualification
 remain unfinished.
+
+### 2026-11-14 — current /2 Core contracts and bounded candidate training
+
+Current joint-runtime consumers pass workspace all-target/all-feature Clippy at
+native group `ea3126fe1ab4e85a8b8c6a1011b3c5327c39aa7e6502dc4d4e8c0dc5bb7c344c`
+in 17.327s (`receipts/native-context-r15/`). Earlier R11–R14 diagnostics remain
+retained. Subsequent early-deadline and singleton-carrier changes require a new
+compiler checkpoint and focused consumer regressions.
+
+Actual Rust semantic emitters each pass one selected test. Reviewed Rust schema
+drift adds required `task_policy`, historical-after-configuration-change status
+and the generic additional-evidence reason; generated consumers follow the Rust
+capture. All 291 Core tests pass, zero skipped, in 7.178s (8.602s command).
+Receipts: `receipts/native-context-r16/`; intentional schema-drift failure remains.
+These passes establish Core behavior, not current real-transport qualification.
+
+One independently reviewed visible-prefix-mining candidate training trial passed
+naturally in 104.725s, under the unchanged 600s/8GiB host/4GiB CUDA/two-process
+limits. Peak host commitment was 4,022,853,632 bytes. Both retained interpreter
+handles exited zero; fresh job census/accounting were empty/zero, with no forced
+cleanup. Full execution seal `57124cb5ca8321729318e60d234a0a19b56fea2f4b18705bad7daabbecbb5cff`
+binds 49,244 runtime/input files and the pre-gradient 315-row master. Receipt:
+`models/a1-visible-prefix-training-execution-r1/training-run/execution-receipt.json`.
+Epoch 1 alone was preselected before training. Native export/admission and quality
+are not yet qualified; the original 205-question absolute-quality failure stands.
+
+Opaque fresh-FINAL materializer R4 hit its original 60s deadline and was forcibly
+closed with no active owned processes. All 159 input pins were unchanged; no gold
+was opened by the observer and no quality result was produced. R1–R4 failures
+remain retained. Allocation-policy diagnosis uses synthetic inputs before any
+revised bounded attempt; limits and eligibility rules remain unchanged.
+
+The public SDK Answer emitter subsequently passed one test in 0.93s after
+79s compilation, but its broad source seal changed concurrently; this run is
+not an unchanged-input qualification receipt and will be repeated after freeze.
+The Python service-client harness passes all 55 focused tests in 1.507s.
+Repository checks pass for 3,240 public files using a process-local Git ownership
+exception; no global configuration was changed.
+
+Fresh-FINAL R5 then passed naturally: 205 tasks, unchanged 159 input pins,
+3.113s child execution and 200,114,176-byte peak process commitment, below the
+original 60s/256MiB ceilings. The concrete Parquet buffered-stream allocation
+repair was reviewed independently and checked against 21 synthetic cases before
+this attempt. Receipt `models/a1-fresh-final-materializer-r5/execution-r5.json`
+SHA256 `b2c098008a54d1a7dcde60100760b9e78c5ea29f5f70ce6f5dcf8cb7904a828b`;
+opaque counts SHA256 `0edf9eec71080556d806023e012acf55a2139e90679e449717117cc526cd5488`.
+No developer/observer opened the emitted gold. Materialization establishes the
+fixed evaluation population, not retrieval quality; earlier failed attempts and
+the original 205-question quality failure remain unchanged.

@@ -52,6 +52,15 @@ Earlier planning sessions exposed no AIRK MCP tools and used scoped local search
 
 ### Current implementation checkpoint (14 November 2026)
 
+Current working-tree checkpoint: all 291 Core tests pass after Rust-emitted `/2`
+semantic fixtures and reviewed schema regeneration. The joint runtime and
+transport consumers have passed workspace Clippy; later ingress refinements and
+real-transport qualification remain in progress. A bounded candidate training
+trial completed naturally in 104.725s; epoch 1 was preselected. Its native
+admission and quality gates are still pending, and the original 205-question
+quality failure remains a promotion blocker. The following source checkpoint
+and artifact evidence retain their earlier identities.
+
 Source checkpoint `6e73dd25` is an unpublished 1.9.0 candidate. A1's frozen
 absolute retrieval-quality gates failed and still block model promotion. The
 planning rows and §1.1 below retain the earlier alignment and artifact identities;

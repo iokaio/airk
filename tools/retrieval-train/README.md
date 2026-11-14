@@ -54,6 +54,18 @@ is not the human evaluation corpus. The subsequent authorized campaign uses
 the separately reviewed licensed human annotations and frozen acceptance rules
 in `a0-freeze.json`. Private inputs, weights and reports remain under artifacts.
 
+`train_encoder.py` keeps the original `paragraph-prefix-v1` recipe by default.
+The explicit `--training-recipe visible-prefix-mining-v1` development ablation
+mines unjudged lexical distractors from the exact query/passage prefixes visible
+to its configured256-token tokenizer. It preserves positive annotations, the
+licensed TRAIN-only pool, tokenizer state, loss and optimizer. This mode filters
+TRAIN task/document scope before deserializing text; it never admits Hotpot,
+development or held-out text for gradients or mining. Its version2 private
+receipt names the changed recipe. Existing checkpoints and receipts stay intact.
+TRAIN token/crop audits and synthetic regression passes do not establish model
+quality. A candidate needs a sealed recipe, actual training/export, matched native
+DEV measurements and the unchanged independently reserved final gates.
+
 An isolated development runtime can exercise Qwen3.5's built-in CPU operator
 path without changing AIRK's production runtime or downloading candidate weights:
 
@@ -137,6 +149,27 @@ The subsequent developer tools implement the actual training/export path:
   `--profile-manifest` is the native manifest digest, not a profile display ID.
   Configure the actual resident fixture through native management before each
   condition. A passing driver test or smoke does not qualify the full comparison.
+
+`context_action_facts.py --protocol <private-protocol.json> --protocol-sha256 <sha256> --output <fresh-private-output>`
+prepares data-only publisher facts from pinned inputs. Its protocol supplies input
+paths and hashes; the repository contains no human answers or private protocol.
+The producer inspects structural split metadata before decoding text: only approved
+QASPER TRAIN and the exact CAL question roster enter the output. It rejects paper
+family overlap, ambiguous selectors and changed source/rights hashes. All Hotpot,
+TEST, developer evaluation and other closed populations remain excluded. Original
+human alternatives stay separate, and original answers are archived separately.
+
+Reference completion and a useful support addition are mechanical projections of
+original annotations, not new human action, gap, role or sufficiency judgments.
+Full-paragraph controls do not certify cropped native evidence windows. The native
+owner must validate actual returned spans and every whole-card hypothesis. Requests
+is one TRAIN-only source family: pinned archive/LICENSE/NOTICE bytes and read-only
+AST/doctest parsing support structural predicates; source and examples never run.
+There is no independent structural CAL population here, so those classes remain
+unqualified. Clarification, counterevidence and general sufficiency are unsupported.
+No model, native request/roster, prompt, tensor or qualification is produced. Run
+`python -B tools/retrieval-train/test_context_action_facts.py` for seven synthetic
+split, annotation, rights/source and structural-predicate controls.
 
 The baseline, goal, source-presentation and resource freeze JSON files preserve
 the approved before-score rules. The additional CPU8 proposal is a distinct
