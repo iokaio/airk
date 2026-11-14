@@ -4,7 +4,7 @@
 // C0/C1 control characters are shown as visible escapes.
 import type { ComponentChildren, JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
-import { call, isUnknownOutcome, NOT_RUNNING, reviewOf, type CallResult } from './api';
+import { call, isUnknownOutcome, reviewOf, type CallResult } from './api';
 import type { Operation } from './operations';
 
 // C0 except tab/newline, DEL, C1, ALM, LRM/RLM, LRE..RLO, LRI..PDI, BOM.
@@ -124,9 +124,12 @@ export function Outcome(props: { state: CallState; receiptOnly?: boolean }): JSX
       return <p class="error">No session. Open with <code>airkctl admin open</code>.</p>;
     case 'transport':
       return (
-        <p class="error">
-          {r.status === null ? NOT_RUNNING : <Text value={`${r.message}`} />}
-        </p>
+        <div class="outcome failed">
+          <p class="error">{r.status === null
+            ? 'The service response was not received. If the service stopped, start it with airkctl service start.'
+            : <Text value={r.message} />}</p>
+          <p class="error">If this request changes state, its outcome is unknown. Read its original receipt when available, or inspect Activity and status. Do not repeat the change. A lost response cannot provide a new receipt handle.</p>
+        </div>
       );
     case 'failed': {
       const e = r.envelope.error;

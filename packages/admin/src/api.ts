@@ -38,8 +38,9 @@ export function reviewOf(result: CallResult): string | null {
   return typeof review === 'string' && REVIEW_TOKEN.test(review) ? review : null;
 }
 
-/** Exact native unknown outcomes; shared Rust-validated recovery cases pin this decision. */
+/** Exact native unknowns and transport loss, which cannot establish no effects. */
 export function isUnknownOutcome(result: CallResult): boolean {
+  if (result.kind === 'transport') return true;
   if (result.kind !== 'failed' || result.status !== 503
       || result.envelope.error.class !== 'unavailable' || result.envelope.error.retryable) return false;
   switch (result.envelope.error.code) {
@@ -132,7 +133,16 @@ export async function call(operation: Operation, body: unknown): Promise<CallRes
   } catch {
     return { kind: 'transport', status: null, message: NOT_RUNNING };
   }
-  const parsed = parseEnvelope(response.status, await response.text());
+  // Headers already establish authorization loss even if the body never arrives.
+  if (response.status === 401 && currentSession() === session) dropSession();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return { kind: 'transport', status: response.status,
+      message: `HTTP ${response.status}: the response body could not be read. The request outcome is unconfirmed.` };
+  }
+  const parsed = parseEnvelope(response.status, text);
   // Review M1: the token is removed on any 401.
   if (endsSession(parsed) && currentSession() === session) dropSession();
   return parsed;

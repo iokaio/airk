@@ -4,10 +4,9 @@ import { render } from 'preact';
 import { App, type Gate } from './app';
 import { exchange, restoreSession, takeLaunchCode } from './session';
 
-// Before any other action: read and clear `#c=` (review M1, I3).
-const code = takeLaunchCode();
-
 async function start(): Promise<void> {
+  // Before any other action: read and clear `#c=` (review M1, I3).
+  const code = takeLaunchCode();
   let gate: Gate = { kind: 'none' };
   if (code !== null) {
     const outcome = await exchange(code);
@@ -23,4 +22,9 @@ async function start(): Promise<void> {
   render(<App initialGate={gate} />, root);
 }
 
-void start();
+void start().catch(() => {
+  const root = document.getElementById('app');
+  if (root === null) return;
+  root.className = 'gate';
+  root.textContent = 'AIRK Admin could not start. Run airkctl admin open to open a fresh session.';
+});

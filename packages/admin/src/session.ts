@@ -9,7 +9,7 @@
 // same tab keeps working; it is removed at logout and on any 401. It is never put
 // in a URL, cookie, localStorage, IndexedDB or the DOM. A new tab has no token.
 import type { ExchangeResponse } from '../../contracts-gen/i3';
-import { parseEnvelope, type ParsedResponse } from './envelope';
+import { endsSession, parseEnvelope, type ParsedResponse } from './envelope';
 
 const STORAGE_PREFIX = 'airk-admin-csrf:';
 const SHELL_PATH = '/admin/';
@@ -171,6 +171,7 @@ export type ExchangeOutcome =
   | { kind: 'failed'; response: ParsedResponse };
 
 export async function exchange(code: string): Promise<ExchangeOutcome> {
+  const originalSession = current;
   let response: Response;
   try {
     response = await fetch(EXCHANGE_PATH, {
@@ -182,10 +183,20 @@ export async function exchange(code: string): Promise<ExchangeOutcome> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),
     });
-  } catch (error) {
-    return { kind: 'failed', response: { kind: 'transport', status: null, message: String(error) } };
+  } catch {
+    return { kind: 'failed', response: { kind: 'transport', status: null,
+      message: 'The service did not answer the session request. Run airkctl admin open for a fresh session.' } };
   }
-  const parsed = parseEnvelope(response.status, await response.text());
+  if (response.status === 401 && current === originalSession) dropSession();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return { kind: 'failed', response: { kind: 'transport', status: response.status,
+      message: `HTTP ${response.status}: the session response body could not be read. Open a fresh Admin session with airkctl admin open.` } };
+  }
+  const parsed = parseEnvelope(response.status, text);
+  if (endsSession(parsed) && current === originalSession) dropSession();
   if (parsed.kind !== 'ok' || !isExchangeResponse(parsed.envelope.result)) {
     return {
       kind: 'failed',
