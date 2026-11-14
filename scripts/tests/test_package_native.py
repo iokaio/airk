@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import importlib.util
 import json
 import os
@@ -335,6 +336,50 @@ def seal_split(root, pair, build):
 
 class SplitPairContracts(unittest.TestCase):
     source = {"sha256": "1" * 64, "files": 4}
+
+    def test_trained_model_notices_require_exact_authenticated_five_file_closure(self):
+        # Independent roster and literal rights pins: no expected set derived from the producer.
+        companions = {
+            "minilm-v2-LICENSE.txt": ("LICENSE", "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd"),
+            "minilm-v2-TRAINING-NOTICES.md": ("TRAINING-NOTICES.md", "2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be"),
+            "minilm-v2-provenance.json": ("training-provenance.json", "6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81"),
+            "CC-BY-4.0.txt": ("CC-BY-4.0.txt", "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"),
+        }
+        for target in SPLIT_IMAGES:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                pair, build = split_runtime(root, target, self.source, version="1.9.0")
+                notice_root = root / "notices/all-MiniLM-L6-v2"
+                for source_name, (name, digest) in companions.items():
+                    content = (package.ROOT / "third_party/models" / source_name).read_bytes()
+                    self.assertEqual(hashlib.sha256(content).hexdigest(), digest)
+                    (notice_root / name).write_bytes(content)
+                (notice_root / "provenance.json").write_bytes(
+                    (package.ROOT / "crates/airk-retrieval/src/model_catalog.json").read_bytes())
+                seal_split(root, pair, build)
+                files, _ = package.validate_runtime(root, "1.9.0", target, self.source)
+                self.assertEqual({name.removeprefix("notices/all-MiniLM-L6-v2/") for name in files
+                                  if name.startswith("notices/all-MiniLM-L6-v2/")},
+                                 {"LICENSE", "TRAINING-NOTICES.md", "training-provenance.json",
+                                  "CC-BY-4.0.txt", "provenance.json"})
+                # Reseal the outer inventory to prove it cannot authorize changed legal bytes.
+                for name in ("LICENSE", "TRAINING-NOTICES.md", "training-provenance.json",
+                             "CC-BY-4.0.txt", "provenance.json"):
+                    path = notice_root / name
+                    original = path.read_bytes()
+                    for replacement in (None, original + b"tampered"):
+                        if replacement is None:
+                            path.unlink()
+                        else:
+                            path.write_bytes(replacement)
+                        seal_split(root, pair, build)
+                        with self.assertRaisesRegex(ValueError, "Pinned trained-model notice"):
+                            package.validate_runtime(root, "1.9.0", target, self.source)
+                        path.write_bytes(original)
+                (notice_root / "unreviewed.txt").write_bytes(b"extra")
+                seal_split(root, pair, build)
+                with self.assertRaisesRegex(ValueError, "outside native/legal allowlist"):
+                    package.validate_runtime(root, "1.9.0", target, self.source)
 
     def test_split_pair_validates_both_images_by_name_on_every_platform(self):
         for target, images in SPLIT_IMAGES.items():

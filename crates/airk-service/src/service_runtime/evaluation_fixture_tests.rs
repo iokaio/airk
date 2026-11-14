@@ -535,9 +535,37 @@ fn bound_publication(
                 == source_roots.iter().copied().collect::<BTreeSet<_>>(),
         "canonical status immutable index/source identity differs"
     );
+    if let Some(actual_collection) = body.get("collection") {
+        ensure!(
+            actual_collection.as_str() == Some(collection),
+            "canonical status top-level collection differs"
+        );
+    }
     let publication = if let Some(value) = body.get("publication").filter(|value| !value.is_null())
     {
-        serde_json::from_value::<airk_core::evidence::RevisionEnvelope>(value.clone())?
+        let fields = value
+            .as_object()
+            .context("canonical status publication must be an object")?;
+        if fields.contains_key("collection") {
+            // Full envelopes retain strict Core field and identity validation.
+            serde_json::from_value::<airk_core::evidence::RevisionEnvelope>(value.clone())?
+        } else {
+            ensure!(
+                fields.len() == 1 && fields.contains_key("token"),
+                "unknown or partial canonical status publication shape"
+            );
+            let actual_collection = body
+                .get("collection")
+                .and_then(serde_json::Value::as_str)
+                .context("canonical status collection missing")?;
+            ensure!(
+                actual_collection == collection,
+                "canonical status collection differs"
+            );
+            let token: airk_core::identity::RevisionToken =
+                serde_json::from_value(fields["token"].clone())?;
+            airk_core::evidence::RevisionEnvelope::new(actual_collection.to_owned(), token)
+        }
     } else {
         let vector: airk_core::combined_reads::PublicationVector = serde_json::from_value(
             body.get("publication_vector")
@@ -664,6 +692,93 @@ fn original_publication_refuses_same_collection_foreign_index_or_missing_scope()
             CatalogRevision::INITIAL,
             &[source],
             "same-label"
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn actual_status_token_projection_binds_top_level_collection_and_refuses_unknown_fields()
+-> Result<()> {
+    use airk_core::{
+        identity::{Incarnation, RevisionToken},
+        index_catalog::{CatalogRevision, IndexId, SourceRootId},
+    };
+    let index = IndexId::from_identity(Incarnation::from_bytes([1; 16]));
+    let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
+    // Actual canonical Status projects publication as token-only while the
+    // collection remains top-level. This is not a full RevisionEnvelope.
+    let token:RevisionToken="airk-r1:04040404040404040404040404040404:7:0505050505050505050505050505050505050505050505050505050505050505".parse()?;
+    let fixture = serde_json::json!({"collection":"actual-collection","publication":{"token":token},"scope_observation":{"schema":1,"qualifier":"selected_subset","fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","selection":{"owner":"agent","scope_identity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","catalog_revision":1},"members":[{"index_id":index,"memberships":[],"source_root_ids":[source],"source_revision":1,"policy_epoch":0,"policy_digest":null}]}});
+    let expected = airk_core::evidence::RevisionEnvelope::new("actual-collection".into(), token);
+    assert_eq!(
+        bound_publication(
+            &fixture,
+            index,
+            CatalogRevision::INITIAL,
+            &[source],
+            "actual-collection"
+        )?,
+        expected
+    );
+    let mut foreign = fixture.clone();
+    foreign["collection"] = "foreign-collection".into();
+    assert!(
+        bound_publication(
+            &foreign,
+            index,
+            CatalogRevision::INITIAL,
+            &[source],
+            "actual-collection"
+        )
+        .is_err()
+    );
+    let mut missing = fixture.clone();
+    missing.as_object_mut().unwrap().remove("collection");
+    assert!(
+        bound_publication(
+            &missing,
+            index,
+            CatalogRevision::INITIAL,
+            &[source],
+            "actual-collection"
+        )
+        .is_err()
+    );
+    let mut unknown = fixture.clone();
+    unknown["publication"]["unexpected_authority"] = true.into();
+    assert!(
+        bound_publication(
+            &unknown,
+            index,
+            CatalogRevision::INITIAL,
+            &[source],
+            "actual-collection"
+        )
+        .is_err()
+    );
+    let mut invalid = fixture.clone();
+    invalid["publication"]["token"] = "generation-only:7".into();
+    assert!(
+        bound_publication(
+            &invalid,
+            index,
+            CatalogRevision::INITIAL,
+            &[source],
+            "actual-collection"
+        )
+        .is_err()
+    );
+    let mut partial = fixture;
+    partial["publication"]["collection"] = "actual-collection".into();
+    assert!(
+        bound_publication(
+            &partial,
+            index,
+            CatalogRevision::INITIAL,
+            &[source],
+            "actual-collection"
         )
         .is_err()
     );

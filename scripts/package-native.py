@@ -157,6 +157,19 @@ def validate_runtime(runtime, version, target, source):
         raise ValueError("Runtime standalone launcher image is missing")
     allowed = {*executables, launcher, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     required = allowed | {"notices/inventory.json", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"}
+    if tuple(int(part) for part in version.split(".")) >= (1, 9, 0):
+        # The legal producer owns the exact companion names and authenticated pins.
+        # Historical candidates retain their original two-file notice contract.
+        legal = builder.load_script("license-notices")
+        model_prefix = "notices/all-MiniLM-L6-v2/"
+        model_files = {model_prefix + name: digest
+                       for name, digest in legal.MODEL_COMPANIONS.values()}
+        model_files[model_prefix + "provenance.json"] = sha256(
+            ROOT / "crates/airk-retrieval/src/model_catalog.json")
+        required.update(model_files)
+        for name, digest in model_files.items():
+            if files.get(name) != digest:
+                raise ValueError("Pinned trained-model notice differs or is missing: " + name)
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)

@@ -1,4 +1,68 @@
-# CLI, MCP and Workbench read parity
+# CLI, MCP, Admin and Workbench read parity
+
+## Current per-surface selections
+
+Source roster reviewed 14 November 2026.
+
+There is no universal four-surface parity runner. Select the affected rows below
+and retain their separate results; this roster describes executable checks, not
+a claim that they pass on the current tree. A read-contract change also needs
+its operation-specific success, refusal, continuation and input-catalog cases.
+Management operations outside evidence MCP are explicitly inapplicable there;
+do not add an evidence mutation alias to make surfaces appear equivalent.
+
+Run from the repository root. Native commands use pinned Rust/Nextest and the
+`ci` profile; add the existing persistent `--target-dir` when applicable. The
+`combined_reads` process fixtures require provisioned static ORT/model inputs
+for `local-inference`, a supported native host and owner-controlled temporary
+storage (`AIRK_PRIVATE_CENSUS_BASE` where needed). Follow CONTRIBUTING.md for
+those prerequisites. Keep any supplied immutable runtime's original identity.
+Node selections require pinned Node 24.15.0 and each package's locked npm
+dependencies. Compile the extension once before its Node selections; its tests
+consume `out/test/`, while Admin tests bundle their source through esbuild.
+
+| Surface / boundary | Explicit selection | Evidence and limits |
+|---|---|---|
+| CLI/session protocol | `cargo nextest run --profile ci -p airkctl --lib --locked --timings -E 'test(cli::session::tests::)'` | Actual session procedures, reviewed frames, budgets and relay applicability with injected service/command observations; not a running-service journey. |
+| MCP and CLI full results | Native selection A below | Actual native readers and CLI/MCP transports; single/combined scope, read families, larger plan results, discovery and complete input catalogs. These isolated component fixtures do not qualify installation or browser delivery. |
+| CLI/session/HTTPS MCP/API process preflight | `python scripts/check-service-clients.py --runtime-dir <matched-debug-pair-dir> --files 16 --model --report <receipt.json>` | A matched provisioned pair is required. Real client/session and MCP/API observations supplement native tests; this does not exercise Admin or the Workbench host. |
+| Admin native handler and I3 contract | `cargo nextest run --profile ci -p airk-https --no-default-features --lib --locked --timings -E 'test(admin_plane::tests::)'`; `cargo nextest run --profile ci -p airk-endpoint --lib --locked --timings -E 'test(admin_contract)'`; `python scripts/dev/contract_types.py i3 --check` | Handler envelopes, operation mappings, native outcome/recovery receipts and generated contract drift. Handler dispatch/peer observations are injected; this is not live browser/OS peer qualification. |
+| Admin API, outcomes and selection ownership | `node --test packages/admin/test/r04Outcomes.test.mjs packages/admin/test/r19Serial.test.mjs packages/admin/test/r19Race.test.mjs` | Production API/envelope/workflow callbacks and request-state procedures, shared native fixtures, retained unknown outcomes and stale ownership. Injected hooks/fetch are not DOM, focus, browser export or live-transport qualification. |
+| Workbench host, forms, complete details/copies/exports and session consumer | `npm run compile --prefix packages/vscode`, then selection B below | Production host/consumer paths with injected native replies/children, plus render/form/export checks. Combine with selection A's native parser/result evidence; these tests do not establish the new-index default-entry journey against a live session. |
+| Workbench automatic/applied window scope and explicit-index native reads | `python scripts/check-workbench-window-scope.py --runtime-dir <matched-debug-pair-dir> --node <Node-24.15.0-executable> --report <fresh-private-receipt.json>` | Compiled production Workbench callbacks, WindowScope, adapter and framed session against a disposable native fixture. Compares complete native results and JSON exports for status/search, plus Workbench/Explorer search/symbol adapters and legacy-binding refusal. The VS Code host and session-history store are injected: this is not installed-editor, DOM or persistence qualification. The runner seals the compiled tree, harness owners and matched pair, preserves source hashes, and writes a pass only after owned native/directory cleanup. This is an executable selection, not a claim that it has passed on the current pair. |
+
+**A — native full-result and input-catalog selection:**
+
+```console
+cargo nextest run --profile ci -p airk-cli --no-default-features --features local-inference --test combined_reads --locked --timings -E 'test(actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_results) | test(all_native_read_families_keep_complete_results_through_cli_and_mcp) | test(capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_frame) | test(actual_query_scope_discovery_keeps_three_views_and_continuations_in_parity) | test(opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_catalog_parity) | test(installed_single_index_scope_disclosure_matches_native_cli_mcp_and_workbench) | test(airkctl_combined_reads_print_what_airk_printed) | test(open_reads_keep_cli_and_pipe_results_and_follow_connection_defaults) | test(open_https_connection_follows_choice_and_defaults_on_the_same_session)'
+```
+
+**B — compiled frontend/session consumer selection:**
+
+```console
+node --test packages/vscode/out/test/airkctlSession.test.js packages/vscode/out/test/workbenchOpenSelection.test.js packages/vscode/out/test/workbenchMcpOptimizations.test.js packages/vscode/out/test/profileFamilies.test.js packages/vscode/out/test/installedCompletion.test.js
+```
+
+The selected native scope-disclosure test compares the native parser path used
+by Workbench; its name does not imply an installed VS Code host was exercised.
+Admin management receipts and public evidence replies have distinct authority
+and applicability. Retain every applicable result field and supported input,
+including unknown fields in consumer copies/exports. Generated-schema checks
+alone do not establish native/transport or frontend result preservation.
+
+For changed Admin bundle bytes, run `npm run build --prefix packages/admin`
+and `npm run check --prefix packages/admin`; affected embedded-asset checks and
+candidate packaging remain separate. Report nonzero selected counts and exact
+identities for every filtered batch. Missing live Admin/Workbench journeys,
+platform prerequisites or affected operation cases remain explicit gaps until
+their own source-bound observations are collected. No passing mock selection
+closes those gaps.
+
+## Contract notes and retained historical evidence
+
+The dated phase/build statements below retain their original scope and do not
+describe current candidate qualification. Current progress is in the
+[execution ledger](simplify/one-process-ledger.md).
 
 MCP's protocol envelope follows the negotiated SDK version. For sessions older
 than `2026-07-28`, the SDK omits the top-level `resultType: "complete"`
@@ -51,9 +115,9 @@ the [ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-
 
 P6c's [search execution contract](search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
-The current manual-test working version is **1.8.8**, implementing the planned
+The historical manual-test working version was **1.8.8**, implementing the planned
 1.9.0 work. Earlier 1.9.0 phase headings below identify original development
-checkpoints; their implemented interfaces remain in this branch. Current build
+checkpoints; their implemented interfaces remain in this branch. That build's
 validation is in the [working-build record](releases/release-1.8.8.md) and ledger.
 
 **1.8.8 working implementation:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
@@ -187,3 +251,23 @@ one complete canonical handler observation through those adapters and the SDK
 bridge, including help/status/diagnostics/parse success, refusal, setup and
 observation failures. They do not substitute for the required running-service,
 CLI/session, HTTPS MCP or installed Workbench parity campaigns.
+
+
+### Strict advanced-split transport observations
+
+New transport comparisons use `tests/common/parity/strict.rs` and raw
+`airk.split.parity/2` snapshots tied to the observed matched pair’s runtime
+manifest, service-image and CLI-image SHA-256 values. Constructing a snapshot is
+not qualification. A new baseline must come from the identified actual pair;
+legacy canonical placeholders cannot reconstruct stable digest bytes.
+
+Normalization defaults to none. Only explicit reviewed outer JSON pointers for
+transport request/service/window/connection identities and observation timing
+may be registered; each identity must match its captured context. Nested
+document fields, content/model hashes, publications, revisions, continuations,
+counts and unregistered timing remain exact. Independent negative cases cover
+stable digest changes and misleading nested identity/timing names.
+
+The original U95 `airk.split.parity/1` captures and their approved recorded
+limitations remain historical replay evidence. Their explicitly named legacy
+hex-token comparison does not establish strict v2 transport parity.
