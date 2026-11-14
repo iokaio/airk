@@ -4,7 +4,7 @@ mod common;
 use airk_core::service::{ControlMethod, ControlResponse, JobKind};
 use anyhow::{Context, Result, ensure};
 use common::read_retry::{self, ReadRetry};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::{
     fs,
     time::{Duration, Instant},
@@ -418,6 +418,16 @@ fn shared_envelope_cases_match_the_native_decision() {
         let envelope = &case["envelope"];
         let decision = if case["expected_scope"].is_null() {
             read_retry::classify(envelope)
+        } else if case["expected_scope"]
+            .get("window_scope_selection")
+            .is_some()
+        {
+            let selection =
+                serde_json::from_value(case["expected_scope"]["window_scope_selection"].clone())
+                    .unwrap();
+            let identity =
+                serde_json::from_value(case["expected_scope"]["scope_identity"].clone()).unwrap();
+            read_retry::classify_for_selection(envelope, &selection, identity)
         } else {
             let scope: airk_core::service::ScopedConnectRequest =
                 serde_json::from_value(case["expected_scope"].clone()).unwrap();
@@ -435,6 +445,247 @@ fn shared_envelope_cases_match_the_native_decision() {
     }
 }
 
+fn caller_binding_case(name: &str) -> Value {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/wire/read_retry_decisions.json"
+    ))
+    .unwrap();
+    fixture["binding_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn native_scope_helpers_bind_all_shared_caller_cases_without_standalone_fallback() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/wire/read_retry_decisions.json"
+    ))
+    .unwrap();
+    let cases = fixture["binding_cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 33, "reviewed caller-binding inventory");
+    for case in cases {
+        let reply = envelope(case["input"].clone());
+        let retained = reply.clone();
+        let args = case["arguments"].as_object().unwrap();
+        let actual = match case["kind"].as_str().unwrap() {
+            "selection" => {
+                let expected = serde_json::from_value(case["expected_scope"].clone()).unwrap();
+                let source: airk_core::scoped_reads::ScopeSelectionObservation =
+                    serde_json::from_value(case["expected_selection"].clone()).unwrap();
+                assert_eq!(
+                    read_retry::classify_for_selection(&reply, &expected, source.scope_identity),
+                    None,
+                    "no original args is not permission to replay"
+                );
+                read_retry::classify_for_selection_with_arguments(&reply, &expected, &source, args)
+            }
+            "catalog_single" => {
+                let expected = serde_json::from_value(case["expected_scope"].clone()).unwrap();
+                assert_eq!(
+                    read_retry::classify_for_scope(&reply, &expected),
+                    None,
+                    "no original args is not permission to replay"
+                );
+                read_retry::classify_for_scope_with_arguments(&reply, &expected, args)
+            }
+            "catalog_combined" => read_retry::classify_for_combined_scope(
+                &reply,
+                &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
+                args,
+            ),
+            kind => panic!("unreviewed source {kind}"),
+        };
+        let observed = actual
+            .map(|retry| json!({"delay":retry.delay.as_millis(),"fresh":retry.fresh_brokerage}));
+        let expected = (!case["expected"].is_null()).then(|| json!({"delay":case["expected"]["retry_after_ms"],"fresh":case["expected"]["fresh_brokerage_required"]}));
+        assert_eq!(observed, expected, "{}", case["name"]);
+        assert_eq!(
+            reply, retained,
+            "the complete original response is immutable"
+        );
+    }
+}
+
+#[test]
+fn actual_cli_argv_binds_original_required_arguments_before_any_generic_retry() -> Result<()> {
+    use std::{
+        cell::RefCell,
+        collections::VecDeque,
+        ffi::{OsStr, OsString},
+        process::{ExitStatus, Output},
+    };
+    struct Transcript {
+        args: Vec<OsString>,
+        replies: RefCell<VecDeque<Output>>,
+        calls: RefCell<Vec<Vec<OsString>>>,
+    }
+    impl read_retry::Invocation for Transcript {
+        fn invocation_args(&self) -> Vec<&OsStr> {
+            self.args.iter().map(OsString::as_os_str).collect()
+        }
+        fn run_until(&self, deadline: Instant) -> std::io::Result<Output> {
+            assert!(Instant::now() < deadline);
+            self.calls.borrow_mut().push(self.args.clone());
+            Ok(self
+                .replies
+                .borrow_mut()
+                .pop_front()
+                .expect("unauthorized CLI replay"))
+        }
+    }
+    fn output(code: u32, value: &Value) -> Output {
+        #[cfg(windows)]
+        let status = {
+            use std::os::windows::process::ExitStatusExt;
+            ExitStatus::from_raw(code)
+        };
+        #[cfg(unix)]
+        let status = {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw((code as i32) << 8)
+        };
+        Output {
+            status,
+            stdout: serde_json::to_vec(value).unwrap(),
+            stderr: vec![],
+        }
+    }
+    for (kind, flag) in [
+        ("catalog_single", "--catalog-session"),
+        ("catalog_combined", "--combined-session"),
+    ] {
+        for (suffix, repeat) in [("active", true), ("grant_changed", false)] {
+            let case = caller_binding_case(&format!("{kind}_{suffix}"));
+            let refusal = envelope(case["input"].clone());
+            let success = json!({"isError":false,"content":[{"type":"text","text":"{}"}]});
+            let args = vec![
+                flag.to_owned(),
+                case["expected_scope"].to_string(),
+                "--service-runtime-dir".into(),
+                "owned-control".into(),
+                "tools".into(),
+                "call".into(),
+                "airk_symbols".into(),
+                "--args".into(),
+                case["arguments"].to_string(),
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+            let mut transcript = Transcript {
+                args: args.clone(),
+                replies: RefCell::new([output(1, &refusal), output(0, &success)].into()),
+                calls: RefCell::new(vec![]),
+            };
+            assert_eq!(
+                read_retry::original_cli_arguments(&transcript),
+                Some(case["arguments"].as_object().unwrap().clone())
+            );
+            let returned =
+                read_retry::output_until(&mut transcript, Instant::now() + Duration::from_secs(5))?;
+            let actual: Value = serde_json::from_slice(&returned.stdout)?;
+            assert_eq!(
+                actual,
+                if repeat { success } else { refusal },
+                "{kind} {suffix}"
+            );
+            let calls = transcript.calls.borrow();
+            assert_eq!(calls.len(), if repeat { 2 } else { 1 }, "{kind} {suffix}");
+            assert!(
+                calls.iter().all(|call| call == &args),
+                "retry keeps actual original argv exactly"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cli_selector_capture_preserves_strict_native_duplicate_field_refusal() {
+    for (kind, flag) in [
+        ("catalog_single", "--catalog-session"),
+        ("catalog_combined", "--combined-session"),
+    ] {
+        let case = caller_binding_case(&format!("{kind}_active"));
+        let mut selector = case["expected_scope"].to_string();
+        selector.pop();
+        selector.push_str(&format!(
+            ",\"namespace\":{}}}",
+            case["expected_scope"]["namespace"]
+        ));
+        let mut command = std::process::Command::new("unused-fixture-client");
+        command.args([flag, &selector, "tools", "call", "airk_symbols"]);
+        assert!(read_retry::original_cli_scope(&command).is_none());
+        assert!(read_retry::original_cli_combined_scope(&command).is_none());
+    }
+}
+
+#[tokio::test]
+async fn scoped_backend_combined_retries_bind_original_args_and_never_replay_stale_coherent_receipts()
+-> Result<()> {
+    use airk_mcp::remote::{RemoteFuture, RemoteTools};
+    use std::{collections::VecDeque, sync::Mutex};
+    struct Selected {
+        expected: airk_core::service::ScopedConnectRequest,
+        replies: Mutex<VecDeque<Value>>,
+        calls: Mutex<Vec<(String, Map<String, Value>)>>,
+    }
+    impl RemoteTools for Selected {
+        fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
+            Some(&self.expected)
+        }
+        fn call(&self, name: String, args: Map<String, Value>) -> RemoteFuture<'_> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push((name, args));
+                Ok(self
+                    .replies
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("unauthorized backend replay"))
+            })
+        }
+    }
+    for (name, repeats) in [
+        ("catalog_single_active", true),
+        ("catalog_single_grant_changed", false),
+    ] {
+        let case = caller_binding_case(name);
+        let refusal = envelope(case["input"].clone());
+        let success = json!({"isError":false,"content":[{"type":"text","text":"{}"}]});
+        let args = case["arguments"].as_object().unwrap().clone();
+        let backend = Selected {
+            expected: serde_json::from_value(case["expected_scope"].clone())?,
+            replies: Mutex::new([refusal.clone(), success.clone()].into()),
+            calls: Mutex::new(vec![]),
+        };
+        let mut rejected = vec![];
+        let returned = read_retry::backend_for_scope(
+            &backend,
+            "airk_symbols",
+            &args,
+            &backend.expected,
+            Instant::now() + Duration::from_secs(5),
+            |reply| rejected.push(reply.clone()),
+        )
+        .await?;
+        assert_eq!(returned, if repeats { success } else { refusal.clone() });
+        assert_eq!(rejected, if repeats { vec![refusal] } else { vec![] });
+        let calls = backend.calls.lock().unwrap();
+        assert_eq!(calls.len(), if repeats { 2 } else { 1 });
+        assert!(
+            calls
+                .iter()
+                .all(|(name, actual)| name == "airk_symbols" && actual == &args)
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn envelope_emitters_produce_the_reviewed_fixture_envelopes() {
     let mut emitted = 0;
@@ -444,6 +695,23 @@ fn envelope_emitters_produce_the_reviewed_fixture_envelopes() {
         };
         let expected = &case["envelope"];
         let actual = match emitter["function"].as_str().unwrap() {
+            "airk_mcp::remote::scoped_scope_setup_failure" => {
+                let requested = &expected["structuredContent"]["requested_scope"]["selection"];
+                let scope = airk_mcp::remote::ScopedScope::Selection {
+                    window_scope_selection: serde_json::from_value(
+                        requested["window_scope_selection"].clone(),
+                    )
+                    .unwrap(),
+                    scope_identity: serde_json::from_value(requested["scope_identity"].clone())
+                        .unwrap(),
+                };
+                airk_mcp::remote::scoped_scope_setup_failure(
+                    &scope,
+                    emitter["code"].as_str().unwrap(),
+                    emitter["retryable"].as_bool().unwrap(),
+                    None,
+                )
+            }
             "airk_mcp::remote::scoped_setup_failure" => {
                 let selection: airk_core::service::ScopedConnectRequest = serde_json::from_value(
                     expected["structuredContent"]["requested_scope"]["selection"].clone(),
@@ -526,12 +794,12 @@ async fn backend_retries_keep_arguments_and_never_replay_submitted_or_unknown_er
                 json!({"status":"retry","code":"selection_busy","retryable":true,
                 "action":"repeat_same_request","retry_after_ms":1}),
             ),
-            true,
+            false, // A coherent composition alone is not the caller's original authority.
         ),
         (
             single_required_retry(json!({"error":{"code":"direct_query_setup","reason":"busy",
                 "query_submitted":false,"retryable":true,"fresh_brokerage_required":true,"retry_after_ms":1}})),
-            true,
+            false, // This synthetic backend supplies no captured scope or required-member request.
         ),
         (
             json!({"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":1}),
