@@ -26,6 +26,12 @@ INFRA_FAILURES = {'native_call_failed', 'source_provenance_failed', 'arbiter_can
                   'deterministic_arm_used_model_work','native_read_population_changed'}
 
 
+def original_task_metadata(task,split):
+    return {'dataset':task['dataset'],'original_question_categories':task['original_question_categories'],
+            'original_human_disagreement':task['disagreement'],
+            'source_component':task['bootstrap_source_component'] if split=='final' else None}
+
+
 def guard_output_location(output, fixture, native_rows):
     """Observe actual directory ancestors before any evaluator metadata write."""
     target=Path(output).resolve();artifact_root=(ROOT/'artifacts').resolve(strict=True)
@@ -142,9 +148,7 @@ def main():
                 if trial is not None:
                     trial.update(client_close_seconds=time.monotonic()-close_started,client_close=closed)
                     require_normal_session_close(closed)
-            trial.update(dataset=task['dataset'], original_question_categories=task['original_question_categories'],
-                         original_human_disagreement=task['disagreement'], source_component=task['bootstrap_source_component'],
-                         client_initialization_seconds=client_seconds)
+            trial.update(**original_task_metadata(task,args.split),client_initialization_seconds=client_seconds)
             save()
             print(json.dumps({'completed_questions': index+1, 'planned_questions': len(tasks), 'arm': args.arm}), flush=True)
             if trial['failure'] in INFRA_FAILURES:raise ValueError('native infrastructure failure: '+str(trial['failure']))
