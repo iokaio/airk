@@ -1,0 +1,455 @@
+{
+  "schema": "airk.release-authority-cases/1",
+  "contract": "docs/split/contracts.md section9.1: exact manual campaign origin; all four targets; no PR/promotion; restore only created environment policy IDs",
+  "context": {
+    "GITHUB_REPOSITORY": "iokaio/airk",
+    "GITHUB_EVENT_NAME": "workflow_dispatch",
+    "GITHUB_REF": "refs/heads/feat/advanced-split",
+    "GITHUB_WORKFLOW_REF": "iokaio/airk/.github/workflows/github-release.yml@refs/heads/feat/advanced-split",
+    "GITHUB_SHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "AIRK_QUALIFIED_SHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "context_cases": [
+    {
+      "name": "exact campaign nomination",
+      "set": {},
+      "remove": [],
+      "expect": "feat/advanced-split"
+    },
+    {
+      "name": "unchanged main nomination",
+      "set": {
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_WORKFLOW_REF": "iokaio/airk/.github/workflows/github-release.yml@refs/heads/main"
+      },
+      "remove": [
+        "AIRK_QUALIFIED_SHA"
+      ],
+      "expect": "main"
+    },
+    {
+      "name": "unqualified campaign refused",
+      "set": {},
+      "remove": [
+        "AIRK_QUALIFIED_SHA"
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "different qualified source refused",
+      "set": {
+        "AIRK_QUALIFIED_SHA": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "arbitrary branch refused",
+      "set": {
+        "GITHUB_REF": "refs/heads/feature",
+        "GITHUB_WORKFLOW_REF": "iokaio/airk/.github/workflows/github-release.yml@refs/heads/feature"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "pull request event refused",
+      "set": {
+        "GITHUB_EVENT_NAME": "pull_request"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "push cannot publish campaign",
+      "set": {
+        "GITHUB_EVENT_NAME": "push"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "fork cannot nominate",
+      "set": {
+        "GITHUB_REPOSITORY": "foreign/airk"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "foreign workflow cannot nominate",
+      "set": {
+        "GITHUB_WORKFLOW_REF": "foreign/airk/.github/workflows/github-release.yml@refs/heads/feat/advanced-split"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "main workflow cannot nominate branch",
+      "set": {
+        "GITHUB_WORKFLOW_REF": "iokaio/airk/.github/workflows/github-release.yml@refs/heads/main"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "uppercase source refused",
+      "set": {
+        "GITHUB_SHA": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "AIRK_QUALIFIED_SHA": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "remove": [],
+      "expect": "refused"
+    },
+    {
+      "name": "short source refused",
+      "set": {
+        "GITHUB_SHA": "aaaaaaa",
+        "AIRK_QUALIFIED_SHA": "aaaaaaa"
+      },
+      "remove": [],
+      "expect": "refused"
+    }
+  ],
+  "live": {
+    "run": {
+      "id": 123,
+      "run_attempt": 2,
+      "workflow_id": 4,
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_branch": "feat/advanced-split",
+      "event": "workflow_dispatch",
+      "path": ".github/workflows/ci.yml",
+      "repository": {
+        "full_name": "iokaio/airk"
+      },
+      "head_repository": {
+        "full_name": "iokaio/airk"
+      },
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "workflow": {
+      "id": 4
+    },
+    "jobs": [
+      {
+        "name": "Required checks",
+        "conclusion": "success"
+      },
+      {
+        "name": "container",
+        "conclusion": "success"
+      },
+      {
+        "name": "quick",
+        "conclusion": "success"
+      },
+      {
+        "name": "plan",
+        "conclusion": "success"
+      },
+      {
+        "name": "extension",
+        "conclusion": "success"
+      },
+      {
+        "name": "Native / x86_64-unknown-linux-gnu",
+        "conclusion": "success"
+      },
+      {
+        "name": "Native / x86_64-pc-windows-msvc",
+        "conclusion": "success"
+      },
+      {
+        "name": "Native / aarch64-apple-darwin",
+        "conclusion": "success"
+      },
+      {
+        "name": "Native / x86_64-apple-darwin",
+        "conclusion": "success"
+      },
+      {
+        "name": "Contracts / ubuntu-24.04",
+        "conclusion": "success"
+      },
+      {
+        "name": "Contracts / windows-2025",
+        "conclusion": "success"
+      },
+      {
+        "name": "Contracts / macos-15",
+        "conclusion": "success"
+      },
+      {
+        "name": "Contracts / macos-15-intel",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "live_cases": [
+    {
+      "name": "exact live manual producer",
+      "set": [],
+      "expect": "accepted"
+    },
+    {
+      "name": "actual branch differs from claimed record",
+      "set": [
+        [
+          [
+            "run",
+            "head_branch"
+          ],
+          "other"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual source differs from claimed record",
+      "set": [
+        [
+          [
+            "run",
+            "head_sha"
+          ],
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual workflow identity differs",
+      "set": [
+        [
+          [
+            "workflow",
+            "id"
+          ],
+          5
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual origin fork",
+      "set": [
+        [
+          [
+            "run",
+            "head_repository",
+            "full_name"
+          ],
+          "foreign/airk"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual workflow path differs",
+      "set": [
+        [
+          [
+            "run",
+            "path"
+          ],
+          ".github/workflows/unreviewed.yml"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual conclusion failed",
+      "set": [
+        [
+          [
+            "run",
+            "conclusion"
+          ],
+          "failure"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual run pending",
+      "set": [
+        [
+          [
+            "run",
+            "status"
+          ],
+          "in_progress"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual run is push",
+      "set": [
+        [
+          [
+            "run",
+            "event"
+          ],
+          "push"
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual run id differs",
+      "set": [
+        [
+          [
+            "run",
+            "id"
+          ],
+          124
+        ]
+      ],
+      "expect": "refused"
+    },
+    {
+      "name": "actual attempt invalid",
+      "set": [
+        [
+          [
+            "run",
+            "run_attempt"
+          ],
+          0
+        ]
+      ],
+      "expect": "refused"
+    }
+  ],
+  "environments": [
+    {
+      "name": "github-pages",
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "protected_branches": false
+      },
+      "protection_rules": [
+        {
+          "type": "required_reviewers",
+          "reviewers": [
+            {
+              "type": "User",
+              "id": 7
+            }
+          ]
+        }
+      ],
+      "branch_policies": [
+        {
+          "id": 101,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    },
+    {
+      "name": "github-releases",
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "protected_branches": false
+      },
+      "protection_rules": [
+        {
+          "type": "required_reviewers",
+          "reviewers": [
+            {
+              "type": "User",
+              "id": 7
+            }
+          ]
+        }
+      ],
+      "branch_policies": [
+        {
+          "id": 102,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    },
+    {
+      "name": "macos-signing",
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "protected_branches": false
+      },
+      "protection_rules": [
+        {
+          "type": "required_reviewers",
+          "reviewers": [
+            {
+              "type": "User",
+              "id": 7
+            }
+          ]
+        }
+      ],
+      "branch_policies": [
+        {
+          "id": 103,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    },
+    {
+      "name": "native-signing",
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "protected_branches": false
+      },
+      "protection_rules": [
+        {
+          "type": "required_reviewers",
+          "reviewers": [
+            {
+              "type": "User",
+              "id": 7
+            }
+          ]
+        }
+      ],
+      "branch_policies": [
+        {
+          "id": 104,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    },
+    {
+      "name": "vscode-marketplace",
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "protected_branches": false
+      },
+      "protection_rules": [
+        {
+          "type": "required_reviewers",
+          "reviewers": [
+            {
+              "type": "User",
+              "id": 7
+            }
+          ]
+        }
+      ],
+      "branch_policies": [
+        {
+          "id": 105,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    }
+  ]
+}

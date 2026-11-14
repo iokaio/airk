@@ -1228,6 +1228,16 @@ that owner without advancing an unmounted workflow's next mutation. Session
 replacement isolates custody. This navigation guarantee adds no durable state
 and does not establish recovery after document reload or browser reply loss.
 
+Browser transport observations do not establish that a mutation had no effect.
+Both API and session-exchange body readers settle read failures using the
+existing local transport result and retain the observed HTTP status. An
+observed 401 ends only the session that sent the request, before body decoding;
+a late response cannot clear a replacement session. Reviewed mutations retain
+their original review for receipt lookup. Generated mutations whose response
+is lost remain unresolved without inventing a recovery handle or another key;
+status/Activity guidance does not claim receipt-based acknowledgment. Bootstrap
+has a final visible error path instead of leaving the loading view indefinitely.
+
 ### 4.5 Launch-code exchange [P, for review]
 
 1. `airkctl admin open|url` calls A1 over the owner pipe and builds
@@ -1609,6 +1619,86 @@ help in MCP comes from the running parser (`install_cli_help`, `main.rs:1341`).
 | VSIX | per-target | universal (U29): `{target:"universal", i2_contracts:[1], required_capabilities, ui_inventory_sha256}`; no native entry |
 | Release catalog | 8 artifacts, 12 inputs, 16 assets | 4 native targets + 1 universal VSIX + installers; recounted from the reviewed fixture, not from code |
 | Local signing | — | `airk-native-signing-local/1`, `airk-service-pair-signing-local/1`, `airk-standalone-installer-local/1`; no paths [V build.md B] |
+
+The build receipt's exact `profile` enum is `debug`, `release`, or
+`release-local`. The local profile is the existing Cargo profile used by the
+force-build installer wrapper; it is recorded literally, never relabeled as a
+published `release` build. This additive C7 decision is authorized by the
+13 November end-to-end plan instruction. The independent
+`build_receipt_2.json` fixture retains refusal of unknown profile values.
+
+The runtime source seal includes the compiled signing policy and conservatively
+resolves literal and `CARGO_MANIFEST_DIR` data includes from Rust source into
+the byte inventory, including test fixtures. Missing, redirected or escaped
+inputs refuse. This is an input-closure correction authorized by the plan's
+R25 repair; it changes validation source identities, not product-state or
+index digests. Generated `OUT_DIR` MiniLM assets remain owned by the host build
+script and verified model catalog/provisioner; generated Admin tables remain
+owned by the HTTPS build script and checked Admin inventory. Static ORT keeps
+its independent verified archive/tool/link-closure identity. New constructed
+embed forms need an explicit owner/audit case rather than an assumed literal
+resolution. The resolver is not a Rust macro expansion engine.
+
+### 9.1 Advanced-split release authority (contract before consumers)
+
+The user's 13 November instruction authorizes completing the whole plan on
+`feat/advanced-split`, with no PRs. Release from that branch uses an exact
+frozen qualified commit; it does not merge into `main`, open a preparation PR,
+or authorize arbitrary branch publication. Existing `main` behavior and its
+producer bytes remain unchanged. Owner: `scripts/release-authority.py` with
+independent cases in `fixtures/split/receipts/release_authority.json`.
+
+- Manual nomination requires repository `iokaio/airk`, event
+  `workflow_dispatch`, the exact reviewed workflow path/ref, and a full
+  lowercase source SHA. The campaign requires `AIRK_QUALIFIED_SHA` to equal
+  `GITHUB_SHA` on exactly `refs/heads/feat/advanced-split`; a nominated SHA is
+  not evidence that qualification passed.
+- Read the actual GitHub API run and workflow before admitting producers:
+  exact source SHA/branch, repository and head repository, workflow ID/path,
+  successful completed run and positive run/attempt identities. Campaign CI
+  must be an explicit manual producer. It must pass all four Native targets,
+  all four Contracts hosts, container, extension, quick, plan and Required
+  checks exactly once. No promoted PR subset substitutes for that catalog.
+  Authenticate the complete native/universal artifact catalog, digests,
+  attempts, source bindings and signing assembly using their existing gates.
+- Retain the final platform/model/product qualification receipts under their
+  exact source and artifact identities before enabling publication. Signing
+  trust, publisher identities, notices, source/private exclusions, final
+  downloaded-byte verification and default-off publication remain required.
+
+| Producer | Main / existing bytes | Campaign variant |
+| --- | --- | --- |
+| CI | `airk-ci-producer/1` or existing promoted `/2`, unchanged | `airk-ci-producer/3`: all `/1` identity/artifact fields plus `source_branch: "feat/advanced-split"` and `qualified_commit` exactly equal to `commit`; `event: "workflow_dispatch"`; no promotion field/subset |
+| Signed release | `airk-signed-release-producer/1`, unchanged | `airk-signed-release-producer/2`: existing identity, exact signed assembly/attempt/artifact fields plus `event: "workflow_dispatch"`, `source_branch: "feat/advanced-split"` and `qualified_commit` equal to `commit` |
+
+Old-schema records cannot acquire campaign fields. New-schema fields are
+untrusted assertions until actual run/workflow/job/artifact provenance is
+rechecked. Later readback from `main` or local tools uses the explicit
+campaign record variant to authenticate its actual origin rather than
+pretending it was a `main` producer. A consumed version requires the next
+unused patch to be applied locally, synchronized and qualified once on this
+branch; the campaign release path cannot call `prepare-pr`. Existing main
+version preparation remains a separate preserved path.
+
+**External environment changes are deferred until final qualification.** The
+five existing environments (`github-pages`, `github-releases`, `macos-signing`,
+`native-signing`, `vscode-marketplace`) currently allow only `main`. Prepare an
+`airk.release-environment-change/1` receipt tied to repository, campaign branch
+and qualified commit. It retains the exact pre-change policy projection
+(`id`, `name`, `type`), deployment-branch mode, every protection/reviewer rule,
+and a canonical SHA-256 of that snapshot. Planned additions are only the exact
+campaign branch; never remove `main`, relax reviewers, change signing identity,
+convert branch-policy mode, or add wildcards. An already existing campaign
+policy is not owned by this operation and cannot later be removed by it.
+
+At execution, retain each actual successful API-created policy ID and response
+with the request/receipt. On restoration, re-read current policy/protection
+state, verify each created ID's exact environment/name/type and preservation
+of prior policies and rules, then delete only those created IDs. Partial
+execution restores only successful creations; changed custody or protection
+state refuses automated restoration and retains diagnostics. Do not blindly
+restore an old environment snapshot. The pure contract tests neither mutate
+settings nor establish publisher membership, signing or release qualification.
 
 ## 10. C8 — Rust-emitted cases for `nativeOutcome.ts` and `readRetryDelay`
 

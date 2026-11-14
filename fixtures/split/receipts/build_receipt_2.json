@@ -43,6 +43,7 @@
  "cases": [
   {"name": "valid release receipt", "expect": "ok"},
   {"name": "valid debug receipt", "set": [[["profile"], "debug"]], "expect": "ok"},
+  {"name": "valid local release receipt", "set": [[["profile"], "release-local"]], "expect": "ok"},
   {"name": "static ORT supplement digest present", "set": [[["static_ort", "static_link_supplement_sha256"], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]], "expect": "ok"},
   {"name": "pre-split schema 1", "set": [[["schema"], 1]], "expect": "schema_mismatch"},
   {"name": "pre-split pair metadata inside", "set": [[["runtime", "schema"], 2]], "expect": "schema_mismatch"},

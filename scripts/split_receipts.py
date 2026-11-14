@@ -289,7 +289,7 @@ def validate_build_receipt(document):
     _fields(document, "", ("schema", "source", "profile", "runtime", "rustc", "static_ort", "static_imports",
                            "airkctl_static_imports", "embedded_model_smoke", "admin_assets"))
     _source(document, "source", "")
-    _text(document, "profile", "", choices=("debug", "release"))
+    _text(document, "profile", "", choices=("debug", "release", "release-local"))
     validate_pair_metadata(document["runtime"], "runtime")
     _text(document, "rustc", "", multiline=True)
     optional = ("static_link_supplement_sha256", "static_link_recovery_sha256")
