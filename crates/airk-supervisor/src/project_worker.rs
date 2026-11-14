@@ -2034,6 +2034,9 @@ pub(crate) async fn serve(
 #[cfg(test)]
 mod response_tests;
 
+#[cfg(test)]
+mod diagnostic_tests;
+
 mod source_configuration;
 
 #[cfg(test)]

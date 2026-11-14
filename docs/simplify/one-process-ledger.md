@@ -3161,3 +3161,68 @@ diagnosis; no assertions, privacy guards, artifacts or limits are relaxed.
 Repository checks pass for 3,178 public files; dependency-boundary and archive
 checks pass. Archive checking required the actual checkout-owner context after
 the sandbox account's internal Git inventory was refused; both logs are retained.
+
+### 2026-11-14 — remaining source landed; real preflights drive corrections
+
+Milestones `7d498048`, `358ccdaa`, `ad24ef82`, `a98d6225` and `150c5c3c`
+are signed and pushed on the authorized branch. They record campaign guidance,
+the CLI allocation correction, exact native legal inventories and Workbench
+harness, current generated CLI/release documentation, and the 81 explicitly
+reviewed model preparation/evaluation source files. No private corpus, model,
+raw result, credential or artifact directory was staged. The two model-test EOF
+whitespace corrections retain identical Python ASTs and a separate before/after
+hash addendum. Independent tool review and primary closure review checked agent,
+pair, protocol/SDK, original service/binding identities and healthy normal close
+across comparison conditions. Retained controls: 33 Python and four Node pass.
+
+The CLI's first direct-box attempt still overflowed. Separate synchronous owning
+future factories then reduced inline public dispatcher state from 54,920/54,896
+bytes to 32/8. The original managed metadata case passed on the ordinary stack
+in 0.13s; all 34 CLI library tests passed in 2.29s and scoped Clippy in 8.80s.
+The earlier 64-KiB size diagnostic already passed before the repair and is not
+the reproduction. Enlarged-stack test workarounds were removed. Exact Windows
+debug poll-frame size remains unknown; Mac/Linux outcomes are not inferred.
+
+Strict native packaging now validates all five pinned model legal companions
+from the owning legal roster. Fourteen tests pass and the existing R2 pair's
+830-file inventory is identical before/after read-only validation. The real
+Workbench harness subsequently passed 12 complete-result comparisons with the
+compiled production adapters and actual framed native session; VS Code/history
+are injected. Its receipt is `receipts/delivery-09-workbench-native-r2.json` and
+confirms both native and outer directory cleanup before success. The generated
+CLI-reference regression independently passed one test in 0.07s using retained
+`airkctl-71e1a3fb990e027c.exe`, SHA
+`b03c3203cd524dadd6a4d97098bfd9871f9e92fa1f57572fa4210189ea951ba6`.
+
+The broader R2 client preflight failed at retained indexing diagnostics before
+its model-smoke stage. Raw private cause was native JSON EOF with no operation
+stage. The first Supervisor-refresh hypothesis was disproved by a cheap test
+and removed. Kernel's earlier `vectors_enabled` call itself observes current
+ownership through `vector_policy`, preceding the later explicitly labelled
+scope read. Existing stages now cover this metadata/semantic-upgrade path;
+the actual owner-corruption regression passes with exact
+`index_vector_settings_metadata_incomplete`, original cause, restored source/
+publication and typed unavailable-source recovery. Final scoped Clippy passed
+in 13.03s and the regression in 0.90s after a 14.20s build. Descriptor metadata
+faults have existing Retrieval refusal coverage but were not injected by this
+new owner-corruption test. The original full preflight remains failed pending a
+fresh pair; no harness assertion was weakened.
+
+R4 and R5 evaluation fixtures each completed twelve original indexing jobs and
+then shut down ordinarily with actual process-exit and lease-reacquisition
+proof. R4 exposed token-only canonical Status projection; R5 exposed the helper's
+omitted existing readable Project IDs. Both are native helper defects repaired
+before any goal trials, with all service/image/scope guards retained. Four pure
+helper tests pass, two actual long-lived tests remain explicit invocations.
+Fresh R6 reached actual Ready under image
+`2998672f12b0583823ae510bac0daba300f1c9be46faa1606d7e38f7d068dcf1`, instance
+`5f5fb0dfca23566736f69c0045020bb5`, namespace
+`fad741982f8a36c012b7c94ee94104a5`. Its native indexing/preflight is underway.
+No development or final downstream model trials, A6 quality pass or production
+promotion is claimed. A1's failed absolute floors remain a release blocker.
+
+Mac public-source delta application preserved displaced originals and retired
+only the exact-hash obsolete auto-discovered CLI build script. The first new
+CLI batch stopped before Cargo on logical `code` versus physical `Code` target
+path identity. Its corrected runner must derive the physical root, retain the
+failure and preserve target/alias guards. No Mac CLI qualification is claimed.

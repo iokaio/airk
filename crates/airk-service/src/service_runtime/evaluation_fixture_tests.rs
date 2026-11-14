@@ -506,6 +506,163 @@ struct IndexBinding {
     status_result: serde_json::Value,
 }
 
+fn readable_fixture_project(
+    index: airk_core::index_catalog::IndexId,
+    sources: &[airk_core::index_catalog::SourceRootId],
+    projects: &[airk_core::index_catalog::QueryProject],
+    memberships: &[airk_core::index_catalog::Membership],
+) -> Result<airk_core::index_catalog::QueryProjectId> {
+    use airk_core::index_catalog::PathScope;
+    let expected: BTreeSet<_> = sources.iter().copied().collect();
+    ensure!(
+        !expected.is_empty() && expected.len() == sources.len(),
+        "private readable source roster is empty or duplicated"
+    );
+    let mut project_ids = BTreeSet::new();
+    for project in projects {
+        project.validate()?;
+        ensure!(
+            project_ids.insert(project.id),
+            "private readable project is ambiguous"
+        );
+    }
+    let candidates: Vec<_> = memberships
+        .iter()
+        .filter(|member| member.index_id == index)
+        .collect();
+    ensure!(
+        candidates.len() == 1,
+        "private index requires exactly one actual readable membership"
+    );
+    let member = candidates[0];
+    member.validate()?;
+    let project = projects
+        .iter()
+        .find(|project| project.id == member.project_id)
+        .context("private readable membership project is missing")?;
+    ensure!(
+        memberships
+            .iter()
+            .filter(|other| other.project_id == project.id)
+            .count()
+            == 1
+            && project.default_indexes.iter().all(|other| *other == index),
+        "private readable project merges other indexes"
+    );
+    ensure!(
+        member.scope.len() == expected.len()
+            && member
+                .scope
+                .iter()
+                .all(|atom| atom.kind == PathScope::Subtree && atom.path.is_empty())
+            && member
+                .scope
+                .iter()
+                .map(|atom| atom.source_root_id)
+                .collect::<BTreeSet<_>>()
+                == expected,
+        "private readable membership does not cover exactly the whole original source roots"
+    );
+    Ok(project.id)
+}
+
+fn fixture_catalog_rows(
+    registry: &mut airk_store::service::registry::ServiceRegistry,
+    namespace: airk_core::identity::Incarnation,
+    revision: airk_core::index_catalog::CatalogRevision,
+    kind: airk_core::catalog_management::CatalogKind,
+) -> Result<Vec<airk_core::catalog_management::CatalogItem>> {
+    use airk_core::catalog_management::{CatalogPageRequest, MAX_PAGE_BYTES};
+    let mut request = CatalogPageRequest {
+        kind,
+        index_id: None,
+        project_id: None,
+        after: None,
+        expected_catalog_revision: Some(revision),
+        limit: airk_core::index_catalog::MAX_SELECTION,
+        max_bytes: MAX_PAGE_BYTES,
+    };
+    let mut items = Vec::new();
+    for _ in 0..64 {
+        let page = registry.catalog_page(&request)?;
+        ensure!(
+            page.namespace == namespace && page.revision == revision,
+            "private readable catalog revision changed"
+        );
+        items.extend(page.items);
+        ensure!(
+            items.len() <= 4096,
+            "private readable catalog exceeds fixture bound"
+        );
+        let Some(next) = page.continuation else {
+            return Ok(items);
+        };
+        ensure!(
+            request.after.as_ref() != Some(&next),
+            "private readable catalog continuation did not progress"
+        );
+        request.after = Some(next);
+    }
+    bail!("private readable catalog page bound exceeded")
+}
+
+#[test]
+fn actual_readable_catalog_binds_one_whole_index_and_refuses_missing_foreign_or_ambiguous_members()
+-> Result<()> {
+    use airk_core::index_catalog::{IndexId, Membership, QueryProject, SourceRootId};
+    let index: IndexId = "idx_97a0908b7435bc91b050849487544562".parse()?;
+    let source: SourceRootId = "src_7b198478f66dc0daeb0c4ead235a95f1".parse()?;
+    let projects: Vec<QueryProject> = serde_json::from_value(
+        serde_json::json!([{"id":"prj_fb876a271dde1dffe98dc55fec6ad1b0","name":"goal-source-01","definition_revision":1,"scope_revision":2,"defaults_revision":1,"default_indexes":[]}]),
+    )?;
+    let members: Vec<Membership> = serde_json::from_value(
+        serde_json::json!([{"project_id":"prj_fb876a271dde1dffe98dc55fec6ad1b0","index_id":"idx_97a0908b7435bc91b050849487544562","revision":1,"scope":[{"source_root_id":"src_7b198478f66dc0daeb0c4ead235a95f1","kind":"subtree","path":""}]}]),
+    )?;
+    assert_eq!(
+        readable_fixture_project(index, &[source], &projects, &members)?,
+        projects[0].id
+    );
+    assert!(readable_fixture_project(index, &[source], &[], &members).is_err());
+    assert!(readable_fixture_project(index, &[source], &projects, &[]).is_err());
+    let mut foreign = members.clone();
+    foreign[0].project_id = "prj_9339def46ca2f665b9bc07115bdb54f2".parse()?;
+    assert!(readable_fixture_project(index, &[source], &projects, &foreign).is_err());
+    let mut foreign = members.clone();
+    foreign[0].index_id = "idx_408453a0f41b66667eb5a0ba92f5a4db".parse()?;
+    assert!(readable_fixture_project(index, &[source], &projects, &foreign).is_err());
+    let mut foreign = members.clone();
+    foreign[0].scope[0].source_root_id = "src_31432f7bc1107061b36db5d653c6855c".parse()?;
+    assert!(readable_fixture_project(index, &[source], &projects, &foreign).is_err());
+    let mut partial = members.clone();
+    partial[0].scope[0].path = "subset".into();
+    assert!(readable_fixture_project(index, &[source], &projects, &partial).is_err());
+    let mut duplicate_projects = projects.clone();
+    duplicate_projects.push(projects[0].clone());
+    assert!(readable_fixture_project(index, &[source], &duplicate_projects, &members).is_err());
+    let mut two_projects = projects.clone();
+    let mut another_project = projects[0].clone();
+    another_project.id = "prj_9339def46ca2f665b9bc07115bdb54f2".parse()?;
+    another_project.name = "goal-source-03".into();
+    two_projects.push(another_project.clone());
+    let mut two_members = members.clone();
+    let mut another_member = members[0].clone();
+    another_member.project_id = another_project.id;
+    two_members.push(another_member);
+    assert!(
+        readable_fixture_project(index, &[source], &two_projects, &two_members).is_err(),
+        "two actual project identities cannot be chosen ambiguously"
+    );
+    let mut ambiguous = members.clone();
+    ambiguous.push(members[0].clone());
+    assert!(readable_fixture_project(index, &[source], &projects, &ambiguous).is_err());
+    let mut merged = members.clone();
+    let mut other = members[0].clone();
+    other.index_id = "idx_408453a0f41b66667eb5a0ba92f5a4db".parse()?;
+    merged.push(other);
+    assert!(readable_fixture_project(index, &[source], &projects, &merged).is_err());
+    Ok(())
+}
+
 fn bound_publication(
     body: &serde_json::Value,
     index: airk_core::index_catalog::IndexId,
@@ -859,7 +1016,8 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
             "duplicate or foreign private source root"
         );
     }
-    let registry = airk_store::service::registry::ServiceRegistry::open_saved(&ready.control_root)?;
+    let mut registry =
+        airk_store::service::registry::ServiceRegistry::open_saved(&ready.control_root)?;
     let catalog = registry
         .catalog_state()?
         .context("actual private catalog missing")?;
@@ -870,6 +1028,30 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                 .is_some_and(|clock| clock.namespace == catalog.namespace),
         "actual private catalog changed"
     );
+    let projects = fixture_catalog_rows(
+        &mut registry,
+        catalog.namespace,
+        catalog.revision,
+        airk_core::catalog_management::CatalogKind::Projects,
+    )?
+    .into_iter()
+    .map(|item| match item {
+        airk_core::catalog_management::CatalogItem::Project(project) => Ok(project),
+        _ => bail!("private project page contains a foreign entity"),
+    })
+    .collect::<Result<Vec<_>>>()?;
+    let memberships = fixture_catalog_rows(
+        &mut registry,
+        catalog.namespace,
+        catalog.revision,
+        airk_core::catalog_management::CatalogKind::Memberships,
+    )?
+    .into_iter()
+    .map(|item| match item {
+        airk_core::catalog_management::CatalogItem::Membership(member) => Ok(member),
+        _ => bail!("private membership page contains a foreign entity"),
+    })
+    .collect::<Result<Vec<_>>>()?;
     let census = registry.catalog_clean_break_sources(catalog.revision)?;
     let mut bindings = BTreeMap::new();
     let mut ids = BTreeSet::new();
@@ -883,6 +1065,12 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                 Path::new(&definition.backing.root).canonicalize()? == canonical,
                 "private index has a foreign backing root"
             );
+            let readable_project = readable_fixture_project(
+                definition.id,
+                &roots.iter().map(|root| root.id).collect::<Vec<_>>(),
+                &projects,
+                &memberships,
+            )?;
             ensure!(
                 bindings
                     .insert(
@@ -894,7 +1082,7 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                                 namespace: catalog.namespace,
                                 expected_catalog_revision: catalog.revision,
                                 index_ids: vec![definition.id],
-                                project_ids: vec![],
+                                project_ids: vec![readable_project],
                             },
                             definition: definition.clone(),
                             source_roots: roots,

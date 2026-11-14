@@ -40,7 +40,7 @@ LEGACY_PENDING = {
     ("crates/airk-inference/src/embedding_client.rs", "spawn"):
         "paired 1.8.14 payload's airk-embed helper; verify_helper refuses a single "
         "executable (installer/inference owner)",
-    ("crates/airk-cli/src/runtime_commands.rs", "run_with"):
+    ("crates/airk-cli/src/runtime_commands.rs", "run_with_owned"):
         "paired-payload `runtime foreground` forwarding; a single executable serves "
         "directly (installer owner)",
     ("crates/airk-inference/src/unix_guardian/shared.rs", "serve"):
@@ -139,7 +139,7 @@ STARTS = {
         "single-instance lease refuses a second resident",
     ("crates/airk-installer/src/runtime_install/activation/catalog_upgrade/authority.rs", "qualify"):
         "one-shot: candidate `runtime catalog-authority-probe`, awaited",
-    ("crates/airk-cli/src/runtime_commands.rs", "run_with"):
+    ("crates/airk-cli/src/runtime_commands.rs", "run_with_owned"):
         "legacy: paired-payload `runtime foreground` forwarding and helper identity check",
     ("crates/airk-installer/src/service_manager.rs", "check_executable_identity"):
         "one-shot: `<helper> --version` identity check of a paired helper, bounded",

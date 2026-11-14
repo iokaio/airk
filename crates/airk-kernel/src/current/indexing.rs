@@ -670,18 +670,24 @@ impl Kernel {
         let execution_lease =
             crate::execution::acquire(&self.data_root).context(Stage("execution_admission"))?;
         if !full
-            && self.vectors_enabled()?
-            && let Some(scope) = self.current_scope()?
+            && self.vectors_enabled().context(Stage("vector_settings"))?
+            && let Some(scope) = self.current_scope().context(Stage("current_scope"))?
         {
-            let read = self.store.current_read(&scope)?;
-            let state = read.collection_state()?;
+            let read = self
+                .store
+                .current_read(&scope)
+                .context(Stage("read_snapshot"))?;
+            let state = read
+                .collection_state()
+                .context(Stage("read_configuration"))?;
             ensure!(
                 !crate::shared_models::semantic_upgrade_pending(
                     &self.store,
                     state
                         .as_ref()
                         .and_then(|state| state.configuration.model.as_ref())
-                )?,
+                )
+                .context(Stage("vector_settings"))?,
                 "semantic_upgrade_required: retained vectors belong to an older native runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
             );
         }
@@ -795,7 +801,7 @@ impl Kernel {
             vector_selection: selection.clone(),
             model: objects.clone(),
         };
-        let existing = self.current_scope()?;
+        let existing = self.current_scope().context(Stage("current_scope"))?;
         let (applied, prior_semantic_work, prior_scan_work) = if let Some(scope) = &existing {
             let read = self
                 .store
