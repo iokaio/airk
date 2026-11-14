@@ -22,6 +22,13 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl agents repair`](#airkctl-agents-repair)
 - [`airkctl agents revoke`](#airkctl-agents-revoke)
 - [`airkctl agents verify`](#airkctl-agents-verify)
+- [`airkctl arbiter`](#airkctl-arbiter)
+- [`airkctl arbiter cancel`](#airkctl-arbiter-cancel)
+- [`airkctl arbiter configure`](#airkctl-arbiter-configure)
+- [`airkctl arbiter provision`](#airkctl-arbiter-provision)
+- [`airkctl arbiter recover`](#airkctl-arbiter-recover)
+- [`airkctl arbiter remove`](#airkctl-arbiter-remove)
+- [`airkctl arbiter status`](#airkctl-arbiter-status)
 - [`airkctl changes`](#airkctl-changes)
 - [`airkctl code-facts`](#airkctl-code-facts)
 - [`airkctl configure`](#airkctl-configure)
@@ -93,6 +100,8 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl service requests retry`](#airkctl-service-requests-retry)
 - [`airkctl service restart`](#airkctl-service-restart)
 - [`airkctl service rpc`](#airkctl-service-rpc)
+- [`airkctl service setup`](#airkctl-service-setup)
+- [`airkctl service setup-receipt`](#airkctl-service-setup-receipt)
 - [`airkctl service shutdown`](#airkctl-service-shutdown)
 - [`airkctl service start`](#airkctl-service-start)
 - [`airkctl service status`](#airkctl-service-status)
@@ -128,6 +137,7 @@ AIRK command-line client: reaches the AIRK service through its local control end
 Usage: airkctl [OPTIONS] <COMMAND>
 
 Commands:
+  arbiter        Explicit optional model configuration, provisioning and recovery
   version        Print the version document: airkctl, its contracts and the installation
   tools          The unified tools: list, help and call
   init           Acknowledge an existing reviewed index mapping and prepare its reserved storage
@@ -1159,6 +1169,399 @@ Options:
 
       --connection-id <CONNECTION_ID>
 
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter
+
+```text
+Explicit optional model configuration, provisioning and recovery
+
+Usage: airkctl arbiter [OPTIONS] <COMMAND>
+
+Commands:
+  status     Inspect optional model readiness, selection and exact per-index enrollment
+  configure  Apply one complete native Configure request. Enrollments are explicit immutable index IDs
+  provision  Explicitly acquire the compiled qualified profile asset closure
+  cancel     Cancel this native optional operation; running native calls drain before removal
+  remove     Explicitly remove one optional profile after actual native pins drain
+  recover    Recover a retained optional model operation under the current configuration revision
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter cancel
+
+```text
+Cancel this native optional operation; running native calls drain before removal
+
+Usage: airkctl arbiter cancel [OPTIONS] --expected-revision <EXPECTED_REVISION>
+
+Options:
+      --expected-revision <EXPECTED_REVISION>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter configure
+
+```text
+Apply one complete native Configure request. Enrollments are explicit immutable index IDs
+
+Usage: airkctl arbiter configure [OPTIONS] --file <FILE>
+
+Options:
+      --file <FILE>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter provision
+
+```text
+Explicitly acquire the compiled qualified profile asset closure
+
+Usage: airkctl arbiter provision [OPTIONS] --expected-revision <EXPECTED_REVISION> --profile <PROFILE>
+
+Options:
+      --expected-revision <EXPECTED_REVISION>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --profile <PROFILE>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter recover
+
+```text
+Recover a retained optional model operation under the current configuration revision
+
+Usage: airkctl arbiter recover [OPTIONS] --expected-revision <EXPECTED_REVISION>
+
+Options:
+      --expected-revision <EXPECTED_REVISION>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter remove
+
+```text
+Explicitly remove one optional profile after actual native pins drain
+
+Usage: airkctl arbiter remove [OPTIONS] --expected-revision <EXPECTED_REVISION> --profile <PROFILE>
+
+Options:
+      --expected-revision <EXPECTED_REVISION>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --profile <PROFILE>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter status
+
+```text
+Inspect optional model readiness, selection and exact per-index enrollment
+
+Usage: airkctl arbiter status [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -4646,6 +5049,8 @@ The AIRK service: start, stop, status, logs, requests, trust and management
 Usage: airkctl service [OPTIONS] <COMMAND>
 
 Commands:
+  setup                  Register this extracted portable runtime without login startup, trust, or automatic start
+  setup-receipt          Validate the native setup receipt for the current verified installation, without starting it
   start                  Start the installed service (the install record's verified airk) and wait until it is healthy
   stop                   Stop the service and wait until its process exits; a saved Stop keeps automatic starts off
   restart                Stop the service, wait until its process exits, then start the installed service again
@@ -5933,6 +6338,131 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## airkctl service setup
+
+```text
+Register this extracted portable runtime without login startup, trust, or automatic start
+
+Usage: airkctl service setup [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --portable
+
+
+      --program <PROGRAM>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --resume <RESUME>
+          Reconcile the exact retained original portable operation; never creates a new request
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --data <DATA>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --state <STATE>
+
+
+      --cache <CACHE>
+
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --logs <LOGS>
+
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl service setup-receipt
+
+```text
+Validate the native setup receipt for the current verified installation, without starting it
+
+Usage: airkctl service setup-receipt [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
 ```
 
 ## airkctl service shutdown

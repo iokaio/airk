@@ -10,7 +10,7 @@ The check confirms that:
 
 - the downloaded files match `SHA256SUMS` and `release.json`;
 - the VSIX and native candidate manifests name the same commit and tree as the release;
-- every file inside the VSIX, including the bundled runtime, matches its inventory;
+- every file inside the native archive and VSIX matches its respective inventory;
 - the Windows binaries carry a valid Authenticode signature.
 
 The check does **not** prove that rebuilding the source reproduces the same bytes. It does not prove the producer run was free of tampering beyond what GitHub records, and it does not show how the extension behaves when installed. A checksum that only matches the inventory shipped in the same package is not, on its own, evidence of authenticity. Matching the separately published records is what links the steps.
@@ -41,6 +41,29 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 4. Confirm the producer run named in the output: `gh run view <run_id> --repo iokaio/airk`. Its workflow, head commit and conclusion should match the release.
 
 5. Record the result, including which install, upgrade and uninstall tests actually ran on that platform. A source test, a CI candidate test and a test of the signed installed artifact are separate kinds of evidence.
+
+## Portable publications and shared Help (1.8.35 and later)
+
+The target filename pattern also downloads its separate portable ZIP and external manifest.
+The read-only verifier checks every portable archive file, the included manuals and inventory,
+and exact equality of `runtime/` bytes to the published native candidate. This does not
+establish portable setup or process behavior on that host. Current `release.json` uses
+`airk-github-release/2`, with an exact official installer capability map; old `/1` records
+remain historical formats and do not imply an automatic headless installation capability.
+
+After verifying the release and its live GitHub producer, check the published website against
+that same downloaded universal VSIX:
+
+```text
+python scripts/check-published-help.py --release-dir DIR --report artifacts/published-help.json
+```
+
+This reads `https://airk.ioka.io/help/html.index`, follows its same-site directory redirect,
+requires `text/html`, compares `/help/index.html` byte-for-byte, and checks every generated
+article/reference/search asset plus the exact shipping Help manifest. Its report records
+final URLs, content types, hashes and the published VSIX identity. It executes no downloaded
+code. Browser rendering, keyboard/search behavior and native installer journeys require their
+own checks. A local preview or an unpublished source manifest is not published Help evidence.
 
 ## Artifact attestations
 
@@ -139,3 +162,21 @@ The first Linux check reported a mismatch for `LICENSE` and `README.md`. vsce st
 | Not verified | bit-for-bit reproduction from source; installed-editor install, upgrade and uninstall of this artifact; the other three platforms |
 
 The Marketplace copy was not compared in this record. Packages for other platforms and versions need their own run of this procedure.
+
+
+For 1.9.0 `/3` publications, retain all optional model part assets alongside the
+published records when running `verify-published-release.py`. The checker uses
+the matching source's native-emitted publication projection and checks each
+original part's size/SHA-256 against native pins, `release.json` and
+`SHA256SUMS`; changing downloaded bytes and resealing the local records cannot
+replace those pins. Use the source revision identified by the release's live
+producer. This check does not establish native concatenation/full logical asset
+verification, provisioning, offline inference, resource fitness or platform
+qualification. Those remain separate required native journeys.
+
+The campaign's final publication nominates an earlier qualified signed run. Its
+small assembly and separate bounded optional-part artifacts retain their
+original run/attempt and actual GitHub artifact digests. Publication verifies
+that complete original set and never rebuilds or resigns it. Read back the
+actual published parts and their GitHub-computed digests after publication;
+local staging success is not published-download verification.
