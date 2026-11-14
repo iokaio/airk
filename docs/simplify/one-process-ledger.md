@@ -3280,3 +3280,20 @@ passed (67 filtered), then one Python projection consumer passed. No weights
 were loaded and no production publication catalog was created. Receipt
 `receipts/delivery-10-hypothetical-publication-capture.json` binds the original
 binary, source, output and observed checks; this is not a fresh native build.
+
+Mac test-only R12 first refused before native launch because its prepared
+owner-baton guard retained the earlier seal. R13 corrected that guard and added
+a pre-transport equality check; the failed R12 inputs/results remain retained.
+R13 then passed all 47 selected tests (35 CLI, two retained-file arithmetic/APFS,
+four IPC deadline and six packet cases; 407 excluded) in 2.243s after compilation.
+Command elapsed time was 117.012s, incremental off in the isolated target.
+Matching JUnit UUID `167c9786-529b-4110-add1-63ac3e027a25` contains every one of
+the 34 independently listed regression guards. Review receipt:
+`mac-cli-await-r13/qualification-review.json`; JUnit SHA
+`88e3653273c2715f819c7b9c5b39c24010d2b0611fea4ace1b92b271480c5938`.
+R11's unchanged eight-crate Clippy pass is reused, not rerun. The harness-inclusive
+R13 seal is `c940ed72a0407ecd5700b9525845c910ef1d6cfb1c1762c734b63f29e658d6f2`;
+native inputs retain R11's seal above. Evidence was retained outside the target,
+compiler exit observed and 4,107 files/2.6 GiB cleaned. This proves only the
+selected macOS arm64 no-default-feature scope, not installed/login, inference,
+other-platform, full-workspace or release qualification.

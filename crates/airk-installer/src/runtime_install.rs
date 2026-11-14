@@ -56,7 +56,7 @@ pub mod lifecycle;
 #[cfg(any(target_os = "macos", test))]
 #[path = "runtime_macos_login.rs"]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) mod macos_login;
+pub mod macos_login;
 pub mod payload_repair;
 pub mod replacement;
 /// The pre-1.9.0 replacement boundary shared by `runtime replace-installation`

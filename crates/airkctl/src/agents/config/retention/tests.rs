@@ -2,6 +2,41 @@
 use super::super::{io, writer_test_support::Editable};
 use super::*;
 
+#[test]
+fn config_retained_available_bytes_widens_native_fields_and_refuses_overflow() {
+    // Darwin's available-block field is u32 while the fragment size is u64.
+    let native_blocks: u32 = 6_000_000;
+    let native_fragment: u64 = 8192;
+    assert_eq!(
+        platform::checked_available_bytes(u128::from(native_blocks), u128::from(native_fragment))
+            .unwrap(),
+        49_152_000_000
+    );
+    assert_eq!(
+        platform::checked_available_bytes(u128::from(u64::MAX), 1).unwrap(),
+        u64::MAX
+    );
+    assert_eq!(platform::checked_available_bytes(0, u128::MAX).unwrap(), 0);
+    for (blocks, fragment) in [(u128::from(u64::MAX), 2), (u128::MAX, 2)] {
+        let error = platform::checked_available_bytes(blocks, fragment).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "available disk count overflow");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn config_retained_available_bytes_observes_actual_pinned_apfs_directory() {
+    let fixture = Editable::new();
+    let parent = fixture.path().join("disk-observation");
+    airk_ipc::endpoint::prepare_root(&parent).unwrap();
+    let parent = fs::canonicalize(parent).unwrap();
+    let directory = OpenedDirectory::open(&parent).unwrap();
+    // Exercise the actual fstatvfs fields without assuming a free-space floor
+    // or comparing changing disk-space snapshots.
+    let _available: u64 = platform::available_bytes(&directory, &parent).unwrap();
+}
+
 fn one_receipt(parent: &Path) -> (PathBuf, Receipt) {
     let root = parent.join(".airk/agent-edits/v1");
     let paths: Vec<_> = fs::read_dir(root)

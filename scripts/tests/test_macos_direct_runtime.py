@@ -19,6 +19,29 @@ class MacDirectRuntimeTests(unittest.TestCase):
                      "\targuments = {\n\t\tairk\n\t\truntime\n\t\tlogin-serve\n\t\t--channel\n\t\tpreview\n\t}\n"
                      "\tpid = 123\n\tenvironment = {\n\t\tpid = 456\n\t}\n}\n")
 
+    def test_retained_mac_cli_entry_points_cross_the_installer_crate_boundary(self):
+        installer=(ROOT/'crates/airk-installer/src/runtime_install.rs').read_text(encoding='utf-8')
+        adapter=(ROOT/'crates/airk-installer/src/runtime_macos_login.rs').read_text(encoding='utf-8')
+        cli=(ROOT/'crates/airk-cli/src/runtime_commands.rs').read_text(encoding='utf-8')
+        exports=(ROOT/'crates/airk-cli/src/lib.rs').read_text(encoding='utf-8')
+        self.assertIn('pub mod runtime_install;', (ROOT/'crates/airk-installer/src/lib.rs').read_text(encoding='utf-8'))
+        self.assertIn('pub use airk_installer::runtime_install;',exports)
+        self.assertRegex(installer,r'pub mod macos_login;')
+        # Independent compatibility routes: each surviving external caller must
+        # reach a public entry, while implementation details remain private.
+        for entry in ('native','foreground_root','direct_root'):
+            with self.subTest(entry=entry):
+                self.assertIn('macos_login::'+entry+'(',cli)
+                self.assertRegex(adapter,r'pub fn '+entry+r'\(')
+                self.assertNotIn('pub(crate) fn '+entry+'(',adapter)
+        self.assertIn('fn startup_root(',adapter)
+        self.assertNotIn('pub fn startup_root(',adapter)
+        manager=(ROOT/'crates/airk-installer/src/service_manager.rs').read_text(encoding='utf-8')
+        self.assertIn('pub(crate) fn verify_macos_login_intent(',manager)
+        self.assertIn('crate::service_manager::verify_macos_login_intent(',adapter)
+        native=(ROOT/'crates/airk-installer/src/service_manager_macos.rs').read_text(encoding='utf-8')
+        self.assertIn('pub(super) fn verify_intent(',native)
+
     def test_direct_main_binds_top_level_job_pid(self):
         observed = fixture.job_observation(self.text, self.main, self.plist)
         self.assertEqual(observed["process_id"], 123)

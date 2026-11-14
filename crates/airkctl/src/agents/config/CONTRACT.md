@@ -154,6 +154,10 @@ there is no automatic restore, retention expiry, sweep or uninstall cleanup.
 
 ## Admission
 
+Unix disk availability widens both native `statvfs` fields to `u128`, checks the
+product, then requires an exact `u64` result. Overflow still refuses admission;
+native field-width differences do not change any reservation or disk budget.
+
 Under the owner-marker admission lock, count pending reservations with undiscarded
 transactions. Refuse a seventeenth transaction. Reserve 2 MiB plus 128 KiB
 metadata headroom, require that much observed available space and refuse if

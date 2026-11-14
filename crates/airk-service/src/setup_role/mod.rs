@@ -1519,6 +1519,7 @@ impl Setup {
         if !full_proof {
             self.leave(program.display().to_string(),"unproven legacy inventory: only exact I4 executables retired; support files/inventory preserved for original-installer recovery",false);
         }
+        #[cfg(windows)]
         let order = entries
             .iter()
             .map(|(name, _, _)| name.clone())

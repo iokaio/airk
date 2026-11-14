@@ -421,10 +421,10 @@ fn drain(
     registry.complete_provider_drain(record)
 }
 
-pub(super) fn recover(registry: &mut ServiceRegistry, active: &[WorkerIdentity]) -> Result<usize> {
+pub fn recover(registry: &mut ServiceRegistry, active: &[WorkerIdentity]) -> Result<usize> {
     registry.recover_provider_drains(&native::boot()?, active, native::absent)
 }
-pub(super) fn rss(registry: &ServiceRegistry, pool_pid: Option<u32>) -> Result<Vec<Option<u64>>> {
+pub fn rss(registry: &ServiceRegistry, pool_pid: Option<u32>) -> Result<Vec<Option<u64>>> {
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     let boot = native::boot()?;
     use airk_store::service::registry::{
@@ -482,7 +482,7 @@ pub(super) fn rss(registry: &ServiceRegistry, pool_pid: Option<u32>) -> Result<V
     }
     Ok(observations)
 }
-pub(super) fn wait_for_worker(runtime: &Path, identity: WorkerIdentity) {
+pub fn wait_for_worker(runtime: &Path, identity: WorkerIdentity) {
     loop {
         let done = (|| -> Result<bool> {
             let mut registry = ServiceRegistry::open(runtime, identity.service)?;

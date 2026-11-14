@@ -481,3 +481,18 @@ reverify full payload and actual original candidate/root proofs before invoking
 the existing verified writer. A missing custody record can therefore recover
 under the same operation; changed/foreign I4 and sibling operations never reach
 the writer. The existing startup custody refusal remains mandatory.
+
+## Platform placement of removal/seal helpers
+
+The removal directory-order snapshot is compiled only on Windows, alongside
+its exact-handle empty-directory cleanup consumer. All hosts still inspect
+and remove the same proven file-entry tuples and retain the original root
+identity validation. Unix preserves unsupported empty-root removal as an
+explicit leftover; a path recheck is never substituted for an atomic proof.
+
+transaction::completed_for is private Windows-only reconciliation for the
+Inno final sealer, its only production caller. Its full settled-owner, root,
+original operation and receipt validation is unchanged. Shared admission_time,
+startup_allowed, Active observation, interrupted owner recovery and scalar
+completion reconciliation remain compiled for all supported hosts. These cfg
+placements do not remove live macOS or Linux recovery duties.

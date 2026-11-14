@@ -122,6 +122,7 @@ pub(super) fn startup_allowed(pointer: &Path, control: &Path) -> Result<bool> {
     Ok(true)
 }
 
+#[cfg(windows)]
 pub(super) fn completed_for(pointer: &Path, operation: &SetupOperation) -> Result<ActiveSetup> {
     let folder = pointer.parent().context("pointer parent")?;
     let bytes = optional(&folder.join(ACTIVE_FILE), MAX_RECOVERY_BYTES)?

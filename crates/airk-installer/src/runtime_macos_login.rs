@@ -322,7 +322,7 @@ fn approved_main(root: &Path, identity: &str, full: bool) -> Result<PathBuf> {
     );
     Ok(main)
 }
-pub(crate) fn native(
+pub fn native(
     root: &Path,
     identity: &str,
     expected_channel: RuntimeChannel,
@@ -414,11 +414,11 @@ pub(crate) fn native(
 pub(crate) fn target_main(root: &Path, identity: &str) -> Result<PathBuf> {
     approved_main(root, identity, false)
 }
-pub(crate) fn foreground_root(expected_channel: RuntimeChannel) -> Result<PathBuf> {
+pub fn foreground_root(expected_channel: RuntimeChannel) -> Result<PathBuf> {
     startup_root(expected_channel, LEGACY_ENTRY, false)
 }
 
-pub(crate) fn direct_root(expected_channel: RuntimeChannel) -> Result<PathBuf> {
+pub fn direct_root(expected_channel: RuntimeChannel) -> Result<PathBuf> {
     startup_root(expected_channel, DIRECT_ENTRY, true)
 }
 

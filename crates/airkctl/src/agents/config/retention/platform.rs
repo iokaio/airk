@@ -135,6 +135,13 @@ pub(super) fn flush_directory(directory: &OpenedDirectory, _path: &Path) -> io::
     directory.sync_all()
 }
 
+#[cfg(any(unix, test))]
+pub(super) fn checked_available_bytes(blocks: u128, fragment_bytes: u128) -> io::Result<u64> {
+    let overflow = || io::Error::other("available disk count overflow");
+    let bytes = blocks.checked_mul(fragment_bytes).ok_or_else(overflow)?;
+    u64::try_from(bytes).map_err(|_| overflow())
+}
+
 pub(super) fn available_bytes(directory: &OpenedDirectory, path: &Path) -> io::Result<u64> {
     #[cfg(windows)]
     {
@@ -238,10 +245,10 @@ pub(super) fn available_bytes(directory: &OpenedDirectory, path: &Path) -> io::R
             }
         }
         let _ = path;
-        statistics
-            .f_bavail
-            .checked_mul(statistics.f_frsize)
-            .ok_or_else(|| io::Error::other("available disk count overflow"))
+        checked_available_bytes(
+            u128::from(statistics.f_bavail),
+            u128::from(statistics.f_frsize),
+        )
     }
 }
 
