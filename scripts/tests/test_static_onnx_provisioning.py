@@ -306,6 +306,49 @@ class StaticOrtPolicyTests(unittest.TestCase):
             self.assertFalse(MODULE.successful({**valid, key: value}))
 
 
+class OwnedObserverPolicyTests(unittest.TestCase):
+    def test_build_cap_stays_10800_and_only_named_evaluation_accepts_long_observer(self):
+        backend = "run_windows_owned" if os.name == "nt" else "run_unix_owned"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with patch.object(MODULE, backend, return_value={"exit_code": 0}) as launch:
+                MODULE.run_owned([sys.executable, "--version"], root, root / "build.log", 10800)
+                self.assertEqual(launch.call_args.args[3], 10800)
+                for value in (10800.001, 18000, 19200, 21600):
+                    with self.subTest(build_refusal=value), self.assertRaises(ValueError):
+                        MODULE.run_owned([sys.executable], root, root / "refused.log", value)
+                self.assertEqual(launch.call_count, 1)
+                for number, value in enumerate((18000, 19200, 19200.5, 21600)):
+                    MODULE.run_evaluation_fixture([sys.executable], root, root / f"evaluation{number}.log", value)
+                    self.assertEqual(launch.call_args.args[3], value)
+                self.assertEqual(launch.call_count, 5)
+
+    def test_both_policies_refuse_nonfinite_nonpositive_non_numeric_and_boolean_before_launch(self):
+        invalid = (0, -1, float("nan"), float("inf"), -float("inf"), True, False,
+                   "19200", None, complex(1), 10**1000)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for run in (MODULE.run_owned, MODULE.run_evaluation_fixture):
+                for value in (*invalid, 21600.001):
+                    with self.subTest(policy=run.__name__, value=repr(value)), self.assertRaises(ValueError):
+                        run([sys.executable], root, root / "must-not-exist.log", value)
+            self.assertFalse((root / "must-not-exist.log").exists())
+
+    def test_named_evaluation_uses_actual_owned_child_exit_log_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            result = MODULE.run_evaluation_fixture(
+                [sys.executable, "-c", "print('private evaluation observer'); raise SystemExit(7)"],
+                root, root / "evaluation.log", 19200)
+            self.assertEqual(result["exit_code"], 7)
+            self.assertFalse(result["timed_out"])
+            self.assertTrue(result["owned_descendants_settled"])
+            self.assertIn("private evaluation observer", (root / "evaluation.log").read_text())
+            if os.name == "nt":
+                self.assertFalse(result["parent_assigned_to_job"])
+                self.assertTrue(result["child_assigned_before_resume"])
+
+
 class OwnedStaticBuildProcessTests(unittest.TestCase):
     def test_real_child_exit_is_recorded_and_parent_is_outside_owned_job(self):
         with tempfile.TemporaryDirectory() as directory:

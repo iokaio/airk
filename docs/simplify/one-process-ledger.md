@@ -3297,3 +3297,17 @@ native inputs retain R11's seal above. Evidence was retained outside the target,
 compiler exit observed and 4,107 files/2.6 GiB cleaned. This proves only the
 selected macOS arm64 no-default-feature scope, not installed/login, inference,
 other-platform, full-workspace or release qualification.
+
+Before any final A6 score, actual development timings forecast roughly 3.51h
+for six final conditions, or 4.56h with a planning margin (not an upper bound).
+The existing native fixture already permits up to 21,600s, but the build/tool
+observer caps commands at 10,800s. A separate named `run_evaluation_fixture`
+entrypoint now permits a predeclared finite positive observer deadline up to
+21,600s; ordinary `run_owned` retains its 10,800s cap. Both use the identical
+suspended-launch, job ownership, bounded-log, timeout and cleanup mechanism.
+Five focused policy/real-child tests pass in 1.202s; receipt:
+`receipts/evaluation-observer-policy-after.json`. This changes observation time,
+not scientific, model, read, resource or quality limits. Any final fixture must
+also prove original native/process/lease closure with no forced termination.
+The prepared final wrapper has not been launched; remaining development and
+source-acceptance review precede any separately frozen final phase.

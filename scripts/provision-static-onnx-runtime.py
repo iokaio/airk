@@ -392,10 +392,27 @@ def prepare(destination, target, download=False):
 
 
 def run_owned(argv, cwd, log, timeout, environment=None):
-    """Own descendants before executable code starts; bound runtime and log size."""
+    """Own a build/tool child; its finite positive observer limit stays at 10800s."""
+    return _run_owned(argv, cwd, log, timeout, environment, 10800)
+
+
+def run_evaluation_fixture(argv, cwd, log, timeout, environment=None):
+    """Explicit private evaluation observer, declared before trial scores.
+
+    Only the observer duration changes (finite positive, at most 21600s).
+    The caller records the scientific phase and independent native fixture
+    deadline before launch; this never extends model/read/resource budgets.
+    Suspended launch, descendant ownership, logging and cleanup are identical.
+    """
+    return _run_owned(argv, cwd, log, timeout, environment, 21600)
+
+
+def _run_owned(argv, cwd, log, timeout, environment, maximum_timeout):
+    """Shared launch mechanism; the two named entrypoints own duration policy."""
     argv = [str(value) for value in argv]
-    if not argv or any("\0" in value for value in argv) or not 0 < timeout <= 10800:
-        raise ValueError("Invalid owned build command/deadline")
+    if (not argv or any("\0" in value for value in argv)
+            or type(timeout) not in (int, float) or not 0 < timeout <= maximum_timeout):
+        raise ValueError("Invalid owned command/finite positive observer deadline")
     log = plain(log)
     log.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
