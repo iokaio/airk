@@ -7,6 +7,7 @@ contract_schema` pins `packages/vscode/src/generated/i2.schema.json`; for I3:
 `packages/contracts-gen/i3.schema.json`). This renderer turns a schema into the
 `.ts` file beside it. It supports only the constructs the contracts use and
 fails on anything else, so it never guesses a type.
+Pure Rust maps render as Record<string, T>; mixed named/open objects refuse.
 
     python scripts/dev/contract_types.py i2 --check   # exit 1 on drift
     python scripts/dev/contract_types.py i3 --write
@@ -90,10 +91,14 @@ def render(schema, indent=""):
 
 def object_type(schema, indent):
     if schema.get("additionalProperties") not in (False, None):
-        # Native BTreeMap<String, Value> is a pure JSON map. Do not broaden a
+        # Native BTreeMap<String, T> is a pure typed map. Do not broaden a
         # mixed named object into an index signature that conceals its contract.
-        if schema.get("additionalProperties") is True and not schema.get("properties") and not schema.get("required"):
-            return "Record<string, unknown>"
+        if not schema.get("properties") and not schema.get("required"):
+            additional = schema["additionalProperties"]
+            if additional is True:
+                return "Record<string, unknown>"
+            if isinstance(additional, dict):
+                return f"Record<string, {render(additional, indent)}>"
         raise Unsupported("open mixed or typed object")
     required = set(schema.get("required", []))
     inner = indent + "    "

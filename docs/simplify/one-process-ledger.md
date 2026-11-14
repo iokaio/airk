@@ -3456,3 +3456,28 @@ pass in 6.734s, including normal Python/PowerShell, an actual blocked orphan,
 timeout and qualifier refusals. Receipt:
 `receipts/owned-job-event-drain-after-r2/receipt.json`. The earlier 7/8 run and
 its observed log-handle cleanup race remain retained; QASPER R4 was not rerun.
+
+### 2026-11-14 — parent-budget contract checkpoint and retained DEV harness
+
+Frozen native group `997688ee0fcd943576dc0f3bc31fbb732f290dfabc5cc2e03d51cbe5ea80e276`
+passes workspace all-target/all-feature Clippy in 45.882s. Actual Rust emitters
+each pass one selected test and produce the current joint/native semantic cases.
+The reviewed schema adds JointCalibration and explicit required-nullable advice
+fields. All 287 Core tests pass, zero skipped, in 7.206s. Receipts and timings:
+`receipts/native-context-r10/`. Earlier compiler diagnostics and the deliberate
+schema-drift observation remain separate retained failures.
+
+The generator refused the newly required pure typed Rust asset map. Its reviewed
+extension now emits `Record<string, T>` only for pure maps; mixed named/open
+objects and unsupported value schemas still refuse. Ten generator tests pass
+before regeneration. No handwritten consumer contract mirror was introduced.
+
+The DEV64 synthetic identity test passes one selected test in 0.020s after
+76.381s including compilation. The exact tested Kernel image is retained under
+`native-harnesses/dev64-r10/`, SHA256
+`719bfd955566bacb856d7fd6d36668a6cf3074b62ac1c607fd1402c7ded7a26b`.
+Its two DEV test identities were inspected. No encoder capture, model training
+or final evaluation ran in this checkpoint. Source writers resumed afterward;
+later task-policy receipt and whole-summary refinements need their own checks.
+Actual joint Kernel execution, full learned transport parity and qualification
+remain unfinished.

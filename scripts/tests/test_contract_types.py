@@ -32,7 +32,8 @@ class Render(unittest.TestCase):
     def test_unsupported_constructs_fail(self):
         for schema in ({"type": "object", "additionalProperties": True, "properties": {"known": {"type": "string"}}},
                        {"type": "object", "additionalProperties": True, "required": ["known"]},
-                       {"type": "object", "additionalProperties": {"type": "string"}},
+                       {"type": "object", "additionalProperties": {"type": "string"}, "properties": {"known": {"type": "string"}}},
+                       {"type": "object", "additionalProperties": {"type": "string"}, "required": ["known"]},
                        {"allOf": [{"type": "string"}]},
                        {"$ref": "https://example.invalid/x"},
                        {"type": "tuple"}):
@@ -50,6 +51,14 @@ class Render(unittest.TestCase):
         escaped = TYPES.render({"type": "object", "additionalProperties": False, "properties": {hostile: {"type": "string"}}})
         self.assertIn(json.dumps(hostile) + '?: string;', escaped)
         TYPES.declaration_only('export const I3_CONTRACT = 1; export type Keys = ' + escaped + ';', "i3")
+
+    def test_native_typed_map_preserves_value_contract_and_refuses_unsupported_values(self):
+        self.assertEqual(TYPES.render({"type": "object", "additionalProperties": {"$ref": "#/$defs/JointAssetBinding"}}),
+                         "Record<string, JointAssetBinding>")
+        self.assertEqual(TYPES.render({"type": "object", "additionalProperties": {"type": ["integer", "null"]}}),
+                         "Record<string, number | null>")
+        with self.assertRaises(TYPES.Unsupported):
+            TYPES.render({"type": "object", "additionalProperties": {"allOf": [{"type": "string"}]}})
 
     def test_check_detects_drift_and_write_repairs_it(self):
         with tempfile.TemporaryDirectory() as temporary:
