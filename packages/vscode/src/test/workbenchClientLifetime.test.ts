@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
+import {answerSourceFixture,answerRecord,answerIndex,answerProject,answerRoot,answerHash,answerPublication} from './workbenchAnswerFixture';
 import Module from 'node:module';
 import { test } from 'node:test';
 import type { LaunchSpec } from '../model';
@@ -10,6 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { renderExport } from '../workbenchRender';
 import { EvidenceClient, EvidenceFailure } from '../explorerEvidence';
+import { openSelectionSpec } from '../airkctl/features/windowScope';
 import { explorerError } from '../explorerErrors';
 import { combinedScopeSelectionIdentity, scopeSelectionIdentity, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from '../scopeSelection';
 import { sharedCapabilityDigest } from '../sharedCapabilityFields';
@@ -862,4 +864,92 @@ test('default Workbench project invalidates implicit window authority without ch
         f.scope(undefined);
         assert.equal(f.created[1].disposed,1,'scope clear restores fallback only through a new client');
     }finally{held.resolve({payload:{}});f.provider.dispose();}
+});
+
+// Synthetic host controls exercise source-navigation fences, not native parity.
+test('A7 answer source jump resolves native record and hit then rechecks file_info without trusting renderer paths',async()=>{
+    const f=fixture(),{answer,info}=answerSourceFixture();
+    try{
+        await f.state.select(A);await tick();
+        f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
+        await f.state.message({type:'answer',question:'Original answer question'});
+        const turn=f.state.session!.turns.at(-1)!;
+        const before=structuredClone(turn.envelope);
+        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+        assert.equal(f.opened.length,1);
+        assert.equal(f.opened[0].root,'/native/verified-original');assert.equal(f.opened[0].relative,'api/source.rs');
+        assert.equal(f.opened[0].contentHash,answerHash);assert.equal(f.opened[0].startLine,7);
+        assert.deepEqual(f.created[0].requests.find(value=>value.tool==='airk_file_info')?.args,{path:'api/source.rs',project_ids:[answerProject],index_ids:[answerIndex],revision:answerPublication.token,known_hash:answerHash,response_mode:'full'});
+        assert.deepEqual(turn.envelope,before);
+        for(const bad of [{record:'99'.repeat(32),hit:0},{record:answerRecord,hit:1}])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,...bad}),/no unambiguous native source/);
+        (info.source_verification as Value).sources=[{...((info.source_verification as Value).sources as Value[])[0],source_root_id:'src_'+'99'.repeat(16)}];
+        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/source identity changed/);
+        assert.equal(f.opened.length,1);
+    }finally{f.provider.dispose();}
+});
+
+test('A7 answer source jump rejects restored turns and scope or native consent changes during file_info',async()=>{
+    for(const boundary of ['restored','scope','disabled','new-session','replaced-turn','client','untrusted']){
+        const f=fixture(),{answer,info}=answerSourceFixture(),held=deferred<{payload:Value}>(),entered=deferred<void>();
+        try{
+            await f.state.select(A);await tick();
+            f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
+            await f.state.message({type:'answer',question:'Original answer question'});
+            let turn=f.state.session!.turns.at(-1)!;
+            if(boundary==='restored'){
+                turn=structuredClone(turn);f.state.session!.turns=[turn];
+                const calls=f.created[0].requests.length;
+                await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/no longer authorized/);
+                assert.equal(f.created[0].requests.length,calls);continue;
+            }
+            f.respond(async tool=>{assert.equal(tool,'airk_file_info');entered.resolve();return held.promise;});
+            const pending=f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+            await entered.promise;
+            if(boundary==='scope')f.scope('replaced-native-window');
+            if(boundary==='replaced-turn')f.state.session!.turns=[structuredClone(turn)];
+            if(boundary==='client')f.replace([{...spec(A),command:'/replacement/client'},spec(B)]);
+            if(boundary==='untrusted')f.trust(false);
+            if(boundary==='disabled')f.native(false);
+            if(boundary==='new-session')await f.provider.newSession();
+            held.resolve({payload:info});
+            await assert.rejects(pending,/no longer authorized|trusted workspace/);
+            assert.equal(f.opened.length,0,boundary);
+        }finally{held.resolve({payload:info});f.provider.dispose();}
+    }
+});
+
+test('A7 answer source Open refuses changed publication hash and ambiguous native metadata',async()=>{
+    for(const failure of ['publication','hash','ambiguous','outside-index']){
+        const f=fixture(),{answer,info}=answerSourceFixture();
+        try{
+            await f.state.select(A);await tick();
+            f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
+            await f.state.message({type:'answer',question:'Original answer question'});
+            const turn=f.state.session!.turns.at(-1)!;
+            if(failure==='publication')info.publication={collection:'fixture',token:`airk-r1:${'36'.repeat(16)}:5:${'37'.repeat(32)}`};
+            if(failure==='hash')((info.source_verification as Value).sources as Value[])[0].expected_hash='99'.repeat(32);
+            if(failure==='ambiguous')((info.source_verification as Value).sources as Value[]).push(structuredClone(((info.source_verification as Value).sources as Value[])[0]));
+            if(failure==='outside-index')((info.source_verification as Value).origins as Value[])[0].index_id='idx_'+'99'.repeat(16);
+            await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/source identity changed/);
+            assert.equal(f.opened.length,0,failure);
+        }finally{f.provider.dispose();}
+    }
+});
+
+test('A7 explicit Open source navigation uses native empty Project attribution without inventing a set',async()=>{
+    const f=fixture(),{answer,info}=answerSourceFixture();
+    const body=(answer.records as Value[])[0].canonical_result as Value;
+    ((body.source_verification as Value).origins as Value[])[0].project_ids=[];
+    ((body.scope_observation as Value).members as Value[])[0].memberships=[];
+    ((info.source_verification as Value).origins as Value[])[0].project_ids=[];
+    try{
+        (f.provider as any).host.openSelectionSpec=(selection:{indexes:string[];sets:string[]},label:string)=>openSelectionSpec({command:'/fixture/airkctl',root:'/fixture/source',installDir:'/fixture/runtime'},selection,label);
+        await f.state.message({type:'openSelection',indexes:[answerIndex],sets:[]});await tick();
+        f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
+        await f.state.message({type:'answer',question:'Explicit named-index answer'});
+        const turn=f.state.session!.turns.at(-1)!;
+        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+        assert.equal(f.opened.length,1);
+        assert.deepEqual(f.created[0].requests.find(value=>value.tool==='airk_file_info')?.args,{path:'api/source.rs',project_ids:[],index_ids:[answerIndex],revision:answerPublication.token,known_hash:answerHash,response_mode:'full'});
+    }finally{f.provider.dispose();}
 });

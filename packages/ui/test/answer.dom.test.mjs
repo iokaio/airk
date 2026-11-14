@@ -9,9 +9,11 @@ const { build } = createRequire(new URL('../../vscode/package.json', import.meta
 const root = fileURLToPath(new URL('../../vscode/', import.meta.url));
 let browser;
 before(async () => { if (browserAvailable) browser = await browserHarness(); });
-after(async () => { await browser?.close(); });
+after(async t => { try { await browser?.close(); } finally { t.diagnostic(JSON.stringify({browser_ownership: browser?.observation})); } });
 test('actual Workbench cited context navigates retained records, discloses gaps and keeps full copy/export',
-  { skip: browserAvailable ? false : 'Chromium unavailable.' }, async () => {
+  { skip: browserAvailable ? false : 'Chromium unavailable.' }, async t => {
+    let stage = 'compile-workbench';
+    try {
     const bundle = await build({ absWorkingDir: root, entryPoints: ['src/workbenchWebview/main.tsx'], bundle: true, write: false,
       outdir: 'out/unused-answer-dom', format: 'iife', platform: 'browser', jsx: 'automatic', jsxImportSource: 'preact' });
     const id = 'a'.repeat(64), missing = 'b'.repeat(64), turn = 'observed-answer';
@@ -21,21 +23,32 @@ test('actual Workbench cited context navigates retained records, discloses gaps 
       records: [{ id, scope: { original_identity: 'retained' }, operation: 'read_evidence', role: 'definition',
         canonical_result: { source: 'original/path/é中.rs', publication: 'original-publication', future_native_field: { complete: ['all', 'fields'] } } }],
       gaps: ['counterevidence'], stop: 'budget', candidate_count: 3, omitted_count: 2, work: { calls: 8 }, applications: [], advice: [] };
+    stage = 'prepare-document';
     await browser.evaluate(`document.body.innerHTML='<div id="root"></div>';window.requests=[];window.acquireVsCodeApi=()=>({postMessage:message=>window.requests.push(message)});`);
+    stage = 'mount-workbench';
     await browser.evaluate(bundle.outputFiles.find(file => file.path.endsWith('.js')).text);
+    stage = 'ready-observed-barrier';
     await browser.observed(`window.requests.some(message=>message.type==='ready')`);
     const project = 'c'.repeat(64);
+    stage = 'deliver-retained-native-state';
     await browser.evaluate(`window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:${JSON.stringify({ projects: [{ id: project, name: 'Fixture' }], project,
       session: { schema: 1, id: 'fixture-session', project, title: 'Context', createdAt: 1, updatedAt: 1, revision: 1, omitted: 0,
         turns: [{ id: turn, input: 'Who owns the fence?', at: 1, format: 'structured', envelope: answer }] },
-      cards: { [turn]: [] }, recent: [], busy: false, save: 'Synthetic DOM fixture', persistence: false, sessionEpoch: 1 })}}}));`);
+      cards: { [turn]: [{id:'record-0',path:'original/path/é中.rs',hash:'c'.repeat(64),start:7,end:9,text:'Original native source',step:id,resultPointer:'/hits/0',publication:'retained-publication',indexId:'idx_'+'d'.repeat(32),sourceRootId:'src_'+'e'.repeat(32),sourceRelativePath:'original/path/é中.rs',projectIds:['prj_'+'f'.repeat(32)]}] }, recent: [], busy: false, save: 'Synthetic DOM fixture', persistence: false, sessionEpoch: 1 })}}}));`);
+    stage = 'answer-rendered-barrier';
     await browser.observed(`document.body.textContent.includes('Evidence-grounded context')`);
     assert.equal(await browser.evaluate(`document.body.textContent.includes('counterevidence')&&document.body.textContent.includes('omitted: 2')`), true);
     assert.equal(await browser.evaluate(`document.body.textContent.includes('Unresolved native evidence citation: ${missing}')`), true);
     assert.equal(await browser.evaluate(`document.querySelectorAll('script').length`), 0);
+    stage = 'read-evidence-button';
     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Read evidence ${id.slice(0, 12)}').click()`);
     await browser.observed(`document.activeElement?.id==='answer-${turn}-${id}'`);
     assert.equal(await browser.evaluate(`document.activeElement.textContent.includes('original/path/é中.rs')&&document.activeElement.closest('details').open`), true);
+    stage = 'open-source-locator-button';
+    await browser.evaluate(`[...document.querySelectorAll('section[aria-label="Open cited answer sources"] button')].find(button=>button.textContent.includes('original/path/é中.rs:7')).click()`);
+    assert.deepEqual(await browser.evaluate(`window.requests.filter(message=>message.type==='openAnswerCitation')`),
+      [{type:'openAnswerCitation',turn,record:id,hit:0}], 'renderer sends only retained IDs and a bounded hit locator, never a source path/root/hash');
+    stage = 'complete-result-copy-export';
     const retained = await browser.evaluate(`JSON.parse([...document.querySelectorAll('details.complete-response pre')][0].textContent)`);
     assert.deepEqual(retained, answer);
     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='json').click()`);
@@ -43,6 +56,7 @@ test('actual Workbench cited context navigates retained records, discloses gaps 
     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Copy JSON').click();[...document.querySelectorAll('button')].find(button=>button.textContent==='Save export…').click();`);
     assert.deepEqual(await browser.evaluate(`window.requests.filter(message=>message.type==='copy'||message.type==='export')`),
       [{ type: 'copy', turn, format: 'json' }, { type: 'export', turn, format: 'json' }]);
+    stage = 'answer-question-budget-controls';
     await browser.evaluate(`{const input=document.querySelector('textarea[aria-label="Request indexed evidence"]');input.value='Explicit context question';input.dispatchEvent(new Event('input',{bubbles:true}));}`);
     await browser.observed(`[...document.querySelectorAll('button')].some(button=>button.textContent==='Gather cited context'&&!button.disabled)`);
     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Gather cited context').click()`);
@@ -51,4 +65,5 @@ test('actual Workbench cited context navigates retained records, discloses gaps 
     await browser.observed(`[...document.querySelectorAll('button')].some(button=>button.textContent==='Gather with this budget'&&!button.disabled)`);
     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Gather with this budget').click()`);
     assert.deepEqual(await browser.evaluate(`window.requests.filter(message=>message.type==='answer').at(-1)`),{type:'answer',question:'é'.repeat(8192),budget:{calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200}});
+    } catch (error) { t.diagnostic(JSON.stringify({stage,browser_ownership:browser?.observation})); throw error; }
   });

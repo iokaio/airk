@@ -29,8 +29,10 @@ const MESSAGES: Record<LiveCheck, string> = {
  * sidebar Workbench passes ViewColumn.Active to use the main editor without a split.
  */
 export async function openSource(location: { root: string; relative: string; contentHash: string; lineBasis?: string; startLine: number;savedState?:LiveCheck;nativeMessage?:string;nativeResult?:Record<string,unknown> },
-    column: vscode.ViewColumn = vscode.ViewColumn.Beside): Promise<OpenSourceResult> {
+    column: vscode.ViewColumn = vscode.ViewColumn.Beside, authorize?: () => void): Promise<OpenSourceResult> {
+    authorize?.();
     const file = await sourceFile(location.root, location.relative);
+    authorize?.();
     const uri = vscode.Uri.file(file);
     const dirty = vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && caseFold(document.uri.fsPath) === caseFold(file) && document.isDirty);
     const live = dirty?'not_saved':location.savedState??'unchecked';

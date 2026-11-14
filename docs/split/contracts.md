@@ -1540,6 +1540,30 @@ Promise<Reply>; subscribe(listener): Unsubscribe; capabilities: Capabilities }`.
 (window via I2 W4; admin via its session grant). UI hides a control whose
 capability is absent; it never branches on the shell name.
 
+**Workbench answer source locator (A7, 2026-11-14).** The local webview action
+`openAnswerCitation { turn, record, hit }` carries only a retained turn ID,
+exact native record digest and bounded zero-based native hit index. The host
+resolves it against the immutable complete answer, using the existing native
+saved-source reference pointer, source ID, origin index, Project attribution,
+source-root ID, relative path, publication, content hash and original location.
+The initial source-jump applicability is explicit for Search, Context and
+ReadEvidence's native hit arrays. Definitions/fact discovery, nested References
+evidence and document-section/outline records remain intact but have no source
+jump until their own native locator shapes are supported. Projection never
+imposes default record or hit counts: the native frame/history and owning native
+budget remain the bounds, and every qualified retained locator is represented.
+Missing or ambiguous native associations stay visible as original evidence but
+do not produce an Open action. A saved/forked turn has no restored read authority.
+Before opening, the host requires the same live window/turn/client and consent,
+asks canonical `file_info` for that exact index/publication/hash, and rechecks the
+source-root/relative-path identity. Projectless selectors are accepted only for
+an actual retained explicit Open selection (`project_ids: []`, captured index),
+never by fabricating a Project. The existing guarded source opener rechecks the
+host callback after asynchronous path resolution and before editor effects;
+non-source line bases, unsaved buffers and native source-check warnings retain
+their existing handling. Renderer paths, hashes or roots are never accepted as
+navigation inputs. Native DTOs and full raw/copy/export results are unchanged.
+
 **Message catalog split** (`WEBVIEW_MESSAGES`, 101 types [V]): evidence and
 read actions (`search.*`, `evidence.*`, `code.*`, `docs.facts`, `list.more`,
 `help.*`, `nav.go`, `ready`, `status.refresh`, `project.select`,

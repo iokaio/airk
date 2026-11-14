@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { answerEvidenceRows } from './workbenchAnswerNavigation';
 import {nativeVerification,readResultBody,selectedVerification,verificationLabel} from './sourceVerification';
 import { CapabilityFieldDisplay, Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn, WORKBENCH_MAX_STEP_REPORTS } from './workbenchContracts';
 
@@ -205,6 +206,7 @@ export function discoveryFollowupPlan(envelope:Value,step:string,target:string,p
 
 /** Rich native plan records retain their complete citation and original location. */
 export function evidenceRows(envelope:Value):Value[] {
+    if(envelope.schema==='airk.arbiter.context/1')return answerEvidenceRows(envelope);
     if(Array.isArray(envelope.evidence))return envelope.evidence.map(object);
     const pointer=(root:Value,path:unknown):unknown=>{
         if(typeof path!=='string'||path.length>4096||!path.startsWith('/'))return;

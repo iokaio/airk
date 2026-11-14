@@ -14,9 +14,14 @@ export async function browserHarness() {
   const browser = spawn(browserPath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', `--user-data-dir=${directory}`, 'about:blank'],
     { windowsHide: true, stdio: 'ignore' });
+  const observation = { pid: browser.pid, profile: directory, executable: browserPath,
+    spawned_at_utc: new Date().toISOString(), browser_close_acknowledged: false,
+    exit_observed: false, profile_removed: false };
+  browser.once('exit', (code, signal) => Object.assign(observation,
+    { exit_observed: true, exit_code: code, exit_signal: signal, exited_at_utc: new Date().toISOString() }));
   let socket, call;
   const close = async () => {
-    try { if (call) await call('Browser.close'); } finally {
+    try { if (call) { await call('Browser.close'); observation.browser_close_acknowledged = true; } } finally {
       socket?.close();
       // Browser.close drains its subprocesses. Killing the parent immediately
       // after its CDP reply can leave Windows profile databases locked.
@@ -27,6 +32,7 @@ export async function browserHarness() {
       }
       assert.ok(resolve(directory).startsWith(`${resolve(tmpdir())}${sep}`));
       await rm(directory, { recursive: true, force: true });
+      observation.profile_removed = true;
     }
   };
   try {
@@ -51,7 +57,9 @@ export async function browserHarness() {
       if (reply.error) request.reject(Error(JSON.stringify(reply.error))); else request.ready(reply.result);
     });
     call = (method, params = {}) => new Promise((ready, reject) => {
-      const id = ++sequence, deadline = setTimeout(() => { pending.delete(id); reject(Error(`CDP deadline: ${method}`)); }, 10000);
+      const id = ++sequence;
+      Object.assign(observation, { last_cdp_method: method, last_cdp_id: id, last_cdp_at_utc: new Date().toISOString() });
+      const deadline = setTimeout(() => { pending.delete(id); reject(Error(`CDP deadline: ${method}`)); }, 10000);
       pending.set(id, { ready, reject, deadline }); socket.send(JSON.stringify({ id, method, params }));
     });
     const evaluate = async expression => {
@@ -61,6 +69,6 @@ export async function browserHarness() {
     };
     const observed = condition => evaluate(`new Promise((resolve,reject)=>{const deadline=performance.now()+5000;const observe=()=>{
       if(${condition})return resolve(true);if(performance.now()>deadline)return reject(Error('DOM observation deadline'));requestAnimationFrame(observe);};observe();})`);
-    return { close, call, evaluate, observed };
+    return { close, call, evaluate, observed, observation };
   } catch (error) { await close(); throw error; }
 }

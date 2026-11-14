@@ -3340,3 +3340,35 @@ execution to construct a later allowance. The Core-only contract/type/fixture
 substep passes scoped Clippy (42.111s) and five read-attempt tests (0.027s after
 compilation), under `receipts/core-read-attempt-contract-r1/`. Consumer repair
 and actual transport proof remain pending; this is not an end-to-end pass.
+
+### 2026-11-14 — answer source navigation and blind metadata result
+
+Workbench answer source actions now carry only retained turn/record/hit IDs.
+The host resolves native source-verification associations, rechecks live window,
+turn, client, consent, index/publication/hash and fresh canonical file_info,
+then uses the guarded source opener. Default-sized record/hit caps were removed;
+all qualified native hit locators remain represented. Host/webview typechecks
+and 79 focused unit tests pass. The required compiled-module packaging control
+passes one test. Full raw/copy/export data remains unchanged.
+
+Two Chromium attempts failed before product mount. A minimal blank-page probe
+then reproduced Edge exit0x80000003 under sandbox SID1012, while the identical
+harness passed under checkout-owner SID1002 with observed exit0, acknowledged
+Browser.close and private-profile removal. In that verified owner context the
+actual Workbench DOM test passed one test, zero skipped, in 1.063s. Retained log:
+`receipts/delivery-11-a7-answer-dom-owner-r3.log`; failed attempts and both
+`browser-blank-*-r1.json` diagnostics remain separate. This proves synthetic
+Chromium rendering/click behavior, not installed/native GUI qualification.
+
+The next-experiment A1 exposure inventory and blind metadata audit received
+independent review before execution. Audit r5 completed in 1.662s with
+225,882,112 committed bytes under the unchanged 256MiB limit. It expanded all
+512 old question IDs into 5,101 actual context slots/5,056 article families,
+then excluded whole exposed components. Structural buckets contain DEV746,
+sealed CAL731 and sealed FINAL2,396 questions before unperformed eligibility/
+alignment checks. The earlier fixed-ten-context assumption and whole-output
+memory allocation refusals remain retained; neither sampling nor limits changed.
+Receipt: `models/a1-next-experiment-blind-metadata-r5/execution-receipt.json`.
+No new question outcomes, model scoring or weight training were consumed.
+These metadata counts do not overturn the original failed 205-question result
+or establish an eligible new final population.

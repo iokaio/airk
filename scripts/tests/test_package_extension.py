@@ -73,6 +73,27 @@ def universal_candidate(directory, version=SPLIT, preview=False, commit=COMMIT, 
 
 
 class VsixContracts(unittest.TestCase):
+    def test_workbench_answer_navigation_is_an_exact_required_host_module(self):
+        self.assertIn("workbenchAnswerNavigation.js", package.MODULES)
+        self.assertEqual(package.resolve_import("workbenchView.js", "./workbenchAnswerNavigation"), "workbenchAnswerNavigation.js")
+        self.assertEqual(package.resolve_import("workbenchRender.js", "./workbenchAnswerNavigation"), "workbenchAnswerNavigation.js")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiled = root / "compiled"
+            compiled.mkdir()
+            # Tiny fixture isolates the literal host import closure. Explicit
+            # source names are independent of the production module roster.
+            names = ("workbenchView.js", "workbenchRender.js", "workbenchAnswerNavigation.js")
+            for name in names:
+                (compiled / name).write_text('require("./workbenchAnswerNavigation");' if name != names[2] else 'exports.navigate = true;', encoding="utf-8")
+            with mock.patch.object(package, "MODULES", names):
+                package.stage_runtime_modules(compiled, root / "stage")
+                self.assertEqual({p.name for p in (root / "stage").iterdir()}, set(names))
+                (compiled / names[2]).unlink()
+                with self.assertRaisesRegex(ValueError, "Invalid or oversized runtime module: workbenchAnswerNavigation.js"):
+                    package.stage_runtime_modules(compiled, root / "missing")
+                self.assertFalse((root / "missing").exists())
+
     def test_vsix_model_notice_owner_retains_exact_public_companions_and_rejects_extra_files(self):
         expected = {"LICENSE": "minilm-v2-LICENSE.txt", "TRAINING-NOTICES.md": "minilm-v2-TRAINING-NOTICES.md",
                     "training-provenance.json": "minilm-v2-provenance.json", "CC-BY-4.0.txt": "CC-BY-4.0.txt"}

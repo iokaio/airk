@@ -4,7 +4,7 @@ import { h, render, type ComponentChildren } from 'preact';
 import { answerPresentation, type AnswerNode } from '../../../ui/src/answerPresentation';
 import type { ContextResponse } from '../../../contracts-gen/arbiter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields, WORKBENCH_CONTEXT_BUDGET } from '../workbenchContracts';
+import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, EvidenceCard, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields, WORKBENCH_CONTEXT_BUDGET } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
 import { canonical, combinedReadDetails, discoveryDetails, markdown, materializeCapabilityMember, openSelectionArgv, searchExecutionLabel, workbenchStepReportOmissions } from '../workbenchRender';
 import './style.css';
@@ -12,13 +12,17 @@ declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):voi
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
 const COMMANDS=['/search','/symbols','/code-facts','/refs','/read','/outline','/files','/info','/imports','/facts','/changes --since','/status','/diagnostics','/capabilities','/context','/relationships','/help'];
 const RECIPES=[['definition','Explore a definition'],['documents','Collect document evidence'],['impact','Find possible impact'],['tests','Find test mentions'],['component','Explore a component'],['readiness','Check retrieval readiness']];
-function AnswerView(props: { answer: ContextResponse; identity: string }) {
+function AnswerView(props: { answer: ContextResponse; identity: string; cards: EvidenceCard[]; disabled: boolean }) {
     const show = (value: AnswerNode | string): ComponentChildren => typeof value === 'string' ? value : h(value.tag, {
         ...(value.id ? { id: value.id, tabIndex: -1 } : {}),
         ...(value.citationTarget ? { type: 'button', onClick: () => { const record = document.getElementById(value.citationTarget!);
             record?.closest('details')?.setAttribute('open', ''); record?.focus(); record?.scrollIntoView({ block: 'start' }); } } : {}),
     }, ...value.children.map(show));
-    return <>{show(answerPresentation(props.answer, props.identity))}</>;
+    return <>{show(answerPresentation(props.answer, props.identity))}<section aria-label="Open cited answer sources">
+        <h4>Open cited sources</h4><p class="note">Source locations are resolved by the native host from the retained record and checked again before opening.</p>
+        {props.cards.length ? props.cards.map(card=><button type="button" disabled={props.disabled} onClick={()=>send({type:'openAnswerCitation',turn:props.identity,record:card.step,hit:Number(card.resultPointer?.slice('/hits/'.length))})}>
+            Open {card.path}:{card.start} · record {card.step.slice(0,12)}</button>) : <p>No unambiguous native source locator was returned. Complete original evidence remains available above.</p>}
+    </section></>;
 }
 interface ToolFormProps {
     state:WorkbenchState;issue:string;currentDraft:()=>WorkbenchFormDraft|undefined;
@@ -137,7 +141,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
                 {format==='structured'?<>
                     {envelope.schema === 'airk.arbiter.context/1' && Array.isArray(envelope.paragraphs) && Array.isArray(envelope.records)
-                        ? <AnswerView answer={envelope as ContextResponse} identity={turn.id} /> : null}
+                        ? <AnswerView answer={envelope as ContextResponse} identity={turn.id} cards={cards} disabled={state.busy} /> : null}
                     <DiscoveryDetails turn={turn} state={state}/>
                     {cards.length>0&&<details class="result-tools"><summary>Filter and group evidence{filter?` · ${rows.length} matches`:''}</summary><label class="filter">Filter retained evidence<input value={filter} onInput={e=>setFilter(e.currentTarget.value)}/></label><button aria-pressed={group} onClick={()=>setGroup(!group)}>Group by file</button><p class="counts">Showing {Math.min(show,rows.length)} of {rows.length} matching retained records.</p></details>}
                     {envelope.truncated===true&&<p class="warning">Upstream or output omissions reported.</p>}

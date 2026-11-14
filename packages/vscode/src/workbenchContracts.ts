@@ -204,6 +204,7 @@ export type WorkbenchMessage =
     | { type: 'run'; input: string; prepare: boolean; recipe?: string; plan?: Value; pathPrefix?: string }
     | { type: 'rerun' | 'saveStrategy' | 'remember'; turn: string }
     | { type: 'open' | 'context'; turn: string; card: string }
+    | { type: 'openAnswerCitation'; turn: string; record: string; hit: number }
     | { type:'continue'; turn:string; step:string }
     | { type:'followTarget';turn:string;step:string;target:string }
     | { type:'followDefinition';turn:string;step:string;name:string;path:string }
@@ -247,6 +248,7 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
     if (type === 'run' && exact(['type','input','prepare','recipe','plan','pathPrefix']) && str('input',4096) && typeof v.prepare === 'boolean' && (v.pathPrefix===undefined || str('pathPrefix',1024))
         && (v.recipe === undefined || str('recipe')) && (v.plan === undefined || Object.keys(object(v.plan)).length > 0)) { return v as WorkbenchMessage; }
     if (['rerun','saveStrategy','remember'].includes(type) && exact(['type','turn']) && str('turn')) { return v as WorkbenchMessage; }
+    if(type==='openAnswerCitation'&&exact(['type','turn','record','hit'])&&str('turn')&&typeof v.record==='string'&&/^[0-9a-f]{64}$/.test(v.record)&&Number.isSafeInteger(v.hit)&&Number(v.hit)>=0)return v as WorkbenchMessage;
     if (['open','context'].includes(type) && exact(['type','turn','card']) && str('turn') && str('card')) { return v as WorkbenchMessage; }
     if(type==='continue'&&exact(['type','turn','step'])&&str('turn')&&str('step')){return v as WorkbenchMessage;}
     if(type==='followTarget'&&exact(['type','turn','step','target'])&&str('turn')&&str('step')&&str('target',4096)){return v as WorkbenchMessage;}

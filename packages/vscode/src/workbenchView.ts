@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { answerSourceBinding } from './workbenchAnswerNavigation';
 import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
 import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
 import {validateCombinedCatalogSession} from './catalogSession';
@@ -458,12 +459,50 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         if(message.action==='copy'){if(!valid())throw new Error('refresh_selection_changed');await vscode.env.clipboard.writeText(text);}
         else{const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file(`airk-reference-refresh.${message.format==='json'?'json':'md'}`),filters:message.format==='json'?{JSON:['json']}:{Markdown:['md']}});if(uri){if(!valid())throw new Error('refresh_selection_changed');await vscode.workspace.fs.writeFile(uri,Buffer.from(text));}}
     }
+    private async openAnswerSource(turn: WorkbenchTurn, card: ReturnType<typeof evidenceCards>[number]): Promise<void> {
+        const session=this.session, generation=this.generation, envelope=turn.envelope, identity=this.evidenceIdentity();
+        const valid=()=>{this.authorized();if(!this.permitted()||!session||session!==this.session||generation!==this.generation
+            ||!session.turns.includes(turn)||turn.envelope!==envelope||!identity||identity!==this.evidenceIdentity()
+            ||this.turnAuthorities.get(turn)!==identity)throw new Error('Answer citation is no longer authorized in this window.');};
+        valid();
+        if(!card.indexId||!card.projectIds||!card.publication||!card.sourceRootId||!card.sourceRelativePath)throw new Error('The native answer has no unambiguous source binding for this citation.');
+        if(!card.projectIds.length&&!this.selectedSpec()?.openSelection)throw new Error('A projectless answer citation requires its original explicit open selection.');
+        const client=this.evidence();
+        const native=await client.call('airk_file_info',{path:card.path,project_ids:card.projectIds,index_ids:[card.indexId],
+            revision:card.publication,known_hash:card.hash,response_mode:'full'});
+        valid();
+        if(client!==this.client)throw new Error('Answer source client changed.');
+        const payload=native.payload;
+        const members=Array.isArray(payload.members)?payload.members.map(object).filter(member=>member.index_id===card.indexId&&member.outcome==='complete'):[];
+        if(payload.schema==='airk.combined-read/1'&&members.length!==1)throw new Error('The originating index did not return a complete source location.');
+        const body=payload.schema==='airk.combined-read/1'?readResultBody(members[0].result):payload;
+        const info=Object.keys(object(body.content)).length?object(body.content):body, source=object(info.source);
+        const binding=answerSourceBinding(body,card.path,card.hash,card.indexId,card.publication);
+        if(!binding||binding.source_root_id!==card.sourceRootId||binding.source_relative_path!==card.sourceRelativePath
+            ||source.relative_path!==card.sourceRelativePath||typeof source.root!=='string')throw new Error('The originating answer source identity changed before opening this location.');
+        valid();
+        const result=await openSource({root:source.root,relative:card.sourceRelativePath,contentHash:card.hash,startLine:card.start,
+            lineBasis:typeof info.line_basis==='string'?info.line_basis:undefined,
+            savedState:nativeSavedSourceState(body,card.hash,card.publication),nativeResult:native.rawPayload??payload,
+            nativeMessage:verificationLabel(body.source_verification)},vscode.ViewColumn.Active,valid);
+        valid();
+        this.sourceOpen={id:randomUUID().replaceAll('-',''),generation,project:session!.project,observation:{path:card.path,expected_hash:card.hash,
+            answer_record:card.step,hit_locator:card.resultPointer,location:card.location,publication:card.publication,index_id:card.indexId,response:result}};
+        this.notice=result.message;this.send();
+    }
     private async message(message:WorkbenchMessage):Promise<void>{
         if(message.type==='ready'){await this.refresh();if(this.pendingInput){void this.view?.webview.postMessage({type:'prefill',input:this.pendingInput});this.pendingInput=undefined;}if(this.pendingForm){void this.view?.webview.postMessage({type:'prefillForm'});this.pendingForm=false;}return;}
         if(message.type==='help'){await vscode.commands.executeCommand('airk.explorer.open',WORKBENCH_HELP_ROUTE);return;}
         this.authorized();
         switch(message.type){
             case 'answer': await this.answer(message.question, message.budget); break;
+            case 'openAnswerCitation': {
+                const turn=this.session?.turns.find(value=>value.id===message.turn);
+                if(!turn?.envelope||this.logical(turn).schema!=='airk.arbiter.context/1')throw new Error('Answer citation expired.');
+                const card=evidenceCards(this.logical(turn)).find(value=>value.step===message.record&&value.resultPointer===`/hits/${message.hit}`);
+                if(!card)throw new Error('Answer citation has no unambiguous native source location.');
+                await this.openAnswerSource(turn,card);break;
+            }
             case 'exportReferenceRefresh':await this.exportReferenceRefresh(message);break;
             case 'refreshReferences':await this.refreshReferences(message);break;
             case 'checkReferenceRefresh':await this.observeReferenceRefresh(message.id,false);break;
@@ -548,6 +587,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'open':case 'context':{
                 const turn=this.session?.turns.find(t=>t.id===message.turn),card=turn&&evidenceCards(this.logical(turn)).find(c=>c.id===message.card);
                 if(!card){throw new Error('Evidence handle expired.');}
+                if(message.type==='open'&&turn&&this.logical(turn).schema==='airk.arbiter.context/1'){await this.openAnswerSource(turn,card);break;}
                 const selected=card.indexId&&card.projectIds?.length?{project_ids:card.projectIds,index_ids:[card.indexId]}:undefined;
                 if(this.selectedSpec()?.combinedSession&&!selected)throw new Error('Choose an originating index from qualified evidence before following this location.');
                 if(message.type==='context'){
