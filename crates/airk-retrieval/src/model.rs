@@ -616,7 +616,7 @@ pub fn require_selected_model_manifest(manifest: &[u8]) -> Result<()> {
     let schema = serde_json::from_slice::<serde_json::Value>(manifest)?["schema"].as_u64();
     if schema == Some(2) {
         let (definition, _) = onnx_manifest(manifest)?;
-        #[cfg(feature = "test-support")]
+        #[cfg(all(feature = "local-inference", feature = "test-support"))]
         if crate::native_inference::evaluation_model_lease(manifest).is_some() {
             return Ok(());
         }

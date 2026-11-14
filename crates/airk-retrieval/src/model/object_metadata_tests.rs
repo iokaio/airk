@@ -397,3 +397,34 @@ fn lazy_shared_retained_onnx_info_keeps_original_identity_and_runtime_without_op
     );
     Ok(())
 }
+
+#[test]
+fn unowned_model_setup_preserves_product_cpu_selection_with_or_without_native_inference()
+-> Result<()> {
+    // This same test runs in the lightweight test-support configuration, where
+    // neither the native module nor an evaluation authority exists.
+    let catalog: crate::model_catalog::ModelCatalog =
+        serde_json::from_str(include_str!("../model_catalog.json"))?;
+    let selected = crate::model_catalog::selected_profile()?;
+    assert_eq!(catalog.profiles.len(), 2);
+    let mut accepted = 0;
+    for profile in catalog.profiles {
+        let bytes = serde_json::to_vec(&profile.manifest)?;
+        let result = require_selected_model_manifest(&bytes);
+        assert_eq!(
+            result.is_ok(),
+            profile.id == selected.id,
+            "test-support alone must not admit a foreign CPU profile"
+        );
+        accepted += usize::from(result.is_ok());
+        let mut foreign: serde_json::Value = serde_json::from_slice(&bytes)?;
+        foreign["model_sha256"] =
+            "0000000000000000000000000000000000000000000000000000000000000000".into();
+        assert!(
+            require_selected_model_manifest(&serde_json::to_vec(&foreign)?).is_err(),
+            "an unlisted graph must not acquire evaluation authority"
+        );
+    }
+    assert_eq!(accepted, 1);
+    Ok(())
+}

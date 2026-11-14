@@ -464,6 +464,7 @@ fn native_split_inheritance_is_compact_exact_and_saved_before_any_build() -> Res
         .as_ref()
         .context("native draft dropped inherited profile")?;
     assert_eq!(draft.request.required_policy_contract, 4);
+    assert!(draft.request.grouping.is_some());
     assert_eq!(
         reference.retained_profile,
         airk_core::retention::RetainedProfile::Lean
@@ -521,7 +522,7 @@ fn native_split_inheritance_is_compact_exact_and_saved_before_any_build() -> Res
     assert!(snapshot.receipt.capacity_receipt.is_none());
     assert_eq!(
         fixture.registry.catalog_state()?.unwrap().policy_contract,
-        3
+        4
     );
     let db = rusqlite::Connection::open_with_flags(
         fixture.control.join("service-1.4.sqlite3"),
@@ -538,6 +539,11 @@ fn native_split_inheritance_is_compact_exact_and_saved_before_any_build() -> Res
     assert!(public.pointer("/request/extraction_policy/body").is_none());
     assert!(public.pointer("/request/extraction_policy/rules").is_none());
     fixture.registry = ServiceRegistry::open_saved(&fixture.control)?;
+    assert_eq!(
+        fixture.registry.catalog_state()?.unwrap().policy_contract,
+        4,
+        "reopening must retain the grouped split contract before any build"
+    );
     let saved = fixture
         .registry
         .catalog_split_status(snapshot.receipt.operation_id)?
