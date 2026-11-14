@@ -2635,6 +2635,1640 @@
    },
    "name": "scoped_integral_float_delay",
    "rule": "the delay is a JSON integer literal; 25.0 is refused"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_scope_setup_failure",
+    "native_control_response": null,
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_scoped_connection_unavailable",
+   "rule": "native pre-submission selection setup may retry the exact active selection"
+  },
+  {
+   "emitter": {
+    "code": "scoped_status_prepare_timeout",
+    "function": "airk_mcp::remote::scoped_scope_setup_failure",
+    "native_control_response": null,
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_scoped_status_prepare_timeout",
+   "rule": "native pre-submission selection setup may retry the exact active selection"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0909090909090909090909090909090909090909090909090909090909090909\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0909090909090909090909090909090909090909090909090909090909090909",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_scope_identity",
+   "rule": "selection identity is exact and public selector fields are closed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"grant_nonce\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "grant_nonce": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_grant_nonce",
+   "rule": "selection identity is exact and public selector fields are closed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"service_instance\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "service_instance": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_service_instance",
+   "rule": "selection identity is exact and public selector fields are closed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"grant_id\":\"grt_03030303030303030303030303030303\",\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "grant_id": "grt_03030303030303030303030303030303",
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_grant_id",
+   "rule": "selection identity is exact and public selector fields are closed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"09090909090909090909090909090909\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "09090909090909090909090909090909",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_namespace_other",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":6,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 6,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_expected_catalog_revision_6",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":8,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 8,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_expected_catalog_revision_8",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_09090909090909090909090909090909\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_09090909090909090909090909090909"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_index_ids_other",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_06060606060606060606060606060606\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_06060606060606060606060606060606"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_project_ids_other",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_index_ids_empty",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": []
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_changed_project_ids_empty",
+   "rule": "namespace, revision and nonempty ID sets must equal the original selection epoch"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "selection_catalog_expected",
+   "rule": "a selection response never agrees with a catalog grant"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "selection_no_expected",
+   "rule": "a caller must capture its original live selection"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":true,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": true,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_error_query_submitted_true",
+   "rule": "only an explicit safe pre-query setup refusal permits replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":null,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": null,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_error_query_submitted_none",
+   "rule": "only an explicit safe pre-query setup refusal permits replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_replay_safe\":false,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_replay_safe": false,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_error_query_replay_safe_false",
+   "rule": "only an explicit safe pre-query setup refusal permits replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":false},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": false
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_error_retryable_false",
+   "rule": "only an explicit safe pre-query setup refusal permits replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": false,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_error_fresh_brokerage_required_false",
+   "rule": "only an explicit safe pre-query setup refusal permits replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true,\"unexpected\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true,
+      "unexpected": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_error_unexpected_true",
+   "rule": "only an explicit safe pre-query setup refusal permits replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"broker_busy\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "broker_busy",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_native_control_response",
+   "rule": "selection setup does not claim a catalog native-control response"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_request_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_request_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_unknown_code",
+   "rule": "unknown error codes never authorize replay"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":0,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 0,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_delay_0",
+   "rule": "delay remains a JSON integer in 1..=1000"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":1,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 1,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 1
+   },
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_delay_1",
+   "rule": "delay remains a JSON integer in 1..=1000"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":1000,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 1000,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 1000
+   },
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_delay_1000",
+   "rule": "delay remains a JSON integer in 1..=1000"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":1001,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 1001,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_delay_1001",
+   "rule": "delay remains a JSON integer in 1..=1000"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":25.0,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 25.0,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_delay_25.0",
+   "rule": "delay remains a JSON integer in 1..=1000"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":true,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": true,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_confirmed",
+   "rule": "confirmed authority is not this setup-refusal contract"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\",\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404",
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505"
+     ]
+    }
+   },
+   "name": "selection_duplicate_ids",
+   "rule": "selection IDs remain unique"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"scope_identity\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"window_scope_selection\":{\"expected_catalog_revision\":7,\"index_ids\":[\"idx_04040404040404040404040404040404\"],\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_06060606060606060606060606060606\",\"prj_05050505050505050505050505050505\"]}}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+       "window_scope_selection": {
+        "expected_catalog_revision": 7,
+        "index_ids": [
+         "idx_04040404040404040404040404040404"
+        ],
+        "namespace": "02020202020202020202020202020202",
+        "project_ids": [
+         "prj_06060606060606060606060606060606",
+         "prj_05050505050505050505050505050505"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "scope_identity": "0808080808080808080808080808080808080808080808080808080808080808",
+    "window_scope_selection": {
+     "expected_catalog_revision": 7,
+     "index_ids": [
+      "idx_04040404040404040404040404040404"
+     ],
+     "namespace": "02020202020202020202020202020202",
+     "project_ids": [
+      "prj_05050505050505050505050505050505",
+      "prj_06060606060606060606060606060606"
+     ]
+    }
+   },
+   "name": "selection_project_order",
+   "rule": "selection ID order does not change the exact set"
   }
  ],
  "generator": "fixtures/wire/read_retry_envelopes.py",
@@ -2649,7 +4283,7 @@
   "project_capacity_busy",
   "project_restart_backoff"
  ],
- "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_scope",
+ "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_scope, classify_for_selection",
  "schema": "airk.wire-fixture.read-retry-envelopes/1",
  "typescript": "packages/vscode/src/readRetry.ts readRetryDelay"
 }

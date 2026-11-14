@@ -12,6 +12,11 @@ under test. `expected_ts` appears only where the TypeScript mirror is
 deliberately or knowingly different. Each such case carries a `divergence`
 note, which the pilot report lists.
 
+The separate `binding_cases` retain the caller's original native selector,
+public selection source where applicable and original request arguments.
+They test the Rust caller-binding helpers and their TypeScript consumer;
+coherent outer/inner metadata alone never establishes active authority.
+
     python fixtures/wire/read_retry_decisions.py          # rewrite the JSON
     python fixtures/wire/read_retry_decisions.py --check  # exit 1 on drift
 """
@@ -177,6 +182,167 @@ def cases():
     # number literals in the native text (JSON.parse source-text access).
     yield case("integral_float_delay", "retry_after_ms must be a JSON integer",
                structured(storage_hint(retry_after_ms=25.0)), None)
+    yield from selection_cases()
+
+
+def selection_cases():
+    """Independent selection-source rules already supported by native Core."""
+    def selected(name, rule, expected, owner="window", observed=True, mutate=None):
+        source = {"owner": owner, "scope_identity": "0c" * 32, "catalog_revision": 5}
+        hint = storage_hint()
+        if observed:
+            hint["scope_observation"] = {
+                "schema": 1, "qualifier": "selected_subset", "fingerprint": "07" * 32,
+                "selection": copy.deepcopy(source),
+                "members": [{"index_id": INDEX,
+                             "memberships": [{"project_id": PROJECT, "membership_revision": 1}],
+                             "source_root_ids": ["src_" + "06" * 16], "source_revision": 1,
+                             "policy_epoch": 0, "policy_digest": None}],
+            }
+        value = combined(structured(hint), expected if expected is not None else retry())
+        del value["selection"]["grant_id"]
+        del value["selection"]["grant_revision"]
+        value["selection"]["selection"] = source
+        if mutate:
+            mutate(value)
+            result = value["members"][0]["result"]
+            result["content"][0]["text"] = text(result["structuredContent"])
+        return {"name": name, "rule": rule, "input": value, "expected": expected}
+
+    yield selected("selection_window_without_observation", "one selection source needs no fabricated member observation", retry(), observed=False)
+    yield selected("selection_window_matching_observation", "window observation must agree with its exact source", retry())
+    yield selected("selection_admin_matching_observation", "admin observation uses the same exact-source rule", retry(), owner="admin")
+    for field, replacement in [("owner", "admin"), ("scope_identity", "0d" * 32), ("catalog_revision", 6)]:
+        yield selected(f"selection_member_changed_{field}", "member selection owner, identity and revision must all match", None,
+                       mutate=set_path("members", 0, "result", "structuredContent", "scope_observation", "selection", field, replacement))
+    yield selected("selection_with_catalog_grant", "catalog and selection sources are mutually exclusive", None,
+                   mutate=lambda value: value["selection"].update(grant_id=GRANT, grant_revision=1))
+    yield selected("selection_without_source", "neither authority source is invalid", None,
+                   mutate=lambda value: value["selection"].pop("selection"))
+    for field in ["grant_nonce", "service_instance"]:
+        yield selected(f"selection_member_leaks_{field}", "public selection observations never carry native secrets", None,
+                       mutate=set_path("members", 0, "result", "structuredContent", "scope_observation", "selection", field, "0a" * 16))
+    yield selected("selection_member_other_index", "the member observation must name the sole selected index", None,
+                   mutate=set_path("members", 0, "result", "structuredContent", "scope_observation", "members", 0, "index_id", "idx_" + "08" * 16))
+    yield selected("selection_member_other_project", "membership observations stay inside selected projects", None,
+                   mutate=set_path("members", 0, "result", "structuredContent", "scope_observation", "members", 0, "memberships", 0, "project_id", SECOND_PROJECT))
+
+
+def binding_cases():
+    """Caller authority is independent of a coherent outer/inner reply."""
+    source = {"owner": "window", "scope_identity": "0c" * 32, "catalog_revision": 5}
+    window = {"namespace": "09" * 16, "expected_catalog_revision": 5,
+              "index_ids": [INDEX], "project_ids": [PROJECT]}
+    catalog = {"schema": 1, "context_key": "0a" * 32, "namespace": "09" * 16,
+               "expected_catalog_revision": 5, "grant_id": GRANT, "expected_grant_revision": 1,
+               "index_id": INDEX, "project_ids": [PROJECT]}
+    arguments = {"project_ids": [PROJECT], "index_ids": [INDEX], "member_availability": "require"}
+    observation = {"schema": 1, "qualifier": "selected_subset", "fingerprint": "07" * 32,
+                   "members": [{"index_id": INDEX,
+                                "memberships": [{"project_id": PROJECT, "membership_revision": 1}],
+                                "source_root_ids": ["src_" + "06" * 16], "source_revision": 1,
+                                "policy_epoch": 0, "policy_digest": None}]}
+
+    def bound(name, rule, expected, kind="selection", mutate=None):
+        member = copy.deepcopy(observation)
+        selected = combined(structured(storage_hint()), retry())
+        if kind == "selection":
+            member["selection"] = copy.deepcopy(source)
+            del selected["selection"]["grant_id"]
+            del selected["selection"]["grant_revision"]
+            selected["selection"]["selection"] = copy.deepcopy(source)
+            expected_scope = copy.deepcopy(window)
+        else:
+            member.update(grant={"id": GRANT, "revision": 1}, provenance="user_reviewed_project_grant")
+            expected_scope = copy.deepcopy(catalog)
+            if kind == "catalog_combined":
+                del expected_scope["index_id"]
+                expected_scope["index_ids"] = [INDEX]
+        selected["members"][0]["result"]["structuredContent"]["scope_observation"] = member
+        entry = {"name": name, "rule": rule, "kind": kind, "input": selected,
+                 "expected_scope": expected_scope, "arguments": copy.deepcopy(arguments), "expected": expected}
+        if kind == "selection":
+            entry["expected_selection"] = copy.deepcopy(source)
+        if mutate:
+            mutate(entry)
+        result = entry["input"]["members"][0]["result"]
+        result["content"][0]["text"] = text(result["structuredContent"])
+        return entry
+
+    def coherent_source(field, value):
+        def change(entry):
+            entry["input"]["selection"]["selection"][field] = value
+            entry["input"]["members"][0]["result"]["structuredContent"]["scope_observation"]["selection"][field] = value
+        return change
+
+    def coherent_index(entry):
+        other = "idx_" + "08" * 16
+        value = entry["input"]
+        value["selection"]["index_ids"] = [other]
+        value["members"][0]["index_id"] = other
+        value["members"][0]["allocation"]["index_id"] = other
+        value["publication_vector"]["members"][0]["index_id"] = other
+        value["error"]["failed_members"] = [other]
+        value["read_retry"]["index_id"] = other
+        value["members"][0]["result"]["structuredContent"]["scope_observation"]["members"][0]["index_id"] = other
+
+    yield bound("active_window", "the exact captured window source and original request permit one replay", retry())
+    def admin(entry):
+        coherent_source("owner", "admin")(entry)
+        entry["expected_selection"]["owner"] = "admin"
+    yield bound("active_admin", "the exact captured admin source follows the same rule", retry(), mutate=admin)
+    for field, value in [("scope_identity", "0d" * 32), ("catalog_revision", 6), ("owner", "admin")]:
+        yield bound(f"coherent_stale_{field}", "coherent outer and inner metadata cannot replace original caller authority", None,
+                    mutate=coherent_source(field, value))
+    yield bound("caller_epoch_disagrees", "the captured source revision agrees with the captured window revision", None,
+                mutate=set_path("expected_selection", "catalog_revision", 6))
+    yield bound("coherent_other_index", "the original captured index set bounds even a coherent result", None, mutate=coherent_index)
+    def other_project(entry):
+        entry["input"]["selection"]["project_ids"] = [SECOND_PROJECT]
+        entry["input"]["members"][0]["result"]["structuredContent"]["scope_observation"]["members"][0]["memberships"][0]["project_id"] = SECOND_PROJECT
+    yield bound("coherent_other_project", "the original requested project set bounds the observed membership", None, mutate=other_project)
+    def pruned(entry):
+        entry["expected_scope"]["project_ids"] = [PROJECT, SECOND_PROJECT]
+        entry["arguments"]["project_ids"] = [SECOND_PROJECT, PROJECT]
+    yield bound("pruned_projects", "native membership pruning may retain a nonempty subset of requested projects", retry(), mutate=pruned)
+    def narrowed(entry):
+        entry["expected_scope"]["index_ids"].append("idx_" + "08" * 16)
+    yield bound("explicit_narrowed_index", "an explicit original index subset remains exact", retry(), mutate=narrowed)
+    def resolved(entry):
+        narrowed(entry)
+        del entry["arguments"]["index_ids"]
+    yield bound("project_resolved_index_subset", "explicit projects may resolve only a subset of known permitted indexes", retry(), mutate=resolved)
+    def wrong_narrow(entry):
+        narrowed(entry)
+        coherent_index(entry)
+    yield bound("coherent_other_permitted_index", "a sibling permitted index is not the explicitly requested index", None, mutate=wrong_narrow)
+    for name, change in [
+        ("original_report_mode", set_path("arguments", "member_availability", "report")),
+        ("original_default_mode", lambda entry: entry["arguments"].pop("member_availability")),
+        ("original_indexes_without_projects", lambda entry: entry["arguments"].pop("project_ids")),
+        ("original_duplicate_projects", set_path("arguments", "project_ids", [PROJECT, PROJECT])),
+        ("original_unknown_index", set_path("arguments", "index_ids", ["idx_" + "0f" * 16])),
+        ("original_unknown_project", set_path("arguments", "project_ids", [SECOND_PROJECT])),
+    ]:
+        yield bound(name, "invalid, widened or non-required original selectors never authorize replay", None, mutate=change)
+    for kind in ["catalog_single", "catalog_combined"]:
+        yield bound(f"{kind}_active", "the exact original grant/revision and known index selection permit replay", retry(), kind=kind)
+        yield bound(f"{kind}_grant_changed", "an older or foreign grant cannot replace the captured grant", None, kind=kind,
+                    mutate=set_path("expected_scope", "grant_id", "grt_" + "0e" * 16))
+        yield bound(f"{kind}_grant_revision_changed", "grant revision remains exact", None, kind=kind,
+                    mutate=set_path("expected_scope", "expected_grant_revision", 2))
+        yield bound(f"{kind}_metadata_clock_forward", "catalog metadata clock changes do not invent a different grant revision", retry(), kind=kind,
+                    mutate=set_path("expected_scope", "expected_catalog_revision", 12))
+        yield bound(f"{kind}_other_index", "a coherent other index cannot replace the captured selection", None, kind=kind, mutate=coherent_index)
+        yield bound(f"{kind}_pruned_projects", "catalog callers retain safe membership pruning", retry(), kind=kind, mutate=pruned)
+    yield bound("catalog_combined_unknown_expansion", "absent captured index membership is not fabricated from a receipt", None, kind="catalog_combined",
+                mutate=lambda entry: entry["expected_scope"].pop("index_ids"))
+    yield bound("window_reply_to_catalog_caller", "authority source kinds never substitute for one another", None,
+                mutate=lambda entry: entry.update(kind="catalog_single", expected_scope=copy.deepcopy(catalog)))
+    def catalog_to_window(entry):
+        entry.update(kind="selection", expected_scope=copy.deepcopy(window), expected_selection=copy.deepcopy(source))
+    yield bound("catalog_reply_to_window_caller", "a catalog grant cannot substitute for an active window source", None,
+                kind="catalog_single", mutate=catalog_to_window)
 
 
 def render():
@@ -186,6 +352,8 @@ def render():
         "typescript": "packages/vscode/src/readRetry.ts singleRequiredMemberRetry",
         "generator": "fixtures/wire/read_retry_decisions.py",
         "cases": list(cases()),
+        "binding_cases": list(binding_cases()),
+        "rust_binding": "airk_core::combined_reads::read_retry validated_retry_for_selection, validated_retry_for_catalog, validated_retry_for_combined_catalog",
     }
     return json.dumps(document, indent=1, ensure_ascii=True) + "\n"
 

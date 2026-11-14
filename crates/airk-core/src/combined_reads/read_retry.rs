@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     identity::Sha256Digest,
-    index_catalog::{IndexId, MAX_SELECTION, encoded_size, unique_bounded},
+    index_catalog::{IndexId, MAX_SELECTION, QueryProjectId, encoded_size, unique_bounded},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -269,12 +269,160 @@ pub fn proposed_retry(combined: &Value) -> Option<SingleRequiredMemberRetry> {
     })
 }
 
-/// Consumers validate the declared metadata against the original exact child;
-/// changing any selection, outcome, publication, hint or pointer invalidates it.
+/// Validate canonical metadata against its exact child. A caller repeating work
+/// must also bind it to its original authority and arguments with the helpers
+/// below; a self-consistent older receipt is not current caller authority.
 pub fn validated_retry(combined: &Value) -> Option<SingleRequiredMemberRetry> {
     let declared: SingleRequiredMemberRetry =
         serde_json::from_value(combined.get("read_retry")?.clone()).ok()?;
     (declared == proposed_retry(combined)?).then_some(declared)
+}
+
+fn query_binding(
+    selected: &SelectedScopeObservation,
+    projects: &[QueryProjectId],
+    indexes: &[IndexId],
+    arguments: &serde_json::Map<String, Value>,
+) -> Option<()> {
+    encoded_size(arguments, crate::MAX_RESPONSE_BYTES).ok()?;
+    unique_bounded(projects, MAX_SELECTION).ok()?;
+    unique_bounded(indexes, MAX_SELECTION).ok()?;
+    if projects.is_empty() || indexes.is_empty() || arguments.contains_key("project") {
+        return None;
+    }
+    let explicit_projects = arguments.contains_key("project_ids");
+    if !explicit_projects
+        && (arguments.contains_key("index_ids") || arguments.contains_key("member_availability"))
+    {
+        return None;
+    }
+    let projects_requested: Vec<QueryProjectId> = arguments
+        .get("project_ids")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .ok()?
+        .unwrap_or_else(|| projects.to_vec());
+    let indexes_requested: Option<Vec<IndexId>> = arguments
+        .get("index_ids")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .ok()?
+        .or_else(|| (!explicit_projects).then(|| indexes.to_vec()));
+    let availability: MemberAvailability = arguments
+        .get("member_availability")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .ok()?
+        .unwrap_or_default();
+    let request = super::QuerySelection {
+        project_ids: projects_requested,
+        index_ids: indexes_requested,
+        member_availability: availability,
+    };
+    request.validate().ok()?;
+    if request.member_availability != MemberAvailability::Require
+        || !request.project_ids.iter().all(|id| projects.contains(id))
+        || !selected
+            .project_ids
+            .iter()
+            .all(|id| request.project_ids.contains(id))
+        || !selected.index_ids.iter().all(|id| indexes.contains(id))
+    {
+        return None;
+    }
+    if let Some(requested) = request.index_ids
+        && (!requested.iter().all(|id| indexes.contains(id))
+            || requested.len() != selected.index_ids.len()
+            || !requested.iter().all(|id| selected.index_ids.contains(id)))
+    {
+        return None;
+    }
+    // With explicit projects and no indexes the native catalog resolves their
+    // memberships. Only the known permitted subset can be checked here; never
+    // fabricate that expansion or unpruned project memberships in the caller.
+    Some(())
+}
+
+/// Bind a W4/A2 result to its original immutable public selection and request.
+/// Namespace is bound by the captured scope identity; public replies never gain
+/// the private nonce or service instance merely to validate a retry.
+pub fn validated_retry_for_selection(
+    combined: &Value,
+    expected: &crate::service::WindowScopeSelection,
+    source: &crate::scoped_reads::ScopeSelectionObservation,
+    arguments: &serde_json::Map<String, Value>,
+) -> Option<SingleRequiredMemberRetry> {
+    let retry = validated_retry(combined)?;
+    let selected: SelectedScopeObservation =
+        serde_json::from_value(combined.get("selection")?.clone()).ok()?;
+    if source.catalog_revision != expected.expected_catalog_revision
+        || selected.selection.as_ref() != Some(source)
+        || selected.grant_id.is_some()
+        || selected.grant_revision.is_some()
+    {
+        return None;
+    }
+    query_binding(
+        &selected,
+        &expected.project_ids,
+        &expected.index_ids,
+        arguments,
+    )?;
+    Some(retry)
+}
+
+/// A single-index catalog caller knows the exact grant, index and permitted
+/// projects. The response has no metadata clock to advance; grant revision is
+/// always exact. The separate setup-envelope clock-forward rule is unchanged.
+pub fn validated_retry_for_catalog(
+    combined: &Value,
+    expected: &crate::service::ScopedConnectRequest,
+    arguments: &serde_json::Map<String, Value>,
+) -> Option<SingleRequiredMemberRetry> {
+    expected.validate().ok()?;
+    let retry = validated_retry(combined)?;
+    let selected: SelectedScopeObservation =
+        serde_json::from_value(combined.get("selection")?.clone()).ok()?;
+    if selected.selection.is_some()
+        || selected.grant_id != Some(expected.grant_id)
+        || selected.grant_revision != Some(expected.expected_grant_revision)
+    {
+        return None;
+    }
+    query_binding(
+        &selected,
+        &expected.project_ids,
+        &[expected.index_id],
+        arguments,
+    )?;
+    Some(retry)
+}
+
+/// A catalog union can bind only indexes already known to its caller. An
+/// unexpanded grant with absent index IDs conservatively retains the refusal;
+/// this helper does not resolve a catalog or infer memberships from a receipt.
+pub fn validated_retry_for_combined_catalog(
+    combined: &Value,
+    expected: &crate::service::CombinedConnectRequest,
+    arguments: &serde_json::Map<String, Value>,
+) -> Option<SingleRequiredMemberRetry> {
+    expected.validate().ok()?;
+    let retry = validated_retry(combined)?;
+    let selected: SelectedScopeObservation =
+        serde_json::from_value(combined.get("selection")?.clone()).ok()?;
+    if selected.selection.is_some()
+        || selected.grant_id != Some(expected.grant_id)
+        || selected.grant_revision != Some(expected.expected_grant_revision)
+    {
+        return None;
+    }
+    query_binding(
+        &selected,
+        &expected.project_ids,
+        expected.index_ids.as_deref()?,
+        arguments,
+    )?;
+    Some(retry)
 }
 
 #[cfg(test)]
@@ -567,6 +715,42 @@ mod tests {
                 case["name"],
                 case["rule"]
             );
+        }
+    }
+
+    #[test]
+    fn shared_caller_binding_cases_match_reviewed_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/wire/read_retry_decisions.json"
+        ))
+        .unwrap();
+        let cases = fixture["binding_cases"].as_array().unwrap();
+        assert!(!cases.is_empty(), "zero selected caller binding cases");
+        for case in cases {
+            let input = &case["input"];
+            let arguments = case["arguments"].as_object().unwrap();
+            let actual = match case["kind"].as_str().unwrap() {
+                "selection" => validated_retry_for_selection(
+                    input,
+                    &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
+                    &serde_json::from_value(case["expected_selection"].clone()).unwrap(),
+                    arguments,
+                ),
+                "catalog_single" => validated_retry_for_catalog(
+                    input,
+                    &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
+                    arguments,
+                ),
+                "catalog_combined" => validated_retry_for_combined_catalog(
+                    input,
+                    &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
+                    arguments,
+                ),
+                kind => panic!("unreviewed caller scope kind {kind}"),
+            };
+            let expected: Option<SingleRequiredMemberRetry> =
+                serde_json::from_value(case["expected"].clone()).unwrap();
+            assert_eq!(actual, expected, "{}: {}", case["name"], case["rule"]);
         }
     }
 }

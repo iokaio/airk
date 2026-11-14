@@ -35,6 +35,11 @@ brokerage. Stated rule:
     requires `native_control_response` = `{status: "failure", code}` with one
     of the nine pre-query busy codes below; the timeout code carries none.
   * The delay is a JSON integer in 1..=1000.
+  * In-memory selection setup echoes `window_scope_selection` and
+    `scope_identity`, with no native-control response. The original public
+    identity, namespace, revision and ID sets must match exactly; this source
+    does not inherit the catalog metadata-clock exception. No private nonce
+    or service instance is accepted. A caller needs its original live capture.
 
 Cases with an `emitter` name the production Rust function whose output must
 equal `envelope`: the `text` byte for byte and the parsed envelope. Object keys
@@ -262,14 +267,67 @@ def scoped_cases():
                envelope(scoped(delay=25.0), structured=True), None, scope)
 
 
+def selection_cases():
+    """A live selection epoch is exact; catalog clock-forward rules do not apply."""
+    selected = {"window_scope_selection": {
+        "namespace": "02" * 16, "expected_catalog_revision": 7,
+        "index_ids": ["idx_" + "04" * 16], "project_ids": [PROJECT],
+    }, "scope_identity": "08" * 32}
+
+    def body(code="scoped_connection_unavailable", **changes):
+        return scoped(code=code, selection=copy.deepcopy(selected), **changes)
+
+    def entry(name, rule, native_body, expected, expected_scope=selected, emitter=None):
+        return case(name, rule, envelope(native_body, structured=True), expected, expected_scope, emitter)
+
+    for code in ["scoped_connection_unavailable", "scoped_status_prepare_timeout"]:
+        yield entry(f"selection_{code}", "native pre-submission selection setup may retry the exact active selection",
+                    body(code), accepted(100, True), emitter={"function": "airk_mcp::remote::scoped_scope_setup_failure",
+                    "code": code, "retryable": True, "native_control_response": None})
+    for field, value in [("scope_identity", "09" * 32), ("grant_nonce", "0a" * 16),
+                         ("service_instance", "0b" * 16), ("grant_id", "grt_" + "03" * 16)]:
+        changed = body()
+        changed["requested_scope"]["selection"][field] = value
+        yield entry(f"selection_changed_{field}", "selection identity is exact and public selector fields are closed", changed, None)
+    for field, value in [("namespace", "09" * 16), ("expected_catalog_revision", 6), ("expected_catalog_revision", 8),
+                         ("index_ids", ["idx_" + "09" * 16]), ("project_ids", [SECOND_PROJECT]),
+                         ("index_ids", []), ("project_ids", [])]:
+        changed = body()
+        changed["requested_scope"]["selection"]["window_scope_selection"][field] = value
+        suffix = str(value) if isinstance(value, int) else "empty" if value == [] else "other"
+        yield entry(f"selection_changed_{field}_{suffix}", "namespace, revision and nonempty ID sets must equal the original selection epoch", changed, None)
+    yield entry("selection_catalog_expected", "a selection response never agrees with a catalog grant", body(), None, SELECTION)
+    yield entry("selection_no_expected", "a caller must capture its original live selection", body(), None, None)
+    for field, value in [("query_submitted", True), ("query_submitted", None), ("query_replay_safe", False),
+                         ("retryable", False), ("fresh_brokerage_required", False), ("unexpected", True)]:
+        yield entry(f"selection_error_{field}_{str(value).lower()}", "only an explicit safe pre-query setup refusal permits replay",
+                    body(**{field: value}), None)
+    yield entry("selection_native_control_response", "selection setup does not claim a catalog native-control response",
+                body(native=native("broker_busy")), None)
+    yield entry("selection_unknown_code", "unknown error codes never authorize replay", body("scoped_request_timeout"), None)
+    for delay, expected in [(0, None), (1, accepted(1, True)), (1000, accepted(1000, True)), (1001, None), (25.0, None)]:
+        yield entry(f"selection_delay_{delay}", "delay remains a JSON integer in 1..=1000", body(delay=delay), expected)
+    changed = body()
+    changed["requested_scope"]["confirmed"] = True
+    yield entry("selection_confirmed", "confirmed authority is not this setup-refusal contract", changed, None)
+    changed = body()
+    changed["requested_scope"]["selection"]["window_scope_selection"]["index_ids"] *= 2
+    yield entry("selection_duplicate_ids", "selection IDs remain unique", changed, None)
+    two = copy.deepcopy(selected)
+    two["window_scope_selection"]["project_ids"] = [PROJECT, SECOND_PROJECT]
+    changed = body()
+    changed["requested_scope"]["selection"]["window_scope_selection"]["project_ids"] = [SECOND_PROJECT, PROJECT]
+    yield entry("selection_project_order", "selection ID order does not change the exact set", changed, accepted(100, True), two)
+
+
 def render():
     document = {
         "schema": SCHEMA,
-        "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_scope",
+        "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_scope, classify_for_selection",
         "typescript": "packages/vscode/src/readRetry.ts readRetryDelay",
         "generator": "fixtures/wire/read_retry_envelopes.py",
         "native_busy_codes": NATIVE_BUSY_CODES,
-        "cases": [*storage_cases(), *direct_cases(), *scoped_cases()],
+        "cases": [*storage_cases(), *direct_cases(), *scoped_cases(), *selection_cases()],
     }
     return json.dumps(document, indent=1, ensure_ascii=True, sort_keys=True) + "\n"
 
