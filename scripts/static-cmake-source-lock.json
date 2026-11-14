@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "version": "3.31.6",
+  "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6.tar.gz",
+  "bytes": 11710589,
+  "sha256": "653427f0f5014750aafff22727fb2aa60c6c732ca91808cfb78ce22ddd9e55f0",
+  "archive_root": "cmake-3.31.6",
+  "program": "bootstrap",
+  "license": {
+    "path": "Copyright.txt",
+    "bytes": 5477,
+    "sha256": "0676e30827684487aa0ea8f72f01e9460a6320fa34a2888df0ad1dd3e8a06eb8"
+  },
+  "checksum_manifest": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-SHA-256.txt"
+}

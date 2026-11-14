@@ -32,6 +32,77 @@ def tools():
 
 
 class StaticOrtPolicyTests(unittest.TestCase):
+    def test_fresh_and_completed_build_handoff_aggregates_but_verify_never_mutates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            aggregate = SimpleNamespace(aggregate=unittest.mock.Mock(return_value={"aggregate": True}),
+                                        verify=unittest.mock.Mock(return_value={"verified": True}))
+            with patch.object(MODULE, "load_script", return_value=aggregate) as loader:
+                self.assertEqual(MODULE.finish_build(root, WINDOWS), {"aggregate": True})
+                self.assertEqual(loader.call_args.args, ("static-onnx-aggregate.py",))
+                self.assertIs(aggregate.aggregate.call_args.args[2].verify_original_build, MODULE.verify_original_build)
+                (root / "build-receipt.json").write_text("original completed evidence")
+                with patch.object(MODULE, "owned_destination", return_value=root), patch.object(MODULE, "run_owned") as compile:
+                    self.assertEqual(MODULE.build(SimpleNamespace(), root, WINDOWS), {"aggregate": True})
+                    compile.assert_not_called()
+                self.assertEqual((root / "build-receipt.json").read_text(), "original completed evidence")
+            with patch.object(MODULE, "verify_original_build", return_value={"original": True}), patch.object(MODULE, "load_script") as loader:
+                with self.assertRaisesRegex(ValueError, "--aggregate-static"):
+                    MODULE.verify_build(root, WINDOWS)
+                loader.assert_not_called()
+                self.assertFalse((root / "aggregate").exists())
+                (root / "static-aggregate-receipt.json").write_text("original aggregate evidence")
+                loader.return_value = aggregate
+                self.assertEqual(MODULE.verify_build(root, WINDOWS), {"verified": True})
+                aggregate.verify.assert_called_once()
+
+    def test_static_provisioner_uses_python39_compatible_recipe_and_refuses_older_hosts(self):
+        import ast
+        for name in ("provision-static-onnx-runtime.py", "provision-static-onnx-tools.py", "darwin-waitid.py"):
+            ast.parse((Path(__file__).parents[1] / name).read_text(encoding="utf-8"), feature_version=(3, 9))
+        options = SimpleNamespace(cmake=sys.executable, ninja=sys.executable, cc=sys.executable,
+                                  cxx=sys.executable, patch=sys.executable, static_tools=None)
+        for version in ((3, 8, 0), (3, 9, 6)):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                def run(argv, cwd, log, timeout):
+                    log.write_text("compiler fixture version\n")
+                    return dict(exit_code=0, timed_out=False, log_oversized=False, owned_descendants_settled=True)
+                with patch.object(MODULE, "host_target", return_value="x86_64-unknown-linux-gnu"), patch.object(MODULE.sys, "version_info", version), patch.object(MODULE, "probe_version", return_value={}), patch.object(MODULE, "run_owned", side_effect=run):
+                    if version < (3, 9):
+                        with self.assertRaisesRegex(ValueError, "Python3.9"):
+                            MODULE.toolchain(options, root, "x86_64-unknown-linux-gnu")
+                    else:
+                        self.assertIn("python", MODULE.toolchain(options, root, "x86_64-unknown-linux-gnu"))
+
+    def test_repeated_tool_probes_preserve_original_logs_and_keep_build_stage_exclusion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "logs").mkdir()
+            original = root / "logs/tool-cmake.log"
+            original.write_bytes(b"retained failed ownership probe evidence")
+            observed = []
+            def run(argv, cwd, log, timeout):
+                with log.open("xb") as output:
+                    output.write(b"cmake version 3.31.6\n")
+                observed.append(log)
+                return dict(exit_code=0, timed_out=False, log_oversized=False,
+                            owned_descendants_settled=True, log=str(log))
+            with patch.object(MODULE, "run_owned", side_effect=run):
+                for _ in range(2):
+                    result = MODULE.probe_version(Path(sys.executable), "3.31.6", root, "cmake")
+                    self.assertEqual(result["probe"]["log"], str(observed[-1]))
+            self.assertEqual(original.read_bytes(), b"retained failed ownership probe evidence")
+            self.assertEqual(len(set(observed)), 2)
+            self.assertTrue(all(path.read_bytes() == b"cmake version 3.31.6\n" for path in observed))
+            for name in ("compiler", "cxx", "sdk"):
+                first, second = MODULE.probe_log(root, name), MODULE.probe_log(root, name)
+                self.assertNotEqual(first, second)
+            # Generic command logging still refuses an existing build log;
+            # this change never authorizes retrying a configure/build attempt.
+            with self.assertRaises(FileExistsError):
+                MODULE.run_owned([sys.executable, "--version"], root, original, 15)
+
     def test_fresh_static_producer_keeps_default_all_and_adds_excluded_re2(self):
         # The observed Ninja graph proves session+re2 misses nine archives.
         # Exercise actual orchestration without starting a compiler or tools.
@@ -47,7 +118,7 @@ class StaticOrtPolicyTests(unittest.TestCase):
             stack.enter_context(patch.object(MODULE, "library_inventory", return_value=[]))
             stack.enter_context(patch.object(MODULE, "verify_cmake_cache"))
             stack.enter_context(patch.object(MODULE, "collect_notices", return_value=[]))
-            stack.enter_context(patch.object(MODULE, "verify_build", return_value={"verified": True}))
+            stack.enter_context(patch.object(MODULE, "finish_build", return_value={"verified": True}))
             self.assertEqual(MODULE.build(SimpleNamespace(), root, WINDOWS), {"verified": True})
             command = invoked.call_args_list[1].args[0]
             index = command.index("--target")
@@ -58,9 +129,9 @@ class StaticOrtPolicyTests(unittest.TestCase):
 
     def test_official_pins_roster_and_source_seal_are_complete(self):
         MODULE.validate_lock()
-        self.assertEqual(MODULE.LOCK["ort_version"], "1.22.1")
-        self.assertEqual(MODULE.LOCK["source"]["files"], 9207)
-        self.assertEqual(MODULE.LOCK["source"]["sha256"], "38f8ffa28a5ea9040431816c6204e6fc36d1b8eab43b33dbee92fceeb181d151")
+        self.assertEqual(MODULE.LOCK["ort_version"], "1.30.0")
+        self.assertEqual(MODULE.LOCK["source"]["files"], 11046)
+        self.assertEqual(MODULE.LOCK["source"]["sha256"], "1b4ec55fa26ee8fe622ea256894dfe9381bdfa99d41489994a1961720f556c48")
         self.assertEqual(len(MODULE.selected_dependencies(WINDOWS)), 14)
         self.assertEqual(len(MODULE.selected_dependencies("aarch64-apple-darwin")), 15)
         for change in (lambda lock: lock.update(ort_version="1.22.0"),
@@ -91,7 +162,7 @@ class StaticOrtPolicyTests(unittest.TestCase):
 
     def test_actual_cmake_cache_must_match_static_policy(self):
         with tempfile.TemporaryDirectory() as directory:
-            cache = Path(directory) / "CMakeCache.txt"
+            cache = Path(directory).resolve() / "CMakeCache.txt"
             cache.write_text("onnxruntime_BUILD_SHARED_LIB:BOOL=OFF\nCMAKE_BUILD_TYPE:STRING=Release\n")
             command = ["-Donnxruntime_BUILD_SHARED_LIB=OFF", "-DCMAKE_BUILD_TYPE=Release"]
             MODULE.verify_cmake_cache(cache, command)

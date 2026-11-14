@@ -1,48 +1,47 @@
 {
-  "schema": 1,
-  "ort_version": "1.22.1",
-  "upstream_commit": "89746dc19a0a1ae59ebf4b16df9acab8f99f3925",
+  "ort_version": "1.30.0",
+  "upstream_commit": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
   "source": {
-    "url": "https://codeload.github.com/microsoft/onnxruntime/tar.gz/89746dc19a0a1ae59ebf4b16df9acab8f99f3925",
-    "bytes": 241420979,
-    "sha256": "38f8ffa28a5ea9040431816c6204e6fc36d1b8eab43b33dbee92fceeb181d151",
-    "archive_root": "onnxruntime-89746dc19a0a1ae59ebf4b16df9acab8f99f3925",
-    "members": 10372,
-    "unpacked_bytes": 603507771,
-    "files": 9207,
-    "directories": 1165,
-    "inventory_sha256": "4ca9a05ab20195fba6f70596cd70c884ffd58503011295ac415a4f2ec676fc60"
+    "url": "https://codeload.github.com/microsoft/onnxruntime/tar.gz/f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+    "bytes": 278646793,
+    "sha256": "1b4ec55fa26ee8fe622ea256894dfe9381bdfa99d41489994a1961720f556c48",
+    "archive_root": "onnxruntime-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+    "members": 12347,
+    "unpacked_bytes": 577327429,
+    "files": 11046,
+    "directories": 1301,
+    "inventory_sha256": "a8be82caaee8d9f8f318ee7f68d2a64b78787b62b94ed80fde9be82a199b1aa4"
   },
   "source_metadata": [
     {
       "path": ".gitmodules",
-      "bytes": 383,
-      "sha256": "d9faa908acb8c577e2c8ba07f89166fe15b229fb7a1695259dc8bd2690a5b684"
+      "bytes": 384,
+      "sha256": "88baf1a643d03b2c6c4ef4caf3463ac9eefdbd150c5e9054b1df23578eb4a160"
     },
     {
       "path": "cmake/deps.txt",
-      "bytes": 7091,
-      "sha256": "74d3fd1b366927a96890eae7decf49f42b80b02cbb98582d6c0c2e41bbab637b"
+      "bytes": 8188,
+      "sha256": "880edacbd7954c32b8bff34959e6fc5bbae0dc402f8f99861c1c3f057b976c0d"
     },
     {
       "path": "cmake/CMakeLists.txt",
-      "bytes": 89936,
-      "sha256": "cd1f70726d4742605e4605772d56ecd41f622560a340df0058ca67ad205af2a1"
+      "bytes": 95089,
+      "sha256": "af52b773d1641f809fc3d161d2dc5d993080a835cf634206de3f64f32e3cae7d"
     },
     {
       "path": "cmake/external/onnxruntime_external_deps.cmake",
-      "bytes": 30973,
-      "sha256": "15f6c0997a5125fe0bfce8966114364097f53291f624e9b94e7a0dac95d8ba48"
+      "bytes": 53635,
+      "sha256": "603d38a11ac0df25e0d316423fbf1efc2e8e707bd72111aed1fcadcbca934ed7"
     },
     {
       "path": "tools/ci_build/build.py",
-      "bytes": 113845,
-      "sha256": "e2f3964cf0c273fa4af1197af2cf86892162f44874c114e112f662ce175a6c3d"
+      "bytes": 125414,
+      "sha256": "fe953810a2bfda1fb9267daf13aaad87f469c4b6fe5563c2ee0771b7e4d0aed1"
     },
     {
       "path": "tools/ci_build/build_args.py",
-      "bytes": 42318,
-      "sha256": "08a9be0f6a4484e2c94d1fd3614174409567d95f5b1a379813245f4db6e58e64"
+      "bytes": 47938,
+      "sha256": "c5206c047e1c910fc1577ed0839ea9a93d8569c11ca7ed8cfa1aa0df1e611d10"
     },
     {
       "path": "LICENSE",
@@ -51,22 +50,18 @@
     },
     {
       "path": "ThirdPartyNotices.txt",
-      "bytes": 326866,
-      "sha256": "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc"
+      "bytes": 338088,
+      "sha256": "143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3"
     }
   ],
-  "gitlinks": [
-    "160000 commit 074211759c17c646164d3271ca1d155cc174f78e\tcmake/external/emsdk",
-    "160000 commit 7a2ed51a6b682a83e345ff49fc4cfd7ca47550db\tcmake/external/libprotobuf-mutator",
-    "160000 commit b8baa8446686496da4cc8fda09f2b6fe65c2a02c\tcmake/external/onnx"
-  ],
+  "schema": 1,
   "dependencies": [
     {
       "name": "abseil_cpp",
-      "url": "https://github.com/abseil/abseil-cpp/archive/refs/tags/20240722.0.zip",
-      "upstream_sha1": "36ee53eb1466fb6e593fc5c286680de31f8a494a",
-      "sha256": "95e90be7c3643e658670e0dd3c1b27092349c34b632c6e795686355f67eca89f",
-      "bytes": 3198385
+      "url": "https://github.com/abseil/abseil-cpp/archive/refs/tags/20250814.0.zip",
+      "upstream_sha1": "a9eb1d648cbca4d4d788737e971a6a7a63726b07",
+      "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff",
+      "bytes": 3194036
     },
     {
       "name": "date",
@@ -105,17 +100,17 @@
     },
     {
       "name": "microsoft_gsl",
-      "url": "https://github.com/microsoft/GSL/archive/refs/tags/v4.0.0.zip",
-      "upstream_sha1": "cf368104cd22a87b4dd0c80228919bb2df3e2a14",
-      "sha256": "eb91fcb10a6aa5ccb1d224e07a56c8ecffe9a1bb601fa1848276ec46a2200bfb",
-      "bytes": 78670
+      "url": "https://github.com/microsoft/GSL/archive/refs/tags/v4.2.1.zip",
+      "upstream_sha1": "1094e3bb7a8af763dcb136ccd676e6e75e614eec",
+      "sha256": "c9291d95f5f6e5c561990d06a589b01d89e553d0f366f0ce723dd1788e7a6076",
+      "bytes": 84222
     },
     {
       "name": "microsoft_wil",
-      "url": "https://github.com/microsoft/wil/archive/refs/tags/v1.0.230629.1.zip",
-      "upstream_sha1": "e4a542a323c070376f7c2d1973d0f7ddbc1d2fa5",
-      "sha256": "f116af6cd96b8404d5e3cd6ef18853f7baa9c7d96930e741591fea8b5a3ef919",
-      "bytes": 600066
+      "url": "https://github.com/microsoft/wil/archive/refs/tags/v1.0.250325.1.zip",
+      "upstream_sha1": "826c8bd47c2258ec61b8b218e031e5b33d27f761",
+      "sha256": "48f7fdc3c7d0b284efae783c1266836b61b63fd0c94749098a60dc8ec78b0725",
+      "bytes": 577341
     },
     {
       "name": "mp11",
@@ -126,24 +121,24 @@
     },
     {
       "name": "onnx",
-      "url": "https://github.com/onnx/onnx/archive/refs/tags/v1.17.0.zip",
-      "upstream_sha1": "13a60ac5217c104139ce0fd024f48628e7bcf5bc",
-      "sha256": "54ab63aec98693c8a021aa708aad046183a0d166808733429fde7f644c84d637",
-      "bytes": 15767281
+      "url": "https://github.com/onnx/onnx/archive/refs/tags/v1.22.0.zip",
+      "upstream_sha1": "2b2cd58ac7a26df5371266149e0c76776330cdf1",
+      "sha256": "8dc1181d33529a1249e031226126d0699ac9bdfc571ee530ee3a12f4656f2be3",
+      "bytes": 18911779
     },
     {
       "name": "protobuf",
-      "url": "https://github.com/protocolbuffers/protobuf/archive/refs/tags/v21.12.zip",
-      "upstream_sha1": "7cf2733949036c7d52fda017badcab093fe73bfa",
-      "sha256": "6a31b662deaeb0ac35e6287bda2f3369b19836e6c9f8828d4da444346f420298",
-      "bytes": 7180794
+      "url": "https://github.com/protocolbuffers/protobuf/releases/download/v33.6/protobuf-33.6.tar.gz",
+      "upstream_sha1": "051fee744fcca04dab37eb009d49aa3e9546acda",
+      "sha256": "16498d7dc7967e9b100632138babd4b86b61592beeccdd556f67539d9c231355",
+      "bytes": 6888932
     },
     {
       "name": "pytorch_cpuinfo",
-      "url": "https://github.com/pytorch/cpuinfo/archive/8a1772a0c5c447df2d18edf33ec4603a8c9c04a6.zip",
-      "upstream_sha1": "85bf8a60dae026b99b6ccd78606c85ed83bfb2cd",
-      "sha256": "4bf314b3f04db2fd984fef38a7e278e702b74297ef0af592b73296edba02b9d4",
-      "bytes": 3850914
+      "url": "https://github.com/pytorch/cpuinfo/archive/66ee79c038d70dad9f08705b2c9b3e58f6d8f512.zip",
+      "upstream_sha1": "6e2be17c110e4f4184b059303c722b3c5bd080a6",
+      "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d",
+      "bytes": 3857141
     },
     {
       "name": "re2",
@@ -160,15 +155,6 @@
       "bytes": 626378
     }
   ],
-  "mac_host_dependencies": [
-    {
-      "name": "protoc_mac_universal",
-      "url": "https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-osx-universal_binary.zip",
-      "bytes": 2822292,
-      "sha256": "1acab3d1f774d120d5a38bccb78fd379d35226b254dc258978bc45593478ca4c",
-      "upstream_sha1": "23710c3d1c2036d8d65a6a22234372fa2d7af9ef"
-    }
-  ],
   "additional_notices": [
     {
       "name": "mp11-boost-license",
@@ -180,6 +166,15 @@
       "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
       "cache_name": "boost-1.82.0-LICENSE_1_0.txt",
       "path": "notices/mp11/LICENSE_1_0.txt"
+    }
+  ],
+  "mac_host_dependencies": [
+    {
+      "name": "protoc_mac_universal",
+      "url": "https://github.com/protocolbuffers/protobuf/releases/download/v33.6/protoc-33.6-osx-universal_binary.zip",
+      "upstream_sha1": "3c2f883c5f828ae184550763ab8ae9dc642d5d97",
+      "sha256": "988cbd03f38013ee833c6a12544a965739345924735d45fc2f0ba96c5973fce6",
+      "bytes": 5138242
     }
   ]
 }

@@ -26,8 +26,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "scripts/static-onnx-runtime-lock.json"
 LOCK = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
-VERSION = "1.22.1"
-COMMIT = "89746dc19a0a1ae59ebf4b16df9acab8f99f3925"
+VERSION = "1.30.0"
+COMMIT = "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7"
 TARGETS = {
     "x86_64-pc-windows-msvc": ("Windows", "x86_64"),
     "x86_64-unknown-linux-gnu": ("Linux", "x86_64"),
@@ -55,9 +55,16 @@ LEGACY_C1 = {
 }
 
 
+def stream_digest(source, algorithm="sha256"):
+    value = hashlib.new(algorithm)
+    for block in iter(lambda: source.read(1024 * 1024), b""):
+        value.update(block)
+    return value
+
+
 def digest(path, algorithm="sha256"):
     with Path(path).open("rb") as source:
-        return hashlib.file_digest(source, algorithm).hexdigest()
+        return stream_digest(source, algorithm).hexdigest()
 
 
 def plain(path, regular=False):
@@ -161,7 +168,7 @@ def validate_lock(lock=LOCK):
         raise ValueError("Static ORT source commit URL differs")
     if source["archive_root"] != "onnxruntime-" + COMMIT:
         raise ValueError("Static ORT archive root differs")
-    if not 0 < source["bytes"] <= 256 * 1024 * 1024 or not 0 < source["unpacked_bytes"] <= 1024 * 1024 * 1024:
+    if not 0 < source["bytes"] <= 320 * 1024 * 1024 or not 0 < source["unpacked_bytes"] <= 1024 * 1024 * 1024:
         raise ValueError("Static ORT source bounds differ")
     if not 0 < source["members"] <= 20000:
         raise ValueError("Static ORT source member bound differs")
@@ -477,7 +484,13 @@ def darwin_zombie_members(pids, group, deadline):
 
 
 def run_unix_owned(argv, cwd, output, timeout, environment):
-    if not all(hasattr(os, name) for name in ("waitid", "WNOWAIT", "WEXITED", "WNOHANG")):
+    if all(hasattr(os, name) for name in ("waitid", "P_PID", "WNOWAIT", "WEXITED", "WNOHANG")):
+        observe = lambda pid: os.waitid(os.P_PID,pid,os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        observation_backend = "python-os-waitid-wnowait"
+    elif sys.platform == "darwin":
+        observe = load_script("darwin-waitid.py").observer()
+        observation_backend = "darwin64-libc-waitid-wnowait"
+    else:
         raise ValueError("This Unix host cannot retain owned child identity through descendant cleanup")
     process = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -491,7 +504,7 @@ def run_unix_owned(argv, cwd, output, timeout, environment):
         while True:
             # WNOWAIT holds the leader's actual OS identity until group cleanup;
             # its numerical group ID cannot be recycled for an unrelated job.
-            observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            observed = observe(process.pid)
             oversized = os.fstat(output.fileno()).st_size > MAX_LOG
             timed_out = time.monotonic() >= end
             if observed is not None or timed_out or oversized:
@@ -545,6 +558,7 @@ def run_unix_owned(argv, cwd, output, timeout, environment):
                 break
             time.sleep(0.05)
     return {"exit_code": return_code, "timed_out": timed_out, "log_oversized": oversized,
+            "leader_observation_backend": observation_backend,
             "owned_descendants_settled": settled and not cleanup_errors, "owned_group_signaled": forced,
             "owned_leader_pid": process.pid, "observed_exit": None if observed is None else
             {"pid": observed.si_pid, "code": observed.si_code, "status": observed.si_status},
@@ -713,9 +727,20 @@ def tool_record(path):
     return {"path": str(path), "bytes": path.stat().st_size, "sha256": digest(path)}
 
 
+def probe_log(destination, name):
+    """Give each read-only probe its own evidence; build stages stay exclusive."""
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+        raise ValueError("Invalid tool probe name")
+    logs = child(destination, "logs")
+    logs.mkdir(parents=True, exist_ok=True)
+    attempt = Path(tempfile.mkdtemp(prefix="probe-" + name + "-", dir=logs))
+    return child(attempt, "output.log")
+
+
 def probe_version(path, expected, destination, name):
-    log = child(destination, "logs/tool-" + name + ".log")
+    log = probe_log(destination, name)
     result = run_owned([path, "--version"], destination, log, 15)
+    write_json(log.parent / "result.json", result)
     text = log.read_text(errors="replace")[:4096]
     if not successful(result) or not re.search(r"(?<![0-9])" + re.escape(expected) + r"(?![0-9.])", text):
         raise ValueError("Static ORT requires " + name + " " + expected + "; see " + str(log))
@@ -743,8 +768,8 @@ def toolchain(args, destination, target):
     result = {"cmake": probe_version(cmake, "3.31.6", destination, "cmake"),
               "ninja": probe_version(ninja, "1.12.1", destination, "ninja"),
               "python": tool_record(Path(sys.executable).resolve())}
-    if sys.version_info < (3, 11):
-        raise ValueError("Static ORT provisioning requires Python3.11 or later")
+    if sys.version_info < (3, 9):
+        raise ValueError("Static ORT provisioning requires Python3.9 or later")
     result["python"]["version"] = platform.python_version()
     if vs:
         vcvars = vs / "VC/Auxiliary/Build/vcvars64.bat"
@@ -761,14 +786,14 @@ def toolchain(args, destination, target):
         patch = program_path(args.patch, "patch")
         result.update({"compiler": tool_record(cc), "cxx": tool_record(cxx), "patch": tool_record(patch)})
         for name, compiler in (("compiler", cc), ("cxx", cxx)):
-            log = child(destination, "logs/tool-" + name + ".log")
+            log = probe_log(destination, name)
             observed = run_owned([compiler, "--version"], destination, log, 15)
             if not successful(observed):
                 raise ValueError("Static ORT compiler probe failed")
             result[name]["version_output"] = log.read_text(errors="replace")[:4096]
             result[name]["probe"] = observed
         if operating_system == "Darwin":
-            log = child(destination, "logs/tool-sdk.log")
+            log = probe_log(destination, "sdk")
             sdk = run_owned(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], destination, log, 15)
             if not successful(sdk):
                 raise ValueError("Missing macOS SDK")
@@ -869,6 +894,27 @@ def notice_items(destination, target, source_root=None, dependency_root=None):
         archive = child(dependency_root, mirror_relative(dependency)) if dependency_root else child(destination, "downloads/" + dependency["name"] + ".zip")
         verify_file(archive, dependency)
         count = 0
+        if tarfile.is_tarfile(archive):
+            with tarfile.open(archive, "r:*") as tar:
+                entries = tar.getmembers()
+                if len(entries) > 50000 or sum(entry.size for entry in entries) > 512 * 1024 * 1024:
+                    raise ValueError("Dependency legal-text archive expansion limit")
+                for info in entries:
+                    name = relative_name(info.name.rstrip("/"))
+                    if info.isdir() or not re.fullmatch(r"(?i)((LICENSE|COPYING|NOTICE)([._-].*)?|ThirdPartyNotices\.txt)", name.name):
+                        continue
+                    if not info.isfile() or info.size > 2 * 1024 * 1024 or count >= 128:
+                        raise ValueError("Dependency notice size/type bound exceeded")
+                    count += 1
+                    with tar.extractfile(info) as input_file:
+                        content = input_file.read(2 * 1024 * 1024 + 1)
+                    if len(content) != info.size:
+                        raise ValueError("Dependency notice expansion differs")
+                    retain("notices/" + dependency["name"] + "/" + name.as_posix(), content,
+                           archive=dependency["name"])
+                    if re.match(r"(?i)(LICENSE|COPYING)", name.name) and name.suffix.lower() != ".json":
+                        covered.add(dependency["name"])
+            continue
         with zipfile.ZipFile(archive) as zipped:
             for info in zipped.infolist():
                 name = relative_name(info.filename.rstrip("/"))
@@ -977,7 +1023,7 @@ def library_inventory(destination, target, build_relative="b/Release", include_s
 def build(args, destination, target):
     destination = owned_destination(destination, target)
     if (destination / "build-receipt.json").exists():
-        return verify_build(destination, target)
+        return finish_build(destination, target)
     if (destination / "b").exists():
         raise ValueError("Existing incomplete static build retained; no automatic retry or overwrite")
     verify_source(destination, target)
@@ -1025,11 +1071,23 @@ def build(args, destination, target):
         receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
         write_json(running, receipt, replace=True)
         raise
+    return finish_build(destination, target)
+
+
+def finish_build(destination, target):
+    if VERSION == "1.30.0":
+        # This owner verifies the original completed C++ receipt before any
+        # additive archive work and refuses incomplete aggregation attempts.
+        return load_script("static-onnx-aggregate.py").aggregate(destination, target, core_api())
     return verify_build(destination, target)
 
 
 def verify_build(destination, target):
     result = verify_original_build(destination, target)
+    if (destination / "static-aggregate-receipt.json").exists():
+        return load_script("static-onnx-aggregate.py").verify(destination, target, result, core_api())
+    if VERSION == "1.30.0":
+        raise ValueError("Completed ORT1.30 component archives require explicit --aggregate-static before read-only --verify")
     return load_script("static-onnx-link-closure.py").consumer(destination, target, result, core_api())
 
 
@@ -1269,7 +1327,9 @@ def main(argv=None):
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--download-tools", action="store_true", help="Prepare pinned build-only CMake and compile pinned Ninja in the owned destination")
+    parser.add_argument("--build-cmake-source", action="store_true", help="Mac arm64 only: use pinned official CMake3.31.6 source provenance")
     parser.add_argument("--build", action="store_true")
+    parser.add_argument("--aggregate-static", action="store_true", help="Package genuine completed component archives into rc10's monolithic static layout; never rebuild sources")
     parser.add_argument("--supplement-link-closure", action="store_true", help="Build only the real missing pinned re2 target; preserve original receipts and archives")
     parser.add_argument("--recover-link-supplement", action="store_true", help="Adopt only the exact reviewed Neo supplemental archive after its owned runner failed; never build")
     parser.add_argument("--verify", action="store_true")
@@ -1285,13 +1345,19 @@ def main(argv=None):
     args = parser.parse_args(argv)
     target = args.target or host_target()
     destination = args.destination or ROOT / "target/static-onnx-runtime" / target
+    if args.aggregate_static and (args.download or args.download_tools or args.build or args.verify or args.supplement_link_closure or args.recover_link_supplement or args.adopt_legacy_receipt or args.adopt_neo_receipt):
+        parser.error("Static aggregation never downloads, configures, rebuilds or adopts old inputs")
     if args.recover_link_supplement and (args.supplement_link_closure or args.verify or args.download or args.build or args.adopt_legacy_receipt or args.adopt_neo_receipt or args.download_tools):
         parser.error("Reviewed recovery never downloads, configures or builds")
     if args.supplement_link_closure and (args.verify or args.download or args.build or args.adopt_legacy_receipt or args.adopt_neo_receipt or args.download_tools):
         parser.error("Supplemental closure build never configures, downloads or rebuilds the original campaign")
     if args.verify and (args.download or args.build or args.adopt_legacy_receipt or args.adopt_neo_receipt or args.download_tools):
         parser.error("--verify is read-only and cannot download/build")
-    if args.recover_link_supplement:
+    if args.build_cmake_source and (not args.download_tools or args.verify):
+        parser.error("--build-cmake-source requires explicit --download-tools preparation")
+    if args.aggregate_static:
+        result = load_script("static-onnx-aggregate.py").aggregate(destination, target, core_api())
+    elif args.recover_link_supplement:
         result = load_script("static-onnx-link-closure.py").recover(destination, target, core_api())
     elif args.supplement_link_closure:
         result = load_script("static-onnx-link-closure.py").supplement(destination, target, core_api())

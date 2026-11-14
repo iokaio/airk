@@ -12,6 +12,7 @@ import shutil
 import sys
 import tarfile
 import time
+import types
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +64,7 @@ def fetch(archive, row, download, core, ninja=False):
 
 
 def archive_entries(archive, row, core, destination=None):
-    """Validate the whole archive; all filesystem links are omitted, never followed."""
+    """Validate archive bytes; only authenticated CMake vendor links are retained."""
     core.verify_file(archive, row)
     is_zip = archive.name.endswith(".zip")
     container = zipfile.ZipFile(archive) if is_zip else tarfile.open(archive, mode="r|gz")
@@ -113,7 +114,11 @@ def archive_entries(archive, row, core, destination=None):
                 resolved = core.relative_name(combined)
                 if resolved.parts[0] != row["archive_root"]:
                     raise ValueError("Build-tool archive link escapes its root")
-                entries.append({"path": relative, "kind": "omitted_link", "target": target})
+                vendor = row.get("program", "").startswith("CMake.app/") and (
+                    relative.startswith("CMake.app/Contents/Frameworks/Qt") or relative == "CMake.app/Contents/bin/cmake-gui")
+                if vendor and not (is_zip or member.issym()):
+                    raise ValueError("CMake vendor hard links are unsupported")
+                entries.append({"path": relative, "kind": "vendor_symlink" if vendor else "omitted_link", "target": target})
                 continue
             if not regular or not 0 <= size <= MAX_FILE:
                 raise ValueError("Unsupported build-tool archive member type/size")
@@ -123,7 +128,7 @@ def archive_entries(archive, row, core, destination=None):
             stream = container.open(member) if is_zip else container.extractfile(member)
             if destination is None:
                 with stream:
-                    sha = hashlib.file_digest(stream, "sha256").hexdigest()
+                    sha = core.stream_digest(stream, "sha256").hexdigest()
             else:
                 path = core.child(destination, relative)
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,12 +150,15 @@ def archive_entries(archive, row, core, destination=None):
                             "executable": bool(mode & 0o111)})
     finally:
         container.close()
-    return sorted(entries, key=lambda entry: entry["path"])
+    entries = sorted(entries, key=lambda entry: entry["path"])
+    validate_vendor_links(entries)
+    return entries
 
 
 def extract(archive, destination, row, core):
     if destination.exists():
         entries = archive_entries(archive, row, core)
+        complete_vendor_links(destination, entries, core)
         verify_tree(destination, entries, core)
         return entries
     if not archive.name.endswith(".zip"):
@@ -158,6 +166,7 @@ def extract(archive, destination, row, core):
         # forces backward decompression; stream mode makes that impossible.
         entries = archive_entries(archive, row, core, destination=destination)
         destination.mkdir(parents=True, exist_ok=True)
+        complete_vendor_links(destination, entries, core)
         verify_tree(destination, entries, core)
         return entries
     entries = archive_entries(archive, row, core)
@@ -166,7 +175,7 @@ def extract(archive, destination, row, core):
     container = zipfile.ZipFile(archive) if is_zip else tarfile.open(archive, "r:gz")
     try:
         for entry in entries:
-            if entry["kind"] == "omitted_link":
+            if entry["kind"] in ("omitted_link", "vendor_symlink"):
                 continue
             path = core.child(destination, entry["path"])
             if entry["kind"] == "directory":
@@ -182,25 +191,81 @@ def extract(archive, destination, row, core):
                 path.chmod(0o755 if entry["executable"] else 0o644)
     finally:
         container.close()
+    complete_vendor_links(destination, entries, core)
     verify_tree(destination, entries, core)
     return entries
 
 
-def verify_tree(destination, entries, core):
+def validate_vendor_links(entries):
+    links = {entry["path"]: entry["target"] for entry in entries if entry["kind"] == "vendor_symlink"}
+    known = {entry["path"] for entry in entries if entry["kind"] in ("file", "directory", "vendor_symlink")}
+    known |= {parent.as_posix() for name in known for parent in PurePosixPath(name).parents}
+    for name, target in links.items():
+        pending = posixpath.normpath(posixpath.join(posixpath.dirname(name), target)).split("/")
+        resolved = []
+        visited = set()
+        while pending:
+            resolved.append(pending.pop(0))
+            candidate = "/".join(resolved)
+            if candidate in links:
+                if candidate in visited or len(visited) >= 32:
+                    raise ValueError("CMake vendor link cycle or depth exceeded")
+                visited.add(candidate)
+                redirected = posixpath.normpath(posixpath.join(posixpath.dirname(candidate), links[candidate]))
+                pending = redirected.split("/") + pending
+                resolved = []
+        final = "/".join(resolved)
+        if not final.startswith("CMake.app/") or final not in known or any(piece in ("", ".", "..") for piece in resolved):
+            raise ValueError("CMake vendor link escapes or misses its authenticated bundle")
+
+
+def complete_vendor_links(destination, entries, core):
+    # Audit every original regular byte and existing link before any additions.
+    verify_tree(destination, entries, core, allow_missing_vendor_links=True)
+    for entry in entries:
+        if entry["kind"] != "vendor_symlink":
+            continue
+        path = Path(destination).joinpath(*PurePosixPath(entry["path"]).parts)
+        core.plain(path.parent)
+        if not path.is_symlink():
+            os.symlink(entry["target"], path)
+
+
+def verify_tree(destination, entries, core, allow_missing_vendor_links=False):
+    validate_vendor_links(entries)
     expected = {entry["path"] for entry in entries if entry["kind"] == "file"}
+    links = {entry["path"]: entry for entry in entries if entry["kind"] == "vendor_symlink"}
     actual = set()
+    seen_links = set()
     for path in destination.rglob("*"):
+        relative = path.relative_to(destination).as_posix()
+        if path.is_symlink():
+            core.plain(path.parent)
+            if relative not in links or os.readlink(path) != links[relative]["target"]:
+                raise ValueError("Unapproved or changed CMake vendor link")
+            seen_links.add(relative)
+            continue
         core.plain(path)
         if path.is_file():
-            actual.add(path.relative_to(destination).as_posix())
-    if actual != expected:
-        raise ValueError("Owned pinned build-tool tree has missing/extra files")
+            actual.add(relative)
+    for name in links:
+        path = destination / name
+        if path.exists() and not path.is_symlink():
+            raise ValueError("CMake vendor link path has been replaced by another type")
+    if actual != expected or not allow_missing_vendor_links and seen_links != set(links):
+        raise ValueError("Owned pinned build-tool tree has missing/extra files or links")
     for entry in entries:
         if entry["kind"] == "file":
             path = core.child(destination, entry["path"])
             core.verify_file(path, entry)
             if os.name != "nt" and bool(path.stat().st_mode & 0o111) != entry["executable"]:
                 raise ValueError("Pinned build-tool executable mode changed")
+    if not allow_missing_vendor_links:
+        for name in links:
+            resolved = (destination / name).resolve(strict=True)
+            if not resolved.is_relative_to(destination / "CMake.app"):
+                raise ValueError("CMake vendor link resolved outside its bundle")
+            core.plain(resolved)
 
 
 def cmake_cli_closure(entries, row):
@@ -260,6 +325,10 @@ def ninja_commands(root, target, cmake, options, core):
     return command, [str(cmake), "--build", str(build), "--target", "ninja", "--config", "Release", "--parallel", "2"], tools
 
 
+def archive_api():
+    return types.SimpleNamespace(extract=extract, archive_entries=archive_entries, verify_tree=verify_tree)
+
+
 def provision_tools(destination, target, download, options, core=None):
     core = core or core_module()
     validate_lock(core)
@@ -277,6 +346,17 @@ def provision_tools(destination, target, download, options, core=None):
     cmake_entries = extract(cmake_archive, root / "cmake", cmake_row, core)
     cmake_cli_closure(cmake_entries, cmake_row)
     cmake = core.child(root / "cmake", cmake_row["program"])
+    signature = None
+    if system == "Darwin":
+        signature_log = core.probe_log(root, "cmake-signature")
+        signature = core.run_owned(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(root / "cmake/CMake.app")], root, signature_log, 30)
+        core.write_json(signature_log.parent / "result.json", signature)
+        if not core.successful(signature):
+            raise ValueError("Pinned CMake vendor signature failed; original bundle/logs retained")
+    source_cmake = None
+    if getattr(options, "build_cmake_source", False):
+        source_cmake = core.load_script("provision-static-cmake-source.py").build(root, target, download, core, archive_api())
+        cmake = Path(source_cmake["program"])
     cmake_record = core.probe_version(cmake, LOCK["cmake_version"], root, "cmake")
     ninja_archive = root / "downloads/ninja-source.tar.gz"
     fetch(ninja_archive, LOCK["ninja"], download, core, ninja=True)
@@ -286,6 +366,10 @@ def provision_tools(destination, target, download, options, core=None):
                "configure_argv": configure, "build_argv": build, "commands": [], "cmake": cmake_record,
                "cmake_entries": cmake_entries, "ninja_source_entries": ninja_entries,
                "python": core.tool_record(Path(sys.executable).resolve()), "windows_tools": windows_tools}
+    if source_cmake is not None:
+        attempt["cmake_source"] = source_cmake
+    if signature is not None:
+        attempt["cmake_signature"] = signature
     attempt["cmake_vendor_bundle_seal_preserved"] = not any(entry["kind"] == "omitted_link" for entry in cmake_entries)
     core.write_json(root / "attempt.json", attempt)
     environment = dict(os.environ)
@@ -334,6 +418,11 @@ def verify_tools(destination, target, core=None):
     if receipt["cmake_entries"] != cmake_entries or receipt["ninja_source_entries"] != ninja_entries:
         raise ValueError("Pinned build-tool source inventory changed")
     cmake_cli_closure(cmake_entries, cmake_row)
+    if core.TARGETS[target][0] == "Darwin":
+        signature = receipt.get("cmake_signature")
+        if (not isinstance(signature, dict) or not core.successful(signature)
+                or signature.get("argv") != ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(root / "cmake/CMake.app")]):
+            raise ValueError("Pinned CMake signature proof is missing or differs")
     if receipt.get("cmake_vendor_bundle_seal_preserved") != (not any(entry["kind"] == "omitted_link" for entry in cmake_entries)):
         raise ValueError("Pinned CMake bundle omission disclosure changed")
     verify_tree(root / "cmake", cmake_entries, core)
@@ -354,7 +443,13 @@ def verify_tools(destination, target, core=None):
 
 def bound_tool_paths(root, target, receipt, core):
     row = LOCK["cmake"][core.TARGETS[target][0]]
-    expected = {"cmake": core.child(root / "cmake", row["program"]),
+    cmake = core.child(root / "cmake", row["program"])
+    if "cmake_source" in receipt:
+        source_cmake = core.load_script("provision-static-cmake-source.py").verify(root, target, core, archive_api())
+        if source_cmake != receipt["cmake_source"]:
+            raise ValueError("CMake source provenance changed")
+        cmake = Path(source_cmake["program"])
+    expected = {"cmake": cmake,
                 "ninja": core.child(root, "ninja-build/" + ("ninja.exe" if core.TARGETS[target][0] == "Windows" else "ninja"))}
     for name, path in expected.items():
         if Path(os.path.abspath(receipt[name]["path"])) != path:
@@ -411,13 +506,14 @@ def main():
     parser.add_argument("--target", choices=core.TARGETS, default=core.host_target())
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--build-cmake-source", action="store_true", help="Use the separately pinned Mac arm64 source-tool provenance")
     parser.add_argument("--vs-root", type=Path)
     parser.add_argument("--cxx", type=Path)
     parser.add_argument("--msvc-toolset", default="14.44.35207", choices=["14.44.35207"])
     parser.add_argument("--windows-sdk", default="10.0.26100.0", choices=["10.0.26100.0"])
     args = parser.parse_args()
-    if args.verify and args.download:
-        parser.error("--verify cannot download")
+    if args.verify and (args.download or args.build_cmake_source):
+        parser.error("--verify cannot download or select a source build")
     core.owned_destination(args.destination, args.target, create=not args.verify)
     result = verify_tools(args.destination, args.target, core) if args.verify else provision_tools(args.destination, args.target, args.download, args, core)
     print(json.dumps(result, indent=2))

@@ -22,6 +22,66 @@ CORE = MODULE.core_module()
 
 
 class StaticToolTests(unittest.TestCase):
+    def vendor_archive(self, root, target="A", cycle=False):
+        archive = root / "cmake.tar.gz"
+        prefix = "CMake.app/Contents/Frameworks/QtCore.framework/"
+        with tarfile.open(archive, "w:gz") as output:
+            member = tarfile.TarInfo("tool/" + prefix + "Versions/A/QtCore")
+            member.size = 6
+            output.addfile(member, io.BytesIO(b"vendor"))
+            for name, reference in ((prefix + "Versions/Current", "../QtCore" if cycle else target),
+                                    (prefix + "QtCore", "Versions/Current/QtCore")):
+                member = tarfile.TarInfo("tool/" + name)
+                member.type, member.linkname = tarfile.SYMTYPE, reference
+                output.addfile(member)
+        return archive, {"archive_root": "tool", "program": "CMake.app/Contents/bin/cmake",
+                         "bytes": archive.stat().st_size, "sha256": CORE.digest(archive)}
+
+    def test_vendor_framework_links_complete_additively_without_changing_regular_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            archive, row = self.vendor_archive(root)
+            target = root / "existing"
+            # Reproduce the old partial extraction: authenticated regular file
+            # remains, but the signed vendor framework's two links were omitted.
+            regular = target / "CMake.app/Contents/Frameworks/QtCore.framework/Versions/A/QtCore"
+            regular.parent.mkdir(parents=True)
+            regular.write_bytes(b"vendor")
+            before = CORE.digest(regular)
+            try:
+                entries = MODULE.extract(archive, target, row, CORE)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("host does not permit unprivileged vendor symlink fixture")
+                raise
+            self.assertEqual(sum(entry["kind"] == "vendor_symlink" for entry in entries), 2)
+            self.assertEqual(CORE.digest(regular), before)
+            alias = target / "CMake.app/Contents/Frameworks/QtCore.framework/QtCore"
+            self.assertEqual(alias.read_bytes(), b"vendor")
+            MODULE.extract(archive, target, row, CORE)
+            self.assertEqual(CORE.digest(regular), before)
+            alias.unlink()
+            regular.write_bytes(b"change")
+            with self.assertRaises(ValueError): MODULE.extract(archive, target, row, CORE)
+            self.assertFalse(alias.is_symlink(), "corrupt original bytes refuse before adding any links")
+
+    def test_vendor_link_escape_cycle_missing_target_and_wrong_existing_type_refuse(self):
+        for target, cycle in (("../../../../../../outside", False), ("missing", False), ("A", True)):
+            with tempfile.TemporaryDirectory() as temporary:
+                archive, row = self.vendor_archive(Path(temporary), target, cycle)
+                with self.assertRaises(ValueError): MODULE.archive_entries(archive, row, CORE)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            archive, row = self.vendor_archive(root)
+            entries = MODULE.archive_entries(archive, row, CORE)
+            tree = root / "partial"
+            regular = tree / "CMake.app/Contents/Frameworks/QtCore.framework/Versions/A/QtCore"
+            regular.parent.mkdir(parents=True)
+            regular.write_bytes(b"vendor")
+            (regular.parent.parent / "Current").mkdir()
+            with self.assertRaisesRegex(ValueError, "another type"):
+                MODULE.complete_vendor_links(tree, entries, CORE)
+
     def archive(self, root, link=None):
         path = root / "tool.tar.gz"
         with tarfile.open(path, "w:gz") as output:
