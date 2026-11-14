@@ -3264,3 +3264,19 @@ a fresh source seal, including the two reviewed Windows cfg placements.
 
 A1's failed absolute quality floors remain a release blocker. Resource passes,
 development improvements and packaging candidates do not override that result.
+
+Mac R11 subsequently passed eight-crate scoped Clippy in 86.514s on source seal
+`13b73ca7ffac293f72ac3cacdcbbd631eab965ab49aced8fdd5d3e21e0c76cd1`.
+Nextest did not launch: receipt-runner input discovery interpreted the long
+filter as a filename and raised ENAMETOOLONG. The cheap real-child regression
+reproduced that failure; all 15 runner tests pass after skipping only arguments
+that cannot name files while preserving permission, I/O and hashing failures.
+The next test-only batch reuses the unchanged Clippy result. R11 diagnostics,
+compiler-exit and target-cleanup evidence are in `mac-cli-await-r11/observed/`.
+
+The existing Rust publication semantic emitter captured six explicitly
+hypothetical cases using the retained 12:36 retrieval harness. One native test
+passed (67 filtered), then one Python projection consumer passed. No weights
+were loaded and no production publication catalog was created. Receipt
+`receipts/delivery-10-hypothetical-publication-capture.json` binds the original
+binary, source, output and observed checks; this is not a fresh native build.

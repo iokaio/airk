@@ -49,6 +49,28 @@ The release is complete only when the approved release workflow and publication 
 
 Earlier planning sessions exposed no AIRK MCP tools and used scoped local searches and live reads. For the 13 November Workbench amendment, deferred AIRK discovery and `status` succeeded for collection `airk`, version `1.8.35`, project binding `e2d64c74e7e0cfd74cc288a554db34f505c4d94ec72efbbc3b896eea928cb856`, publication `airk-r1:4b9af3a7b2d5a72432e93246a61e03e2:640:a7912532910609b009b88caaeffb41dfdcd44aa638fc250e71e9bd4813c0c82e`. Scoped file/symbol navigation and the review excerpt were checked against saved/live contents before editing; collection freshness remained unavailable. Discover MCP again when implementation begins. Git inspection used a process-local `safe.directory` override without changing global configuration. Preserve unrelated work.
 
+### Current implementation checkpoint (14 November 2026)
+
+Source checkpoint `0b3f48ee` is an unpublished 1.9.0 candidate. A1's frozen
+absolute retrieval-quality gates failed and still block model promotion. The
+planning rows and §1.1 below retain the earlier alignment and artifact identities;
+they are not current-source qualification.
+
+On 14 November, A6 fixture R7's actual development baselines completed 1/9 goals
+with ordinary follow-up and 3/9 with deterministic packets. Fresh R8 development
+conditions completed 1/9, 3/9 and 2/9 respectively for ordinary follow-up,
+deterministic packets and `arbiter-small-intern-08b`, without infrastructure
+errors. Remaining development conditions and final-100 acceptance are outstanding;
+these observations do not establish an A6 quality pass.
+
+The checkpoint preserves the original native deadline and mandatory initial
+Search receipt; 29 IPC tests and six packet regressions pass. Mac R11's
+eight-crate Clippy passed in 86.51 seconds with unchanged inputs. Its Nextest
+batch never launched because the receipt runner treated the filter as a filename;
+the test-only follow-up remains outstanding.
+The [execution ledger](../simplify/one-process-ledger.md) retains the evidence;
+installed, platform and publication acceptance remain separate.
+
 ### 1.1 Committed baseline and retained qualification at the eight-hour cutoff
 
 The alignment covers these 20 commits, selected by committer time in the ledger's fixed window. Read commit diffs together with current source/tests: an earlier intermediate refusal or design note is not the final behavior. The previous uncommitted Workbench amendment remains part of this plan; no production changes accompany this alignment.

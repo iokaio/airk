@@ -8,6 +8,19 @@ This is an unpublished source candidate. The [active plan](../split/codex-plan.m
 
 The first complete native six-family retrieval campaign failed its frozen absolute quality gates. Both trained candidates reached 52.3% mean fact recall and 35.1% complete-support recall against required 85% and 70%, despite improving complete-support recall by 13.66 percentage points over the shipped baseline. Separate byte-set verification matched all 1,230 graded queries. The result remains failed; no model promotion or completed release is claimed. The ledger retains the source identities, exact scores and other qualification work.
 
+At source checkpoint `0b3f48ee`, A6 fixture R7's development baselines on
+14 November completed 1/9 goals with ordinary follow-up and 3/9 with deterministic
+packets. Fresh R8 development conditions completed 1/9, 3/9 and 2/9 respectively
+for ordinary follow-up, deterministic packets and `arbiter-small-intern-08b`,
+without infrastructure errors. Other development conditions and final-100
+acceptance remain outstanding. Original-deadline and initial-evidence repairs
+have 29 passing IPC tests and six packet regressions. Mac R11's eight-crate
+Clippy passed in 86.51 seconds with unchanged inputs. Its Nextest batch never
+launched because the receipt runner treated the filter as a filename; the
+test-only follow-up remains outstanding.
+These scoped source checks do not override A1's failed gate or establish platform
+or release qualification.
+
 A later native authentication refusal ends the captured editor Admin context while preserving uncertainty about the original operation. It never fabricates an I3 response, silently opens another session or replays a mutation. Recovery availability belongs to the original owning session and native receipt; process death is not fake persistence.
 
 The material below is retained historical planning and development evidence.

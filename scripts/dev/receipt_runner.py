@@ -15,6 +15,7 @@ Example:
         cargo nextest run -p airk-cli --lib --profile ci -E 'test(session_protocol::)'
 """
 import argparse
+import errno
 import hashlib
 import importlib.util
 import json
@@ -22,6 +23,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -50,6 +52,32 @@ NEXTEST_END = re.compile(r"^\s*Summary \[")
 def digest(path):
     with Path(path).open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def command_input_files(command, root=ROOT):
+    """Seal repository files named by argv; ordinary arguments need not be paths.
+
+    Probe stat directly so permission and I/O failures are not hidden by
+    pathlib versions that make is_file() return False for every OSError.
+    """
+    inputs = {}
+    for value in command:
+        path = Path(value) if Path(value).is_absolute() else root / value
+        try:
+            metadata = path.stat()
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as error:
+            # Long selectors and Windows-invalid filename characters are valid
+            # argv, but cannot name a file. Do not suppress access/I/O errors.
+            if error.errno == errno.ENAMETOOLONG or getattr(error, "winerror", None) in (123, 206):
+                continue
+            raise
+        if stat.S_ISREG(metadata.st_mode):
+            resolved = path.resolve(strict=True)
+            if resolved.is_relative_to(root):
+                inputs[resolved.relative_to(root).as_posix()] = digest(path)
+    return inputs
 
 
 def tracked_files(scopes, root=ROOT):
@@ -195,11 +223,7 @@ def main(argv=None):
                    AIRK_TEST_F09_QUALIFICATION="1")
     command = list(args.command)
     command[0] = shutil.which(command[0], path=env["PATH"]) or command[0]
-    command_inputs = {}
-    for value in command:
-        path = Path(value) if Path(value).is_absolute() else ROOT / value
-        if path.is_file() and path.resolve().is_relative_to(ROOT):
-            command_inputs[path.resolve().relative_to(ROOT).as_posix()] = digest(path)
+    command_inputs = command_input_files(command)
     runner_bytes = Path(__file__).read_bytes()
     runner_hash = hashlib.sha256(runner_bytes).hexdigest()
     groups = [group for group in args.groups.split(",") if group]

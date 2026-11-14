@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The receipt runner must record consumed inputs and refuse empty test selections."""
 import contextlib
+import errno
+import hashlib
 import importlib.util
 import io
 import json
@@ -58,6 +60,56 @@ class SelectedTests(unittest.TestCase):
 
 
 class Receipts(unittest.TestCase):
+    def test_long_nonpath_argument_reaches_real_child_and_keeps_file_hash(self):
+        selector = 'test(original_request_is_retained) | ' * 100
+        native_stat = Path.stat
+
+        def mac_stat(path, *args, **kwargs):
+            if path == ROOT / selector:
+                raise OSError(errno.ENAMETOOLONG, 'File name too long', str(path))
+            return native_stat(path, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            script = out / 'child.py'
+            script.write_text('import sys; print(len(sys.argv[1]))')
+            # Keep a real repository-local input so discovery must still hash it.
+            source = ROOT / 'scripts/tests/test_receipt_runner.py'
+            with patch.object(Path, 'stat', mac_stat), contextlib.redirect_stdout(io.StringIO()):
+                status = RUNNER.main(['--groups', '', '--out', str(out), 'long-selector',
+                                      sys.executable, str(script), selector, str(source)])
+            self.assertEqual(status, 0)
+            receipt = json.loads((out / 'long-selector.json').read_text())
+            self.assertEqual(receipt['command'][-2], selector)
+            self.assertEqual((out / 'long-selector.log').read_text().strip(), str(len(selector)))
+            self.assertEqual(receipt['command_inputs']['scripts/tests/test_receipt_runner.py'],
+                             hashlib.sha256(source.read_bytes()).hexdigest())
+            self.assertTrue(receipt['command_inputs_unchanged'])
+
+    def test_command_input_discovery_propagates_permission_and_io_errors(self):
+        for code in (errno.EACCES, errno.EIO):
+            with self.subTest(errno=code), patch.object(Path, 'stat', side_effect=OSError(code, 'refused')):
+                with self.assertRaises(OSError) as caught:
+                    RUNNER.command_input_files(['source.py'])
+                self.assertEqual(caught.exception.errno, code)
+
+    def test_nonpath_discovery_does_not_hide_file_read_errors(self):
+        with patch.object(RUNNER, 'digest', side_effect=PermissionError(errno.EACCES, 'read refused')):
+            with self.assertRaises(PermissionError):
+                RUNNER.command_input_files(['scripts/tests/test_receipt_runner.py'])
+
+    def test_nonfile_arguments_are_not_sealed(self):
+        errors = [FileNotFoundError(errno.ENOENT, 'missing'),
+                  NotADirectoryError(errno.ENOTDIR, 'not a directory'),
+                  OSError(errno.ENAMETOOLONG, 'too long')]
+        for native_code in (123, 206):
+            error = OSError(errno.EINVAL, 'invalid Windows filename')
+            error.winerror = native_code
+            errors.append(error)
+        for error in errors:
+            with self.subTest(error=error), patch.object(Path, 'stat', side_effect=error):
+                self.assertEqual(RUNNER.command_input_files(['nonpath-argument']), {})
+
     def test_child_tempfile_uses_owned_base_instead_of_inherited_tmpdir(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
