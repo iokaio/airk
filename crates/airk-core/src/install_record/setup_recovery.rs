@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private setup recovery metadata. This module performs no filesystem work
 //! and never relaxes ordinary I4 pointer/record verification.
+pub mod active;
 use super::{
     IndexDeletion, InstallPointer, InstallRecord, OperationKind, Refusal, SETUP_RECEIPT_SCHEMA,
     SetupOperation, SetupPhase, SetupReceipt, canonical, decode,
@@ -86,7 +87,18 @@ impl PublicationReceipt {
             .prior
             .as_ref()
             .filter(|prior| prior.pointer.program == self.candidate.pointer.program)
-            .map_or(operation.operation_id, |prior| prior.record.install_id);
+            .map_or_else(
+                || {
+                    let digest = crate::identity::framed_digest(
+                        b"airk/install-id/1",
+                        &[operation.operation_id.as_bytes()],
+                    );
+                    let mut bytes = [0; 16];
+                    bytes.copy_from_slice(&digest.as_bytes()[..16]);
+                    Incarnation::from_bytes(bytes)
+                },
+                |prior| prior.record.install_id,
+            );
         if self.candidate.record.install_id != expected_install_id {
             return Err(Refusal::InstallIdMismatch);
         }

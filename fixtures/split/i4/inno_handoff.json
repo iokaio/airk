@@ -1,0 +1,122 @@
+{
+  "image": {
+    "pointer": {
+      "schema": "airk-install-pointer/1",
+      "install_id": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+      "program": "C:\\Users\\fixture\\AppData\\Local\\Programs\\AIRK",
+      "record": "install-record.json",
+      "record_sha256": "735fac8e7e2428c435ff4ccaaf79b883f60234af1f36a7ee29a227c28740801a",
+      "version": "1.9.0",
+      "written_unix_ms": 1800000000001
+    },
+    "record": {
+      "schema": "airk-install-record/1",
+      "install_id": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+      "version": "1.9.0",
+      "channel": "stable",
+      "target": "x86_64-pc-windows-msvc",
+      "contracts": {
+        "i1_protocol": 1,
+        "i2_contract": 1,
+        "i3_admin": 1,
+        "i4_record": 1,
+        "state": "airk-state/1"
+      },
+      "executables": {
+        "airkctl": {
+          "path": "bin/airkctl.exe",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "bytes": 4000000
+        },
+        "airk": {
+          "path": "service/airk.exe",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "bytes": 300000000
+        }
+      },
+      "admin_assets": {
+        "inventory_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "bundle_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "locations": {
+        "program": "C:\\Users\\fixture\\AppData\\Local\\Programs\\AIRK",
+        "data": "C:\\Users\\fixture\\AppData\\Local\\AIRK\\data\\indexes",
+        "state": "C:\\Users\\fixture\\AppData\\Local\\AIRK\\state\\service",
+        "cache": "C:\\Users\\fixture\\AppData\\Local\\AIRK\\cache\\service",
+        "logs": "C:\\Users\\fixture\\AppData\\Local\\AIRK\\logs\\service"
+      },
+      "signing": {
+        "platform": "windows",
+        "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+        "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"
+      },
+      "installed_by": {
+        "operation_id": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "installer": "inno",
+        "installed_unix_ms": 1800000000000
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "bound EXE and finalized DAT",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "ok"
+    },
+    {
+      "name": "unknown schema",
+      "text": "{\"schema\":\"airk-inno-handoff/2\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_file_unknown_schema"
+    },
+    {
+      "name": "wrong install identity",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"07070707070707070707070707070707\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_id_mismatch"
+    },
+    {
+      "name": "wrong original operation",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"08080808080808080808080808080808\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "wrong version",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"0.0.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_version_mismatch"
+    },
+    {
+      "name": "unknown capability",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/2\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "unknown field",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321},\"extra\":true}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "EXE traversal",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"../unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "unmatched DAT basename",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins001.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "empty EXE",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":0},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":654321}}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "empty DAT",
+      "text": "{\"schema\":\"airk-inno-handoff/1\",\"install_id\":\"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"version\":\"1.9.0\",\"capability\":\"original-operation/1\",\"uninstaller\":{\"path\":\"unins000.exe\",\"sha256\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"bytes\":123456},\"data\":{\"path\":\"unins000.dat\",\"sha256\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"bytes\":0}}\n",
+      "expect": "install_file_malformed"
+    },
+    {
+      "name": "noncanonical pretty JSON",
+      "text": "{\n  \"schema\": \"airk-inno-handoff/1\",\n  \"install_id\": \"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d\",\n  \"operation_id\": \"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\n  \"version\": \"1.9.0\",\n  \"capability\": \"original-operation/1\",\n  \"uninstaller\": {\n    \"path\": \"unins000.exe\",\n    \"sha256\": \"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\n    \"bytes\": 123456\n  },\n  \"data\": {\n    \"path\": \"unins000.dat\",\n    \"sha256\": \"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\n    \"bytes\": 654321\n  }\n}\n",
+      "expect": "install_file_non_canonical"
+    }
+  ]
+}

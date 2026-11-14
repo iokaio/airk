@@ -6,6 +6,29 @@ use serde_json::Value;
 
 const CASES: &str = include_str!("../../../../fixtures/split/i4/i4_cases.json");
 
+#[test]
+fn native_operation_decodes_exact_compiled_wrapper_utf8_bytes() {
+    let bytes = include_bytes!("../../../../fixtures/split/i4/wrapper_utf8_operation.json");
+    let operation = SetupOperation::decode(bytes, 1_800_000_000_000).unwrap();
+    assert_eq!(
+        operation.locations.program,
+        r"C:\Users\fixture-é-日本語-🙂\Programs\AIRK"
+    );
+    assert_eq!(
+        operation.locations.logs,
+        r"C:\Users\fixture-é-日本語-🙂\AIRKCache\logs\service"
+    );
+    assert_eq!(
+        operation.operation_id,
+        crate::identity::Incarnation::from_bytes([0x0e; 16])
+    );
+    assert_eq!(
+        canonical(&operation),
+        bytes.as_slice(),
+        "producer bytes are accepted unchanged, not regenerated for the assertion"
+    );
+}
+
 fn fixture() -> Value {
     serde_json::from_str(CASES).expect("I4 fixture is JSON")
 }

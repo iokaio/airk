@@ -11,6 +11,8 @@ use crate::identity::{Incarnation, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod inno_handoff;
+pub mod payload_inventory;
 pub mod setup_recovery;
 
 pub const POINTER_SCHEMA: &str = "airk-install-pointer/1";
@@ -162,7 +164,11 @@ pub enum Installer {
     Dmg,
     AppFirstLaunch,
     InstallSh,
+    Portable,
 }
+
+#[cfg(test)]
+mod portable_contract_tests;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -524,6 +530,17 @@ impl SetupOperation {
             return Err(Refusal::Expired);
         }
         let locations = &operation.locations;
+        if operation.requested_by == "airkctl-portable"
+            && (!matches!(
+                operation.kind,
+                OperationKind::Install | OperationKind::Repair | OperationKind::Upgrade
+            ) || operation.options.login_startup
+                || operation.options.trust != TrustChoice::Skip
+                || operation.options.start
+                || operation.options.delete_indexes != IndexDeletion::Keep)
+        {
+            return Err(Refusal::Malformed);
+        }
         if [
             &locations.program,
             &locations.data,

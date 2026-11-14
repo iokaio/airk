@@ -1,0 +1,11 @@
+{
+  "schema": "airk-wrapper-utf8-fixture/1",
+  "producer": "scripts/check-windows-installer-wrapper.py --emit-utf8",
+  "compiler": "Inno Setup 6.7.1",
+  "case_sha256": "9139e53b64c7319d86be9b7035f0c730b803c4a3ac3b41e2a6bf14b514115f4d",
+  "scope": "Actual compiled production serializer; only clock/operation ID and synthetic nonexistent locations injected. No native setup executes against these locations.",
+  "reproduce": "python scripts/check-windows-installer-wrapper.py --output artifacts/<fresh> --scenario unicode-success --emit-utf8",
+  "operation_id": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+  "created_unix_ms": 1800000000000,
+  "product_source_sha256": "fd427e38f01101a5b2c86c86323fff48831bef08e3538c45033c17b96ce41f5c"
+}
