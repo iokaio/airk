@@ -31,6 +31,7 @@ const object = (value: unknown): Record<string, unknown> | undefined => value &&
 
 export class WindowAssistance {
     private subscribed = false;
+    private generation = 0;
     private subscribing?: Promise<void>;
     /** Highest sequence handled in this window (sequences restart with a new window). */
     private handled = 0;
@@ -53,19 +54,21 @@ export class WindowAssistance {
     start(): Promise<void> {
         const topics = this.topics();
         if (this.subscribed || !topics) { return Promise.resolve(); }
+        const generation = this.generation;
         this.subscribing ??= this.session.subscribe(topics).then(outcome => {
+            if (generation !== this.generation) { return; }
             if (outcome.status === 'subscribed') { this.subscribed = true; return; }
             this.log(`AIRK: session events (${topics.join(', ')}) are unavailable (${outcome.status === 'refused' ? outcome.code : outcome.status}).`);
-        }, error => { this.log(`AIRK: the session event subscription failed: ${error instanceof Error ? error.message : String(error)}`); })
-            .finally(() => { this.subscribing = undefined; });
+        }, error => { if (generation !== this.generation) { return; } this.log(`AIRK: the session event subscription failed: ${error instanceof Error ? error.message : String(error)}`); })
+            .finally(() => { if (generation === this.generation) { this.subscribing = undefined; } });
         return this.subscribing;
     }
 
     /** One session event. Returns the acknowledgement in flight (tests await it). */
     event(event: ClientEvent): Promise<void> {
-        if (event.kind === 'session_lost') { this.subscribed = false; this.handled = this.acknowledged = 0; return this.acking; }
+        if (event.kind === 'session_lost') { this.reset(); return this.acking; }
         // A restarted service re-opens the window: a new queue whose sequences start at 1.
-        if (event.kind === 'resync' && event.reason === 'service_restarted') { this.handled = this.acknowledged = 0; return this.acking; }
+        if (event.kind === 'resync' && event.reason === 'service_restarted') { this.reset(); return this.acking; }
         if (event.kind !== 'assistance_draft') { return this.acking; }
         const delivered = object(event.draft), sequence = delivered?.sequence;
         if (!delivered || !Number.isSafeInteger(sequence) || (sequence as number) < 1) { this.log('AIRK: ignored a malformed Explorer Assistance draft event.'); return this.acking; }
@@ -83,14 +86,21 @@ export class WindowAssistance {
         return this.ack(sequence as number);
     }
 
+    private reset(): void {
+        this.generation++; this.subscribed = false; this.subscribing = undefined;
+        this.handled = this.acknowledged = 0; this.acking = Promise.resolve();
+    }
+
     private ack(through: number): Promise<void> {
+        const generation = this.generation;
         this.acking = this.acking.then(async () => {
-            if (through <= this.acknowledged) { return; }
+            if (generation !== this.generation || through <= this.acknowledged) { return; }
             try {
                 const outcome = await this.session.assistanceAck(through);
+                if (generation !== this.generation) { return; }
                 if (outcome.status === 'acknowledged') { this.acknowledged = through; }
                 else { this.log(`AIRK: Explorer Assistance acknowledgement refused (${outcome.status === 'refused' ? outcome.code : outcome.status}).`); }
-            } catch (error) { this.log(`AIRK: Explorer Assistance acknowledgement failed: ${error instanceof Error ? error.message : String(error)}`); }
+            } catch (error) { if (generation !== this.generation) { return; } this.log(`AIRK: Explorer Assistance acknowledgement failed: ${error instanceof Error ? error.message : String(error)}`); }
         });
         return this.acking;
     }

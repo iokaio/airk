@@ -15,6 +15,7 @@ import {
 } from '../airkctl/session';
 import { sessionRefuses } from '../airkctl';
 import { exitClass, parseErrorLine, splitErrorLine } from '../airkctl/runner';
+import { WindowAssistance } from '../airkctl/features/windowAssistance';
 import { AirkctlToolSession, selectionArguments } from '../airkctl/tools';
 
 const repo = path.resolve(__dirname, '../../../..');
@@ -155,10 +156,42 @@ test('a deadline answers at once, sends cancel and keeps no reply for the caller
 test('evidence reads become `tools call` with the reviewed selection named explicitly', async () => {
     assert.deepEqual(selectionArguments({ project: 'ab'.repeat(32) }), ['--service-project', 'ab'.repeat(32)]);
     assert.deepEqual(selectionArguments({ project: 'p', catalogSession: { kind: 'scoped' } }), ['--catalog-session', '{"kind":"scoped"}']);
+    const catalogue={kind:'catalog'},combined={kind:'combined'};
+    const binding=new AirkctlToolSession({closed:false} as never,{project:'p',catalogSession:catalogue,combinedSession:combined});
+    assert.deepEqual(binding.readScope(),combined,'retry capture follows the same combined-before-catalog selection precedence as dispatch');
+    assert.deepEqual(selectionArguments({catalogSession:catalogue,combinedSession:combined}),['--combined-session',JSON.stringify(combined)]);
+
     const seen: string[][] = [];
     const fakeSession = { closed: false, invoke: async (argv: string[]) => { seen.push(argv); return { exitCode: 0, class: 'success' as const, stdout: '{"content":[{"type":"text","text":"{}"}]}', stderr: '' }; } };
     const tools = new AirkctlToolSession(fakeSession as never, { project: 'ab'.repeat(32) });
     assert.deepEqual(await tools.request('tools/call', { name: 'airk_status', arguments: { detail: 'scalar' } }, 1000), { content: [{ type: 'text', text: '{}' }] });
     assert.deepEqual(seen[0], ['tools', 'call', 'airk_status', '--args', '{"detail":"scalar"}', '--service-project', 'ab'.repeat(32), '--output', 'json']);
     await assert.rejects(tools.request('tools/call', { name: 'airk_search', arguments: { query: 'x'.repeat(MAX_INVOKE_ARG_BYTES) } }, 1000), /32 KiB/);
+});
+
+
+test('retiring a verified session child resets event subscription and discards its later events', async () => {
+    const children:FakeChild[]=[],seen:ClientEvent[]=[];
+    let image=IMAGE;
+    const session=new AirkctlSession({clientVersion:'1.9.0',launch:()=>{
+        const expected=image;
+        const child=new FakeChild((request,me)=>{
+            if(request.request.hello){me.send(hello(request,{executable_sha256:expected.sha256,capabilities:['session/2','assistance/1']}));}
+            else if(request.request.subscribe){me.send({id:request.id,outcome:{status:'subscribed',cursor:{}}});}
+            else if(request.request.invoke){me.send({id:request.id,outcome:{status:'invoked',exit_code:0,class:'success',stdout:'{}',stderr:''}});}
+        });children.push(child);return child;
+    }});
+    const assistance=new WindowAssistance(session,()=>session.hello?.capabilities,{submit:()=>({ok:false,code:'fixture',message:'fixture'})} as never);
+    session.onEvent(event=>{seen.push(event);void assistance.event(event);});
+    try{
+        session.bind(image);await session.invoke(['status']);await assistance.start();
+        assert.equal(children[0].requests.filter(request=>request.request.subscribe).length,1);
+        image={...IMAGE,sha256:'cd'.repeat(32)};session.bind(image);
+        assert.deepEqual(seen,[{kind:'session_lost',code:'session_image_changed'}]);
+        await session.invoke(['status']);await assistance.start();
+        assert.equal(children[1].requests.filter(request=>request.request.subscribe).length,1,'replacement must receive its own subscription');
+        children[0].send({event:{kind:'resync',reason:'overflow'}});
+        assert.equal(seen.length,1,'detached stdout cannot publish stale events');
+        session.unbind();assert.equal(seen.length,2,'unbind retires the generation once');
+    }finally{session.dispose();}
 });

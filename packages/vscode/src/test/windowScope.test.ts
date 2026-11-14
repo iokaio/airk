@@ -459,3 +459,36 @@ test('R02 successful automatic switch grants B and explicit multi-index scope su
     assert.equal(f.selects.length, calls, 'a selected multi-index scope does not resolve or grant the new backing index');
     assert.deepEqual(f.scope.readRoute(), { state: 'scope', automatic: false });
 });
+
+
+test('assistance generation retirement releases pending subscribe and fences old completions and acknowledgments',async()=>{
+    let release!: (value:any)=>void,subscriptions=0;
+    const old=new Promise<any>(resolve=>{release=resolve;}),acks:number[]=[];
+    const fake={subscribe:async()=>++subscriptions===1?old:{status:'subscribed',cursor:{}} as any,
+        assistanceAck:async(through:number)=>{acks.push(through);return {status:'acknowledged'} as any;}};
+    const assistance=new WindowAssistance(fake,()=>['session/2','assistance/1'],{submit:()=>({ok:false,code:'fixture',message:'fixture'})} as never);
+    const first=assistance.start();
+    await assistance.event({kind:'session_lost',code:'session_image_changed'});
+    const second=assistance.start();
+    assert.equal(subscriptions,2,'new child is not blocked behind old subscribe');
+    await second;release({status:'subscribed',cursor:{}});await first;
+    await assistance.start();assert.equal(subscriptions,2,'old finally cannot clear a newer subscription');
+    const event={kind:'assistance_draft',cursor:{} as any,draft:{sequence:1,draft_id:'aa'.repeat(16),kind:'unknown',draft:{}}} as any;
+    const pending=assistance.event(event);
+    await assistance.event({kind:'session_lost',code:'session_image_changed'});
+    await pending;
+    assert.deepEqual(acks,[],'queued old acknowledgment never crosses into the new child');
+});
+
+
+test('window retry scope exposes a copied public epoch and disappears when the grant is lost',async()=>{
+    const s=session(()=>7),scope=new WindowScope(s.fake,ready,memento(),base);
+    await scope.readSearchScope();await scope.applySearchScope({project_ids:[prj(1)],index_ids:[]});
+    const observed=scope as unknown as {retryScope():any};
+    const first=observed.retryScope();
+    assert.deepEqual(first,{window_scope_selection:s.selects.at(-1),scope_identity:'cd'.repeat(32)});
+    assert.doesNotMatch(JSON.stringify(first),/grant_nonce|service_instance|lease|cookie/);
+    first.window_scope_selection.index_ids.length=0;
+    assert.notDeepEqual(observed.retryScope(),first,'caller cannot mutate the active scope');
+    scope.lost();assert.equal(observed.retryScope(),undefined);
+});

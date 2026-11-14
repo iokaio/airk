@@ -164,3 +164,22 @@ for(const item of outcomes.cases){
         else assert.equal(failure.nativeResponse,undefined);
     });
 }
+
+
+// Active replay binding uses the same independent original-authority/arguments
+// cases as the Core validator, beyond the standalone semantic classifier above.
+type BindingCase={name:string;rule:string;kind:string;input:Record<string,unknown>;arguments:Record<string,unknown>;
+    expected_scope:unknown;expected_selection?:{owner:string;scope_identity:string;catalog_revision:number};expected:{retry_after_ms:number}|null};
+const bindingCases=(decisions as typeof decisions&{binding_cases:BindingCase[]}).binding_cases;
+test('active read-retry binding fixture has independent cases',()=>{
+    assert.ok(Array.isArray(bindingCases)&&bindingCases.length>0,'zero active binding cases is a failure');
+});
+for(const item of bindingCases??[]){
+    test(`active read-retry binding: ${item.name}`,()=>{
+        const scope=item.kind==='selection'?{window_scope_selection:item.expected_scope,scope_identity:item.expected_selection?.scope_identity}:item.expected_scope;
+        const envelope={isError:true,content:[{type:'text',text:JSON.stringify(item.input)}],structuredContent:item.input};
+        const classify=readRetryDelay as (value:unknown,expected?:unknown,args?:Record<string,unknown>,source?:unknown)=>number|undefined;
+        assert.equal(classify(structuredClone(envelope),structuredClone(scope),structuredClone(item.arguments),structuredClone(item.expected_selection))??null,
+            item.expected?.retry_after_ms??null,item.rule);
+    });
+}

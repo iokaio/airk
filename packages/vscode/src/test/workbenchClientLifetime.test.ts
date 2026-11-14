@@ -25,7 +25,8 @@ class Emitter<T> {
 const A='aa'.repeat(32),B='bb'.repeat(32);
 const spec=(project:string):LaunchSpec=>({command:'/fixture/airk',root:`/fixture/${project}`,dataDir:`/fixture/data-${project}`,collection:'fixture',name:project===A?'A':'B',service:{installDir:'/fixture/runtime',project}});
 function fixture(attach=false) {
-    let specs=[spec(A),spec(B)],trusted=true,native=true;
+    let specs=[spec(A),spec(B)],trusted=true,native=true,scopeIdentity:string|undefined,scopeGeneration=0;
+    const scopeChanged=new Emitter<void>();
     const changed=new Emitter<void>(),configuration=new Emitter<{affectsConfiguration(key:string):boolean}>();
     const created:FakeClient[]=[],messages:unknown[]=[],removed:string[]=[],saved:WorkbenchSession[]=[],exports:Buffer[]=[],opened:Value[]=[];
     let response:(tool:string,client:FakeClient)=>Promise<{payload:Value}> = async tool=>({payload:{tag:tool}});
@@ -57,7 +58,7 @@ function fixture(attach=false) {
     };
     let WorkbenchView:typeof import('../workbenchView').WorkbenchView;
     try{delete require.cache[require.resolve('../workbenchView')];({WorkbenchView}=require('../workbenchView'));}finally{loader._load=original;}
-    const host={trusted:()=>trusted,specs:()=>specs,activeProject:()=>undefined,onDidChangeSpecs:changed.event,version:'1.8.0'};
+    const host={trusted:()=>trusted,specs:()=>specs,activeProject:()=>undefined,onDidChangeSpecs:changed.event,version:'1.8.0',windowScope:{identity:()=>scopeIdentity,get generation(){return scopeGeneration;},onDidChange:scopeChanged.event,searchScopeChoices:()=>undefined}};
     const provider=new WorkbenchView({globalStorageUri:{fsPath:'/unused'},extensionUri:{fsPath:'/fixture/extension'}} as any,host as any);
     type Internal={sessions:typeof store;session?:WorkbenchSession;status?:Value;notice?:string;recent:unknown[];saveQueue:Promise<void>;
         select(id:string):Promise<void>;run(input:string):Promise<void>;save(session:WorkbenchSession):void;message(value:unknown):Promise<void>};
@@ -69,6 +70,7 @@ function fixture(attach=false) {
     if(attach){provider.resolveWebviewView(view as any);}
     return {provider,state,store,created,messages,removed,saved,exports,opened,
         respond:(handler:typeof response)=>{response=handler;},confirm:(handler:typeof confirm)=>{confirm=handler;},
+        scope:(identity:string|undefined)=>{scopeIdentity=identity;scopeGeneration++;scopeChanged.fire();},
         specs:()=>specs,replace:(next:LaunchSpec[])=>{specs=next;changed.fire();},
         trust:(value:boolean)=>{trusted=value;changed.fire();},native:(value:boolean)=>{native=value;configuration.fire({affectsConfiguration:key=>key==='airk.runtime.nativeExecution'});},
         disposeView:()=>release.fire(),
@@ -771,4 +773,26 @@ test('actual host forwards opt-in and preserves flat native and historical neste
         for(const output of f.exports){assert.ok(output.includes('keep-all-fields'));assert.ok(output.includes('family-17'));assert.ok(output.includes('selected_scope'));}
     }finally{f.provider.dispose();}
     }
+});
+
+
+test('default Workbench project invalidates implicit window authority without changing the project spec',async()=>{
+    const f=fixture(),held=deferred<{payload:Value}>();
+    try{
+        f.scope('automatic-index-A');
+        await f.state.select(A);await tick();
+        const first=f.created[0];
+        f.respond(tool=>tool==='airk_parse'?held.promise:Promise.resolve({payload:{tag:tool}}));
+        const reading=f.state.run('/status');await tick();
+        assert.equal(first.calls.filter(tool=>tool==='airk_parse').length,1);
+        f.scope('applied-multi-index-B');
+        assert.equal(first.disposed,1,'authority change closes the old client synchronously, even with an identical LaunchSpec');
+        assert.equal(f.state.status,undefined,'old scope readiness is not current');
+        held.resolve({payload:{tag:'late-A',complete:{retained:true}}});await reading;await tick();
+        assert.ok(!f.state.session!.turns.some(turn=>(turn.envelope as Value|undefined)?.tag==='late-A'));
+        await f.provider.newSession();await tick();
+        assert.equal(f.created.length,2);
+        f.scope(undefined);
+        assert.equal(f.created[1].disposed,1,'scope clear restores fallback only through a new client');
+    }finally{held.resolve({payload:{}});f.provider.dispose();}
 });

@@ -230,6 +230,11 @@ export class WindowScope {
     }
     /** Identity of the granted scope (changes reset evidence); undefined without one. */
     identity(): string | undefined { return this.active ? JSON.stringify([this.current!.scopeIdentity, this.current!.selection]) : undefined; }
+    /** Public immutable epoch for retry validation; never the service's lease or nonce. */
+    retryScope():unknown {
+        const current=this.active&&!this.stale?this.current:undefined;
+        return current?{window_scope_selection:structuredClone(current.selection),scope_identity:current.scopeIdentity}:undefined;
+    }
     /** The user's checked choice (not the members or sets the grant added). */
     searchScopeSelection(): { index_ids: string[]; project_ids: string[]; active: boolean } {
         const current = this.active ? this.current : undefined;

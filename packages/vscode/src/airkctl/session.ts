@@ -500,7 +500,9 @@ export class AirkctlSession {
     /** EOF, then kill if the child outlives a bounded grace. Started work is
      * failed to its callers; accepted mutations are recovered by receipt. */
     private retire(child: SessionChild, code: string): void {
+        if (child !== this.child) { return; }
         this.detach(child, code);
+        this.event({ kind: 'session_lost', code });
         const timer = this.timers.set(() => { if (child.exitCode === null && child.signalCode === null) { child.kill(); } }, this.options.closeGraceMs ?? 5000, true);
         child.on('exit', () => this.timers.clear(timer));
         child.stdin.end();

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { readRetryDelay } from './readRetry';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { McpSessionError, McpStdioOptions, McpStdioSession } from './mcpStdioSession';
@@ -179,11 +180,28 @@ export class EvidenceClient {
 
     private async run(task: Task): Promise<ToolResult> {
         const deadline = Date.now() + (this.options.retryBudget ?? 5000);
+        const requestDeadline=Date.now()+(task.options.timeout??this.options.timeout??15000);
+        const originalArguments=structuredClone(task.args);
+        let expectedScope:unknown,scopeCaptured=false,previous:any,retries=0;
         while (true) {
             const session = await this.connect();
+            const activeScope=()=>('readScope' in session&&typeof session.readScope==='function')?session.readScope():this.spec.combinedSession??this.spec.catalogSession;
+            if(!scopeCaptured){expectedScope=structuredClone(activeScope());scopeCaptured=true;}
+            else if(Date.now()>=Math.min(deadline,requestDeadline)||!isDeepStrictEqual(activeScope(),expectedScope)){
+                const text=previous?.content?.find((part:any)=>part?.type==='text')?.text;
+                throw toolFailure(typeof text==='string'?text:'The read authority changed before retry.',previous);
+            }
+            const remaining=requestDeadline-Date.now();
+            if(remaining<=0){
+                if(previous){
+                    const text=previous.content?.find((part:any)=>part?.type==='text')?.text;
+                    throw toolFailure(typeof text==='string'?text:'The original read deadline expired.',previous);
+                }
+                throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT'));
+            }
             let envelope: any;
             try {
-                envelope = await session.request('tools/call', { name: task.tool, arguments: task.args }, task.options.timeout ?? this.options.timeout ?? 15000);
+                envelope = await session.request('tools/call', { name: task.tool, arguments: originalArguments }, remaining);
             } catch (error) {
                 if (error instanceof McpSessionError && error.code === 'overloaded') { throw new EvidenceFailure(explorerError('RATE_LIMITED')); }
                 if (error instanceof McpSessionError && error.code === 'timeout') { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT')); }
@@ -197,8 +215,11 @@ export class EvidenceClient {
                 }
                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
             }
-            const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope,this.spec.catalogSession);
-            if (delay !== undefined && Date.now() + delay < deadline && !this.disposed) {
+            const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope,expectedScope,originalArguments);
+            const windowScope=!!expectedScope&&typeof expectedScope==='object'&&'window_scope_selection' in expectedScope;
+            if (delay !== undefined && (!windowScope||retries===0) && Date.now() + delay < Math.min(deadline,requestDeadline)
+                && !this.disposed && isDeepStrictEqual(activeScope(),expectedScope)) {
+                previous=envelope;retries++;
                 await new Promise(resolve => setTimeout(resolve, delay)); continue;
             }
             const text = Array.isArray(envelope?.content) ? envelope.content.find((part: any) => part?.type === 'text')?.text : undefined;

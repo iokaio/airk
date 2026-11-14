@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { EvidenceClient, EvidenceFailure, EXPLORER_CLIENT_NAME, NativeTool } from '../explorerEvidence';
@@ -200,4 +202,111 @@ test('new native header template slots decode at ingress without altering raw me
         assert.deepEqual(body.hits, raw.members[0].result.hits); assert.deepEqual(body.source_verification, { retained: true });
         assert.equal(result.payload.delivery_observation, undefined); assert.deepEqual(result.rawPayload, raw);
     } finally { client.dispose(); }
+});
+
+
+const selectionRetryCase=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../../../../fixtures/wire/read_retry_envelopes.json'),'utf8')).cases
+    .find((row:{name:string})=>row.name==='selection_delay_1');
+assert.ok(selectionRetryCase,'shared Rust-emitted selection retry case');
+for(const mode of ['same','changed','repeat'] as const){
+    test(`selection retry ${mode} binds original live authority and never restarts a submitted plan`,async()=>{
+        let current=structuredClone(selectionRetryCase.expected_scope),attempts=0;
+        const timeouts:number[]=[],sent:unknown[]=[];
+        const client=new EvidenceClient(spec,'1.8.35',{retryBudget:2000,timeout:2000,transport:()=>({
+            closed:false,close(){},readScope:()=>structuredClone(current),
+            async request(_method,params,timeout){
+                attempts++;timeouts.push(timeout);sent.push(structuredClone(params));
+                if(mode==='changed')current={...current,scope_identity:'09'.repeat(32)};
+                return attempts===1||mode==='repeat'?structuredClone(selectionRetryCase.envelope):text({hits:[1]});
+            },
+        })});
+        try{
+            if(mode==='same'){
+                assert.deepEqual((await client.call('airk_search',{query:'original'})).payload,{hits:[1]});
+                assert.equal(attempts,2);assert.deepEqual(sent[0],sent[1],'exact original read arguments');
+                assert.ok(timeouts[1]<timeouts[0],'retry keeps the first attempt deadline');
+            }else{
+                await assert.rejects(client.call('airk_search',{query:'original'}),error=>{
+                    assert.ok(error instanceof EvidenceFailure);assert.deepEqual(error.nativeResponse,selectionRetryCase.envelope);return true;
+                });
+                assert.equal(attempts,mode==='changed'?1:2,'only one automatic retry, under the original active scope');
+            }
+        }finally{client.dispose();}
+    });
+}
+
+
+for(const boundary of ['scope','deadline'] as const){
+    test(`selection retry revalidates ${boundary} after the native requested delay`,async()=>{
+        let current=structuredClone(selectionRetryCase.expected_scope),calls=0,delays=0;
+        const originalTimer=global.setTimeout,originalNow=Date.now;let now=originalNow();
+        const client=new EvidenceClient(spec,'1.8.35',{retryBudget:2000,timeout:2000,transport:()=>({
+            closed:false,close(){},readScope:()=>structuredClone(current),
+            async request(){calls++;return structuredClone(selectionRetryCase.envelope);},
+        })});
+        // Observe the requested native backoff, then inject the external epoch
+        // change or clock advance before it completes; no scheduling race/sleep.
+        Date.now=()=>now;
+        global.setTimeout=((callback:(...args:any[])=>void,delay?:number,...args:any[])=>{
+            if(delay===selectionRetryCase.expected.retry_after_ms){
+                delays++;
+                if(boundary==='scope')current={...current,scope_identity:'09'.repeat(32)};
+                else now+=2000;
+            }
+            return originalTimer(callback,delay,...args);
+        }) as typeof setTimeout;
+        try{
+            await assert.rejects(client.call('airk_search',{query:'original'}),error=>{
+                assert.ok(error instanceof EvidenceFailure);assert.deepEqual(error.nativeResponse,selectionRetryCase.envelope);return true;
+            });
+            assert.equal(delays,1);assert.equal(calls,1,'changed epoch/deadline admits no further native read');
+        }finally{Date.now=originalNow;global.setTimeout=originalTimer;client.dispose();}
+    });
+}
+
+
+test('initial read deadline expires while the native connection is being prepared',async()=>{
+    let release!:()=>void,entered!:()=>void,calls=0;
+    const held=new Promise<void>(resolve=>{release=resolve;}),observed=new Promise<void>(resolve=>{entered=resolve;});
+    const originalNow=Date.now;let now=originalNow();Date.now=()=>now;
+    const client=new EvidenceClient(spec,'1.8.35',{timeout:2000,resolveConnection:async()=>{entered();await held;return spec;},
+        transport:()=>({closed:false,close(){},async request(){calls++;return text({hits:[1]});}})});
+    try{
+        const failed=assert.rejects(client.call('airk_search',{query:'original'}),failure('REQUEST_TIMEOUT'));
+        await observed;now+=2000;release();await failed;
+        assert.equal(calls,0,'an expired original deadline cannot admit a one-millisecond replacement read');
+    }finally{release();Date.now=originalNow;client.dispose();}
+});
+
+
+test('selection retry retains the original arguments when a caller edits its input object',async()=>{
+    const original={query:'original'},sent:unknown[]=[];
+    const client=new EvidenceClient(spec,'1.8.35',{timeout:2000,transport:()=>({closed:false,close(){},
+        readScope:()=>structuredClone(selectionRetryCase.expected_scope),async request(_method,params){
+            sent.push(structuredClone(params.arguments));
+            if(sent.length===1){original.query='later caller edit';return structuredClone(selectionRetryCase.envelope);}
+            return text({hits:[1]});
+        }})});
+    try{
+        await client.call('airk_search',original);
+        assert.deepEqual(sent,[{query:'original'},{query:'original'}],"a replay cannot submit the caller's later input");
+        assert.deepEqual(original,{query:'later caller edit'},'the client does not modify caller-owned input');
+    }finally{client.dispose();}
+});
+
+
+test('a retained combined catalog opener binds its original known scope before retry',async()=>{
+    const bound=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../../../../fixtures/wire/read_retry_decisions.json'),'utf8')).binding_cases
+        .find((row:{name:string})=>row.name==='catalog_combined_active');
+    assert.ok(bound);let calls=0;
+    const client=new EvidenceClient({...spec,combinedSession:bound.expected_scope},'1.8.35',{timeout:2000,open:async()=>({session:{
+        closed:false,close(){},async request(){
+            calls++;
+            return calls===1?{isError:true,content:[{type:'text',text:JSON.stringify(bound.input)}],structuredContent:bound.input}:text({hits:[1]});
+        },
+    } as never})});
+    try{
+        assert.deepEqual((await client.call('airk_search',bound.arguments)).payload,{hits:[1]});
+        assert.equal(calls,2,'the known original combined catalog source participates in caller binding');
+    }finally{client.dispose();}
 });

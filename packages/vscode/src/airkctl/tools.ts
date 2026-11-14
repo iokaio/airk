@@ -15,6 +15,8 @@ import type { ReadRouteView } from '../explorerContracts';
 /** The subset of the former MCP session the evidence client uses. */
 export interface ToolTransport {
     request(method: 'tools/call', params: { name: string; arguments: Record<string, unknown> }, timeoutMs: number): Promise<unknown>;
+    /** Exact public authority before dispatch; absence supplies no retry authority. */
+    readScope?(): unknown;
     readonly closed: boolean;
     close(): void;
 }
@@ -46,14 +48,14 @@ export function selectionArguments(selection: ToolSelection): string[] {
 
 /** The selection one evidence read names for its launch spec. A Workbench entry naming indexes and
  * index sets reads them explicitly (U105, `--index`/`--set`); the Workbench's window-scope entry always
- * reads under the window scope; the Explorer reads under it while one is granted, and otherwise names
+ * reads under the window scope; ordinary Explorer and Workbench project entries read under it while granted, and otherwise name
  * its selected project or reviewed session (U77, §3.7). */
 export function evidenceSelection(spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', windowActive: boolean, route?: ReadRouteView): ToolSelection {
     if (spec.openSelection) { return { open: { indexes: [...spec.openSelection.indexes], sets: [...spec.openSelection.sets] } }; }
-    if ((spec.windowScope || client === 'airk-explorer') && route && ['checking', 'failed', 'not_readable'].includes(route.state)) {
+    if ((spec.windowScope || client === 'airk-explorer' || client === 'airk-workbench' && !spec.catalogSession && !spec.combinedSession) && route && ['checking', 'failed', 'not_readable'].includes(route.state)) {
         throw new ToolCallError('unavailable', route.message ?? 'The requested index scope is being checked or could not be resolved.');
     }
-    if (spec.windowScope || (client === 'airk-explorer' && windowActive)) { return { window: true }; }
+    if (spec.windowScope || (windowActive && (client === 'airk-explorer' || !spec.catalogSession && !spec.combinedSession))) { return { window: true }; }
     return {
         ...(spec.service?.project ? { project: spec.service.project } : {}),
         ...(spec.catalogSession ? { catalogSession: spec.catalogSession } : {}),
@@ -76,6 +78,7 @@ export function readFailureCode(result: InvokeResult): string | undefined {
 }
 
 export interface ToolSessionHooks {
+    windowReadScope?(): unknown;
     /** A read under the window scope failed with this native code (for example `scoped_read_unavailable`). */
     windowReadFailed?(code: string): void;
 }
@@ -86,6 +89,12 @@ export class AirkctlToolSession implements ToolTransport {
     /** `selection` is read per call: the window scope can be chosen or cleared while the transport lives. */
     constructor(private readonly session: AirkctlSession, private readonly selection: ToolSelection | (() => ToolSelection), private readonly hooks: ToolSessionHooks = {}) {}
     get closed(): boolean { return this.stopped || this.session.closed; }
+    readScope(): unknown {
+        try {
+            const selected=typeof this.selection==='function'?this.selection():this.selection;
+            return selected.window?this.hooks.windowReadScope?.():selected.combinedSession??selected.catalogSession;
+        } catch { return undefined; } // Admission still reports its exact refusal in request().
+    }
     close(): void { this.stopped = true; for (const abort of this.aborts) { abort.abort(); } this.aborts.clear(); }
 
     async request(_method: 'tools/call', params: { name: string; arguments: Record<string, unknown> }, timeoutMs: number): Promise<unknown> {

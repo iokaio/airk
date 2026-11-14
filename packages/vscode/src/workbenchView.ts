@@ -84,11 +84,11 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     // Live object identity is intentional: loaded/forked saved turns have no authority proof.
     private readonly turnAuthorities=new WeakMap<object,string>();
     private publicationRelations():Record<string,PublicationRelation>{
-        const observed=this.permitted()&&this.status&&this.statusAuthority&&this.statusAuthority===JSON.stringify(this.selectedSpec())?this.publicationObservation(this.status,this.statusAuthority):undefined;
+        const observed=this.permitted()&&this.status&&this.statusAuthority&&this.statusAuthority===this.evidenceIdentity()?this.publicationObservation(this.status,this.statusAuthority):undefined;
         return Object.fromEntries((this.session?.turns??[]).map(turn=>{
             const authority=this.turnAuthorities.get(turn);
             if(this.selectedSpec()?.combinedSession){
-                const current=this.permitted()&&this.status&&this.statusAuthority===JSON.stringify(this.selectedSpec())?this.combinedPublicationObservation(this.status,this.statusAuthority!):undefined;
+                const current=this.permitted()&&this.status&&this.statusAuthority===this.evidenceIdentity()?this.combinedPublicationObservation(this.status,this.statusAuthority!):undefined;
                 return [turn.id,comparePublicationVector(turn.envelope&&authority?this.combinedPublicationObservation(turn.envelope,authority):undefined,current)];
             }
             return [turn.id,comparePublication(turn.envelope&&authority?this.publicationObservation(turn.envelope,authority):undefined,observed)];
@@ -158,10 +158,18 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         const label=parts.join(' · ');return label.length>120?`${label.slice(0,119)}…`:label;
     }
     private selectedSpec():LaunchSpec|undefined{return this.specs().find(spec=>workbenchProjectKey(spec)===this.session?.project);}
+    /** Includes the implicit W4 authority of ordinary project entries without changing saved session keys. */
+    private evidenceIdentity(spec:LaunchSpec|undefined=this.selectedSpec()):string{
+        if(!spec)return 'null';
+        if(spec.openSelection||spec.catalogSession||spec.combinedSession)return JSON.stringify(spec);
+        const route=this.host.readRoute?.();
+        return JSON.stringify({...spec,windowAuthority:{identity:this.host.windowScope?.identity()??null,
+            ...(route?{route:{state:route.state,indexId:route.indexId,automatic:route.automatic,code:route.code}}:{})}});
+    }
     /** Invalidate synchronously before refresh/list awaits, including hidden views. */
     private invalidateChangedClient():void{
         const spec=this.selectedSpec();
-        if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==JSON.stringify(spec))){
+        if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==this.evidenceIdentity(spec))){
             this.sessionEpoch++;this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;this.combinedControls=undefined;
         }
     }
@@ -204,19 +212,19 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     /** Host calls only after an explicit reviewed scope choice is exposed in specs. */
     async useScope(spec:LaunchSpec):Promise<void>{
         const id=workbenchProjectKey(spec);
-        if((!spec.catalogSession&&!spec.combinedSession)||!id||!this.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('Reviewed scope is not available in this workspace.');
+        if((!spec.catalogSession&&!spec.combinedSession)||!id||!this.specs().some(value=>JSON.stringify(value)===this.evidenceIdentity(spec)))throw new Error('Reviewed scope is not available in this workspace.');
         this.invalidateChangedClient();
         if(this.session?.project===id){await this.refresh();return;}
         await this.select(id);
     }
     private async select(id:string):Promise<void>{
         this.authorized();const spec=this.specs().find(value=>workbenchProjectKey(value)===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
-        const identity=JSON.stringify(spec);
+        const identity=this.evidenceIdentity(spec);
         this.stop();
         if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
         this.sessionEpoch++;this.status=undefined;this.session=newSession(id);this.recent=[];this.notice=undefined;
         const generation=this.generation,session=this.session;
-        const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+        const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&this.evidenceIdentity()===identity;
         this.send();
         if(this.permitted()){
             const client=this.evidence();
@@ -233,7 +241,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private evidence():EvidenceClient{
         this.authorized();if(!this.nativeAllowed()){throw new Error('Native execution is disabled.');}const spec=this.selectedSpec();
         if(!spec){throw new Error('Choose a registered project.');}
-        const identity=JSON.stringify(spec);
+        const identity=this.evidenceIdentity(spec);
         if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;this.combinedControls=undefined;}
         if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});this.clientIdentity=identity;}
         return this.client;
@@ -242,14 +250,14 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     async newSession():Promise<void>{if(this.session){await this.select(this.session.project);}else{await this.refresh();}}
     async clear():Promise<void>{
         this.authorized();if(!this.session){return;}
-        const session=this.session,selected=session.project,generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+        const session=this.session,selected=session.project,generation=this.generation,identity=this.evidenceIdentity();
         const choice=await vscode.window.showWarningMessage('Delete saved Workbench sessions for this project?',{modal:true},'Delete sessions');
-        if(choice==='Delete sessions'&&this.session===session&&generation===this.generation&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){
+        if(choice==='Delete sessions'&&this.session===session&&generation===this.generation&&this.localAllowed()&&this.evidenceIdentity()===identity){
             this.sessionEpoch++;this.stop();const accepted=this.generation;
             // The already authorized deletion keeps its exact project even if a
             // later selection supersedes it; it never restores that old selection.
             await this.saveQueue;await this.store.remove(selected);
-            if(accepted===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){if(this.selectedSpec()){await this.select(selected);}else{this.session=undefined;this.recent=[];this.status=undefined;this.send();}}
+            if(accepted===this.generation&&this.session===session&&this.localAllowed()&&this.evidenceIdentity()===identity){if(this.selectedSpec()){await this.select(selected);}else{this.session=undefined;this.recent=[];this.status=undefined;this.send();}}
         }
     }
     private save(session:WorkbenchSession,formOnly=false):void{
@@ -276,8 +284,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async loadRecent(id:string):Promise<void>{
         const session=this.session;if(!session){return;}
-        this.sessionEpoch++;this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
-        const current=()=>generation===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+        this.sessionEpoch++;this.stop();const generation=this.generation,identity=this.evidenceIdentity();
+        const current=()=>generation===this.generation&&this.session===session&&this.localAllowed()&&this.evidenceIdentity()===identity;
         await this.saveQueue;if(!current()){return;}
         let loaded:WorkbenchSession|undefined;
         try{loaded=await this.store.load(session.project,id);}
@@ -287,11 +295,11 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async deleteRecent(id:string):Promise<void>{
         const session=this.session;if(!session){return;}
-        this.sessionEpoch++;this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+        this.sessionEpoch++;this.stop();const generation=this.generation,identity=this.evidenceIdentity();
         // Deletion was explicitly accepted for this project/id. Finish that
         // operation, but never redirect it or reset a superseding transcript.
         await this.saveQueue;await this.store.remove(session.project,id);
-        if(generation===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){await this.newSession();}
+        if(generation===this.generation&&this.session===session&&this.localAllowed()&&this.evidenceIdentity()===identity){await this.newSession();}
     }
     private async privacyChanged():Promise<void>{
         await this.saveQueue;
@@ -320,14 +328,14 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 const shortcut=await this.store.findShortcut(session.project,input,pathPrefix??'');
                 if(shortcut){plan=shortcut;remembered=true;}
             }
-            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
+            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==this.evidenceIdentity()||!this.permitted()){return;}
             if(plan)assertOriginalPublicationForSymbolInputs(plan);
             if(remembered){this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
             if(plan){request.plan=plan;if(this.selectedSpec()?.combinedSession&&plan.query_scope){const scope=object(plan.query_scope);for(const key of ['project_ids','index_ids','member_availability'])if(scope[key]!==undefined)request[key]=structuredClone(scope[key]);}}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
             turn.request=structuredClone(request);
             const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:35000});
-            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
+            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==this.evidenceIdentity()||!this.permitted()){return;}
             turn.envelope=result.rawPayload??result.payload;if(result.rawPayload)this.metadata.remember(result.rawPayload,result.payload);this.turnAuthorities.set(turn,this.clientIdentity!);
             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);if(error instanceof EvidenceFailure&&error.nativeResponse){turn.error=explorerError(error.error.code).message;turn.nativeFailure=structuredClone(error.nativeResponse);}}}
@@ -335,10 +343,10 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async refreshReferences(message:Extract<WorkbenchMessage,{type:'refreshReferences'}>):Promise<void> {
         if(this.busy)throw new Error('refresh_wait_for_current_workbench_read');
-        const session=this.session,turn=session?.turns.find(value=>value.id===message.turn),spec=this.selectedSpec(),identity=JSON.stringify(spec),generation=this.generation;
+        const session=this.session,turn=session?.turns.find(value=>value.id===message.turn),spec=this.selectedSpec(),identity=this.evidenceIdentity(spec),generation=this.generation;
         if(!session||!turn?.envelope||!spec?.combinedSession||this.turnAuthorities.get(turn)!==identity)throw new Error('refresh_requires_live_authorized_turn');
         const captured=captureWorkbenchRefresh(turn,this.logical(turn),message.cards,spec.combinedSession as unknown as Value),control=this.refreshControl();
-        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===JSON.stringify(this.selectedSpec())&&this.turnAuthorities.get(turn)===identity;
+        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===this.evidenceIdentity()&&this.turnAuthorities.get(turn)===identity;
         const current=()=>{if(!valid())throw new Error('refresh_selection_changed');};
         this.busy=true;this.notice=undefined;this.send();
         try{
@@ -392,9 +400,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             }};
     }
     private async observeReferenceRefresh(id:string,requery:boolean):Promise<void> {
-        const session=this.session,spec=this.selectedSpec(),identity=JSON.stringify(spec),generation=this.generation;
+        const session=this.session,spec=this.selectedSpec(),identity=this.evidenceIdentity(spec),generation=this.generation;
         if(!session||!spec?.combinedSession||this.busy)throw new Error('refresh_current_selection_required');
-        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===JSON.stringify(this.selectedSpec());
+        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===this.evidenceIdentity();
         if(!this.refreshControl().referenceRefreshPending(spec.combinedSession as unknown as Value).some(value=>value.id===id))throw new Error('refresh_saved_intent_outside_current_selection');
         const flow=this.refreshFlows.get(id)??this.refreshControl().referenceRefreshFlow(this.refreshHost(valid,spec),valid);
         this.busy=true;this.send();
@@ -412,8 +420,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         }finally{this.busy=false;if(session===this.session)this.send();}
     }
     private async exportReferenceRefresh(message:Extract<WorkbenchMessage,{type:'exportReferenceRefresh'}>):Promise<void>{
-        const session=this.session,spec=this.selectedSpec(),identity=JSON.stringify(spec);
-        const valid=()=>this.permitted()&&session===this.session&&identity===JSON.stringify(this.selectedSpec());
+        const session=this.session,spec=this.selectedSpec(),identity=this.evidenceIdentity(spec);
+        const valid=()=>this.permitted()&&session===this.session&&identity===this.evidenceIdentity();
         if(!spec?.combinedSession||!valid()||!this.refreshControl().referenceRefreshPending(spec.combinedSession as unknown as Value).some(value=>value.id===message.id))throw new Error('refresh_saved_intent_outside_current_selection');
         const flow=this.refreshFlows.get(message.id)??this.refreshControl().referenceRefreshFlow(this.refreshHost(valid,spec),valid),output=flow.exportObservation(message.id,this.refreshRequeries.get(message.id)),text=output[message.format];
         if(message.action==='copy'){if(!valid())throw new Error('refresh_selection_changed');await vscode.env.clipboard.writeText(text);}
@@ -429,7 +437,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'checkReferenceRefresh':await this.observeReferenceRefresh(message.id,false);break;
             case 'requeryReferenceRefresh':await this.observeReferenceRefresh(message.id,true);break;
             case 'project':await this.select(message.id);break;
-            case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const client=this.evidence(),generation=this.generation,identity=this.clientIdentity;const result=await client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&session===this.session&&client===this.client&&identity===this.clientIdentity&&identity===JSON.stringify(this.selectedSpec())&&this.permitted()){this.observeStatus(result.payload,identity!);this.sendStatus();}}break;}
+            case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const client=this.evidence(),generation=this.generation,identity=this.clientIdentity;const result=await client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&session===this.session&&client===this.client&&identity===this.clientIdentity&&identity===this.evidenceIdentity()&&this.permitted()){this.observeStatus(result.payload,identity!);this.sendStatus();}}break;}
             case 'new':await this.newSession();break;
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;
@@ -585,7 +593,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
      * evidence and never restores a grant or another window's saved defaults. */
     async prefillSearchForm(spec:LaunchSpec,search:SearchDraft,reviewedSubset=false):Promise<void>{
         this.authorized();const key=workbenchProjectKey(spec);
-        if(!spec.combinedSession||!key||!this.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('The combined scope changed before applying the search draft.');
+        if(!spec.combinedSession||!key||!this.specs().some(value=>JSON.stringify(value)===this.evidenceIdentity(spec)))throw new Error('The combined scope changed before applying the search draft.');
         if(reviewedSubset){
             if(!search.project_ids?.length||!search.index_ids?.length||search.project_ids.some(id=>!spec.combinedSession!.project_ids.includes(id))
                 ||spec.combinedSession.index_ids&&search.index_ids.some(id=>!spec.combinedSession!.index_ids!.includes(id)))throw new Error('The recommended scope is outside the frozen connection.');

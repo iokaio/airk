@@ -83,7 +83,7 @@ class SplitExtension implements vscode.Disposable {
         // The selection is chosen per call (evidenceSelection): the window scope can change while the transport lives.
         setEvidenceTransport((spec, client) => new AirkctlToolSession(this.airkctl.session,
             () => evidenceSelection(spec, client, this.host.windowScope.active, this.host.windowScope.readRoute()),
-            { windowReadFailed: code => this.host.windowScope.refused(code) }));
+            { windowReadFailed: code => this.host.windowScope.refused(code), windowReadScope: () => this.host.windowScope.retryScope() }));
     }
 
     private stateChanged(state: AirkctlState): void {

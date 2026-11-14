@@ -29,7 +29,7 @@ test('an explicit selection sends --index/--set through the session invoke; the 
     const named = openSelectionSpec(base, { indexes: [idx(1), 'Docs'], sets: [prj(2)] }, 'Docs');
     const window: LaunchSpec = { command: base.command, root: base.root, dataDir: '', collection: 'window-scope', name: 'scope', service: { installDir: base.installDir, project: 'ef'.repeat(32) }, windowScope: { key: 'ef'.repeat(32), label: 'Set 1' } };
     const project: LaunchSpec = { command: base.command, root: base.root, dataDir: '/data', collection: 'app', name: 'app', service: { installDir: base.installDir, project: 'ab'.repeat(32) } };
-    for (const [spec, client, windowActive] of [[named, 'airk-workbench', false], [named, 'airk-explorer', true], [window, 'airk-workbench', false], [project, 'airk-workbench', false], [project, 'airk-explorer', true]] as const) {
+    for (const [spec, client, windowActive] of [[named, 'airk-workbench', false], [named, 'airk-explorer', true], [window, 'airk-workbench', false], [project, 'airk-workbench', false], [project, 'airk-explorer', true], [project, 'airk-workbench', true]] as const) {
         const tools = new AirkctlToolSession(fake as never, () => evidenceSelection(spec, client, windowActive));
         await tools.request('tools/call', { name: 'search', arguments: { query: 'retry', limit_per_index: 2 } }, 60000);
     }
@@ -39,6 +39,7 @@ test('an explicit selection sends --index/--set through the session invoke; the 
         ['tools', 'call', 'search', '--args', args, '--index', idx(1), '--index', 'Docs', '--set', prj(2), '--output', 'json'],
         ['tools', 'call', 'search', '--args', args, '--output', 'json'],
         ['tools', 'call', 'search', '--args', args, '--service-project', 'ab'.repeat(32), '--output', 'json'],
+        ['tools', 'call', 'search', '--args', args, '--output', 'json'],
         ['tools', 'call', 'search', '--args', args, '--output', 'json'],
     ], 'explicit names never also name the history key (--service-project), a window grant or a session');
     assert.deepEqual(selectionArguments({ open: { indexes: [], sets: ['Team docs'] }, window: true, project: 'ab'.repeat(32) }), ['--set', 'Team docs']);
@@ -86,7 +87,7 @@ test('R02 per-call admission refuses checking and failed automatic routes withou
     const select: (spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', active: boolean, route: { state: 'checking' | 'failed' | 'scope'; automatic?: boolean; message?: string }) => ReturnType<typeof evidenceSelection> = evidenceSelection;
     for (const state of ['checking', 'failed'] as const) {
         const route = { state, message: 'The requested index scope is unavailable.' };
-        for (const [spec, client] of [[project, 'airk-explorer'], [window, 'airk-workbench']] as const) {
+        for (const [spec, client] of [[project, 'airk-explorer'], [project, 'airk-workbench'], [window, 'airk-workbench']] as const) {
             for (const heldA of [true, false]) {
                 const tools = new AirkctlToolSession(fake as never, () => select(spec, client, heldA, route));
                 await assert.rejects(tools.request('tools/call', { name: 'search', arguments: { query: 'B' } }, 60000), { code: 'unavailable' });
