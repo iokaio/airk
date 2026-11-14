@@ -348,6 +348,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 "invalid tool name"
             );
             admin::validate_request(purpose, &request)?;
+            admin::validate_context_partition(&request, grant.scope)?;
             state.storage.check()?;
             {
                 let scopes=state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?;
@@ -361,7 +362,13 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let retry_budget_complete = request.native.is_none()
                 || wire_attempt.is_some_and(|budget| budget.native_retry_expires_monotonic_ns.is_some());
             let read_context = wire_attempt.map(airk_host::read_attempt::decode).transpose()?
-                .map(|context| context.narrowed(authorized_until));
+                .map(|context| -> Result<_> {
+                    let context = context.narrowed(authorized_until);
+                    match &request.context_partition {
+                        Some(partition) => context.with_context_partition(partition.clone()),
+                        None => Ok(context),
+                    }
+                }).transpose()?;
             // Accepted blocking work keeps the existing hard reap boundary; a
             // shorter caller deadline must not kill this shared worker early.
             let query_deadline = received + Duration::from_secs(125);

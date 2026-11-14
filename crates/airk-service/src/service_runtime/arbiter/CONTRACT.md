@@ -1,5 +1,67 @@
 # Native Arbiter lifecycle contract
 
+## Actual outer delivery policy cut
+
+The original ReadAttemptContext retains one aggregate expected-policy guard
+through pipe, HTTP/SSE and native Admin chunk custody. Private combined members
+defer registration to the whole reply owner; a changed binding roster cannot
+replace a retained guard. Required Core delivery_bindings reconcile all actual
+NN receipts, including abstention and unknown reservations, against full member
+bodies. Missing or inconsistent facts refuse.
+
+Every actual outer write/flush poll takes Store's nonblocking writer and existing
+shared configuration-file lock, checks exact policy/profile/enrollment and the
+original deadline/cancellation, then enters credential and native source gates.
+Configure's order remains lifecycle -> Store writer -> configuration file ->
+native gate. No lifecycle/status/application/Store call occurs inside a native
+gate. The final raw-I/O liveness check uses only clock, cancellation and service
+atomics. Pending releases every guard; resumed polls repeat them. A revoked
+partial frame closes without an unguarded fallback or replay of completed work.
+
+Actual native issue/selection-nonce custody is captured before work, separate
+from public ScopeBinding hashes. At most one fixed epoch and one fixed selection
+guard are retained. The final selected guard holds its original issue and live
+nonce across the raw poll. An earlier fixed epoch is an additional check;
+monotonic generation changes also invalidate the final fixed issue. Native nonce
+revocation needs no generation bump and is checked explicitly. HTTP avoids a
+duplicate native-gate acquisition when this source guard owns the actual cut.
+
+Store uses try_lock/try_lock_shared, never a new waiting allowance. Empty validated
+no-NN replies retain deadline-only custody and create no optional state. Guards
+capture scalar time/cancellation and native owners, never their context/container.
+
+## Joint ContextAction scoring
+
+The private `ArbiterContextAction` I1 callback carries the REQUIRED original
+ReadAttemptBudget, actual installed worker/read authority, original publication,
+frozen whole-card roster, global ordinal and optional native partition allowance.
+The service revalidates actual scope/configuration both before admission and
+before delivery. Old NextRead enrollment/profile qualification cannot enable the
+new task. The callback is refused by metadata relays and generic public control.
+
+The selected profile authenticates the exact bounded Calibration asset bytes.
+Core parses the new joint calibration, reciprocally binding all trained model,
+external-weight and tokenizer assets, compiler, ABI and current task policy.
+Retrieval scores the complete frozen roster once: only the unique global top
+whole card may pass its own supported-class rule and raw-score margin. A tied,
+unsupported or low-margin top abstains, without selecting a lower supported card.
+
+A service-owned mutex ledger keys the ORIGINAL attempt globally across
+partitions. Global ordinals 1..3 are one-use; aggregate NN tokens are at most2048
+and each partition's captured allowance is enforced separately. Requested token
+maxima are reserved before queueing. A compiled receipt records observed tokens
+but unknown native completion retains the full reservation. Only actual native
+completion may reconcile unused tokens; no ordinal is ever refunded. The shared
+30s assessment cap cannot renew under a longer original read parent: its expired
+tombstone remains until that original parent expires. Live ledger capacity is
+bounded and pressure refuses new optional work.
+
+Advice/2 retains separate reserved and optionally observed input-token counts;
+Work contains only measured lower bounds. Missing compilation/inference remains
+explicitly unknown. Native FFI reservations/completion continue to belong to the
+existing inference owner; dropping a callback never fabricates completed work.
+New policy/asset and real model/transport/resource qualification remain required.
+
 Service owns explicit management and readiness; Core owns configuration/profile/download types, Retrieval owns the immutable compiled catalog and execution, Store owns descriptor-relative asset transactions, and the existing Supervisor/Inference owner mints resource permits and owns actual native completion. No read, status call or default-disabled startup starts a pool, creates an optional directory, or downloads bytes. No new process/factory, provider or runtime Python/curl dependency is introduced.
 
 Provision accepts only a manifest admitted by ExecutionProfile::from_release: exact compiled qualified catalog, runtime, task, compiler, calibration, notices and complete Core transport closure. Every asset part is <=1GiB, fetched from exact official GitHub release authority with at most four approved HTTPS GitHub/CDN redirects. No credentials or source/evidence enter requests. TLS uses the pinned Mozilla roots; lengths, body/idle/total deadlines, each part SHA and complete logical SHA are enforced. HTTP errors or cancellation preserve the private original transaction and never publish a partial logical file.

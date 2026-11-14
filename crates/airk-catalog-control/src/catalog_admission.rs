@@ -731,24 +731,47 @@ impl NativeCatalogAdmission {
         response: &airk_core::service::ControlResponse,
         budget: Duration,
     ) -> Result<()> {
+        self.deliver_issue_guarded(ticket, stream, response, budget, |effect| effect())
+            .await
+    }
+    /// The outer synchronous guard owns an additional policy fence BEFORE the
+    /// native admission lock. It must never await or retain a lock on Pending.
+    /// Each actual write/flush poll repeats both fences; a partial refusal closes
+    /// the exchange without appending an unguarded fallback.
+    pub async fn deliver_issue_guarded<S, G>(
+        &self,
+        ticket: IssueTicket,
+        stream: &mut S,
+        response: &airk_core::service::ControlResponse,
+        budget: Duration,
+        mut guard: G,
+    ) -> Result<()>
+    where
+        S: tokio::io::AsyncWrite + Unpin,
+        G: FnMut(
+            &mut dyn FnMut() -> std::task::Poll<std::io::Result<usize>>,
+        ) -> std::task::Poll<std::io::Result<usize>>,
+    {
         let mut frame = Vec::new();
         crate::service_ipc::write_frame(&mut frame, response)?;
         tokio::time::timeout(budget, async {
             let mut offset = 0;
             while offset < frame.len() {
                 let count = std::future::poll_fn(|cx| {
-                    self.with_issue(ticket, || {
-                        tokio::io::AsyncWrite::poll_write(
-                            std::pin::Pin::new(&mut *stream),
-                            cx,
-                            &frame[offset..],
-                        )
-                    })
-                    .unwrap_or_else(|_| {
-                        std::task::Poll::Ready(Err(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "combined_delivery_scope_expired",
-                        )))
+                    guard(&mut || {
+                        self.with_issue(ticket, || {
+                            tokio::io::AsyncWrite::poll_write(
+                                std::pin::Pin::new(&mut *stream),
+                                cx,
+                                &frame[offset..],
+                            )
+                        })
+                        .unwrap_or_else(|_| {
+                            std::task::Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::PermissionDenied,
+                                "combined_delivery_scope_expired",
+                            )))
+                        })
                     })
                 })
                 .await?;
@@ -756,14 +779,17 @@ impl NativeCatalogAdmission {
                 offset += count;
             }
             std::future::poll_fn(|cx| {
-                self.with_issue(ticket, || {
-                    tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut *stream), cx)
-                })
-                .unwrap_or_else(|_| {
-                    std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "combined_delivery_scope_expired",
-                    )))
+                guard(&mut || {
+                    self.with_issue(ticket, || {
+                        tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut *stream), cx)
+                            .map(|result| result.map(|()| 0))
+                    })
+                    .unwrap_or_else(|_| {
+                        std::task::Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "combined_delivery_scope_expired",
+                        )))
+                    })
                 })
             })
             .await?;

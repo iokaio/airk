@@ -45,6 +45,22 @@ pub async fn call(
     airk_mcp::remote::call_observed(backend, tool, arguments).await
 }
 
+/// Same canonical projection under an already-owned original read allowance.
+pub async fn call_with_context(
+    backend: &dyn RemoteTools,
+    tool: String,
+    mut arguments: Map<String, Value>,
+    mode: ResponseMode,
+    context: airk_mcp::read_attempt::ReadAttemptContext,
+) -> Result<Value> {
+    if backend.uses_response_mode(&tool) {
+        arguments
+            .entry("response_mode")
+            .or_insert_with(|| serde_json::to_value(mode).expect("scalar response mode"));
+    }
+    airk_mcp::remote::call_observed_with_context(backend, tool, arguments, context).await
+}
+
 /// Whether the CLI answers `tool` in process: its help tool, for any call
 /// without a catalog or combined session, before resolving a project.
 pub fn is_local_help(tool: &str) -> bool {

@@ -81,6 +81,14 @@ They repeat the original arguments within the original deadline and retain the
 complete receipt. Backward clocks, changed authority, unknown errors and
 submitted or uncertain work do not authorize a retry.
 
+Answer's validated nested deadline is anchored at public canonical admission,
+before routing, scope setup or selected-member work. MCP projects the payload
+using the actual native, Unified and combined tool schemas; selectors remain in
+the unchanged original call for their owning authority and error checks. A
+longer parent never refreshes the nested Answer ceiling after setup. Generic
+reads retain their supported original allowance, including queries over30s.
+Malformed arguments retain the canonical handler's existing error envelope.
+
 P9's [permanent exclusions](source-policy.md) apply to canonical native handlers
 and delivery fences across CLI tool calls/shell/convenience commands, MCP aliases
 and Workbench plans, details and copies/exports. Full status and refusal responses
@@ -271,3 +279,31 @@ stable digest changes and misleading nested identity/timing names.
 The original U95 `airk.split.parity/1` captures and their approved recorded
 limitations remain historical replay evidence. Their explicitly named legacy
 hex-token comparison does not establish strict v2 transport parity.
+
+### Current /2 Answer comparison boundary
+
+Fresh Answer transport tests validate each complete raw ContextResponseV2 with
+its original Core budget before comparison. For unassessed native fallback,
+the existing pure Kernel Gathering owner first replays the complete retained
+fallback dispatch prefix and regenerates every canonical record digest. Omitted
+or learned/non-prefix packets are refused by this proof. Only then may tests
+normalize canonical-record primitive transport request IDs and typed clocks, then rebind that record's derived identifier by a
+validated positional bijection at records, grounded paragraph references and
+assessment basis source-unit references. Original records, stable source/model/
+publication identities, native arguments, counters, allocations and unknown
+nested evidence fields remain retained. Raw replies are saved on differences.
+Learned selected/abstained assessments require their own decision/prompt parity
+proof; this fallback comparator refuses them rather than hiding a changed
+model input or decision. Tamper cases must detect changed evidence, authority,
+coverage and orphaned record references.
+
+The optional `check-service-clients.py --answer-validator <prebuilt-combined_reads-test-binary>`
+selection collects actual current CLI/session/MCP/API packets and executes only
+`retained_current_answer_pair_validates_full_transport_results --exact --ignored`
+on that existing Rust integration binary. It never invokes Cargo. The validator
+checks the full raw packets and emits its executable, input and compiled owner/
+fixture hashes; the harness refuses stale source/fixture identities. It requires
+the Rust-emitted current /2 public request case. This selection proves only the
+exercised unassessed fallback; learned prompt/decision transport parity remains
+a separate required qualification. Without this option the preflight report
+explicitly records Answer transport coverage as unexecuted.

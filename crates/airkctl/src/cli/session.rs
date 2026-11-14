@@ -1014,14 +1014,21 @@ fn renew(window: &Window) -> ControlMethod {
 }
 
 impl Worker {
-    fn run(&self, snapshot: &Snapshot, work: Work) -> (SessionOutcome, Effects) {
+    fn run(
+        &self,
+        snapshot: &Snapshot,
+        work: Work,
+        read_context: Option<&super::InvocationReadContext>,
+    ) -> (SessionOutcome, Effects) {
         let mut effects = Effects {
             epoch: snapshot.epoch,
             ..Effects::default()
         };
         let outcome = match work {
             Work::Admin(task) => self.admin_task(snapshot, task, &mut effects),
-            Work::Invoke { argv, stdin } => self.invoke(snapshot, argv, stdin, &mut effects),
+            Work::Invoke { argv, stdin } => {
+                self.invoke(snapshot, argv, stdin, &mut effects, read_context)
+            }
             Work::Control(method) => self.control(snapshot, *method, &mut effects),
             Work::Subscribe { topics, native } => {
                 self.subscribe(snapshot, topics, native, &mut effects)
@@ -1288,6 +1295,7 @@ impl Worker {
         argv: Vec<String>,
         stdin: Option<String>,
         effects: &mut Effects,
+        read_context: Option<&super::InvocationReadContext>,
     ) -> SessionOutcome {
         let mut arguments: Vec<OsString> = vec!["airkctl".into()];
         if let Some(root) = &self.shared.explicit_root
@@ -1305,18 +1313,38 @@ impl Worker {
         // with `ToolSelection::Window`, fenced to the snapshot's instance
         // (window_plane.json `scope_select_in_memory_grant`).
         let mut route = window_route(snapshot);
-        let mut ran = self.command(arguments.clone(), &stdin, route.as_mut());
+        let mut ran = self.command(arguments.clone(), &stdin, route.as_mut(), read_context);
         // U99 Q4: on `scoped_read_unavailable` caused by a catalog revision
         // change, re-select once at the current revision and retry the read
         // once. The retry's outcome, refused or not, is returned unchanged.
-        if route
+        let scope_refused = route
             .as_ref()
-            .is_some_and(|route| route.refused.as_deref() == Some(SCOPE_UNAVAILABLE))
+            .is_some_and(|route| route.refused.as_deref() == Some(SCOPE_UNAVAILABLE));
+        if scope_refused
+            && let Some(context) = read_context
+            && context.live_budget().is_err()
+        {
+            return if context.cancelled() {
+                SessionOutcome::Cancelled
+            } else {
+                failed(SessionFailure::SessionDeadlineExceeded)
+            };
+        }
+        if scope_refused
             && let Some(generation) = self.reselect(snapshot, effects)
             && self.shared.scope_current(snapshot.epoch, generation)
         {
+            if let Some(context) = read_context
+                && context.live_budget().is_err()
+            {
+                return if context.cancelled() {
+                    SessionOutcome::Cancelled
+                } else {
+                    failed(SessionFailure::SessionDeadlineExceeded)
+                };
+            }
             let mut retry = window_route(snapshot);
-            let retried = self.command(arguments, &stdin, retry.as_mut());
+            let retried = self.command(arguments, &stdin, retry.as_mut(), read_context);
             if self.shared.scope_current(snapshot.epoch, generation) {
                 ran = retried;
             }
@@ -1358,6 +1386,7 @@ impl Worker {
         arguments: Vec<OsString>,
         stdin: &str,
         window: Option<&mut crate::cli::WindowRoute>,
+        read_context: Option<&super::InvocationReadContext>,
     ) -> (u8, Bounded, Tail) {
         let mut input = std::io::Cursor::new(stdin.as_bytes());
         let mut stdout = Bounded {
@@ -1367,6 +1396,7 @@ impl Worker {
         let mut stderr = Tail::default();
         let exit_code = {
             let mut io = crate::cli::Io {
+                read_attempt: read_context.cloned(),
                 stdin: &mut input,
                 stdout: &mut stdout,
                 stderr: &mut stderr,
@@ -2165,6 +2195,7 @@ impl Session {
     }
 
     fn start(&mut self, id: Incarnation, deadline_ms: Option<u64>, work: Work) {
+        let duration_ms = deadline_ms;
         // Preserve full-frame receipt time through actor and worker queues.
         let deadline_ms = deadline_ms.map(|deadline| self.received.ms.saturating_add(deadline));
         if deadline_ms.is_some_and(|at| at <= self.now()) {
@@ -2180,6 +2211,17 @@ impl Session {
         let (worker, snapshot, sender) = (self.worker(), self.snapshot(), self.sender.clone());
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let before_dispatch = cancelled.clone();
+        // Clock failure is retained lazily: nonread Invoke keeps its existing
+        // foreground/effect semantics and does not need a canonical read budget.
+        let read_context = matches!(&work, Work::Invoke { .. }).then(|| {
+            super::InvocationReadContext::new(
+                id,
+                self.received.ns,
+                duration_ms.unwrap_or(0),
+                cancelled.clone(),
+                self.shared.clock.clone(),
+            )
+        });
         let spawned = std::thread::Builder::new()
             .name("airkctl-session-request".into())
             .stack_size(REQUEST_STACK_BYTES)
@@ -2201,7 +2243,7 @@ impl Session {
                         },
                     )
                 } else {
-                    worker.run(&snapshot, work)
+                    worker.run(&snapshot, work, read_context.as_ref())
                 };
                 let _ = sender.send(Event::Finished {
                     id,

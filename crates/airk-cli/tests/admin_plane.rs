@@ -144,6 +144,7 @@ fn http_request(method: &str, target: &str, headers: &[(&str, &str)], body: &str
 fn admin_url(control: &Path) -> (u8, String, String) {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let mut io = airkctl::cli::Io {
+        read_attempt: None,
         stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,
@@ -412,6 +413,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     // N3: the grant's nonce never reaches the browser.
     assert!(!String::from_utf8_lossy(&searched.body).contains("grant_nonce"));
     let pipe = service.request(ControlMethod::ToolsCall {
+        read_attempt: None,
         tool: "airk_status".into(),
         arguments: Default::default(),
         selection: ToolSelection::Admin,
@@ -422,6 +424,37 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
         serde_json::to_value(pipe)?,
         json!({"status": "failure", "code": "admin_scope_not_granted"})
     );
+
+    // The same A2 session and grant traverse real TLS and native I1 chunks.
+    // Neither finite Answer is retried, including after an unknown outcome.
+    let answer=airk_core::arbiter::context_action::ContextRequestV2{
+        schema:airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),question:"owned Admin fixture evidence".into(),budget:Default::default()};
+    answer.validate()?;let budget=answer.budget.clone();
+    let request=ControlMethod::ToolsCall{tool:"airk_answer".into(),arguments:serde_json::to_value(answer)?.as_object().context("Answer arguments")?.clone(),
+        selection:ToolSelection::Admin,response_mode:ToolResponseMode::Full,usage_client:ClientFamily::Unknown,read_attempt:None};
+    let request=serde_json::to_string(&request)?;
+    let browser=api("/admin/api/v1/call/search.call",&authenticated,&request)?;
+    ensure!(browser.status==200,"finite browser Answer refused without replay: {}",String::from_utf8_lossy(&browser.body));
+    let native_session=airk_core::native_admin::NativeAdminSessionSecret::new(
+        cookie.strip_prefix("__Host-airk_admin=").context("owned session cookie")?.to_owned(),csrf.clone())?;
+    let request_id=airk_core::identity::Incarnation::from_bytes([0x55;16]);
+    let mut response=service.request(ControlMethod::AdminNativeCall{session:native_session.clone(),request_id,
+        operation:"search.call".into(),body:serde_json::value::RawValue::from_string(request)?,
+        deadline_ns:airk_process::monotonic::now_ns()?.checked_add(30_000_000_000).context("Admin original deadline")?});
+    let mut assembly=airk_core::native_admin::NativeAdminAssembly::default();
+    let mut native=loop {
+        let ControlResponse::AdminNativeChunk{chunk}=response else{anyhow::bail!("finite native Admin Answer refused without replay: {}",serde_json::to_string(&response)?)};
+        let next=chunk.validate()?;
+        if let Some(result)=assembly.push(&chunk)?{break result}
+        response=service.request(ControlMethod::AdminNativeRead{session:native_session.clone(),request_id,offset:next});
+    };
+    ensure!(assembly.complete(),"native Admin Answer stream incomplete");
+    let mut browser=browser.json();
+    let browser_result=browser.pointer("/result/result").context("browser canonical ToolResult")?;
+    let native_result=native.pointer("/result/result").context("native canonical ToolResult")?;
+    let (browser_result,native_result)=common::parity::context::envelopes(browser_result,native_result,&budget)?;
+    browser["result"]["result"]=browser_result;native["result"]["result"]=native_result;
+    assert_eq!(browser,native,"complete I3 envelope/authority/canonical Answer result differs");
 
     // Logout ends the session.
     let logout = api("/admin/api/v1/session/logout", &authenticated, "{}")?;

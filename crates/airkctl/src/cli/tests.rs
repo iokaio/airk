@@ -24,6 +24,7 @@ fn run_line(arguments: &[&str]) -> (u8, String, String) {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut io = Io {
+        read_attempt: None,
         stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,

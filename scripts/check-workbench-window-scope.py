@@ -37,7 +37,9 @@ def input_inventory():
     paths = [path for path in (ROOT / 'scripts').rglob('*')
              if path.is_file() and path.suffix in ('.py', '.cjs', '.mjs', '.json')]
     paths.extend(path for path in compiled.rglob('*') if path.is_file())
-    paths.extend(ROOT / name for name in ('packages/vscode/package.json', 'packages/vscode/package-lock.json'))
+    paths.extend(ROOT / name for name in ('packages/vscode/package.json', 'packages/vscode/package-lock.json',
+        'fixtures/split/arbiter/public_answer_cases.json', 'fixtures/split/arbiter/context_action_cases.json',
+        'packages/contracts-gen/arbiter.schema.json'))
     return {path.relative_to(ROOT).as_posix(): sha256(path) for path in sorted(paths)}
 
 
@@ -53,6 +55,12 @@ def qualify(runtime, node, report, target):
     files, _ = package.validate_runtime(runtime, metadata['version'], target, build['source'])
     expected_runtime = dict(files)
     before = input_inventory()
+    public_answer = json.loads((ROOT / 'fixtures/split/arbiter/public_answer_cases.json').read_bytes())
+    examples = [row for row in public_answer['examples'] if row['name'] == 'complete_native_request' and row['accepted']]
+    assert len(examples) == 1, 'Exactly one actual Rust current Answer request is required'
+    answer_request = examples[0]['arguments']
+    assert answer_request['schema'] == 'airk.arbiter.context.request/2'
+    assert '\n' not in answer_request['question'] and '\r' not in answer_request['question']
     with clients.owned_client_fixture() as directory:
         owner = Path(directory).resolve(strict=True)
         (owner / 'data').mkdir(mode=0o700)
@@ -60,7 +68,8 @@ def qualify(runtime, node, report, target):
         for ordinal in ('a', 'b'):
             source = owner / ('source-' + ordinal)
             source.mkdir(mode=0o700)
-            content = ('def workbench_fixture():\n    return "workbenchneedle-' + ordinal + '"\n').encode()
+            content = ('# ' + answer_request['question'] + '\n' +
+                       'def workbench_fixture():\n    return "workbenchneedle-' + ordinal + '"\n').encode()
             file = source / 'fixture.py'
             file.write_bytes(content)
             source_hashes[str(file)] = sha256(file)
@@ -77,7 +86,7 @@ def qualify(runtime, node, report, target):
                 'cli_sha256': sha256(fixture.cli), 'version': metadata['version'],
                 'control': str(fixture.control.resolve(strict=True)), 'project': fixture.projects['workbench-a'],
                 'selection': fixture.scopes['workbench-a'], 'other_selection': fixture.scopes['workbench-b'],
-                'source_hashes': source_hashes, 'output': str(output),
+                'source_hashes': source_hashes, 'output': str(output), 'answer_request': answer_request,
             }
             request_path = owner / 'workbench-request.json'
             request_path.write_text(json.dumps(request, ensure_ascii=False) + '\n', encoding='utf-8')
@@ -89,7 +98,10 @@ def qualify(runtime, node, report, target):
                 raise AssertionError('Real Workbench peer failed: ' + run.stderr[-8192:])
             observations = json.loads(output.read_bytes())
             assert observations['exactComparisons'] >= 10, 'Zero/partial native comparison selection'
+            assert observations['answerComparisons'] == 2, 'Automatic and explicit current Answer routes both required'
+            assert observations['answerSourceOpens'] == 2, 'Both native Answer source locations must pass actual file_info fences'
             assert all(sha256(file) == expected for file, expected in source_hashes.items()), 'Indexed source was modified'
+            assert {str(file) for source in roots for file in source.rglob('*') if file.is_file()} == set(source_hashes), 'Indexed source roster was modified'
             fixture.assert_alive()
     # Both the native owner and its temporary directory must close successfully
     # before any pass receipt is written. Failed cleanup retains owned evidence.

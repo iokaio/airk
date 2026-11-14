@@ -16,7 +16,8 @@ const { AirkctlSession } = require(path.join(out, 'airkctl/session'));
 const { AirkctlToolSession, evidenceSelection } = require(path.join(out, 'airkctl/tools'));
 const { WindowScope, openSelectionSpec } = require(path.join(out, 'airkctl/features/windowScope'));
 const { setEvidenceTransport } = require(path.join(out, 'explorerEvidence'));
-const { renderExport } = require(path.join(out, 'workbenchRender'));
+const { renderExport, evidenceCards } = require(path.join(out, 'workbenchRender'));
+const {answerPartitions} = require(path.join(out,'workbenchAnswerNavigation'));
 const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 assert.equal(digest(input.cli), input.cli_sha256, 'fixture must use its matched airkctl');
 assert.equal(path.resolve(input.control), input.control, 'absolute isolated fixture control required');
@@ -48,7 +49,9 @@ const bodyOf = envelope => {
   return JSON.parse(text);
 };
 const nativeBody = delivery => bodyOf(JSON.parse(delivery.result.stdout));
-let exactComparisons = 0;
+let exactComparisons = 0, answerComparisons = 0, answerSourceOpens = 0;
+let copied; const editorOpens = [], exportsWritten = [];
+const exportFile = path.join(input.owner, 'workbench-answer-export.json');
 setEvidenceTransport((launch, client) => {
   const adapter = new AirkctlToolSession(commands, () => evidenceSelection(launch, client, scope.active, scope.readRoute()),
     { windowReadScope: () => scope.retryScope(), windowReadFailed: code => scope.refused(code) });
@@ -66,10 +69,12 @@ class Emitter {
   fire(event) { for (const listener of this.listeners) listener(event); }
   dispose() { this.listeners.clear(); }
 }
-const vscode = { EventEmitter: Emitter, env: { clipboard: { writeText: async () => undefined } },
-  workspace: { getConfiguration: () => ({ get: (_key, fallback) => fallback, inspect: () => ({ globalValue: true }) }),
-    onDidChangeConfiguration: () => ({ dispose() {} }) }, window: {}, commands: { executeCommand: async () => undefined },
-  Uri: { file: fsPath => ({ fsPath }), joinPath: (base, ...parts) => ({ fsPath: path.join(base.fsPath, ...parts) }) } };
+const vscode = { EventEmitter: Emitter, env: { clipboard: { writeText: async value => { copied = value; } } },
+  ViewColumn: {Active: 1, Beside: 2}, Range: class { constructor(...coordinates) { this.coordinates = coordinates; } },
+  workspace: { textDocuments: [], workspaceFolders: [{uri:{scheme:'file',fsPath:input.project.root}}],
+    fs: {writeFile: async (uri, bytes) => { assert.equal(uri.fsPath, exportFile); fs.writeFileSync(uri.fsPath,bytes); exportsWritten.push(uri.fsPath); }}, getConfiguration: () => ({ get: (_key, fallback) => fallback, inspect: () => ({ globalValue: true }) }),
+    onDidChangeConfiguration: () => ({ dispose() {} }) }, window: {showSaveDialog:async()=>({fsPath:exportFile}), showTextDocument:async(uri,options)=>{editorOpens.push({uri,options});}}, commands: { executeCommand: async () => undefined },
+  Uri: { file: fsPath => ({ fsPath, scheme:'file' }), joinPath: (base, ...parts) => ({ fsPath: path.join(base.fsPath, ...parts) }) } };
 const originalLoad = Module._load;
 Module._load = function (name, ...args) { return name === 'vscode' ? vscode : originalLoad.call(this, name, ...args); };
 let WorkbenchView;
@@ -112,6 +117,42 @@ async function runSlash(text, expectedSelection) {
   assert.deepEqual(exported.turns.at(-1).envelope, turn.envelope, 'complete JSON export retains every native field');
   observations.push({ text, selection: expectedSelection, delivery: delivered, turn: structuredClone(turn) });
 }
+async function runAnswer(expectedSelection) {
+  const before = deliveries.length, original = structuredClone(input.answer_request);
+  await workbench.message({type:'answer',question:original.question,budget:original.budget}); await workbench.saveQueue;
+  const turn = workbench.session.turns.at(-1), delivered = parsedDelivery('airk_answer',before);
+  assert.equal(turn.error,undefined,JSON.stringify(turn));
+  assert.equal(turn.envelope?.schema,'airk.combined-read/1',JSON.stringify(turn.envelope));
+  assert.equal(turn.envelope.context?.schema,'airk.combined-context/1');
+  const partitions=answerPartitions(turn.envelope);
+  assert.equal(partitions.length,1,'these automatic and explicit fixtures each select exactly one index');
+  assert.equal(partitions[0].outcome,'complete');assert.equal(partitions[0].packet?.schema,'airk.arbiter.context/2');
+  assert.deepEqual(turn.request,original,'Workbench uses the complete unchanged Rust-emitted current request');
+  assert.deepEqual(JSON.parse(delivered.argv[delivered.argv.indexOf('--args')+1]),original,'real framed native request preserves every input field');
+  assert.deepEqual(turn.envelope,nativeBody(delivered),'complete native /2 result including all work, history, provenance and records is retained');
+  if(expectedSelection==='window')assert.ok(!delivered.argv.includes('--index')&&!delivered.argv.includes('--service-project'));
+  else assert.ok(delivered.argv.includes('--index'));
+  assert.ok(partitions[0].packet.records.length>0,'actual question search must retain canonical evidence');
+  assert.ok(partitions[0].packet.records.some(record=>record.canonical_result?.hits?.length>0),'indexed exact Rust fixture question must return actual hits');
+  await workbench.message({type:'copy',turn:turn.id,format:'json'});
+  assert.deepEqual(JSON.parse(copied).turns[0],turn,'actual host copy preserves entire original turn/request/result');
+  await workbench.message({type:'export',turn:turn.id,format:'json'});
+  assert.equal(exportsWritten.at(-1),exportFile);
+  assert.deepEqual(JSON.parse(fs.readFileSync(exportFile,'utf8')).turns[0],turn,'actual host export preserves entire original turn/request/result');
+  const cards=evidenceCards(turn.envelope),card=cards.find(card=>card.step&&/^\/hits\/\d+$/.test(card.resultPointer));
+  assert.ok(card,'actual native source verification must provide an unambiguous Answer citation');
+  const sourceBefore=deliveries.length,openBefore=editorOpens.length;
+  await workbench.message({type:'openAnswerCitation',turn:turn.id,record:card.step,hit:Number(card.resultPointer.split('/').at(-1)),member:card.answerMember});
+  const info=parsedDelivery('airk_file_info',sourceBefore),args=JSON.parse(info.argv[info.argv.indexOf('--args')+1]);
+  assert.equal(args.path,card.path);assert.equal(args.known_hash,card.hash);assert.equal(args.revision,card.publication);
+  assert.deepEqual(args.index_ids,[card.indexId]);assert.deepEqual(args.project_ids,card.projectIds);
+  assert.equal(editorOpens.length,openBefore+1,'native file_info and source/turn/window fences precede injected editor effect');
+  const opened=editorOpens.at(-1);assert.ok(Object.hasOwn(input.source_hashes,opened.uri.fsPath),'source path belongs to this actual read-only fixture');
+  assert.equal(digest(opened.uri.fsPath),card.hash);assert.equal(opened.options.selection.coordinates[0],card.start-1);
+  observations.push({name:'airk_answer',selection:expectedSelection,request:original,delivery:delivered,turn:structuredClone(turn),source:{card,delivery:info,editor:opened},
+    host_effect:'injected editor effect after real canonical file_info/source verification; not installed-editor qualification'});
+  answerComparisons++; answerSourceOpens++;
+}
 async function readSibling(name, args, client = 'airk-workbench') {
   const before = deliveries.length;
   const adapter = new AirkctlToolSession(commands, () => evidenceSelection(spec, client, scope.active, scope.readRoute()),
@@ -139,6 +180,7 @@ async function main() {
   await until(() => workbench.status !== undefined, 'initial native Workbench status');
   await runSlash('/status', 'window');
   await runSlash('/search workbenchneedle --mode lexical', 'window');
+  await runAnswer('window');
   await readSibling('airk_search', { query: 'workbenchneedle', mode: 'lexical', verification: 'off', response_mode: 'full' });
   await readSibling('airk_symbols', { name: 'workbench_fixture', compact: false, response_mode: 'full' });
   await readSibling('airk_search', { query: 'workbenchneedle', mode: 'lexical', verification: 'off', response_mode: 'full' }, 'airk-explorer');
@@ -156,7 +198,8 @@ async function main() {
   await workbench.message({ type: 'openSelection', indexes: [input.selection.index_id], sets: [] });
   await runSlash('/status', 'explicit');
   await runSlash('/search workbenchneedle --mode lexical', 'explicit');
-  fs.writeFileSync(input.output, JSON.stringify({ schema: 1, protocol: native.hello, exactComparisons,
+  await runAnswer('explicit');
+  fs.writeFileSync(input.output, JSON.stringify({ schema: 1, protocol: native.hello, exactComparisons, answerComparisons, answerSourceOpens,
     observations, source_before: input.source_hashes, host: 'actual Workbench callbacks; injected VS Code host; real native session' }, null, 2) + '\n');
   console.log(JSON.stringify({ tests: 1, passed: 1, exactComparisons, observations: observations.length, output: input.output }));
 }

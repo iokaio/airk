@@ -8,6 +8,8 @@ mod external_data;
 pub mod runtime;
 #[cfg(feature = "local-inference")]
 pub mod tasks;
+#[cfg(feature = "local-inference")]
+pub mod context_action;
 
 #[cfg(feature = "local-inference")]
 pub mod publication;

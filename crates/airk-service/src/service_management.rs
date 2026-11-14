@@ -1212,6 +1212,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::Arbiter { .. }
         | ControlMethod::ArbiterApplication { .. }
         | ControlMethod::ArbiterNextRead { .. }
+        | ControlMethod::ArbiterContextAction { .. }
         | ControlMethod::Resources
         | ControlMethod::Workers { .. }
         | ControlMethod::Worker { .. }

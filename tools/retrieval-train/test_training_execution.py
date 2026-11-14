@@ -9,6 +9,7 @@ import tempfile
 import time
 import types
 import unittest
+import venv
 from unittest.mock import patch
 
 import training_execution as execution
@@ -16,6 +17,21 @@ import training_execution as execution
 
 @unittest.skipUnless(os.name == 'nt', 'owning Windows training host only')
 class TrainingExecutionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parents[2]
+        (root / 'artifacts').mkdir(exist_ok=True)
+        cls.base_python = Path(sys._base_executable).resolve()
+        cls.child_python = Path(sys.executable).resolve()
+        if sys.prefix == sys.base_prefix:
+            # The Windows venv redirector and its actual base interpreter are
+            # the two owned processes under test, including from base Python.
+            temporary = tempfile.TemporaryDirectory(dir=root / 'artifacts')
+            cls.addClassCleanup(temporary.cleanup)
+            environment = Path(temporary.name) / 'venv'
+            venv.EnvBuilder(with_pip=False, symlinks=False).create(environment)
+            cls.child_python = environment / 'Scripts/python.exe'
+
     def test_runtime_roster_includes_source_and_excludes_disabled_bytecode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -35,8 +51,8 @@ class TrainingExecutionTests(unittest.TestCase):
             seal = {'launch_log_dir': str(work / 'logs'), 'nvidia_smi': 'NOT_EXECUTED', 'gpu': gpu,
                     'limits': {'wall_seconds': deadline, 'host_committed_bytes': 1024**3,
                                'cuda_allocator_bytes': 1024**3, 'minimum_gpu_free_mib': 8192},
-                    'environment': {}, 'command': [sys.executable, '-B', str(child)], 'cwd': str(work),
-                    'file_roles': {name: {'path': str(Path(image).resolve()), 'sha256': hashlib.sha256(Path(image).read_bytes()).hexdigest()} for name, image in [('venv_launcher', sys.executable), ('base_interpreter', sys._base_executable)]}}
+                    'environment': {}, 'command': [str(self.child_python), '-B', str(child)], 'cwd': str(work),
+                    'file_roles': {name: {'path': str(Path(image).resolve()), 'sha256': hashlib.sha256(Path(image).read_bytes()).hexdigest()} for name, image in [('venv_launcher', self.child_python), ('base_interpreter', self.base_python)]}}
             path = work / 'seal.json'
             path.write_text(json.dumps(seal), encoding='utf-8')
             args = types.SimpleNamespace(seal=path, seal_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), log_dir=work / 'logs')
@@ -48,6 +64,7 @@ class TrainingExecutionTests(unittest.TestCase):
             receipt = json.loads((work / 'logs/execution-receipt.json').read_text())
             stdout = (work / 'logs/stdout.log').read_text()
             retained = root / 'artifacts/advanced-split/models/a1-visible-prefix-training-execution-r1'
+            retained.mkdir(parents=True, exist_ok=True)
             witness = retained / ('suspended-child-' + str(deadline) + '-' + str(time.time_ns()) + '.json')
             witness.write_text(json.dumps(receipt, indent=2), encoding='utf-8')
             print(json.dumps({'synthetic_ownership_witness': str(witness), 'sha256': hashlib.sha256(witness.read_bytes()).hexdigest()}))
@@ -82,7 +99,7 @@ class TrainingExecutionTests(unittest.TestCase):
         real = execution.image_proof
         def reject_base(api, handle, expected):
             value = real(api, handle, expected)
-            if Path(expected['path']).resolve() == Path(sys._base_executable).resolve():
+            if Path(expected['path']).resolve() == self.base_python:
                 raise ValueError('synthetic pre-GO rejection after actual base READY')
             return value
         with patch.object(execution, 'image_proof', side_effect=reject_base):
@@ -110,7 +127,7 @@ class TrainingExecutionTests(unittest.TestCase):
                 self.assertFalse(marker.exists())
                 return {'checked_before_code': True}
             with open(os.devnull, 'rb') as stdin, (work / 'out.log').open('wb') as log:
-                result = execution.run_windows_owned_training([sys.executable, '-B', '-c',
+                result = execution.run_windows_owned_training([str(self.child_python), '-B', '-c',
                     'from pathlib import Path;Path(' + repr(str(marker)) + ').write_text("executed")'], work, log, 10,
                     dict(os.environ), stdin, 1024**3, before_resume=before)
             self.assertTrue(marker.exists())
@@ -130,7 +147,9 @@ class TrainingExecutionTests(unittest.TestCase):
             self.assertEqual(result['exit_code'], 0)
             self.assertTrue(result['owned_job_forced_termination'])
             self.assertEqual(result['owned_total_processes'], 2)
-            (root / 'artifacts/advanced-split/models/a1-visible-prefix-training-execution-r1/blocked-descendant-refusal.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+            retained = root / 'artifacts/advanced-split/models/a1-visible-prefix-training-execution-r1'
+            retained.mkdir(parents=True, exist_ok=True)
+            (retained / 'blocked-descendant-refusal.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
 
 
 if __name__ == '__main__':

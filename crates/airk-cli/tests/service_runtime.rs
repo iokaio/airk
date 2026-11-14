@@ -4370,6 +4370,7 @@ fn metadata_relay_and_stdin_rpc_preserve_closed_projects_and_frame_bounds() -> R
 fn airkctl(arguments: &[&str]) -> (u8, String, String) {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let mut io = airkctl::cli::Io {
+        read_attempt: None,
         stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,
@@ -4848,6 +4849,7 @@ fn airkctl_with_input(arguments: &[&str], input: &[u8]) -> (u8, String, String) 
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let mut stdin = input;
     let mut io = airkctl::cli::Io {
+        read_attempt: None,
         stdin: &mut stdin,
         stdout: &mut stdout,
         stderr: &mut stderr,

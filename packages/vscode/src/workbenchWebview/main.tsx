@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { answerPartitions, isAnswerEnvelope } from '../workbenchAnswerNavigation';
 import { publicationRelationLabel } from '../publications';
 import { h, render, type ComponentChildren } from 'preact';
 import { answerPresentation, type AnswerNode } from '../../../ui/src/answerPresentation';
-import type { ContextResponse } from '../../../contracts-gen/arbiter';
+import type { ContextResponseV2 } from '../../../contracts-gen/arbiter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, EvidenceCard, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields, WORKBENCH_CONTEXT_BUDGET } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
@@ -12,15 +13,15 @@ declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):voi
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
 const COMMANDS=['/search','/symbols','/code-facts','/refs','/read','/outline','/files','/info','/imports','/facts','/changes --since','/status','/diagnostics','/capabilities','/context','/relationships','/help'];
 const RECIPES=[['definition','Explore a definition'],['documents','Collect document evidence'],['impact','Find possible impact'],['tests','Find test mentions'],['component','Explore a component'],['readiness','Check retrieval readiness']];
-function AnswerView(props: { answer: ContextResponse; identity: string; cards: EvidenceCard[]; disabled: boolean }) {
+function AnswerView(props: { answer: ContextResponseV2; identity: string; cards: EvidenceCard[]; disabled: boolean; member?:number }) {
     const show = (value: AnswerNode | string): ComponentChildren => typeof value === 'string' ? value : h(value.tag, {
         ...(value.id ? { id: value.id, tabIndex: -1 } : {}),
         ...(value.citationTarget ? { type: 'button', onClick: () => { const record = document.getElementById(value.citationTarget!);
             record?.closest('details')?.setAttribute('open', ''); record?.focus(); record?.scrollIntoView({ block: 'start' }); } } : {}),
     }, ...value.children.map(show));
-    return <>{show(answerPresentation(props.answer, props.identity))}<section aria-label="Open cited answer sources">
+    return <>{show(answerPresentation(props.answer, props.member===undefined?props.identity:`${props.identity}-member-${props.member}`))}<section aria-label="Open cited answer sources">
         <h4>Open cited sources</h4><p class="note">Source locations are resolved by the native host from the retained record and checked again before opening.</p>
-        {props.cards.length ? props.cards.map(card=><button type="button" disabled={props.disabled} onClick={()=>send({type:'openAnswerCitation',turn:props.identity,record:card.step,hit:Number(card.resultPointer?.slice('/hits/'.length))})}>
+        {props.cards.length ? props.cards.map(card=><button type="button" disabled={props.disabled} onClick={()=>send({type:'openAnswerCitation',turn:props.identity,record:card.step,hit:Number(card.resultPointer?.slice('/hits/'.length)),...(props.member===undefined?{}:{member:props.member})})}>
             Open {card.path}:{card.start} · record {card.step.slice(0,12)}</button>) : <p>No unambiguous native source locator was returned. Complete original evidence remains available above.</p>}
     </section></>;
 }
@@ -136,12 +137,20 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
             {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(planText);}}>Review proposed plan</button>}
             {edit&&<div class="editor"><label>Plan JSON<textarea value={draft} onInput={e=>setDraft(e.currentTarget.value)} spellcheck={false}/></label><button onClick={()=>runPlan(true)}>Prepare edited plan</button><button disabled={state.busy} onClick={()=>runPlan(false)}>Run plan</button>{issue&&<p role="alert">{issue}</p>}</div>}
             {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(planText);revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
-            <section class="result"><header><span>{String(envelope.status ?? envelope.stop ?? 'native result')} · {envelope.schema === 'airk.arbiter.context/1' && Array.isArray(envelope.records) ? envelope.records.length : cards.length} retained records</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
+            <section class="result"><header><span>{String(envelope.status ?? envelope.stop ?? object(envelope.context).termination ?? 'native result')} · {envelope.schema==='airk.combined-read/1'&&isAnswerEnvelope(envelope)?`${answerPartitions(envelope).length} native members`: `${envelope.schema === 'airk.arbiter.context/2' && Array.isArray(envelope.records) ? envelope.records.length : cards.length} retained records`}</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
                 {format==='structured'?<>
-                    {envelope.schema === 'airk.arbiter.context/1' && Array.isArray(envelope.paragraphs) && Array.isArray(envelope.records)
-                        ? <AnswerView answer={envelope as ContextResponse} identity={turn.id} cards={cards} disabled={state.busy} /> : null}
+                    {isAnswerEnvelope(envelope)&&<section aria-label="Native Answer partitions">
+                        {envelope.schema==='airk.combined-read/1'&&<><h3>Combined Answer</h3><p>Every native member remains separate. Failed, exhausted and unqueried members do not establish coverage. The complete outer result, publication vector and whole-selection accounting remain in Complete response and every full export.</p><details><summary>Whole-selection context accounting</summary><pre>{canonical(envelope.context)}</pre></details></>}
+                        {answerPartitions(envelope).map(partition=><section key={partition.member??'local'} aria-label={`Answer partition ${partition.member??'local'}`}>
+                            {partition.member!==undefined&&<><h4>Index {partition.indexId??'unavailable'} · member {partition.member} · {partition.outcome}</h4></>}
+                            {partition.packet?<AnswerView answer={partition.packet} identity={turn.id} member={partition.member}
+                                cards={cards.filter(card=>card.answerMember===partition.member)} disabled={state.busy||partition.member!==undefined&&partition.outcome!=='complete'}/>
+                                :<p>No valid locally bound current Answer packet was returned for this member. No local assessment or source authority is inferred.</p>}
+                            {partition.member!==undefined&&<details><summary>Complete original member</summary><pre>{canonical(partition.raw)}</pre></details>}
+                        </section>)}
+                    </section>}
                     <DiscoveryDetails turn={turn} state={state}/>
                     {cards.length>0&&<details class="result-tools"><summary>Filter and group evidence{filter?` · ${rows.length} matches`:''}</summary><label class="filter">Filter retained evidence<input value={filter} onInput={e=>setFilter(e.currentTarget.value)}/></label><button aria-pressed={group} onClick={()=>setGroup(!group)}>Group by file</button><p class="counts">Showing {Math.min(show,rows.length)} of {rows.length} matching retained records.</p></details>}
                     {envelope.truncated===true&&<p class="warning">Upstream or output omissions reported.</p>}

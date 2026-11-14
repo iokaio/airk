@@ -30,13 +30,23 @@ pub trait NativeController: Send + Sync {
     ) -> Result<Option<Advice>> {
         Ok(None)
     }
+    fn context_action(
+        &self,
+        _request: airk_core::native_context_action::NativeContextActionRequest,
+        _deadline: Instant,
+    ) -> Result<Option<airk_core::arbiter::context_action::ContextActionAdvice>> {
+        Ok(None)
+    }
 }
 pub type CanonicalReader<'a> =
     dyn Fn(&str, &Map<String, Value>, Option<&str>) -> Result<Value> + 'a;
+#[derive(Clone)]
 pub(crate) struct NativeContext {
     worker: airk_core::service::WorkerIdentity,
     authority: airk_core::service::ScopedReadRef,
     owner: Arc<dyn NativeController>,
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    partition: Option<airk_core::combined_context::PartitionAllowance>,
 }
 fn observed_application(
     context: &NativeContext,
@@ -101,7 +111,63 @@ impl crate::Kernel {
             worker,
             authority,
             owner,
+            attempt: None,
+            partition: None,
         }));
+        Ok(kernel)
+    }
+    /// Request-local native metadata after the worker redeemed its actual grant.
+    /// An actual parent is preserved; this setter never creates an attempt.
+    pub fn with_context_attempt(
+        &self,
+        attempt: airk_core::read_attempt::ReadAttemptBudget,
+    ) -> Result<Self> {
+        ensure!(
+            attempt.schema == 1
+                && attempt.remaining_ns > 0
+                && attempt.remaining_ns
+                    <= airk_core::read_attempt::MAX_READ_BUDGET.as_nanos() as u64
+                && attempt
+                    .native_retry_expires_monotonic_ns
+                    .is_none_or(|expiry| expiry <= attempt.expires_monotonic_ns),
+            "invalid native context attempt"
+        );
+        let mut context = self
+            .arbiter_context
+            .as_ref()
+            .context("context attempt requires a native admitted index")?
+            .as_ref()
+            .clone();
+        ensure!(
+            context.attempt.is_none(),
+            "native context attempt already captured"
+        );
+        context.attempt = Some(attempt);
+        let mut kernel = self.clone();
+        kernel.arbiter_context = Some(Arc::new(context));
+        Ok(kernel)
+    }
+    /// Whole-selection authority is checked by the worker before this local
+    /// injection. The installed local index and original attempt still must match.
+    pub fn with_context_partition(
+        &self,
+        allowance: airk_core::combined_context::PartitionAllowance,
+        attempt: airk_core::read_attempt::ReadAttemptBudget,
+    ) -> Result<Self> {
+        allowance.validate()?;
+        ensure!(
+            allowance.attempt == attempt.request_id,
+            "context partition attempt mismatch"
+        );
+        let mut kernel = self.with_context_attempt(attempt)?;
+        let context = Arc::get_mut(kernel.arbiter_context.as_mut().unwrap())
+            .context("new native context unexpectedly shared")?;
+        ensure!(
+            context.authority.index_id == allowance.index_id
+                && self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
+            "context partition differs from installed authority"
+        );
+        context.partition = Some(allowance);
         Ok(kernel)
     }
     pub fn answer_with_reader(
@@ -128,6 +194,10 @@ impl crate::Kernel {
             .arbiter_context
             .as_ref()
             .context("Arbiter context requires a native admitted index connection")?;
+        ensure!(
+            context.partition.is_none(),
+            "partition allocation requires current context /2 handler"
+        );
         ensure!(
             self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
             "Arbiter source authority expired"
@@ -615,7 +685,24 @@ impl Gathering {
                         && hit.citation.end_line <= u32::MAX as usize,
                     "unsafe indexed Arbiter target"
                 );
-                let start = hit.citation.start_line;
+                // Full-chunk search can return a match near the end of a long
+                // hit. Anchor its bounded context at the exact returned query
+                // line when present, rather than losing it behind the first
+                // 32 lines. The candidate stays inside the verified citation;
+                // nonliteral questions retain the original start-line recipe.
+                let start = hit
+                    .text
+                    .find(&self.request.question)
+                    .and_then(|offset| {
+                        hit.citation.start_line.checked_add(
+                            hit.text[..offset]
+                                .bytes()
+                                .filter(|byte| *byte == b'\n')
+                                .count(),
+                        )
+                    })
+                    .filter(|line| *line <= hit.citation.end_line)
+                    .unwrap_or(hit.citation.start_line);
                 let end = start.saturating_add(32).min(u32::MAX as usize);
                 let target = format!("{path}:{start}-{end}");
                 let id = framed_digest(
@@ -720,7 +807,10 @@ impl Gathering {
         Ok(true)
     }
 
-    pub fn finish(mut self, now: Instant) -> Result<ContextResponse> {
+    pub fn finish(self, now: Instant) -> Result<ContextResponse> {
+        self.finish_native(now, true)
+    }
+    fn finish_native(mut self, now: Instant, validate: bool) -> Result<ContextResponse> {
         ensure!(
             self.pending.is_none(),
             "Arbiter native read is still pending"
@@ -767,10 +857,14 @@ impl Gathering {
                 }
             }
         }
-        self.output.validate(&self.request.budget)?;
+        if validate {
+            self.output.validate(&self.request.budget)?;
+        }
         Ok(self.output)
     }
 }
 
+mod joint;
+pub use joint::JointPostExecutionStale;
 #[cfg(test)]
 mod tests;

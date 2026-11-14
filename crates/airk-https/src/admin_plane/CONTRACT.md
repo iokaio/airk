@@ -314,3 +314,31 @@ unit tests. Platform-only cases require their native host.
 ## Optional Arbiter management (2026-11-14)
 
 The additive management rows are arbiter.status/configure/provision/cancel/remove/recover. Their canonical body is `{ "arbiter": { "request": <Rust ManagementRequest> } }`, matched exhaustively on request.operation. Status is read-only; other rows are naturally revision-fenced mutations. Remove affects only optional private model assets, never indexed sources. Owner pipe or authenticated Admin session plus CSRF applies. Dispatch rechecks the pure admission callback at the configuration CAS or before accepting a background native job; the accepted job subsequently owns its ServiceLease/configuration/cancellation authority. ArbiterApplication and ArbiterNextRead remain native owner-pipe internals and never receive HTTP routes. No browser field creates worker scope or model qualification.
+
+## Original canonical selected-read allowance
+
+Internal SelectedRead preserves a supplied M3 ReadAttemptBudget through Admin
+selection authority into the same canonical service/MCP handlers. A native
+AdminCall also supplies its already-admitted original deadline and cancellation
+context; intersect with the M3 parent, never refresh either allowance. Cancel,
+close, expiry and session end cancel that same retained context, while producer
+capacity stays charged until the real producer settles. The internal Rust
+carrier adds no browser request field or HTTP timeout. Ordinary HTTP reads
+without an earlier parent retain their existing canonical default.
+
+Validated Answer ceilings are anchored through the MCP owning admission helper
+before A2 scope observation. The resulting earlier deadline passes through
+SelectedRead. Native Admin keeps its original Entry cancellation token while
+intersecting that deadline, so admission never detaches accepted work from its
+original cancellation/settlement owner. Malformed Answer arguments retain the
+canonical handler's existing error envelope rather than a new Admin projection.
+
+Final Answer policy delivery uses the shared native ReadAttemptContext guard,
+registered from the Core-owned complete scalar/mixed binding extractor before
+rendering. The gateway installs the service's policy factory at admission and
+holds original custody through socket flush. The actual socket write poll is
+inside Store policy ownership outside existing credential/read-cell/NativeGate
+locks; preprobes and producer guard drops cannot substitute for that atomic cut.
+An Admin request view shares the original parent/factory with A2 selected reads;
+its native counterpart keeps the same context after the final chunk is built
+until the owner-pipe writer has completed that chunk.

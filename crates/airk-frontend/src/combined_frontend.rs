@@ -39,6 +39,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod answer;
 mod cursor;
 mod member_runner;
 
@@ -55,6 +56,7 @@ const DELIVERY_OBSERVATION_RESERVE: usize = 1024;
 enum ReplyBudget {
     Read,
     Plan { max_bytes: usize },
+    Context { max_bytes: usize },
 }
 impl ReplyBudget {
     fn body_bytes(self) -> Result<usize> {
@@ -67,6 +69,13 @@ impl ReplyBudget {
                     "invalid plan output budget"
                 );
                 Ok(max_bytes)
+            }
+            Self::Context { max_bytes } => {
+                ensure!(
+                    (1024..=524288).contains(&max_bytes),
+                    "invalid context output budget"
+                );
+                Ok(max_bytes.min(airk_core::MAX_RESPONSE_BYTES))
             }
         }
     }
@@ -145,6 +154,8 @@ struct Delivery<'a> {
     scope_identity: Sha256Digest,
     result_digest: Sha256Digest,
     deadline: Instant,
+    context_bindings: &'a [airk_core::combined_context::ContextDeliveryBinding],
+    context: Option<&'a airk_mcp::read_attempt::ReadAttemptContext>,
 }
 
 /// The steps that depend on where a combined session's authority comes from.
@@ -237,6 +248,8 @@ impl Session for CombinedConnectRequest {
                 scope_identity,
                 result_digest,
                 deadline,
+                context_bindings,
+                context,
             } = delivery;
             let instance = *tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
@@ -261,6 +274,17 @@ impl Session for CombinedConnectRequest {
                         query_selection: selected.clone(),
                         scope_identity,
                         result_digest,
+                        context_bindings: context_bindings.to_vec(),
+                        read_attempt: if context_bindings.is_empty() {
+                            None
+                        } else {
+                            let context =
+                                context.context("model delivery requires original read context")?;
+                            let id = context
+                                .request_id()
+                                .context("model delivery original identity missing")?;
+                            Some(airk_host::read_attempt::encode(context, id)?)
+                        },
                     },
                     instance,
                 ),
@@ -296,7 +320,13 @@ pub type SelectionConnect =
 /// one gate lock. It is the selection analogue of `ValidateCombinedDelivery`,
 /// which no selection crosses a pipe for (F4).
 pub type SelectionIssue = Arc<
-    dyn Fn(&SelectionScopeRef, Sha256Digest, Sha256Digest) -> Result<CombinedDeliveryReceipt>
+    dyn Fn(
+            &SelectionScopeRef,
+            Sha256Digest,
+            Sha256Digest,
+            &[airk_core::combined_context::ContextDeliveryBinding],
+            Option<&airk_mcp::read_attempt::ReadAttemptContext>,
+        ) -> Result<CombinedDeliveryReceipt>
         + Send
         + Sync,
 >;
@@ -406,6 +436,8 @@ async fn deliver_in_process<S: Session>(
         scope_identity,
         result_digest,
         deadline,
+        context_bindings,
+        context,
     } = delivery;
     let current = tokio::time::timeout_at(
         tokio::time::Instant::from_std(deadline),
@@ -418,7 +450,14 @@ async fn deliver_in_process<S: Session>(
         current.identity == scope_identity && current.revision == revision,
         ScopeReadRefused
     );
-    let receipt = issue(selection_ref, scope_identity, result_digest)?;
+    validate_context_members(&current, namespace, context_bindings)?;
+    let receipt = issue(
+        selection_ref,
+        scope_identity,
+        result_digest,
+        context_bindings,
+        context,
+    )?;
     ensure!(
         receipt.schema == 1
             && receipt.service_instance == selection_ref.service_instance
@@ -1013,11 +1052,53 @@ pub fn validate_delivery(
     expected_scope: Sha256Digest,
     expected_catalog_revision: CatalogRevision,
 ) -> Result<()> {
+    validate_delivery_with_context(
+        root,
+        session,
+        selected,
+        expected_scope,
+        expected_catalog_revision,
+        &[],
+    )
+}
+
+pub fn validate_delivery_with_context(
+    root: &Path,
+    session: &CombinedConnectRequest,
+    selected: &QuerySelection,
+    expected_scope: Sha256Digest,
+    expected_catalog_revision: CatalogRevision,
+    bindings: &[airk_core::combined_context::ContextDeliveryBinding],
+) -> Result<()> {
     let snapshot = read_snapshot(root, session, selected)?;
     ensure!(
         snapshot.identity == expected_scope && snapshot.revision == expected_catalog_revision,
         ScopeReadRefused
     );
+    validate_context_members(&snapshot, session.namespace, bindings)?;
+    Ok(())
+}
+
+fn validate_context_members<A: MemberAuthority, C>(
+    snapshot: &Snapshot<A, C>,
+    namespace: Incarnation,
+    bindings: &[airk_core::combined_context::ContextDeliveryBinding],
+) -> Result<()> {
+    ensure!(bindings.len() <= snapshot.members.len(), ScopeReadRefused);
+    let mut seen = std::collections::BTreeSet::new();
+    for binding in bindings {
+        ensure!(seen.insert(binding.scope.index_id), ScopeReadRefused);
+        let member = snapshot
+            .members
+            .iter()
+            .find(|member| member.index.id == binding.scope.index_id)
+            .ok_or(ScopeReadRefused)?;
+        ensure!(
+            binding.scope.catalog == namespace
+                && binding.scope.authorization == member.authority.member_fingerprint()?,
+            ScopeReadRefused
+        );
+    }
     Ok(())
 }
 
@@ -1156,6 +1237,34 @@ impl<S: Session> Backend<S> {
         deadline: Instant,
         budget: ReplyBudget,
     ) -> Result<Value> {
+        self.finalize_bound(
+            selected,
+            scope_identity,
+            result,
+            deadline,
+            budget,
+            (&[], None),
+        )
+        .await
+    }
+
+    async fn finalize_bound(
+        &self,
+        selected: &QuerySelection,
+        scope_identity: Sha256Digest,
+        result: Value,
+        deadline: Instant,
+        budget: ReplyBudget,
+        delivery_context: (
+            &[airk_core::combined_context::ContextDeliveryBinding],
+            Option<&airk_mcp::read_attempt::ReadAttemptContext>,
+        ),
+    ) -> Result<Value> {
+        let (context_bindings, context) = delivery_context;
+        if let Some(context) = context {
+            answer::retain_context_wrapper(context, &result)?;
+            context.retain_delivery_for(&result)?;
+        }
         ensure!(
             !self.closed.load(std::sync::atomic::Ordering::Acquire),
             ScopeReadRefused
@@ -1179,6 +1288,8 @@ impl<S: Session> Backend<S> {
                     scope_identity,
                     result_digest,
                     deadline,
+                    context_bindings,
+                    context,
                 },
             )
             .await?;
@@ -1191,6 +1302,9 @@ impl<S: Session> Backend<S> {
         let mut result = native_envelope(body);
         if was_error || result_failed(&result) {
             result["isError"] = true.into();
+        }
+        if let Some(context) = context {
+            answer::retain_context_wrapper(context, &result)?;
         }
         check_public_reply_budget(&result, budget)?;
         Ok(result)
@@ -1974,6 +2088,11 @@ impl<S: Session> Backend<S> {
         before: Snapshot<S::Authority, S::Child>,
         admission: ReadAdmission,
     ) -> Result<Value> {
+        if tool == "airk_answer" {
+            return self
+                .execute_answer(args, selected, before, admission.context)
+                .await;
+        }
         let ReadAdmission {
             remaining_deadline_ms,
             capacity,
@@ -2711,6 +2830,7 @@ impl<S: Session> Backend<S> {
             } else {
                 format!("airk_{tool}")
             };
+            let context = airk_mcp::read_attempt::admit_tool_context(&native, &args, context);
             if native == "airk_query_scope"
                 && !internal_allowed
                 && [

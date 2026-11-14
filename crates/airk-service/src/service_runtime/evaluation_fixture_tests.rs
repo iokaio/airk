@@ -185,8 +185,8 @@ fn write(work: &Path, name: &str, value: &impl Serialize) -> Result<()> {
     crate::ipc::private_record::write_private(work, name, &bytes, 8 * LIMIT, false)
 }
 
-fn context_template() -> Result<airk_core::arbiter::ContextRequest> {
-    use airk_core::arbiter::{Budget, ContextRequest, REQUEST_SCHEMA};
+fn context_template() -> Result<airk_core::arbiter::context_action::ContextRequestV2> {
+    use airk_core::arbiter::{Budget, context_action::{ContextRequestV2 as ContextRequest, REQUEST_SCHEMA_V2 as REQUEST_SCHEMA}};
     let budget = Budget::default();
     ensure!(
         (
@@ -239,7 +239,7 @@ fn answer_template() -> Result<serde_json::Value> {
 fn native_goal_context_template_has_the_independent_frozen_instance() -> Result<()> {
     assert_eq!(
         serde_json::to_value(context_template()?)?,
-        serde_json::json!({"schema":"airk.arbiter.context.request/1","question":"__PRIVATE_FROZEN_QUESTION__","budget":{"calls":8,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000}})
+        serde_json::json!({"schema":"airk.arbiter.context.request/2","question":"__PRIVATE_FROZEN_QUESTION__","budget":{"calls":8,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000}})
     );
     let answer = answer_template()?;
     assert_eq!(answer["response_mode"], "full");
@@ -1114,6 +1114,7 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
         let result = crate::ipc::control::request_once(
             &ready.control_root,
             ControlMethod::ToolsCall {
+                read_attempt: None,
                 tool: "status".into(),
                 arguments: serde_json::Map::new(),
                 selection: airk_core::service::ToolSelection::Open {

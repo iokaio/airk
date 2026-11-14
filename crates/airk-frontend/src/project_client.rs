@@ -533,6 +533,7 @@ impl Connection {
     ) -> Result<serde_json::Value> {
         self.exchange(
             Query {
+                context_partition: None,
                 frontend: if tool == "airk_diagnostics" && !self.scoped {
                     Some(airk_supervisor::runtime_metadata::observe_process())
                 } else {
@@ -577,6 +578,7 @@ impl Connection {
         };
         self.exchange(
             Query {
+                context_partition: None,
                 frontend: None,
                 tool: String::new(),
                 arguments: Default::default(),
@@ -598,11 +600,30 @@ impl Connection {
             "direct connection expired before query submission; obtain fresh brokerage"
         );
         let context = context.narrowed(self.authorized_until);
+        query.context_partition = context.context_partition().cloned();
+        ensure!(
+            query.context_partition.is_none() || self.read_attempt_supported,
+            "context partitions require original native read attempts"
+        );
         if self.read_attempt_supported {
             query.read_attempt = Some(airk_host::read_attempt::encode(
                 &context,
-                airk_kernel::service_broker::new_instance_id()?,
+                match context.request_id() {
+                    Some(id) => id,
+                    None => airk_kernel::service_broker::new_instance_id()?,
+                },
             )?);
+        }
+        if let Some(partition) = &query.context_partition {
+            let attempt = query
+                .read_attempt
+                .as_ref()
+                .context("context partition original attempt missing")?;
+            partition.validate_binding(attempt, partition.selection, partition.index_id)?;
+            ensure!(
+                query.native.is_none() && query.tool == "airk_answer",
+                "context partition requires canonical Answer"
+            );
         }
         loop {
             ensure!(
@@ -1146,7 +1167,7 @@ impl Backend {
                 return Ok(source_scope_superseded());
             }
             if state.connection.as_ref().is_none_or(|connection| {
-                !self
+                (context.context_partition().is_some() && connection.authorized_until<context.deadline()) || !self
                     .status
                     .transport_reusable(&ticket, state.connection_scope, connection)
             }) {

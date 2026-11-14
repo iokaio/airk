@@ -32,11 +32,42 @@ fn encode_sampled(
     ticks: u64,
     now: Instant,
 ) -> Result<ReadAttemptBudget> {
+    anyhow::ensure!(
+        !context.cancellation().is_cancelled(),
+        "native read canceled"
+    );
     let remaining = context
         .deadline()
         .saturating_duration_since(now)
         .min(MAX_READ_BUDGET);
     let remaining_ns = u64::try_from(remaining.as_nanos())?;
+    anyhow::ensure!(remaining_ns > 0, "native read deadline expired");
+    if let Some(captured) = context.captured_transport_attempt() {
+        anyhow::ensure!(
+            captured.request_id == request_id,
+            "captured native read identity mismatch"
+        );
+        let actual = captured.remaining_at(clock(), ticks)?;
+        anyhow::ensure!(!actual.is_zero(), "native read deadline expired");
+        return Ok(ReadAttemptBudget {
+            remaining_ns: remaining_ns.min(u64::try_from(actual.as_nanos())?),
+            ..captured
+        });
+    }
+    let original = context.wire_attempt();
+    let expires_monotonic_ns = ticks
+        .checked_add(remaining_ns)
+        .ok_or_else(|| anyhow::anyhow!("native read deadline overflow"))?;
+    let expires_monotonic_ns = if let Some(prior) = original {
+        let actual = prior.remaining_at(clock(), ticks)?;
+        anyhow::ensure!(
+            !actual.is_zero() && prior.request_id == request_id,
+            "original native read expired or identity changed"
+        );
+        expires_monotonic_ns.min(prior.expires_monotonic_ns)
+    } else {
+        expires_monotonic_ns
+    };
     let native_retry_expires_monotonic_ns = context
         .native_retry_deadline()
         .map(|deadline| -> Result<_> {
@@ -55,11 +86,10 @@ fn encode_sampled(
         schema: 1,
         request_id,
         clock: clock(),
-        expires_monotonic_ns: ticks
-            .checked_add(remaining_ns)
-            .ok_or_else(|| anyhow::anyhow!("native read deadline overflow"))?,
-        remaining_ns,
-        native_retry_expires_monotonic_ns,
+        expires_monotonic_ns,
+        remaining_ns: remaining_ns.min(expires_monotonic_ns.saturating_sub(ticks)),
+        native_retry_expires_monotonic_ns: native_retry_expires_monotonic_ns
+            .map(|expiry| expiry.min(expires_monotonic_ns)),
     })
 }
 
@@ -76,8 +106,9 @@ fn decode_sampled(
     ticks: u64,
 ) -> Result<ReadAttemptContext> {
     let remaining = budget.remaining_at(clock(), ticks)?;
-    let mut context =
-        ReadAttemptContext::new(now + remaining, Default::default()).remote_admission();
+    let mut context = ReadAttemptContext::new(now + remaining, Default::default())
+        .with_wire_attempt(budget)?
+        .remote_admission();
     if let Some(deadline) = budget.native_retry_expires_monotonic_ns {
         let allowance = std::time::Duration::from_nanos(deadline.saturating_sub(ticks))
             .min(remaining)

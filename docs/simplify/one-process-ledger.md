@@ -3530,3 +3530,139 @@ opaque counts SHA256 `0edf9eec71080556d806023e012acf55a2139e90679e449717117cc526
 No developer/observer opened the emitted gold. Materialization establishes the
 fixed evaluation population, not retrieval quality; earlier failed attempts and
 the original 205-question quality failure remain unchanged.
+
+The preselected visible-prefix-mining epoch1 TRAIN run completed naturally in
+104.725s, with two owned processes observed exited, an empty Job and no forced
+termination. The complete training seal remained
+`57124cb5ca8321729318e60d234a0a19b56fea2f4b18705bad7daabbecbb5cff`;
+epoch1 is `f0c31fc04f2e516dba7221518790a71fa42c9c4088343327562c1661c97b9edf`.
+Epochs2/3 are not candidates. CPU export plus all twelve synthetic padded-input
+cases and independent eager-FP32 checks then passed the unchanged numerical
+gates in an owned 44.798s window. The private export-stage seal is
+`10cb03745f8170fa4a0cb2062ce5d079cab1b6a6b1fa811c1c857db611804799`.
+This is numerical export evidence; Rust-owned candidate manifests, native
+admission, DEV comparison and final quality are separate gates.
+
+All six existing encoder families completed the retained R10 DEV64 native
+capture: 384 ready requests, exact366-source pre/post closure, natural owned
+exits and no input drift. R10 retains binary identity `719bfd95…`; concurrent
+compiler/export activity precludes a latency qualification claim. The first
+bounded grader failed during NumPy bootstrap at its original256MiB ceiling.
+A no-scoring probe demonstrated that explicit single-thread BLAS caps reduce
+bootstrap commitment to25.6MB; the unchanged grader then passed in3.454s at
+44,949,504 bytes. The failed attempt remains retained. Grading SHA256 is
+`1ef850f8bd24836cd12541f9e0789b0ff3f4aaf5838da06f251e429edf4219f4`
+under `models/native-dev64-baseline-r10-r1/grading-r2/`.
+
+The fixed20 aligned DEV questions give old trainedU8/S8 mean recall59/120 and
+6/20 complete, shippedU8 37/60 and9/20, shippedS8 8/15 and7/20, and original
+mixedU8/S8 13/24 and8/20. The other44 questions per family remain
+`NOT_EVALUABLE`, without refill or perfect empty credit. These are development
+diagnostics, not final qualification; the original205 failure remains failed.
+Separate candidate and opaque fresh-FINAL native test siblings preserve the
+old205 and closed-six DEV owners. Their source reviews passed independently;
+actual execution still binds the reviewed native image, model/input hashes
+and, for FINAL, the immutable candidate/export/CAL freeze before any outcome.
+
+The actual Rust emitter then produced the distinct two-family candidate master
+`0b58b97e…` under retained R20 image `0f6ddd26…`. Both candidates passed all
+twelve actual native numerical cases with exact oracle tensors and zero
+same-graph component error. The R20 same-published-index control reproduced all
+64 complete R10 canonical results exactly. The reviewed comparison permits
+only binary identity, per-query timing, and the observed collection-reuse
+accounting transition `false` to `true`; full raw captures and unknown fields
+are retained. No canonical result field was normalized.
+
+Both candidate DEV64 captures closed naturally with all sources and input pins
+unchanged. Their independent source-reviewed grader executes captured verified
+bytes for its complete helper closure, avoiding path-reopen/module-cache
+substitution. It passed in1.749s at76,140,544 bytes under the original
+60s/256MiB caps; seven synthetic controls cover that execution boundary and
+full-result comparison. Result SHA256
+`15a24387769dd1a8b62efe941f764c45fc47f9f6e61437e83671a9fbf0d68407`
+is retained under `models/candidate-native-r20-r1/grading/`.
+
+This ablation did not improve the DEV aggregate: both new U8/S8 candidates
+remain59/120 mean recall and6/20 complete, with all64 native requests ready and
+44 alignment refusals retained. Both trail the unsigned controls and establish
+no promotion basis. No new FINAL content or neural outcome was consumed, no
+checkpoint/recipe was changed after these outcomes, and no quality floor was
+lowered. The original205 failure remains unchanged.
+
+### 2026-11-14 — joint consumers, actual TLS cuts and combined presentation
+
+R18 workspace Clippy passes on frozen native group
+`95c1c5bd5571871881c6d31f1da22cfd59cf3d94984f922d7ee580d52e32012b`.
+Its focused checks pass 292 Core, eight Kernel joint/combined, sixteen Service,
+eight Host and five Frontend tests. The HTTPS batch stopped at 7/8: ordinary
+incoming TLS plaintext did not attempt the pending outgoing write. The reviewed
+test correction uses an actual malformed encrypted record to force the alert
+write, retains the original error/zero-additional-ciphertext assertions, and adds
+queued-ciphertext and actual policy-poll observations. No production fence,
+assertion, timeout or retry policy was weakened. R18 diagnostics remain retained.
+A temporary unrelated DOM-test draft was restored to its exact preimage during
+the earlier batch; native compilation did not consume that JavaScript file.
+
+R20's compatible five-crate batch runs 241 tests: 237 pass, four MCP tests fail.
+The corrected TLS cases, IPC, known inference-work controls and both new native
+synthetic harness tests pass. The four failures exposed missing Answer verifier
+routing/catalog controls and context anchored before a late verified match.
+The fixes restore shared source verification, inventory only exact native records
+under their original scope/publication, retain an independent 30-tool roster and
+anchor context at an exact returned question occurrence inside verified bounds.
+Full canonical Search results and the EOF regression's original assertion remain.
+
+R21 workspace all-target/all-feature Clippy passes in 47.146s at native group
+`1c308ef72bd3eda68d31b74fe2ef0f09ba60777e4e07f72c4e718e4214e59698`.
+The actual Kernel composer emits three complete/failed/unqueried combined cases
+(one selected test, .079s), and the actual SDK public Answer emitter passes one
+test in 1.01s. Direct execution of that exact R21 MCP image then passes all four
+formerly failing tests plus the new actual report/off/require source-verification
+regression, five selected tests total. Two actual native Help emitters each pass
+one test; generated Help consumers are refreshed from those Rust outputs.
+Receipts: `receipts/native-context-r18/`, `native-context-r20/`,
+`native-context-r21/`, `mcp-corrections-r21/` and `native-help-r21/`.
+These are scoped checks, not the final workspace/platform gate.
+
+The real combined Answer path uncovered a frontend gap: its outer combined-read
+wrapper was not recognized by the direct-packet presentation. The correction
+preserves every member and the complete original outer copy/export. Citation
+navigation binds the selected member, exact local record/index/publication and
+source proof; duplicate record hashes cannot switch members. Three actual
+Chromium DOM tests pass with observed browser exit/profile removal; the actual
+Rust combined cases are consumed unchanged. Native Workbench transport and
+fresh embedded assets are separate pending checks.
+
+Opaque FINAL fixture preparation passes naturally in 2.309s with all 158 input
+identities and exclusive current-SID anchor unchanged. It emits 205 questions,
+1,685 paragraphs, 1,271 source files and the 100-goal population. Receipt
+`models/a1-fresh-final-evaluation-r1/fixture-execution-r1.json`, SHA256
+`5ed0f0363f6ce4741fb3ca9b0b27ece279a9f1449a16f1b638a952670d595c03`.
+No developer/observer parsed the sealed gold and no FINAL model evaluation ran.
+
+### 2026-11-14 — frozen native /2 milestone
+
+R23 workspace all-target/all-feature Clippy passes in15.402s. Its compatible
+Core/MCP/Kernel batch passes518/518 selected tests in37.652s (80.668s command),
+with unchanged native/harness/fixture/frontend inputs. Native group:
+`4992f1c731c3a1efa110f143b949bc84978afb28af079d385e5d649205256528`.
+This includes the source-verification inventory regression, complete current MCP
+catalog, late verified context anchor and new capture/preflight synthetic tests.
+R22's two test-harness lint diagnostics remain retained; they were corrected
+without changing production behavior. Receipts: `receipts/native-context-r23/`.
+Final workspace tests/doctests, installed transports and other hosts remain.
+
+Independent combined-UI review found a record/assessment scope comparison gap.
+The correction compares the complete JSON scope semantically, preserving unknown
+fields and array order; paired consistent foreign authorization is refused before
+file_info/editor access. Current host87/87 and Chromium3/3 pass, both typechecks
+pass, and Admin assets are rebuilt/sealed. The reviewer's separate64KiB concern
+was retracted after tracing the current whole-response admission/composition cap;
+no native metadata guard or byte budget changed. Receipt:
+`receipts/context-fullscope-final.json`. Real Workbench transport remains pending.
+
+The Windows ownership test setup now creates a real temporary venv redirector
+when launched from base Python; six affected controls pass from both base and
+venv without weakening the exact two-process or cleanup assertions. Fresh-checkout
+private artifact directories are prepared explicitly. Historic TRAIN execution
+source/seals are unchanged. Receipt: `receipts/training-execution-portability-r2.json`.

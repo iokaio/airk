@@ -173,6 +173,34 @@ async fn listing(state: &State, sources: bool) -> Result<CatalogListing, &'stati
 
 /// Answer one open read (M3 `ToolSelection::Open`).
 pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlResponse {
+    match tools_call::read_context(None) {
+        Ok(context) => response_with_context(state, call, context).await,
+        Err(error) => tools_call::failed(&error),
+    }
+}
+pub(super) async fn response_with_context(
+    state: &Arc<State>,
+    call: OpenCall,
+    context: airk_mcp::read_attempt::ReadAttemptContext,
+) -> ControlResponse {
+    let context = match tools_call::admit_context(&call.tool, &call.arguments, context) {
+        Ok(context) => context,
+        Err(error) => return tools_call::failed(&error),
+    };
+    if let Err(error) = tools_call::require_live(&context) {
+        return tools_call::failed(&error);
+    }
+    let result = response_inner(state, call, context.clone()).await;
+    if let Err(error) = tools_call::require_live(&context) {
+        return tools_call::failed(&error);
+    }
+    result
+}
+async fn response_inner(
+    state: &Arc<State>,
+    call: OpenCall,
+    context: airk_mcp::read_attempt::ReadAttemptContext,
+) -> ControlResponse {
     let selection = ToolSelection::Open {
         index_ids: call.index_names.clone(),
         index_set_ids: call.set_names.clone(),
@@ -252,6 +280,11 @@ pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlRespo
         }
     };
     let mut arguments = call.arguments;
+    if matches!(call.tool.as_str(), "answer" | "airk_answer")
+        && let Err(error) = super::source_delivery::retain_selection(state, &context, selection_ref)
+    {
+        return tools_call::failed(&error);
+    }
     if index_ids.len() == 1 {
         arguments = match tools_call::single_index_arguments(arguments) {
             Ok(arguments) => arguments,
@@ -281,7 +314,9 @@ pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlRespo
         }
     };
     let read = match backend {
-        Ok(backend) => tools_call::read_through(backend, call.tool, arguments, call.mode).await,
+        Ok(backend) => {
+            tools_call::read_through(backend, call.tool, arguments, call.mode, context).await
+        }
         Err(refusal) => Err(refusal),
     };
     match read {

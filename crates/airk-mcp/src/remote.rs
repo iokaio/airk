@@ -18,6 +18,8 @@ mod combined_tests;
 #[cfg(test)]
 mod envelope_tests;
 #[cfg(test)]
+mod parent_context_tests;
+#[cfg(test)]
 mod scoped_tests;
 
 /// Complete public tool envelopes include both text and structured forms.
@@ -575,6 +577,7 @@ impl ReadSession {
         client: airk_core::usage::ClientFamily,
         context: crate::read_attempt::ReadAttemptContext,
     ) -> Result<CallToolResult, AdmissionFailure> {
+        let context = crate::read_attempt::admit_tool_context(&name, &arguments, context);
         let canceled = context.cancellation().clone();
         let query_concurrency = self.backend.query_concurrency();
         self.admission.calls.configure(query_concurrency);
@@ -777,20 +780,32 @@ pub async fn call_observed(
     tool: String,
     arguments: serde_json::Map<String, serde_json::Value>,
 ) -> anyhow::Result<serde_json::Value> {
+    call_observed_with_context(
+        backend,
+        tool,
+        arguments,
+        crate::read_attempt::ReadAttemptContext::new(
+            std::time::Instant::now() + Duration::from_secs(125),
+            tokio_util::sync::CancellationToken::new(),
+        ),
+    )
+    .await
+}
+
+/// The original caller's admitted allowance, preserving shared capacity and
+/// full envelope handling without starting a fresh duration at this boundary.
+pub async fn call_observed_with_context(
+    backend: &dyn RemoteTools,
+    tool: String,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    context: crate::read_attempt::ReadAttemptContext,
+) -> anyhow::Result<serde_json::Value> {
+    let context = crate::read_attempt::admit_tool_context(&tool, &arguments, context);
+    context.require_live()?;
     let limit = backend.query_concurrency();
-    Ok(serde_json::to_value(
-        call_at_capacity(
-            backend,
-            tool,
-            arguments,
-            limit,
-            crate::read_attempt::ReadAttemptContext::new(
-                std::time::Instant::now() + Duration::from_secs(125),
-                tokio_util::sync::CancellationToken::new(),
-            ),
-        )
-        .await?,
-    )?)
+    let result = call_at_capacity(backend, tool, arguments, limit, context.clone()).await?;
+    context.require_live()?;
+    Ok(serde_json::to_value(result)?)
 }
 
 async fn call_at_capacity(
@@ -801,7 +816,7 @@ async fn call_at_capacity(
     context: crate::read_attempt::ReadAttemptContext,
 ) -> anyhow::Result<CallToolResult> {
     let value = match backend
-        .call_with_read_context(tool.clone(), arguments, limit, context)
+        .call_with_read_context(tool.clone(), arguments, limit, context.clone())
         .await
     {
         Ok(value) => value,
@@ -822,6 +837,9 @@ async fn call_at_capacity(
         ),
         Err(_) => direct_observation_failure("direct_observation_unavailable"),
     };
+    if matches!(tool.as_str(), "answer" | "airk_answer") {
+        context.retain_delivery_for(&value)?;
+    }
     let mut result = serde_json::from_value::<CallToolResult>(value).unwrap_or_else(|_| {
         serde_json::from_value(direct_observation_failure("direct_response_invalid"))
             .expect("bounded direct failure envelope")

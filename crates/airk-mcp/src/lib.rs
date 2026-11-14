@@ -22,7 +22,9 @@ use response::ResponseArgs;
 #[serde(deny_unknown_fields)]
 pub struct AnswerArgs {
     #[serde(flatten)]
-    pub request: airk_core::arbiter::ContextRequest,
+    pub verification: response::VerificationArgs,
+    #[serde(flatten)]
+    pub request: airk_core::arbiter::context_action::ContextRequestV2,
     #[serde(flatten, skip_serializing)]
     pub response: ResponseArgs,
 }
@@ -41,6 +43,8 @@ mod optimization_tests;
 
 #[cfg(test)]
 mod arbiter_calibration_capture;
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+mod context_action_capture_tests;
 #[cfg(test)]
 mod arbiter_handler_tests;
 #[cfg(test)]
@@ -724,7 +728,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_answer",
-        description = "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing airk_context expands neighboring lines around one coordinate.",
+        description = "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing airk_context expands neighboring lines around one coordinate. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources without changing indexed evidence.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -744,13 +748,13 @@ impl AirkServer {
             .read_attempt
             .as_ref()
             .map_or(deadline, |context| deadline.min(context.deadline()));
-        self.execute_verification_aware(
+        self.execute_verified_response(
             UsageOperation::Answer,
             args.response,
-            false,
+            args.verification.controls(),
             move |kernel| {
                 reader.kernel = kernel.clone();
-                kernel.answer_with_reader(
+                kernel.answer_with_reader_v2(
                     args.request,
                     deadline,
                     &|| {

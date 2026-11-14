@@ -27,6 +27,14 @@ moved from `quota` down into `capacity`, which `quota` re-exports.
 
 ## Interface
 
+The service Arbiter ConfigurationStore's read-only `with_current` consumer takes
+the same writer mutex and existing ownership file as CAS, using nonblocking
+admission. It reads bounded current bytes and runs a synchronous delivery effect
+while the shared file lock remains held. It creates no directory/lock/config,
+checks caller liveness around metadata I/O and cannot await or acquire lifecycle
+locks. Native admission follows Store. Another adapter's exclusive CAS cannot
+publish during that delivery cut.
+
 The module is private to the crate. Items are `pub(crate)` unless noted.
 
 | Item | Contract |

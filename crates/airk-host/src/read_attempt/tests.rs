@@ -3,6 +3,60 @@ use super::*;
 use serde::Deserialize;
 
 #[test]
+fn combined_members_reuse_exact_captured_expiry_and_only_narrow_children() -> Result<()> {
+    use std::time::Duration;
+    let base = Instant::now();
+    let id = Incarnation::from_bytes([17; 16]);
+    let context = ReadAttemptContext::new(base + Duration::from_nanos(2000), Default::default())
+        .with_request_id(id)?;
+    let first = encode_sampled(&context, id, 1010, base + Duration::from_nanos(11))?;
+    assert_eq!(first.expires_monotonic_ns, 2999);
+    let context = context.capture_transport_attempt(first)?;
+    for (tick, instant, remaining) in [(1100, 101, 1899), (1503, 500, 1496)] {
+        let member = encode_sampled(&context, id, tick, base + Duration::from_nanos(instant))?;
+        assert_eq!(member.request_id, id);
+        assert_eq!(member.expires_monotonic_ns, 2999);
+        assert_eq!(member.remaining_ns, remaining);
+    }
+    let child = context.narrowed(base + Duration::from_nanos(1200));
+    let narrowed = encode_sampled(&child, id, 1503, base + Duration::from_nanos(500))?;
+    assert_eq!(narrowed.expires_monotonic_ns, 2203);
+    assert!(
+        context
+            .clone()
+            .capture_transport_attempt(ReadAttemptBudget {
+                expires_monotonic_ns: 3000,
+                ..first
+            })
+            .is_err()
+    );
+    assert!(
+        encode_sampled(
+            &context,
+            Incarnation::from_bytes([18; 16]),
+            1503,
+            base + Duration::from_nanos(500)
+        )
+        .is_err()
+    );
+    assert!(encode_sampled(&context, id, 2999, base + Duration::from_nanos(1999)).is_err());
+    let foreign = ReadAttemptBudget {
+        clock: match clock() {
+            ReadClock::UnixMonotonic => ReadClock::WindowsPerformanceCounter,
+            ReadClock::WindowsPerformanceCounter => ReadClock::UnixMonotonic,
+        },
+        ..first
+    };
+    let foreign = ReadAttemptContext::new(context.deadline(), Default::default())
+        .with_wire_attempt(foreign)?;
+    assert!(encode_sampled(&foreign, id, 1503, base + Duration::from_nanos(500)).is_err());
+    context.cancellation().cancel();
+    assert!(encode_sampled(&context, id, 1503, base + Duration::from_nanos(500)).is_err());
+    assert!(child.cancellation().is_cancelled());
+    Ok(())
+}
+
+#[test]
 fn sampled_conversion_charges_nanoseconds_and_repeated_frames_without_refresh() -> Result<()> {
     use std::time::Duration;
     let base = Instant::now();
@@ -24,6 +78,11 @@ fn sampled_conversion_charges_nanoseconds_and_repeated_frames_without_refresh() 
         // Decode's Instant sample precedes its native sample. Reusing the
         // original frame later consumes time rather than resetting its expiry.
         let decoded = decode_sampled(budget, base + Duration::from_nanos(instant_ns), tick)?;
+        assert_eq!(decoded.request_id(), Some(Incarnation::from_bytes([3; 16])));
+        assert_eq!(
+            decoded.wire_attempt().unwrap().expires_monotonic_ns,
+            budget.expires_monotonic_ns
+        );
         assert_eq!(
             decoded.deadline(),
             base + Duration::from_nanos(expected_read_ns)
@@ -56,6 +115,7 @@ fn feature_gate_and_absent_budget_preserve_frozen_legacy_query() -> Result<()> {
     assert!(supported("1.8.14"));
     assert!(supported("1.9.0"));
     let query = crate::project_protocol::Query {
+        context_partition: None,
         read_attempt: None,
         frontend: None,
         tool: "airk_status".into(),

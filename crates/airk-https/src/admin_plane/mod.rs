@@ -96,6 +96,9 @@ pub struct SelectionAuthority {
 /// the browser's tools call. The nonce inside `selection_ref` reaches only
 /// the in-process admission; the answer never carries it (N3).
 pub struct SelectedRead {
+    /// Native carrier and an earlier same-process Admin parent, never output.
+    pub read_attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    pub parent_context: Option<airk_mcp::read_attempt::ReadAttemptContext>,
     pub selection: WindowScopeSelection,
     pub scope_identity: Sha256Digest,
     pub selection_ref: SelectionScopeRef,
@@ -155,6 +158,8 @@ pub struct AdminPlane {
     selection: Option<SelectionAuthority>,
     /// Without it a search under an A2 grant answers `not_yet_served`.
     selection_reader: Option<SelectionReader>,
+    delivery_guard_factory:Option<airk_mcp::read_attempt::ReadDeliveryGuardFactory>,
+    read_parent:Option<airk_mcp::read_attempt::ReadAttemptContext>,
 }
 
 /// An unpublished slot reserved before dispatch. Read cancellation proves the
@@ -299,7 +304,20 @@ impl AdminPlane {
             trust_inspect: None,
             selection: None,
             selection_reader: None,
+            delivery_guard_factory:None,
+            read_parent:None,
         }
+    }
+
+    /// Internal service policy factory; no browser or native request can supply it.
+    pub fn with_delivery_guard_factory(mut self,factory:airk_mcp::read_attempt::ReadDeliveryGuardFactory)->Self {
+        self.delivery_guard_factory=Some(factory);self
+    }
+    pub(crate) fn with_read_parent(&self,parent:airk_mcp::read_attempt::ReadAttemptContext)->Self {
+        Self{dispatch:self.dispatch.clone(),instance:self.instance,clock:self.clock.clone(),random:self.random.clone(),
+            secrets:self.secrets.clone(),native:self.native.clone(),native_admission:self.native_admission.clone(),scope_check:self.scope_check.clone(),
+            trust_inspect:self.trust_inspect.clone(),selection:self.selection.clone(),selection_reader:self.selection_reader.clone(),
+            delivery_guard_factory:self.delivery_guard_factory.clone(),read_parent:Some(parent)}
     }
 
     /// Serve searches under A2 grants (selection authority S2).
@@ -1019,10 +1037,48 @@ impl AdminPlane {
         method: ControlMethod,
         identity: Option<&secrets::Review>,
     ) -> Result<HttpResponse, AdminCode> {
-        if let ControlMethod::ToolsCall { selection, .. } = &method {
+        if let ControlMethod::ToolsCall {
+            selection,
+            read_attempt,
+            tool,
+            arguments,
+            ..
+        } = &method
+        {
+            if let Some(attempt) = read_attempt {
+                let admitted = airk_host::read_attempt::decode(*attempt).and_then(|context| {
+                    anyhow::ensure!(
+                        std::time::Instant::now() < context.deadline(),
+                        "original canonical read deadline expired"
+                    );
+                    Ok(())
+                });
+                if let Err(error) = admitted {
+                    return Ok(native(
+                        operation,
+                        ControlResponse::ToolCallFailed {
+                            message: format!("{error:#}"),
+                        },
+                    ));
+                }
+            }
             match selection {
                 ToolSelection::Unselected => {}
-                ToolSelection::Admin => return self.granted_read(operation, cookie, method).await,
+                ToolSelection::Admin => {
+                    let parent = match read_attempt {
+                        Some(attempt) => airk_host::read_attempt::decode(*attempt)
+                            .map_err(|_| AdminCode::AdminInternal)?,
+                        None => airk_mcp::read_attempt::ReadAttemptContext::new(
+                            std::time::Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET,
+                            Default::default(),
+                        ),
+                    };
+                    let parent=self.read_parent.as_ref().map_or_else(||parent.clone(),|original|original.narrowed(parent.deadline()));
+                    let parent=match &self.delivery_guard_factory {Some(factory)=>parent.with_delivery_guard_factory(factory.clone()),None=>parent};
+                    let context =
+                        airk_mcp::read_attempt::admit_tool_context(tool, arguments, parent);
+                    return self.granted_read(operation, cookie, method, context).await;
+                }
                 _ => return Err(AdminCode::AdminMalformedRequest),
             }
         }
@@ -1040,6 +1096,7 @@ impl AdminPlane {
         operation: &str,
         cookie: Option<&str>,
         method: ControlMethod,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<HttpResponse, AdminCode> {
         let now = (self.clock)();
         let grant = cookie.and_then(|cookie| self.secrets().sessions.grant(cookie, now));
@@ -1062,12 +1119,15 @@ impl AdminPlane {
                     arguments,
                     response_mode,
                     usage_client,
+                    read_attempt,
                     ..
                 } = method
                 else {
                     return Err(AdminCode::AdminMalformedRequest);
                 };
                 let response = reader(SelectedRead {
+                    read_attempt,
+                    parent_context: Some(context),
                     selection: grant.selection,
                     scope_identity: grant.scope_identity,
                     selection_ref,

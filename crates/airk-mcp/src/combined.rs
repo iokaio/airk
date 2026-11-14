@@ -129,6 +129,40 @@ pub fn legacy_discovery(arguments: Value) -> Value {
     }
 }
 
+/// Project only the canonical native payload for budget admission. Routing
+/// controls come from the actual public catalogs; this neither validates nor
+/// changes the original call's selectors or its canonical error projection.
+pub(crate) fn native_admission_arguments(
+    tool: &str,
+    arguments: &serde_json::Map<String, Value>,
+) -> Option<serde_json::Map<String, Value>> {
+    let name = tool.strip_prefix("airk_").unwrap_or(tool);
+    let native = crate::local::tools()
+        .into_iter()
+        .find(|entry| entry.name.strip_prefix("airk_") == Some(name))?;
+    let native_properties = native.input_schema.get("properties")?.as_object()?;
+    let public = crate::unified::tools()
+        .into_iter()
+        .find(|entry| entry.name == name)?;
+    let combined = controls(native.clone());
+    let public_properties = public.input_schema.get("properties")?.as_object()?;
+    let combined_properties = combined.input_schema.get("properties")?.as_object()?;
+    if arguments.keys().any(|key| {
+        !native_properties.contains_key(key)
+            && !public_properties.contains_key(key)
+            && !combined_properties.contains_key(key)
+    }) {
+        return None;
+    }
+    Some(
+        arguments
+            .iter()
+            .filter(|(key, _)| native_properties.contains_key(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
+}
+
 /// Parse the same closed native handler inputs before admitting any member.
 /// The caller removes only combined controls; native cursors/validators retain
 /// their native owner checks when the actual handler executes.
@@ -169,6 +203,10 @@ pub fn validate_native_arguments(
         }};
     }
     match name {
+        "answer" => {
+            let args = typed!(crate::AnswerArgs);
+            args.request.validate()?;
+        }
         "search" => {
             let args = typed!(crate::SearchArgs);
             evidence!(args);

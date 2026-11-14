@@ -25,6 +25,9 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+mod read_context;
+pub use read_context::InvocationReadContext;
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Capabilities of the served operations of this build (contracts §3.5); an
 /// unserved operation's capability is absent. `window-scope/1`: W4 and
@@ -48,6 +51,8 @@ const CAPABILITIES: &[&str] = &[
 
 /// The streams and environment one run uses.
 pub struct Io<'a> {
+    /// Original session read custody; standalone commands have no earlier parent.
+    pub read_attempt: Option<InvocationReadContext>,
     pub stdin: &'a mut dyn std::io::Read,
     pub stdout: &'a mut dyn Write,
     pub stderr: &'a mut dyn Write,
@@ -2636,6 +2641,16 @@ fn open_call(
     call_resolved(cx, control, open, tool, arguments)
 }
 
+fn read_budget(
+    cx: &Context,
+) -> Result<Option<airk_core::read_attempt::ReadAttemptBudget>, ErrorLine> {
+    cx.io
+        .read_attempt
+        .as_ref()
+        .map(InvocationReadContext::live_budget)
+        .transpose()
+}
+
 /// Send one resolved M3 call and print its answer.
 fn call_resolved(
     cx: &mut Context,
@@ -2644,6 +2659,10 @@ fn call_resolved(
     tool: String,
     arguments: Map<String, Value>,
 ) -> u8 {
+    let read_attempt = match read_budget(cx) {
+        Ok(budget) => budget,
+        Err(error) => return fail(cx, &error),
+    };
     let local_help = matches!(
         selection,
         ToolSelection::Unselected | ToolSelection::Project { .. } | ToolSelection::Open { .. }
@@ -2669,6 +2688,7 @@ fn call_resolved(
             selection,
             response_mode,
             usage_client: airk_core::usage::ClientFamily::Cli,
+            read_attempt,
         },
         VERSION,
         expected_instance,
@@ -3676,6 +3696,7 @@ pub fn help_catalog() -> std::collections::BTreeMap<String, String> {
 /// The binary uses this when the OS cannot create its command thread.
 pub fn startup_failure(arguments: &[OsString], stderr: &mut dyn Write, message: &str) -> u8 {
     let mut io = Io {
+        read_attempt: None,
         stdin: &mut std::io::empty(),
         stdout: &mut std::io::sink(),
         stderr,

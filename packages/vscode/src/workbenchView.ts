@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { answerSourceBinding } from './workbenchAnswerNavigation';
+import { answerSourceBinding, isAnswerEnvelope } from './workbenchAnswerNavigation';
 import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
 import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
 import {validateCombinedCatalogSession} from './catalogSession';
 import {NativeMetadataProjectionCache} from './nativeMetadata';
 import * as vscode from 'vscode';
-import type { Budget, ContextRequest } from './generated/arbiter';
+import type { Budget, ContextRequestV2 } from './generated/arbiter';
 import { WORKBENCH_CONTEXT_BUDGET } from './workbenchContracts';
 import * as path from 'node:path';
 import { comparePublication, comparePublicationVector, type PublicationObservation, type PublicationRelation } from './publications';
@@ -321,7 +321,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.stop();
         const session = this.session, client = this.evidence(), generation = this.generation, identity = this.clientIdentity;
         const named = this.selectedSpec()?.openSelection;
-        const request: ContextRequest = { schema: 'airk.arbiter.context.request/1', question,
+        const request: ContextRequestV2 = { schema: 'airk.arbiter.context.request/2', question,
             budget: structuredClone(budget) };
         // The existing persisted title field stays bounded; the full question and
         // every budget field remain in the original request and native result.
@@ -498,8 +498,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'answer': await this.answer(message.question, message.budget); break;
             case 'openAnswerCitation': {
                 const turn=this.session?.turns.find(value=>value.id===message.turn);
-                if(!turn?.envelope||this.logical(turn).schema!=='airk.arbiter.context/1')throw new Error('Answer citation expired.');
-                const card=evidenceCards(this.logical(turn)).find(value=>value.step===message.record&&value.resultPointer===`/hits/${message.hit}`);
+                if(!turn?.envelope||!isAnswerEnvelope(this.logical(turn)))throw new Error('Answer citation expired.');
+                const card=evidenceCards(this.logical(turn)).find(value=>value.step===message.record&&value.resultPointer===`/hits/${message.hit}`&&value.answerMember===message.member);
                 if(!card)throw new Error('Answer citation has no unambiguous native source location.');
                 await this.openAnswerSource(turn,card);break;
             }
@@ -554,7 +554,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 // inspect its retained plan before discarding any revision fence.
                 assertPortablePlanInputs(object(object(turn.envelope).plan));
                 const request=object(turn.request),plan=request.plan?planForWorkbenchRerun(object(request.plan)):undefined;
-                if (request.schema === 'airk.arbiter.context.request/1') await this.answer(String(request.question), request.budget as Budget);
+                if(typeof request.schema==='string'&&request.schema.startsWith('airk.arbiter.context.request/')&&request.schema!=='airk.arbiter.context.request/2')throw new Error('This saved answer request uses an unsupported contract version; submit a new current context request.');
+                if (request.schema === 'airk.arbiter.context.request/2') await this.answer(String(request.question), request.budget as Budget);
                 else await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);
             }break;}
             case 'saveStrategy':{
@@ -587,7 +588,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'open':case 'context':{
                 const turn=this.session?.turns.find(t=>t.id===message.turn),card=turn&&evidenceCards(this.logical(turn)).find(c=>c.id===message.card);
                 if(!card){throw new Error('Evidence handle expired.');}
-                if(message.type==='open'&&turn&&this.logical(turn).schema==='airk.arbiter.context/1'){await this.openAnswerSource(turn,card);break;}
+                if(message.type==='open'&&turn&&isAnswerEnvelope(this.logical(turn))){await this.openAnswerSource(turn,card);break;}
                 const selected=card.indexId&&card.projectIds?.length?{project_ids:card.projectIds,index_ids:[card.indexId]}:undefined;
                 if(this.selectedSpec()?.combinedSession&&!selected)throw new Error('Choose an originating index from qualified evidence before following this location.');
                 if(message.type==='context'){

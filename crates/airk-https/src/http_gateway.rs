@@ -57,6 +57,7 @@ pub type AdmissionClosed = Arc<dyn Fn() -> bool + Send + Sync>;
 pub type AdmitRequest =
     Arc<dyn Fn() -> anyhow::Result<Arc<dyn std::any::Any + Send + Sync>> + Send + Sync>;
 pub struct NativeAdmission {
+    pub delivery_guard_factory:airk_mcp::read_attempt::ReadDeliveryGuardFactory,
     pub closed: AdmissionClosed,
     pub gate: NativeCatalogAdmission,
     pub admit: AdmitRequest,
@@ -98,6 +99,7 @@ struct State {
     native_gate: NativeCatalogAdmission,
     admit: AdmitRequest,
     settle: airk_mcp::read_attempt::WorkerSettlementRequester,
+    delivery_guard_factory:airk_mcp::read_attempt::ReadDeliveryGuardFactory,
     /// The listener's port (the exact `Host` and `Origin` of `/admin`).
     port: u16,
     /// The `/admin` plane (split Phase 5); set once by the service owner.
@@ -133,6 +135,7 @@ impl Gateway {
             native_gate: native.gate,
             admit: native.admit,
             settle: native.settle,
+            delivery_guard_factory:native.delivery_guard_factory,
             port: endpoint.url.port(),
             admin: std::sync::OnceLock::new(),
         })))
@@ -325,6 +328,7 @@ impl Gateway {
             token: context.cancellation().clone(),
             armed: true,
         };
+        context=context.with_delivery_guard_factory(self.0.delivery_guard_factory.clone());
         let bound = delivery.bind_request(context.clone()).await;
         // Targets `admin_contract::route` places in the admin plane never reach
         // the bearer dispatch; every other target is handled as before.
@@ -335,7 +339,7 @@ impl Gateway {
                         .extensions()
                         .get::<crate::admin_plane::ConnectionPeer>()
                         .cloned();
-                    plane
+                    plane.with_read_parent(context.clone())
                         .handle(request, peer, self.0.port, self.0.closed.is_cancelled())
                         .await
                 }
@@ -1097,6 +1101,18 @@ impl ConnectionFence {
         &self,
         effect: impl FnOnce() -> Poll<std::io::Result<T>>,
     ) -> Poll<std::io::Result<T>> {
+        // Copy opaque custody before Store policy ownership: never invert the
+        // Store -> request/credential/read-cell -> NativeGate lock order.
+        let context=match self.requests.lock() {
+            Ok(state)=>state.active.as_ref().map(|active|active.context.clone()),
+            Err(_)=>return Poll::Ready(Err(std::io::Error::other("request delivery unavailable"))),
+        };
+        match context {
+            Some(context)=>poll_custody(&context,DeliveryLayer::Policy,||self.poll_native(effect)),
+            None=>self.poll_native(effect),
+        }
+    }
+    fn poll_native<T>(&self,effect:impl FnOnce()->Poll<std::io::Result<T>>)->Poll<std::io::Result<T>> {
         let requests = match self.requests.lock() {
             Ok(state) => state,
             Err(_) => {
@@ -1160,6 +1176,23 @@ impl ConnectionFence {
                 )));
             }
         };
+        let effect=|| {
+            if let Some(active)=requests.active.as_ref() {
+                if active.context.cancellation().is_cancelled()||Instant::now()>=active.deadline {
+                    return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::TimedOut,"HTTP delivery expired at actual IO cut")));
+                }
+                if let Err(error)=active.context.check_delivery_live(){return Poll::Ready(Err(error))}
+            }
+            effect()
+        };
+        if let Some(context)=requests.active.as_ref().map(|active|&active.context).filter(|context|context.has_source_delivery()) {
+            if let Some(ticket)=ticket && self.gate.check_issue(ticket).is_err() {
+                return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,"HTTP issue changed before source delivery")));
+            }
+            // The source owner holds the fixed original NativeGate issue and
+            // actual live selection nonce around this poll. Never reenter it.
+            return poll_custody(context,DeliveryLayer::Source,effect);
+        }
         match ticket {
             None => effect(),
             Some(ticket) => self.gate.with_issue(ticket, effect).unwrap_or_else(|_| {
@@ -1171,6 +1204,28 @@ impl ConnectionFence {
         }
     }
 }
+// The usize is only the opaque guard's effect-status carrier for non-write
+// polls. Return the original IO result, including the actual byte count.
+enum DeliveryLayer {Policy,Source}
+fn poll_custody<T>(context:&ReadAttemptContext,layer:DeliveryLayer,effect:impl FnOnce()->Poll<std::io::Result<T>>)->Poll<std::io::Result<T>> {
+    let mut effect=Some(effect);let mut observed=None;
+    let mut actual=|| {
+        let Some(effect)=effect.take() else{return Poll::Ready(Err(std::io::Error::other("delivery effect repeated")))};
+        let result=effect();
+        let status=match &result {
+            Poll::Pending=>Poll::Pending,
+            Poll::Ready(Ok(_))=>Poll::Ready(Ok(0)),
+            Poll::Ready(Err(error))=>Poll::Ready(Err(std::io::Error::new(error.kind(),error.to_string()))),
+        };
+        observed=Some(result);status
+    };
+    let status=match layer {DeliveryLayer::Policy=>context.poll_delivery(&mut actual),DeliveryLayer::Source=>context.poll_source_delivery(&mut actual)};
+    if let Poll::Ready(Err(error))=status {
+        return match observed {Some(Poll::Ready(Err(original)))=>Poll::Ready(Err(original)),_=>Poll::Ready(Err(error))};
+    }
+    observed.unwrap_or_else(||Poll::Ready(Err(std::io::Error::other("delivery gate omitted actual IO poll"))))
+}
+
 struct FencedIo<S> {
     inner: S,
     delivery: ConnectionFence,

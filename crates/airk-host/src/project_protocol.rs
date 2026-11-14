@@ -227,7 +227,25 @@ pub struct Query {
     pub native: Option<airk_mcp::local::NativeRead>,
     #[serde(default)]
     pub status_receipt: airk_mcp::response::StatusReceipt,
+    /// Native combined-owner reservation; never a public Answer argument.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "partition_present"
+    )]
+    pub context_partition: Option<airk_core::combined_context::PartitionAllowance>,
 }
+
+fn partition_present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<airk_core::combined_context::PartitionAllowance>, D::Error> {
+    let allowance = airk_core::combined_context::PartitionAllowance::deserialize(deserializer)?;
+    allowance.validate().map_err(serde::de::Error::custom)?;
+    Ok(Some(allowance))
+}
+
+#[cfg(test)]
+mod combined_context_tests;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

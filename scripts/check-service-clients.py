@@ -102,6 +102,77 @@ def assert_frozen_query_scope(value, selection, observation):
     assert value.get("scope_observation") == observation, value
     assert isinstance(value.get("reason"), str) and value["reason"], value
 
+def current_answer_arguments(question, fixture_path=None):
+    """Consume the Rust-emitted public request; never manufacture a native DTO.
+
+    The current matched pair must refuse an older/missing fixture before any
+    finite Answer submission. Only the fixture question/display preference vary.
+    """
+    path = fixture_path or Path(__file__).parents[1] / "fixtures/split/arbiter/public_answer_cases.json"
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    cases = [case for case in document["examples"]
+             if case.get("accepted") is True and case.get("name") == "complete_native_request"]
+    assert len(cases) == 1, "Current Rust Answer request case is missing or ambiguous"
+    arguments = json.loads(json.dumps(cases[0]["arguments"]))
+    assert arguments.get("schema") == "airk.arbiter.context.request/2", "Current /2 Rust Answer request fixture is required"
+    arguments["question"] = question
+    arguments["response_mode"] = "full"
+    return arguments
+
+
+ANSWER_VALIDATOR_TEST = "retained_current_answer_pair_validates_full_transport_results"
+ANSWER_VALIDATOR_SOURCES = (
+    "crates/airk-cli/tests/combined_reads.rs", "crates/airk-cli/tests/common/parity/context.rs",
+    "crates/airk-cli/tests/common/parity/strict.rs", "crates/airk-core/src/arbiter/context_action.rs",
+    "crates/airk-core/src/combined_context.rs", "crates/airk-kernel/src/arbiter.rs",
+    "crates/airk-mcp/src/lib.rs", "fixtures/split/arbiter/public_answer_cases.json",
+)
+
+
+def validate_answer_pair(fixture, label, arguments, left, right, protocol=None):
+    """Only the identified prebuilt Rust owner validates full retained packets."""
+    answer_packet(left); answer_packet(right)
+    executable = Path(fixture.answer_validator).resolve(strict=True)
+    repository = Path(__file__).parents[1]
+    sources = {name: file_sha256(repository / name) for name in ANSWER_VALIDATOR_SOURCES}
+    binary = file_sha256(executable)
+    capture = fixture.owner / ("answer-pair-" + uuid.uuid4().hex + ".json")
+    value = {"arguments": arguments, "left": left, "right": right}
+    if protocol is not None:
+        value["right_mcp_protocol"] = protocol
+    with capture.open("x", encoding="utf-8") as output:
+        json.dump(value, output, ensure_ascii=False)
+    input_hash = file_sha256(capture)
+    environment = {**fixture.environment, "AIRK_CONTEXT_PARITY_CAPTURE": str(capture)}
+    result = subprocess.run([str(executable), "--exact", ANSWER_VALIDATOR_TEST, "--ignored", "--nocapture", "--test-threads=1"],
+                            cwd=repository, env=environment, capture_output=True, text=True, encoding="utf-8", timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    assert result.returncode == 0, f"Full Answer parity validator failed ({label}); original capture retained at {capture}: {result.stdout[-4096:]} {result.stderr[-4096:]}"
+    marker = "AIRK_CONTEXT_PARITY_VALIDATED "
+    receipts = [json.loads(line.split(marker, 1)[1]) for line in result.stdout.splitlines() if marker in line]
+    assert len(receipts) == 1, "Rust Answer validator did not emit exactly one proof"
+    proof = receipts[0]
+    assert proof.get("schema") == 1 and proof.get("full_envelopes_equal") is True, "Rust Answer validator proof incomplete"
+    assert proof.get("scope") == "validated-unassessed-fallback-only", "Unexpected Answer qualification scope"
+    assert proof.get("compiled_sources") == sources, "Answer validator compiled source/fixture identities differ from current owners"
+    assert proof.get("input_sha256") == input_hash == file_sha256(capture), "Retained Answer input changed"
+    assert proof.get("validator_sha256") == binary == file_sha256(executable), "Answer validator image changed"
+    assert sources == {name: file_sha256(repository / name) for name in ANSWER_VALIDATOR_SOURCES}, "Answer validator source/fixture changed during observation"
+    proof["label"] = label
+    fixture.answer_comparisons.append(proof)
+    return proof
+
+
+def answer_packet(envelope):
+    """Retain the full canonical packet, including unknown future fields."""
+    assert envelope.get("isError") is not True, "Finite Answer returned a typed failure; it was not replayed"
+    packet = tool_value(envelope)
+    if "structuredContent" in envelope:
+        assert packet == envelope["structuredContent"], "Answer text/structured duplicates differ"
+    assert packet.get("schema") in ("airk.arbiter.context/2", "airk.combined-read/1"), "Unexpected current Answer packet"
+    return packet
+
+
 def tool_value(envelope):
     assert isinstance(envelope, dict) and isinstance(envelope.get("content"), list), envelope
     assert len(envelope["content"]) == 1 and envelope["content"][0].get("type") == "text", "Invalid native text envelope"
@@ -570,6 +641,9 @@ class Fixture:
         self.control = owner / "control"
         self.projects = {}
         self.scopes = {}
+        self.answer_validator = None
+        self.answer_comparisons = []
+        self.answer_references = {}
         self.compatibility = classify_runtime(self.runtime)
         # A split pair's airk is the same single service image; HTTPS only.
         self.single_image = self.compatibility["topology"] in ("single_image", "split_pair")
@@ -794,6 +868,15 @@ class Fixture:
         return self.query(project, "tools", "call", tool, "--args",
                           json.dumps(arguments or {"response_mode": "full"}))
 
+    def answer_once(self, project, arguments):
+        """One exact finite execution. Failure/unknown outcome never permits replay."""
+        result = self.run(*self.arguments(project), "tools", "call", "airk_answer", "--args",
+                          json.dumps(arguments), check=False, timeout=90)
+        assert result.returncode in (0, 1), "Finite Answer client process failed"
+        envelope = json.loads(result.stdout)
+        assert result.returncode == 0, "Finite Answer was refused or failed; original outcome retained without retry"
+        return envelope
+
     def published_status(self, project, deadline=None):
         deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
         registration = self.projects[project]
@@ -1017,6 +1100,10 @@ class Fixture:
             assert catalog_value(api_catalog["tools"]) == catalog_value(mcp_catalog), "Complete MCP/API input/output schemas or annotations differ"
             scope = tool_value(network.api_read("query_scope", {"view": "projects"}))
             assert scope == self.tool(name, "airk_query_scope", {"view": "projects"}), "Complete CLI/API query scope differs"
+            if workbench and self.answer_validator is not None:
+                arguments, reference = self.answer_references[name]
+                result = network.api_read("answer", arguments)
+                validate_answer_pair(self, "CLI/HTTPS API", arguments, reference, result)
             return count
         finally:
             network.close(delete=lifecycle != "disconnect")
@@ -1075,6 +1162,17 @@ class Fixture:
         else:
             assert_legacy_query_scope(query_scope)
         assert query_scope == self.tool(name, "airk_query_scope", {"view": "projects"}), query_scope
+        if workbench and self.answer_validator is not None:
+            arguments = current_answer_arguments("polaronlymarker")
+            with self.hold_publication(name):
+                reference = self.answer_once(name, arguments)
+                send({"jsonrpc":"2.0", "id":9, "method":"tools/call", "params":{
+                    **params, "name":"answer", "arguments":arguments}})
+                reply = receive(9)
+                assert "error" not in reply, "Finite MCP Answer failed without retry"
+                protocol = "2026-07-28" if lifecycle == "inline" else initialized["protocolVersion"]
+                validate_answer_pair(self, "CLI/" + ("HTTPS MCP" if self.single_image else "stdio MCP"), arguments, reference, reply["result"], protocol)
+                self.answer_references[name] = (arguments, reference)
         if workbench:
             # Keep learned review and finite conversational execution distinct.
             # Each execution is sent once, never replayed after uncertainty.
@@ -1176,6 +1274,19 @@ def airkctl_session_smoke(fixture):
         assert observation["executable_sha256"] == file_sha256(fixture.binary), "Session relayed another service image"
         if "service_instance" in hello:
             assert hello["service_instance"] == expected["instance"], hello
+        if fixture.answer_validator is not None:
+            arguments, reference = fixture.answer_references.get("project-a", (None, None))
+            if arguments is None:
+                arguments = current_answer_arguments("polaronlymarker")
+                reference = fixture.answer_once("project-a", arguments)
+            selected = fixture.arguments("project-a")
+            assert selected[:2] == ["--service-runtime-dir", str(fixture.control)], "Session must retain the exact owned service"
+            identifier = uuid.uuid4().hex
+            send(identifier, {"invoke": {"argv": [*selected[2:], "tools", "call", "airk_answer", "--args", json.dumps(arguments)],
+                                         "deadline_ms": arguments["budget"]["deadline_ms"]}})
+            outcome = reply(identifier)
+            assert outcome["status"] == "invoked" and outcome["exit_code"] == 0, "Finite I2 Answer failed/unknown; no replay permitted"
+            validate_answer_pair(fixture, "CLI/framed I2 Invoke", arguments, reference, json.loads(outcome["stdout"]))
         child.stdin.close()
         child.wait(timeout=30)
         errors = child.stderr.read()
@@ -1416,9 +1527,12 @@ def qualify_cold(runtime):
             "cold_first_status": results}
 
 
-def qualify(runtime, files, model):
+def qualify(runtime, files, model, answer_validator=None):
     runtime = runtime_root(runtime)
     started = time.monotonic()
+    if answer_validator is not None:
+        current_answer_arguments("polaronlymarker")
+        assert Path(answer_validator).is_file(), "Prebuilt native Answer validator is missing"
     cold = (qualify_cold(runtime) if classify_runtime(runtime)["topology"] in ("single_image", "split_pair")
             and classify_runtime(runtime)["authority"] == "catalog" else {"cold_first_status": None})
     with owned_client_fixture() as temporary:
@@ -1441,6 +1555,7 @@ def qualify(runtime, files, model):
                 path.write_text(text, encoding="utf-8")
                 original[path] = hashlib.sha256(path.read_bytes()).hexdigest()
         fixture = Fixture(runtime, owner)
+        fixture.answer_validator = answer_validator
         try:
             fixture.start()
             for name, root in zip(("project-a", "project-b"), roots):
@@ -1508,6 +1623,10 @@ def qualify(runtime, files, model):
                       "cold_first_status": cold["cold_first_status"],
                       "mcp_lifecycles": mcp_lifecycles,
                       "airkctl_session": session,
+                      "answer_transports": {"executed": bool(fixture.answer_comparisons),
+                                            "scope": "validated-unassessed-fallback-only" if fixture.answer_comparisons else "not_executed",
+                                            "comparisons": fixture.answer_comparisons,
+                                            "remaining": ["learned prompt/decision transport parity", "many/Open/Admin actual native integration selections"]},
                       # start() proved the installed service bytes equal the runtime's image.
                       "images": {"service_sha256": file_sha256(fixture.binary),
                                  "cli_sha256": file_sha256(fixture.cli) if fixture.cli is not None else None},
@@ -1526,13 +1645,16 @@ def main():
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--files", type=int, default=16)
     parser.add_argument("--model", action="store_true")
+    parser.add_argument("--answer-validator", type=Path, help="Prebuilt current combined_reads integration test binary for full /2 unassessed Answer transport parity; never invokes Cargo")
     parser.add_argument("--cold-clients-only", action="store_true", help="Fresh sequential and concurrent four-client HTTPS first-status checks")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
+    if args.cold_clients_only and args.answer_validator is not None:
+        parser.error("--answer-validator requires the full current client preflight")
     if not 1 <= args.files <= 2048:
         parser.error("files must be 1..2048")
     runtime = args.runtime_dir.resolve(strict=True)
-    report = qualify_cold(runtime) if args.cold_clients_only else qualify(runtime, args.files, args.model)
+    report = qualify_cold(runtime) if args.cold_clients_only else qualify(runtime, args.files, args.model, args.answer_validator)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

@@ -43,13 +43,110 @@ pub struct Scored {
     pub compile_us: u64,
     pub inference_us: u64,
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CompiledReceipt {
     pub input_digest: Sha256Digest,
     pub input_tokens: usize,
     pub queue_us: u64,
     pub compile_us: u64,
 }
+/// Fixed-size, private native measurements after an actual score call returns.
+/// This is not a wire response or evidence/source authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScoreReceipt {
+    pub input_digest: Sha256Digest,
+    pub input_tokens: usize,
+    pub queue_us: u64,
+    pub compile_us: u64,
+    pub inference_us: u64,
+}
+/// A failed completed score retains known work. Absence of this type never
+/// implies zero work: a canceled/undelivered result can remain unknown.
+#[derive(Debug)]
+pub struct KnownScoreFailure {
+    pub receipt: ScoreReceipt,
+    pub source_delivery_refused: bool,
+    cause: anyhow::Error,
+}
+impl std::fmt::Display for KnownScoreFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Optional native score failed after observed completion")
+    }
+}
+impl std::error::Error for KnownScoreFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+
+fn observed_score_call(
+    compiled: &CompiledReceipt,
+    started: Instant,
+    now: impl FnOnce() -> Instant,
+    score: impl FnOnce() -> Result<Vec<f32>>,
+) -> Result<Scored> {
+    let result = score();
+    let receipt = ScoreReceipt {
+        input_digest: compiled.input_digest,
+        input_tokens: compiled.input_tokens,
+        queue_us: compiled.queue_us,
+        compile_us: compiled.compile_us,
+        inference_us: now()
+            .saturating_duration_since(started)
+            .as_micros()
+            .min(u64::MAX as u128) as u64,
+    };
+    match result {
+        Ok(scores) => Ok(Scored {
+            scores,
+            input_digest: receipt.input_digest,
+            input_tokens: receipt.input_tokens,
+            queue_us: receipt.queue_us,
+            compile_us: receipt.compile_us,
+            inference_us: receipt.inference_us,
+        }),
+        Err(cause) => Err(KnownScoreFailure {
+            receipt,
+            source_delivery_refused: false,
+            cause,
+        }
+        .into()),
+    }
+}
+
+fn finish_score_delivery(result: Result<Scored>, admission: Result<()>) -> Result<Scored> {
+    let Err(refused) = admission else {
+        return result;
+    };
+    let (receipt, cause) = match result {
+        Ok(scored) => (
+            Some(ScoreReceipt {
+                input_digest: scored.input_digest,
+                input_tokens: scored.input_tokens,
+                queue_us: scored.queue_us,
+                compile_us: scored.compile_us,
+                inference_us: scored.inference_us,
+            }),
+            refused,
+        ),
+        Err(error) => (
+            error
+                .downcast_ref::<KnownScoreFailure>()
+                .map(|failure| failure.receipt.clone()),
+            error.context(refused),
+        ),
+    };
+    match receipt {
+        Some(receipt) => Err(KnownScoreFailure {
+            receipt,
+            source_delivery_refused: true,
+            cause,
+        }
+        .into()),
+        None => Err(cause),
+    }
+}
+
 pub struct PendingScore {
     pub compiled: oneshot::Receiver<CompiledReceipt>,
     pub completed: oneshot::Receiver<Result<Scored>>,
@@ -108,6 +205,8 @@ struct Queue {
     last_index: Option<airk_core::index_catalog::IndexId>,
     running_index: Option<airk_core::index_catalog::IndexId>,
     active_profile: Option<Sha256Digest>,
+    joint_calibration:
+        Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
     resident: std::sync::Weak<Reservation>,
     warming_profile: Option<Sha256Digest>,
     release_profiles: std::collections::BTreeSet<Sha256Digest>,
@@ -136,6 +235,7 @@ impl Drop for LaneCompleted {
         queue.jobs.clear();
         queue.warm = None;
         queue.active_profile = None;
+        queue.joint_calibration = None;
         queue.warming_profile = None;
         queue.running_index = None;
         self.0.running.store(0, Ordering::Release);
@@ -344,6 +444,28 @@ impl Handle {
             reservation,
         })
     }
+    /// Immutable metadata authenticated by the actual resident scorer's warm.
+    /// This never reopens paths, rehashes all weights or creates a session.
+    pub fn joint_calibration(
+        &self,
+        profile: Sha256Digest,
+    ) -> Result<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>> {
+        let queue = self
+            .0
+            .queue
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
+        ensure!(
+            !queue.closed
+                && queue.active_profile == Some(profile)
+                && !queue.release_profiles.contains(&profile),
+            "joint resident profile unavailable"
+        );
+        queue
+            .joint_calibration
+            .clone()
+            .context("resident has no authenticated joint calibration")
+    }
     pub fn score(&self, request: ScoreRequest) -> Result<PendingScore> {
         let ScoreRequest {
             worker,
@@ -521,6 +643,7 @@ impl Lane {
                         {
                             scorer = None;
                             queue.active_profile = None;
+                            queue.joint_calibration = None;
                             queue.resident=std::sync::Weak::new();
                             resident_reservation = None;
                             shared.accounting.arbiter_cached(false);
@@ -549,6 +672,7 @@ impl Lane {
                                                     == Some(loaded.profile().manifest)
                                         }) =>
                                 {
+                                    queue.joint_calibration=loaded.joint_calibration();
                                     scorer = Some(ResidentSession {scorer:loaded,_source:warm.source});
                                     queue.active_profile =
                                         scorer.as_ref().map(|scorer| scorer.profile().manifest);
@@ -599,38 +723,36 @@ impl Lane {
                             let compile_started=Instant::now();
                             let result = scorer.compile(&job.state, &job.question, &job.candidates).and_then(|input| {
                                 let compile_us=compile_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                                // Known compilation is observable even when a
+                                // subsequent token/deadline/authority gate refuses
+                                // FFI. No native execution precedes those checks.
+                                let receipt=CompiledReceipt {input_digest:input.input_digest,input_tokens:input.input_ids.len(),queue_us,compile_us};
+                                let compiled_delivered=job.compiled.take().context("compiled receipt already consumed")?.send(receipt.clone()).is_ok();
                                 ensure!(input.input_ids.len() <= job.max_input_tokens,"Arbiter original input-token budget exhausted before native execution");
                                 ensure!(Instant::now() < job.deadline,"Arbiter original deadline exhausted during compilation");
                                 let current={let queue=shared.queue.lock().map_err(|_|anyhow::anyhow!("Arbiter queue unavailable"))?;
                                     !queue.closed && !queue.release_profiles.contains(&scorer.profile().manifest) && permitted(queue.configuration.as_ref(),&job,scorer.profile().manifest)};
                                 ensure!(current && (job.authority)(&job.scope),"Arbiter source authority expired during compilation");
-                                let receipt=CompiledReceipt {input_digest:input.input_digest,input_tokens:input.input_ids.len(),queue_us,compile_us};
-                                ensure!(job.compiled.take().context("compiled receipt already consumed")?.send(receipt).is_ok() && !job.reply.is_closed(),"Arbiter delivery canceled before native dispatch");
+                                ensure!(compiled_delivered && !job.reply.is_closed(),"Arbiter delivery canceled before native dispatch");
                                 let started=Instant::now();
                                 ensure!(airk_kernel::service_resource_observations::available_memory().is_some_and(|available|available>=job.resident.reservation.bytes().saturating_add(256<<20)),"optional native score has no fresh OS headroom");
                                 job.admission.validate(&job.resident.reservation)?;
-                                let scores=dispatch_before_original_deadline(job.deadline,Instant::now,||job.reply.is_closed(),||scorer.score(&input))?;
-                                Ok(Scored {scores,input_digest:input.input_digest,input_tokens:input.input_ids.len(),queue_us,compile_us,inference_us:started.elapsed().as_micros().min(u64::MAX as u128) as u64})
+                                dispatch_before_original_deadline(job.deadline,Instant::now,||job.reply.is_closed(),|| {
+                                    observed_score_call(&receipt, started, Instant::now, || scorer.score(&input))
+                                })
                             });
                             let source_live = (job.authority)(&job.scope);
-                            let mut queue = shared
-                                .queue
-                                .lock()
-                                .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
-                            queue.running_index=None;
-                            let result = if source_live
-                                && !queue.closed
-                                && !queue.release_profiles.contains(&scorer.profile().manifest)
-                                && permitted(
-                                    queue.configuration.as_ref(),
-                                    &job,
-                                    scorer.profile().manifest,
-                                ) {
-                                result
-                            } else {
-                                Err(anyhow::anyhow!("Arbiter delivery revoked"))
-                            };
-                            drop(queue);
+                            let delivery_admission = shared.queue.lock()
+                                .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))
+                                .and_then(|mut queue| {
+                                    queue.running_index=None;
+                                    ensure!(source_live && !queue.closed
+                                        && !queue.release_profiles.contains(&scorer.profile().manifest)
+                                        && permitted(queue.configuration.as_ref(), &job, scorer.profile().manifest),
+                                        "Arbiter delivery revoked");
+                                    Ok(())
+                                });
+                            let result = finish_score_delivery(result, delivery_admission);
                             let _delivery = job.delivery;
                             let _ = job.reply.send(result);
                             shared.running.store(0, Ordering::Release);
@@ -652,6 +774,7 @@ impl Lane {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
                         queue.active_profile = None;
+                        queue.joint_calibration = None;
                         queue.warming_profile = None;
                     }
                     shared.accounting.arbiter_cached(false);

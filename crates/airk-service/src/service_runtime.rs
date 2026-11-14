@@ -5,7 +5,7 @@ use airk_core::service::{
     ControlMethod, ControlRequest, ControlResponse, PROTOCOL_VERSION, ServiceHealth,
 };
 use airk_kernel::service_broker::{Broker, BrokerLimits, new_instance_id};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
@@ -31,10 +31,12 @@ mod lifecycle;
 mod login;
 mod native_admin;
 mod open_reads;
+mod policy_writer;
 mod registration;
 mod resolve;
 mod rotation;
 mod scope_grant;
+mod source_delivery;
 mod storage;
 mod tools_call;
 mod usage;
@@ -281,6 +283,17 @@ fn admin_selection_reader(
                     code: "service_draining".into(),
                 };
             };
+            let decoded = match tools_call::read_context(read.read_attempt) {
+                Ok(context) => context,
+                Err(error) => return tools_call::failed(&error),
+            };
+            let context = read.parent_context.map_or_else(
+                || decoded.clone(),
+                |parent| parent.narrowed(decoded.deadline()),
+            );
+            if let Err(error) = tools_call::require_live(&context) {
+                return tools_call::failed(&error);
+            }
             let grant = tools_call::SelectionGrant {
                 selection: read.selection,
                 scope_identity: read.scope_identity,
@@ -293,6 +306,7 @@ fn admin_selection_reader(
                 read.arguments,
                 read.mode,
                 read.client,
+                context,
             )
             .await
             {
@@ -400,6 +414,51 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let instance_matches = request
         .expected_instance
         .is_none_or(|expected| expected == state.instance);
+    let mut delivery_context = if request.protocol == PROTOCOL_VERSION && instance_matches {
+        match &request.method {
+            ControlMethod::ToolsCall {
+                tool,
+                arguments,
+                read_attempt,
+                ..
+            } => match tools_call::read_context(*read_attempt)
+                .and_then(|context| tools_call::admit_context(tool, arguments, context))
+            {
+                Ok(context) => Some(
+                    context.with_delivery_guard_factory(arbiter::policy_delivery::factory(&state)),
+                ),
+                Err(error) => {
+                    return local_ipc::write_message_limited(
+                        &mut stream,
+                        &tools_call::failed(&error),
+                        Duration::from_secs(5),
+                        request.method.response_frame_budget(),
+                    )
+                    .await;
+                }
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let answer_delivery = matches!(&request.method,ControlMethod::ToolsCall {tool,..} if matches!(tool.as_str(),"answer"|"airk_answer"));
+    if answer_delivery && let Some(context) = &delivery_context {
+        source_delivery::retain_epoch(&state, context)?;
+    }
+    let admin_delivery = match &request.method {
+        ControlMethod::AdminNativeCall {
+            session,
+            request_id,
+            ..
+        }
+        | ControlMethod::AdminNativeRead {
+            session,
+            request_id,
+            ..
+        } => Some((session.clone(), *request_id)),
+        _ => None,
+    };
     if request.protocol == PROTOCOL_VERSION
         && instance_matches
         && !matches!(request.method, ControlMethod::Health)
@@ -447,7 +506,23 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 query_selection,
                 scope_identity,
                 result_digest,
+                context_bindings,
+                read_attempt,
             } => {
+                ensure!(
+                    context_bindings.is_empty() || read_attempt.is_some(),
+                    "context delivery requires original native attempt"
+                );
+                let policy_context = read_attempt
+                    .map(|attempt| tools_call::read_context(Some(attempt)))
+                    .transpose()?;
+                let policy_guard = match policy_context.as_ref() {
+                    Some(context) => Some(arbiter::policy_delivery::factory(&state)(
+                        &context_bindings,
+                        context,
+                    )?),
+                    None => None,
+                };
                 let Some(gate) = state.catalog_gate.as_ref() else {
                     return local_ipc::write_message(
                         &mut stream,
@@ -470,13 +545,15 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 };
                 let control = state.control_root.clone();
                 let expected_revision = clock.revision;
+                let expected_context = context_bindings.clone();
                 let observed = tokio::task::spawn_blocking(move || {
-                    airk_frontend::combined_frontend::validate_delivery(
+                    airk_frontend::combined_frontend::validate_delivery_with_context(
                         &control,
                         &selection,
                         &query_selection,
                         scope_identity,
                         expected_revision,
+                        &expected_context,
                     )
                 })
                 .await;
@@ -498,6 +575,24 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                         };
                         // A partial refused write closes this exchange. Never
                         // append an unguarded fallback after protected bytes.
+                        if let Some(guard) = policy_guard {
+                            let context = policy_context
+                                .as_ref()
+                                .context("context delivery original attempt missing")?;
+                            tools_call::require_live(context)?;
+                            return tokio::time::timeout_at(
+                                tokio::time::Instant::from_std(context.deadline()),
+                                gate.deliver_issue_guarded(
+                                    ticket,
+                                    &mut stream,
+                                    &response,
+                                    Duration::from_secs(5),
+                                    |effect| guard.poll(effect),
+                                ),
+                            )
+                            .await
+                            .context("original context delivery deadline exhausted")?;
+                        }
                         return gate
                             .deliver_issue(ticket, &mut stream, &response, Duration::from_secs(5))
                             .await;
@@ -574,12 +669,24 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             }
             method => {
                 let (response, requested_shutdown) =
-                    canonical_control(state.clone(), method, None).await?;
+                    canonical_control(state.clone(), method, None, delivery_context.clone())
+                        .await?;
                 shutdown |= requested_shutdown;
                 response
             }
         }
     };
+    if answer_delivery
+        && let (Some(context), ControlResponse::ToolResult { result }) =
+            (&delivery_context, &response)
+    {
+        context.retain_delivery_for(result)?;
+    }
+    if matches!(response, ControlResponse::AdminNativeChunk { .. })
+        && let Some((session, id)) = admin_delivery
+    {
+        delivery_context = state.admin.native_delivery_context(&session, id)?;
+    }
     if let ControlResponse::Failure { code, .. }
     | ControlResponse::CatalogOutcomeUnknown { code, .. }
     | ControlResponse::SourceChangeBusy { code, .. }
@@ -599,16 +706,34 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             Some("runtime_incompatible"),
         );
     }
-    deliver_control_response(
-        &state.shutdown,
-        shutdown,
-        local_ipc::write_message_limited(
-            &mut stream,
-            &response,
-            Duration::from_secs(5),
-            response_budget,
-        ),
-    )
+    deliver_control_response(&state.shutdown, shutdown, async {
+        if let Some(context) = &delivery_context {
+            tools_call::require_live(context)?;
+            let mut writer = policy_writer::PolicyWriter {
+                inner: &mut stream,
+                context,
+            };
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(context.deadline()),
+                local_ipc::write_message_limited(
+                    &mut writer,
+                    &response,
+                    Duration::from_secs(5),
+                    response_budget,
+                ),
+            )
+            .await
+            .context("original native delivery deadline exhausted")?
+        } else {
+            local_ipc::write_message_limited(
+                &mut stream,
+                &response,
+                Duration::from_secs(5),
+                response_budget,
+            )
+            .await
+        }
+    })
     .await
 }
 
@@ -620,6 +745,7 @@ fn canonical_control(
     state: Arc<State>,
     method: ControlMethod,
     effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
+    captured_context: Option<airk_mcp::read_attempt::ReadAttemptContext>,
 ) -> ControlFuture {
     Box::pin(async move {
         if let Some(check) = &effect_check
@@ -797,6 +923,17 @@ fn canonical_control(
             ControlMethod::ArbiterNextRead { request } => match &state.arbiter {
                 Some(owner) => match owner.next_read(*request, &state.supervisor).await {
                     Ok(advice) => ControlResponse::ArbiterAdvice {
+                        advice: advice.map(Box::new),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterContextAction { request } => match &state.arbiter {
+                Some(owner) => match owner.context_action(*request, &state.supervisor).await {
+                    Ok(advice) => ControlResponse::ArbiterContextActionAdvice {
                         advice: advice.map(Box::new),
                     },
                     Err(error) => arbiter::failure(error),
@@ -1149,15 +1286,22 @@ fn canonical_control(
                 selection: airk_core::service::ToolSelection::Window { window_id, lease },
                 response_mode,
                 usage_client,
+                read_attempt,
             } => {
+                let context = match captured_context
+                    .map_or_else(|| tools_call::read_context(read_attempt), Ok)
+                {
+                    Ok(context) => context,
+                    Err(error) => return Ok((tools_call::failed(&error), false)),
+                };
                 tools_call::window_response(
                     &state,
-                    window_id,
-                    lease,
+                    (window_id, lease),
                     tool,
                     arguments,
                     response_mode,
                     usage_client,
+                    context,
                 )
                 .await
             }
@@ -1174,8 +1318,15 @@ fn canonical_control(
                     },
                 response_mode,
                 usage_client,
+                read_attempt,
             } => {
-                open_reads::response(
+                let context = match captured_context
+                    .map_or_else(|| tools_call::read_context(read_attempt), Ok)
+                {
+                    Ok(context) => context,
+                    Err(error) => return Ok((tools_call::failed(&error), false)),
+                };
+                open_reads::response_with_context(
                     &state,
                     open_reads::OpenCall {
                         connection_id,
@@ -1186,6 +1337,7 @@ fn canonical_control(
                         mode: response_mode,
                         client: usage_client,
                     },
+                    context,
                 )
                 .await
             }
@@ -1195,7 +1347,14 @@ fn canonical_control(
                 selection,
                 response_mode,
                 usage_client,
+                read_attempt,
             } => {
+                let context = match captured_context
+                    .map_or_else(|| tools_call::read_context(read_attempt), Ok)
+                {
+                    Ok(context) => context,
+                    Err(error) => return Ok((tools_call::failed(&error), false)),
+                };
                 tools_call::response(
                     &state.control_root,
                     tool,
@@ -1203,6 +1362,7 @@ fn canonical_control(
                     selection,
                     response_mode,
                     usage_client,
+                    context,
                 )
                 .await
             }
@@ -1460,6 +1620,14 @@ async fn serve_owned(
     )
     .with_scope_check(admin_scope_check(root.canonicalize()?))
     .with_trust_inspect(admin_trust_inspect(root.canonicalize()?));
+    let policy_state = reader_state.clone();
+    let admin = admin.with_delivery_guard_factory(Arc::new(move |expected, context| {
+        let state = policy_state
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .context("native policy service unavailable")?;
+        arbiter::policy_delivery::factory(&state)(expected, context)
+    }));
     let admin = match catalog_gate.clone() {
         Some(gate) => admin
             .with_selection_authority(admin_selection_authority(gate, selection_control.clone()))

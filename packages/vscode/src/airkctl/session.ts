@@ -516,13 +516,15 @@ export class AirkctlSession {
             if (entry.owner && entry.owner !== child || entry.admit && !entry.admit()) {
                 this.settle(entry); entry.reject(new SessionError('admin_context_changed', false)); continue;
             }
-            if (entry.deadlineAt <= this.timers.now()) { this.abandon(entry, 'session_deadline_exceeded'); continue; }
+            // One conservative sample: a sub-millisecond remainder cannot
+            // grant a new minimum millisecond after the caller's allowance.
+            const remaining = Math.floor(entry.deadlineAt - this.timers.now());
+            if (remaining <= 0) { this.abandon(entry, 'session_deadline_exceeded'); continue; }
             if ('invoke' in entry.request) {
-                const remaining = Math.max(1, Math.min(entry.request.invoke.deadline_ms, Math.round(entry.deadlineAt - this.timers.now())));
-                entry.request = { invoke: { ...entry.request.invoke, deadline_ms: remaining } };
+                entry.request = { invoke: { ...entry.request.invoke, deadline_ms: Math.min(entry.request.invoke.deadline_ms, remaining) } };
             }
             if ('admin_call' in entry.request) entry.request = { admin_call: { ...entry.request.admin_call,
-                deadline_ms: Math.max(1, Math.min(entry.request.admin_call.deadline_ms, Math.floor(entry.deadlineAt - this.timers.now()))) } };
+                deadline_ms: Math.min(entry.request.admin_call.deadline_ms, remaining) } };
             entry.id = entry.originalId ?? newId(); entry.state = 'sent'; this.sent.set(entry.id, entry);
             child.stdin.write(encodeRequest(entry.id, entry.request), error => { if (error) { this.lost(child, 'session_closed'); } });
         }

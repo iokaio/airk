@@ -163,6 +163,43 @@ fn long_document_late_hit_choices_start_at_the_verified_hit_and_stay_distinct() 
 }
 
 #[test]
+fn exact_returned_query_line_anchors_context_without_escaping_verified_citation() -> Result<()> {
+    for (body, expected) in [
+        (
+            result(
+                &scope(),
+                161,
+                240,
+                &format!("{}amber_eof\n", "background\n".repeat(79)),
+            ),
+            240,
+        ),
+        (result(&scope(), 20, 20, "é中\namber_eof\n"), 20),
+        (result(&scope(), 20, 21, "é中\namber_eof\n"), 21),
+        (result(&scope(), 1, 1, "amber_eof\n"), 1),
+        (
+            result(&scope(), 20, 22, "amber_eof\nbackground\namber_eof\n"),
+            20,
+        ),
+        (result(&scope(), 20, 21, "unrelated returned evidence"), 20),
+    ] {
+        let now = Instant::now();
+        let scope = scope();
+        let mut request = request();
+        request.question = "amber_eof".into();
+        let mut gather = Gathering::new(request, scope.clone(), application(&scope), now)?;
+        gather.next(now)?;
+        gather.observe(Ok(body), now)?;
+        let dispatch = gather.next(now)?.context("missing verified context")?;
+        assert_eq!(dispatch.arguments["line"], expected);
+        assert_eq!(dispatch.arguments["before"], 0);
+        assert_eq!(dispatch.arguments["after"], 32);
+        assert_eq!(dispatch.arguments["max_bytes"], 4096);
+    }
+    Ok(())
+}
+
+#[test]
 fn duplicate_context_keeps_the_same_bounded_literal_bridge_choice_for_both_conditions() -> Result<()>
 {
     let now = Instant::now();

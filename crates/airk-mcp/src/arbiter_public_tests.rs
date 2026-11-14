@@ -6,7 +6,13 @@ use crate::{
     unified,
 };
 use airk_core::{
-    arbiter::{Budget, CONTEXT_SCHEMA, ContextRequest, REQUEST_SCHEMA},
+    arbiter::{
+        Budget,
+        context_action::{
+            CONTEXT_SCHEMA_V2 as CONTEXT_SCHEMA, ContextRequestV2 as ContextRequest,
+            REQUEST_SCHEMA_V2 as REQUEST_SCHEMA,
+        },
+    },
     identity::Incarnation,
     service::{ScopedReadRef, WorkerIdentity},
 };

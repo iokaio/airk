@@ -195,3 +195,33 @@ test('retiring a verified session child resets event subscription and discards i
         session.unbind();assert.equal(seen.length,2,'unbind retires the generation once');
     }finally{session.dispose();}
 });
+
+
+test('queued Invoke and Admin deadlines floor fractional time without a minimum millisecond or original send after expiry', async () => {
+    for (const kind of ['invoke','admin'] as const) for (const [observed,expected] of [[8.4,1],[9.6,0],[10,0]] as const) {
+        let now=0;let child!:FakeChild;
+        const held:Record<string,any>[]=[];
+        const invoked=(request:Record<string,any>)=>({id:request.id,outcome:{status:'invoked',exit_code:0,class:'success',stdout:'{}',stderr:''}});
+        const session=new AirkctlSession({clientVersion:'1.9.0',timers:{now:()=>now,set:callback=>callback,clear:()=>{}},
+            launch:()=>child=new FakeChild((request,me)=>{
+                if(request.request.hello){me.send(hello(request,{capabilities:['session/2','tools/1','admin-management/1']}));return;}
+                if(request.request.invoke?.argv[0]==='hold'){held.push(request);return;}
+                if(request.request.invoke){me.send(invoked(request));return;}
+                if(request.request.admin_call){me.send({id:request.id,outcome:{status:'admin_chunk',chunk:{http_status:200,total_bytes:2,offset:0,data:[123,125],done:true}}});}
+            })});
+        const blockers:Promise<unknown>[]=[];
+        try {
+            session.bind(IMAGE);await session.invoke(['version']);
+            for(let n=0;n<MAX_IN_FLIGHT;n++){const blocked=session.invoke(['hold'],{deadlineMs:1000});blockers.push(blocked);void blocked.catch(()=>{});}
+            assert.equal(held.length,MAX_IN_FLIGHT);
+            const pending=kind==='invoke'?session.invoke(['candidate'],{deadlineMs:10}):session.adminCall(session.captureAdmin(),'usage.document',{}, {deadlineMs:10});
+            void pending.catch(()=>{});
+            now=observed;child.send(invoked(held[0]));
+            if(expected===0){await assert.rejects(pending,(error:SessionError)=>error.code==='session_deadline_exceeded'&&!error.sent);}
+            else {await pending;}
+            const actual=child.requests.filter(request=>kind==='invoke'?request.request.invoke?.argv[0]==='candidate':!!request.request.admin_call);
+            assert.equal(actual.length,expected===0?0:1,kind+' at '+observed);
+            if(expected>0){assert.equal((kind==='invoke'?actual[0].request.invoke:actual[0].request.admin_call).deadline_ms,expected);}
+        } finally {session.dispose();await Promise.allSettled(blockers);}
+    }
+});

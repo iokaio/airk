@@ -46,3 +46,18 @@ strict offsets, duplicate suppression, cancellation before/after dispatch,
 session isolation, expiry during dispatch and between chunks, and no-effect
 admission refusals. These injected-handler
 tests do not establish real I1/I2 transport or installed-editor qualification.
+
+Actual delivery retains the original ReadAttemptContext after body creation and
+through the last native chunk's outer I1 write. A chunk builder is not a policy
+linearization point. Native delivery-context lookup validates the same session,
+request identity, original deadline and dispatch phase; missing custody refuses.
+Known Answer results register the Core-owned exact delivery binding roster in
+shared context custody before JSON/SSE/chunk projection. The guard captures
+immutable native policy facts, the original narrowed deadline and cancellation;
+it cannot capture the context/container and create a cycle.
+
+HTTPS and native I1 writers execute the actual synchronous write poll under
+Store policy read ownership, then credential/read-context cells and NativeGate
+in that order. No lock is held across an await or Poll::Pending. Disable/profile
+switch may not commit across an admitted byte cut. Once revoked, a buffered or
+partially written response closes; it cannot become a successful fallback.

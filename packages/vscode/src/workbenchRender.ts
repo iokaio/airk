@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { answerEvidenceRows } from './workbenchAnswerNavigation';
+import { answerEvidenceRows, isAnswerEnvelope } from './workbenchAnswerNavigation';
 import {nativeVerification,readResultBody,selectedVerification,verificationLabel} from './sourceVerification';
 import { CapabilityFieldDisplay, Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn, WORKBENCH_MAX_STEP_REPORTS } from './workbenchContracts';
 
@@ -206,7 +206,7 @@ export function discoveryFollowupPlan(envelope:Value,step:string,target:string,p
 
 /** Rich native plan records retain their complete citation and original location. */
 export function evidenceRows(envelope:Value):Value[] {
-    if(envelope.schema==='airk.arbiter.context/1')return answerEvidenceRows(envelope);
+    if(isAnswerEnvelope(envelope))return answerEvidenceRows(envelope);
     if(Array.isArray(envelope.evidence))return envelope.evidence.map(object);
     const pointer=(root:Value,path:unknown):unknown=>{
         if(typeof path!=='string'||path.length>4096||!path.startsWith('/'))return;
@@ -252,7 +252,8 @@ export function evidenceCards(envelope: Value): EvidenceCard[] {
             step: String(row.step ?? ''), publication: typeof row.publication === 'string' ? row.publication : undefined,
             ...(typeof origin.index_id==='string'?{indexId:origin.index_id}:{}),...(Array.isArray(origin.project_ids)?{projectIds:origin.project_ids.map(String)}:{}),
             ...(typeof origin.source_root_id==='string'?{sourceRootId:origin.source_root_id}:{}),...(typeof origin.source_relative_path==='string'?{sourceRelativePath:origin.source_relative_path}:{}),
-            ...(typeof row.result_pointer==='string'?{resultPointer:row.result_pointer}:{}) }];
+            ...(typeof row.result_pointer==='string'?{resultPointer:row.result_pointer}:{}),
+            ...(Number.isSafeInteger(row.answer_member)?{answerMember:Number(row.answer_member)}:{}) }];
     });
 }
 /** A display-only cache owned by one view, bounded to its current transcript.
@@ -349,7 +350,7 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>,projection=
         const label=searchExecutionLabel(details.execution);
         return Object.keys(details).length?[...(label?[escape(label)]:[]),`### ${escape(String(report.tool??report.id??'Step'))} discovery details\n\n${fenced(canonical(details))}`]:[];
     });
-    return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? 'not available'))}`,
+    return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? e.stop ?? object(e.context).termination ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? object(object(object(e.assessment).scope).publication).token ?? (isAnswerEnvelope(e)&&e.schema==='airk.combined-read/1'?'Independent member publication vector retained in complete response':'not available')))}`,
         `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.selection ? [`Explicit selection: ${escape(openSelectionArgv(turn.selection).join(' '))}`] : []), ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
         ...(e.scope_observation!==undefined?[`### Recorded scope observation\n\n${fenced(canonical(e.scope_observation))}`]:[]),
         ...(selected?[`### ${selectedChecks?.requested?'Selected evidence and dated source observations':'Selected evidence'}\n\n${fenced(canonical({evidence:selectedRows,...(selectedChecks?.requested?{source_verification_observations:selectedChecks.observations,selected_verification_accounting:selectedChecks.accounting}:{})}))}`]:[]),

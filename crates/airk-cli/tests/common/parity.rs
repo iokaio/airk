@@ -19,6 +19,7 @@
 // Strict new transport comparisons live separately. The original U95 v1
 // captures retain their approved, explicitly limited legacy comparison.
 pub mod strict;
+pub mod context;
 
 use serde::{Deserialize, Serialize};
 use std::{

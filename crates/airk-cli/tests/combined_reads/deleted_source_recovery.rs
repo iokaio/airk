@@ -274,12 +274,14 @@ fn reconnect_healthy_after_catalog_commit(
     require_catalog_fenced_socket(old)?;
     let mut fresh = McpSession {
         transport: mcp.transport.reconnect(&f.control)?,
+        negotiated_protocol:String::new(),
     };
     let initialized = fresh.request(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
     ensure!(
         initialized.get("error").is_none(),
         "explicit reconnect initialization failed: {initialized}"
     );
+    fresh.negotiated_protocol=initialized["result"]["protocolVersion"].as_str().context("actual reconnected MCP protocol")?.to_owned();
     fresh
         .transport
         .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;

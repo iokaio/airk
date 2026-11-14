@@ -12,6 +12,45 @@ use anyhow::Context as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct Echo;
+struct PassDelivery;
+impl airk_mcp::read_attempt::ReadDeliveryGuard for PassDelivery {
+    fn bindings_digest(&self)->Sha256Digest{Sha256Digest::from_bytes([0;32])}
+    fn poll(&self,effect:&mut dyn FnMut()->Poll<std::io::Result<usize>>)->Poll<std::io::Result<usize>>{effect()}
+}
+struct PolicyIo {
+    inner:CountWrites,
+    policy:Arc<Mutex<u64>>,
+    armed:Arc<AtomicBool>,
+}
+impl AsyncRead for PolicyIo {
+    fn poll_read(self:Pin<&mut Self>,cx:&mut Context<'_>,buffer:&mut ReadBuf<'_>)->Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_read(cx,buffer)
+    }
+}
+impl AsyncWrite for PolicyIo {
+    fn poll_write(self:Pin<&mut Self>,cx:&mut Context<'_>,bytes:&[u8])->Poll<std::io::Result<usize>> {
+        let this=self.get_mut();
+        if this.armed.load(Ordering::SeqCst){assert!(this.policy.try_lock().is_err(),"Store policy was released before actual ciphertext write poll");}
+        Pin::new(&mut this.inner).poll_write(cx,bytes)
+    }
+    fn poll_flush(self:Pin<&mut Self>,cx:&mut Context<'_>)->Poll<std::io::Result<()>>{Pin::new(&mut self.get_mut().inner).poll_flush(cx)}
+    fn poll_shutdown(self:Pin<&mut Self>,cx:&mut Context<'_>)->Poll<std::io::Result<()>>{Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)}
+}
+struct PolicyDelivery {
+    current:Arc<Mutex<u64>>,
+    expected:u64,
+    polls:Arc<AtomicUsize>,
+}
+impl airk_mcp::read_attempt::ReadDeliveryGuard for PolicyDelivery {
+    fn bindings_digest(&self)->Sha256Digest{Sha256Digest::from_bytes([1;32])}
+    fn poll(&self,effect:&mut dyn FnMut()->Poll<std::io::Result<usize>>)->Poll<std::io::Result<usize>> {
+        self.polls.fetch_add(1,Ordering::SeqCst);
+        let current=self.current.lock().unwrap();
+        if *current!=self.expected{return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,"native policy changed")))}
+        effect()
+    }
+}
+
 
 #[tokio::test]
 async fn saturated_authentication_refuses_before_native_validation() -> anyhow::Result<()> {
@@ -208,6 +247,7 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
         tls,
         validate,
         NativeAdmission {
+            delivery_guard_factory:Arc::new(|_,_|Ok(Arc::new(PassDelivery))),
             closed: Arc::new(move || fence.load(Ordering::SeqCst)),
             gate: native_gate,
             admit: Arc::new(|| Ok(Arc::new(()))),
@@ -2048,4 +2088,153 @@ async fn an_open_connection_survives_a_revision_move_and_a_scoped_one_does_not()
     let delivered = opened.poll(|| Poll::Ready(Ok(7usize)));
     assert!(matches!(delivered, Poll::Ready(Ok(7))));
     Ok(())
+}
+
+#[tokio::test]
+async fn native_policy_fences_buffered_tls_bytes_at_actual_write_poll()->anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt,AsyncWriteExt};
+    for read_driven in [false,true] {for prefix in [false,true] {
+        let f=fixture(57427)?;
+        let delivery=ConnectionFence::new(f.gateway.0.native_gate.clone());
+        let (socket,peer)=tokio::io::duplex(65536);let bytes=Arc::new(AtomicUsize::new(0));
+        let policy=Arc::new(Mutex::new(1u64));let armed=Arc::new(AtomicBool::new(false));
+        let raw=FencedIo{inner:PolicyIo{inner:CountWrites{inner:socket,bytes:bytes.clone()},policy:policy.clone(),armed:armed.clone()},delivery:delivery.clone()};
+        let mut roots=rustls::RootCertStore::empty();roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
+        let config=rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()?.with_root_certificates(roots).with_no_client_auth();
+        let connector=tokio_rustls::TlsConnector::from(Arc::new(config));let acceptor=f.gateway.0.tls.borrow().clone();
+        let (server,client)=tokio::time::timeout(Duration::from_secs(5),async {
+            tokio::join!(acceptor.accept(raw),connector.connect(rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),peer))
+        }).await?;
+        let mut server=server?;let mut client=client?;
+        let context=ReadAttemptContext::new(Instant::now()+Duration::from_secs(30),CancellationToken::new());
+        let polls=Arc::new(AtomicUsize::new(0));
+        context.retain_delivery_guard(Arc::new(PolicyDelivery{current:policy.clone(),expected:1,polls:polls.clone()}))?;
+        delivery.bind_request(context).await?;armed.store(true,Ordering::SeqCst);
+        if prefix {
+            server.write_all(b"part").await?;server.flush().await?;
+            let mut observed=[0;4];tokio::time::timeout(Duration::from_secs(5),client.read_exact(&mut observed)).await??;
+            assert_eq!(&observed,b"part");
+        }
+        std::io::Write::write_all(&mut server.get_mut().1.writer(),b"buffered mixed NN result")?;
+        assert!(server.get_ref().1.wants_write(),"fixture must retain actual queued ciphertext");
+        let before=bytes.load(Ordering::SeqCst);
+        let polls_before=polls.load(Ordering::SeqCst);
+        *policy.lock().unwrap()=2; // disable/profile switch after computation, before actual socket poll
+        let failed=tokio::time::timeout(Duration::from_secs(5),async {
+            if read_driven {
+                // Ordinary incoming application data does not flush queued TLS
+                // output. An invalid encrypted record drives pinned tokio-rustls
+                // read_io's last-gasp alert write through the actual raw fence.
+                client.get_mut().0.write_all(&[23,3,3,0,1,0]).await?;
+                let mut buffer=[0;1];server.read(&mut buffer).await.map(|_|())
+            } else {server.flush().await}
+        }).await?;
+        assert!(failed.is_err(),"revoked TLS output must refuse (read_driven={read_driven},prefix={prefix})");
+        assert!(polls.load(Ordering::SeqCst)>polls_before,"TLS must actually attempt the guarded write, including the read-driven alert");
+        assert_eq!(bytes.load(Ordering::SeqCst),before,"revoked ciphertext reached actual socket");
+        f.gateway.close().await;
+    }}
+    Ok(())
+}
+
+#[tokio::test]
+async fn policy_lock_covers_actual_http_effect_and_rechecks_after_partial_write()->anyhow::Result<()> {
+    let f=fixture(57428)?;let delivery=ConnectionFence::new(f.gateway.0.native_gate.clone());
+    let policy=Arc::new(Mutex::new(1u64));
+    let context=ReadAttemptContext::new(Instant::now()+Duration::from_secs(30),CancellationToken::new());
+    context.retain_delivery_guard(Arc::new(PolicyDelivery{current:policy.clone(),expected:1,polls:Arc::new(AtomicUsize::new(0))}))?;
+    delivery.bind_request(context).await?;
+    let mut output=Vec::new();
+    let result=delivery.poll(||{
+        assert!(policy.try_lock().is_err(),"policy ownership was dropped before the actual IO effect");
+        output.extend_from_slice(b"part");Poll::Ready(Ok(4usize))
+    });
+    assert!(matches!(result,Poll::Ready(Ok(4))));
+    *policy.lock().unwrap()=2;
+    let result=delivery.poll(||{output.extend_from_slice(b"stale fallback");Poll::Ready(Ok(14usize))});
+    assert!(matches!(result,Poll::Ready(Err(_))));assert_eq!(output,b"part");
+    f.gateway.close().await;Ok(())
+}
+
+struct NativeSourceGuard {
+    gate:NativeCatalogAdmission,
+    ticket:IssueTicket,
+    policy:Arc<Mutex<u64>>,
+    calls:Arc<AtomicUsize>,
+    cancel_at_cut:Option<CancellationToken>,
+    expire_at_cut:Option<Arc<AtomicBool>>,
+}
+impl airk_mcp::read_attempt::ReadSourceDeliveryGuard for NativeSourceGuard {
+    fn kind(&self)->airk_mcp::read_attempt::ReadSourceGuardKind{airk_mcp::read_attempt::ReadSourceGuardKind::Selection}
+    fn identity(&self)->Sha256Digest{Sha256Digest::from_bytes([3;32])}
+    fn check(&self)->std::io::Result<()>{self.gate.check_issue(self.ticket).map_err(|_|std::io::Error::other("native source fenced"))}
+    fn poll(&self,effect:&mut dyn FnMut()->Poll<std::io::Result<usize>>)->Poll<std::io::Result<usize>> {
+        assert!(self.policy.try_lock().is_err(),"native source gate entered outside Store policy ownership");
+        self.calls.fetch_add(1,Ordering::SeqCst);
+        if let Some(cancel)=&self.cancel_at_cut{cancel.cancel();}
+        if let Some(live)=&self.expire_at_cut{live.store(false,Ordering::SeqCst);}
+        self.gate.with_issue(self.ticket,effect).unwrap_or_else(|_|Poll::Ready(Err(std::io::Error::other("native source fenced"))))
+    }
+}
+#[tokio::test]
+async fn native_source_delivery_is_nested_once_inside_policy_and_credential_cuts()->anyhow::Result<()> {
+    let f=fixture(57429)?;let delivery=ConnectionFence::new(f.gateway.0.native_gate.clone());
+    let ticket=f.gateway.0.native_gate.capture_current_issue(Incarnation::from_bytes([2;16]),CatalogRevision::INITIAL)?;
+    *delivery.ticket.lock().unwrap()=Some(ticket);
+    let policy=Arc::new(Mutex::new(1u64));let calls=Arc::new(AtomicUsize::new(0));
+    let context=ReadAttemptContext::new(Instant::now()+Duration::from_secs(30),CancellationToken::new());
+    context.retain_delivery_guard(Arc::new(PolicyDelivery{current:policy.clone(),expected:1,polls:Arc::new(AtomicUsize::new(0))}))?;
+    context.retain_source_delivery_guard(Arc::new(NativeSourceGuard{gate:f.gateway.0.native_gate.clone(),ticket,policy:policy.clone(),calls:calls.clone(),cancel_at_cut:None,expire_at_cut:None}))?;
+    delivery.bind_request(context).await?;
+    let mut bytes=Vec::new();assert!(matches!(delivery.poll(||{bytes.extend_from_slice(b"first");Poll::Ready(Ok(5usize))}),Poll::Ready(Ok(5))));
+    assert_eq!(calls.load(Ordering::SeqCst),1);
+    *policy.lock().unwrap()=2;
+    assert!(matches!(delivery.poll(||{bytes.extend_from_slice(b"revoked");Poll::Ready(Ok(7usize))}),Poll::Ready(Err(_))));
+    assert_eq!(calls.load(Ordering::SeqCst),1);assert_eq!(bytes,b"first");
+    f.gateway.close().await;Ok(())
+}
+
+#[tokio::test]
+async fn cancellation_after_outer_policy_check_refuses_actual_http_write_cut()->anyhow::Result<()> {
+    let f=fixture(57430)?;let delivery=ConnectionFence::new(f.gateway.0.native_gate.clone());
+    let ticket=f.gateway.0.native_gate.capture_current_issue(Incarnation::from_bytes([2;16]),CatalogRevision::INITIAL)?;
+    *delivery.ticket.lock().unwrap()=Some(ticket);
+    let policy=Arc::new(Mutex::new(1u64));let calls=Arc::new(AtomicUsize::new(0));let canceled=CancellationToken::new();
+    let context=ReadAttemptContext::new(Instant::now()+Duration::from_secs(30),canceled.clone());
+    context.retain_delivery_guard(Arc::new(PolicyDelivery{current:policy.clone(),expected:1,polls:Arc::new(AtomicUsize::new(0))}))?;
+    context.retain_source_delivery_guard(Arc::new(NativeSourceGuard{gate:f.gateway.0.native_gate.clone(),ticket,policy,calls:calls.clone(),cancel_at_cut:Some(canceled),expire_at_cut:None}))?;
+    delivery.bind_request(context).await?;
+    let writes=AtomicUsize::new(0);
+    let result=delivery.poll(||{writes.fetch_add(1,Ordering::SeqCst);Poll::Ready(Ok(1usize))});
+    assert!(matches!(result,Poll::Ready(Err(_))));assert_eq!(calls.load(Ordering::SeqCst),1);assert_eq!(writes.load(Ordering::SeqCst),0);
+    f.gateway.close().await;Ok(())
+}
+
+struct CutDeadlineGuard {policy:Arc<Mutex<u64>>,live:Arc<AtomicBool>}
+impl airk_mcp::read_attempt::ReadDeliveryGuard for CutDeadlineGuard {
+    fn bindings_digest(&self)->Sha256Digest{Sha256Digest::from_bytes([4;32])}
+    fn check_live(&self)->std::io::Result<()>{
+        if self.live.load(Ordering::SeqCst){Ok(())}else{Err(std::io::Error::new(std::io::ErrorKind::TimedOut,"injected original narrowed deadline expired"))}
+    }
+    fn poll(&self,effect:&mut dyn FnMut()->Poll<std::io::Result<usize>>)->Poll<std::io::Result<usize>>{
+        let _policy=self.policy.lock().unwrap();
+        if let Err(error)=self.check_live(){return Poll::Ready(Err(error))}
+        effect()
+    }
+}
+#[tokio::test]
+async fn narrowed_deadline_expiring_inside_source_gate_refuses_actual_http_cut()->anyhow::Result<()> {
+    let f=fixture(57431)?;let delivery=ConnectionFence::new(f.gateway.0.native_gate.clone());
+    let ticket=f.gateway.0.native_gate.capture_current_issue(Incarnation::from_bytes([2;16]),CatalogRevision::INITIAL)?;
+    *delivery.ticket.lock().unwrap()=Some(ticket);
+    let policy=Arc::new(Mutex::new(1u64));let calls=Arc::new(AtomicUsize::new(0));let live=Arc::new(AtomicBool::new(true));
+    let context=ReadAttemptContext::new(Instant::now()+Duration::from_secs(30),CancellationToken::new());
+    context.retain_delivery_guard(Arc::new(CutDeadlineGuard{policy:policy.clone(),live:live.clone()}))?;
+    context.retain_source_delivery_guard(Arc::new(NativeSourceGuard{gate:f.gateway.0.native_gate.clone(),ticket,policy,calls:calls.clone(),cancel_at_cut:None,expire_at_cut:Some(live)}))?;
+    delivery.bind_request(context).await?;
+    let writes=AtomicUsize::new(0);
+    assert!(matches!(delivery.poll(||{writes.fetch_add(1,Ordering::SeqCst);Poll::Ready(Ok(1usize))}),Poll::Ready(Err(_))));
+    assert_eq!(calls.load(Ordering::SeqCst),1);assert_eq!(writes.load(Ordering::SeqCst),0);
+    f.gateway.close().await;Ok(())
 }

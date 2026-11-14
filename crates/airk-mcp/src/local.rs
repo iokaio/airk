@@ -189,7 +189,36 @@ impl LocalTools {
         arguments: serde_json::Map<String, serde_json::Value>,
         context: crate::read_attempt::ReadAttemptContext,
     ) -> anyhow::Result<CallToolResult> {
+        let context = crate::read_attempt::admit_tool_context(&name, &arguments, context);
         let mut server = self.direct_server.clone();
+        let answer = matches!(name.as_str(), "airk_answer" | "answer")
+            || context.context_partition().is_some();
+        anyhow::ensure!(
+            !answer
+                || context.wire_attempt().is_none()
+                || context.captured_transport_attempt().is_some(),
+            "narrowed Answer requires the native Host-captured absolute attempt before local dispatch"
+        );
+        if let Some(attempt) = context.captured_transport_attempt()
+            && (matches!(name.as_str(), "airk_answer" | "answer")
+                || context.context_partition().is_some())
+        {
+            anyhow::ensure!(
+                matches!(name.as_str(), "airk_answer" | "answer"),
+                "context partition requires canonical Answer"
+            );
+            server.kernel = match context.context_partition() {
+                Some(partition) => server
+                    .kernel
+                    .with_context_partition(partition.clone(), attempt)?,
+                None => server.kernel.with_context_attempt(attempt)?,
+            };
+        } else if context.wire_attempt().is_none() {
+            anyhow::ensure!(
+                context.context_partition().is_none(),
+                "context partition has no original wire attempt"
+            );
+        }
         server.read_attempt = Some(if context.uses_remote_admission() {
             context.clone()
         } else {

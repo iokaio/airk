@@ -148,6 +148,7 @@ fn run(line: Vec<OsString>, full_responses: bool, input: &[u8]) -> Output {
     let code = {
         let mut stdin = input;
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut stdin,
             stdout: &mut stdout,
             stderr: &mut stderr,

@@ -1,22 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[test]
-fn answer_application_requires_next_read_in_actual_enrollment_and_profile() {
+fn answer_application_requires_joint_task_in_actual_enrollment_and_profile() {
     use std::collections::BTreeSet;
     let relevance = BTreeSet::from([Task::EvidenceRelevance]);
-    let next = BTreeSet::from([Task::ContextNextRead]);
+    let next = BTreeSet::from([Task::ContextAction]);
     assert!(
-        !supports_next_read(&relevance, &next),
+        !supports_answer_task(&relevance, &next),
         "Another enrolled task cannot enable answer advice"
     );
     assert!(
-        !supports_next_read(&next, &relevance),
+        !supports_answer_task(&next, &relevance),
         "A relevance-only resident model is not an answer adviser"
     );
     assert!(
-        supports_next_read(&next, &next),
+        supports_answer_task(&next, &next),
         "Explicit current task on both owners is eligible"
     );
+}
+#[test]
+fn joint_and_legacy_tasks_never_authorize_each_others_advice() {
+    use std::collections::BTreeSet;
+    let legacy = BTreeSet::from([Task::ContextNextRead]);
+    let joint = BTreeSet::from([Task::ContextAction]);
+    assert!(
+        !supports_answer_task(&legacy, &legacy),
+        "a warm legacy-only profile is not current Answer/2 readiness"
+    );
+    assert!(!supports_answer_task(&legacy, &joint));
+    assert!(!supports_answer_task(&joint, &legacy));
+    assert!(supports_answer_task(&joint, &joint));
 }
 #[test]
 fn scoped_application_does_not_disclose_another_indexes_selected_profile() {

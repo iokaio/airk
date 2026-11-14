@@ -13,6 +13,14 @@ identity and remote-admission semantics remain unchanged. Private sampled
 helpers permit deterministic nanosecond tests without sleeping or broadening
 the public API.
 
+The whole Answer owner captures the already narrowed native frame once before
+member work. An unchanged opaque Instant deadline reuses that exact request ID,
+clock and absolute expiry; separate member samples only reduce remaining time.
+A genuinely narrower child may shorten expiry, never enlarge its captured
+ceiling. Cancellation, expiry, foreign clocks and identity rebinding refuse.
+This preserves the service ledger's exact cross-member parent identity without
+renewing time at a worker hop.
+
 The feature-version gate preserves strict legacy query serialization. Existing
 native service/version, worker/grant and same-boot fences still apply; the gate
 alone does not authorize mixed-version runtime pairs. There is no new wire,

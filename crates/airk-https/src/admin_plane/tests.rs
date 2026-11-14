@@ -2863,3 +2863,58 @@ fn every_dropped_admin_grant_hands_back_its_nonce() {
     assert_eq!(sessions.take_dropped(), [nonce(15)]);
     assert_eq!(sessions.len(), 0);
 }
+
+#[tokio::test]
+async fn invalid_original_read_parent_observes_no_scope_or_backend() {
+    let (plane, sent, _) = scripted_plane(Vec::new());
+    let (cookie, csrf) = sign_in(&plane).await;
+    let (status, reply) = envelope(
+        &plane,
+        api_call(
+            &cookie,
+            &csrf,
+            "search.select_scope",
+            &grant_body(GRANTED_INDEX, 12),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    let observations = Arc::new(AtomicU64::new(0));
+    let counted = observations.clone();
+    let plane = plane.with_scope_check(Arc::new(move |_| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Err("invalid original parent reached scope observation".to_owned()) })
+    }));
+    let now = airk_process::monotonic::now_ns().unwrap();
+    for schema in [1, 2] {
+        let result = plane
+            .read(
+                "search.call",
+                Some(&cookie),
+                ControlMethod::ToolsCall {
+                    tool: "airk_answer".into(),
+                    arguments: serde_json::Map::new(),
+                    selection: ToolSelection::Admin,
+                    response_mode: airk_core::service::ToolResponseMode::Full,
+                    usage_client: airk_core::usage::ClientFamily::Cli,
+                    read_attempt: Some(airk_core::read_attempt::ReadAttemptBudget {
+                        schema,
+                        request_id: Incarnation::from_bytes([8; 16]),
+                        clock: if cfg!(windows) {
+                            airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+                        } else {
+                            airk_core::read_attempt::ReadClock::UnixMonotonic
+                        },
+                        expires_monotonic_ns: now,
+                        remaining_ns: 2_000_000_000,
+                        native_retry_expires_monotonic_ns: None,
+                    }),
+                },
+                None,
+            )
+            .await;
+        assert!(result.is_ok(), "typed canonical read failure response");
+    }
+    assert_eq!(observations.load(Ordering::SeqCst), 0);
+    assert!(sent.lock().unwrap().is_empty());
+}

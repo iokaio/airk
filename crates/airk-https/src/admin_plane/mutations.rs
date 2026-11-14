@@ -575,6 +575,7 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::Arbiter { .. }
         | ControlResponse::ArbiterApplication { .. }
         | ControlResponse::ArbiterAdvice { .. }
+        | ControlResponse::ArbiterContextActionAdvice { .. }
         | ControlResponse::ModelCatalog { .. }
         | ControlResponse::UsageDocument { .. }
         | ControlResponse::ConfigurationPrepared { .. }

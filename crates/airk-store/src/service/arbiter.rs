@@ -89,6 +89,42 @@ impl ConfigurationStore {
         }
     }
 
+    /// Read-only final-delivery cut. The same writer and existing OS lock as
+    /// apply_checked fence configuration publication through the synchronous
+    /// effect. Admission never waits; caller cancellation/deadline is checked
+    /// before and after bounded metadata I/O. Never await or acquire lifecycle
+    /// locks inside effect. The owning native gate is acquired AFTER Store.
+    pub fn with_current<T>(
+        &self,
+        live: impl Fn() -> Result<()>,
+        effect: impl FnOnce(&Configuration) -> Result<T>,
+    ) -> Result<T> {
+        live()?;
+        let _writer = self
+            .writer
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter delivery configuration busy"))?;
+        live()?;
+        match self.root.open_dir(OsStr::new("arbiter-v1")) {
+            Ok(_) => anyhow::bail!("Arbiter prototype configuration requires explicit migration"),
+            Err(error) if missing(&error) => {}
+            Err(error) => return Err(error),
+        }
+        let directory = self.root.open_dir(OsStr::new(DIRECTORY))?;
+        let lock =
+            directory.open_file(OsStr::new("configuration.lock"), SetupFileMode::ReadWrite)?;
+        ensure!(
+            lock.metadata()?.len() == 0,
+            "invalid Arbiter state ownership file"
+        );
+        lock.try_lock_shared()
+            .context("Arbiter delivery configuration writer active")?;
+        live()?;
+        let (current, _) = self.read(&directory)?;
+        live()?;
+        effect(&current)
+    }
+
     /// The caller validates management authority and index/catalog membership
     /// before this CAS. Store rechecks exact immutable installation/catalog IDs.
     pub fn apply(
@@ -312,6 +348,47 @@ mod tests {
         assert!(task.join().unwrap().is_err());
         assert!(!owner.path().join(DIRECTORY).exists());
         assert!(!store.load()?.enabled);
+        Ok(())
+    }
+    #[test]
+    fn final_delivery_policy_admission_refuses_busy_writer_without_waiting_or_effect() -> Result<()>
+    {
+        let (_root, store) = fixture()?;
+        let current = enabled(&store)?;
+        store.apply(1, &current)?;
+        let _held = store.writer.lock().unwrap();
+        let mut effect = false;
+        assert!(
+            store
+                .with_current(
+                    || Ok(()),
+                    |_| {
+                        effect = true;
+                        Ok(())
+                    }
+                )
+                .is_err()
+        );
+        assert!(!effect);
+        Ok(())
+    }
+    #[test]
+    fn final_delivery_shared_file_lock_fences_another_configuration_adapter() -> Result<()> {
+        let (_root, store) = fixture()?;
+        let current = enabled(&store)?;
+        store.apply(1, &current)?;
+        let other =
+            ConfigurationStore::open(store._ownership.clone(), store.installation, store.catalog)?;
+        let mut disabled = current.clone();
+        disabled.revision += 1;
+        disabled.enabled = false;
+        store.with_current(||Ok(()),|observed| {
+            assert_eq!(*observed,current);
+            assert!(other.apply(2,&disabled).is_err(),"another adapter cannot publish while actual delivery poll owns shared policy lock");
+            Ok(())
+        })?;
+        assert_eq!(other.apply(2, &disabled)?, disabled);
+        assert_eq!(store.load()?, disabled);
         Ok(())
     }
 }

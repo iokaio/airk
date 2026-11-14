@@ -1064,8 +1064,18 @@ fn a_stale_window_read_reselects_once_and_retries_once() {
     let service = FakeService::new(E1, script.clone());
     let runs = Arc::new(AtomicU64::new(0));
     let counted = runs.clone();
+    let budgets = Arc::new(Mutex::new(Vec::new()));
+    let observed = budgets.clone();
+    let elapsed = clock.clone();
     let mut client = Client::start(options(&clock, Some(service.clone()), move |_, io| {
-        counted.fetch_add(1, Ordering::SeqCst);
+        let invocation = counted.fetch_add(1, Ordering::SeqCst);
+        observed
+            .lock()
+            .unwrap()
+            .push(io.read_attempt.as_ref().unwrap().live_budget().unwrap());
+        if invocation == 0 {
+            elapsed.advance(250);
+        }
         let route = io.window.as_deref_mut().expect("a routed read");
         route.refused = Some("scoped_read_unavailable".into());
         ExitClass::Refused.code()
@@ -1080,6 +1090,18 @@ fn a_stale_window_read_reselects_once_and_retries_once() {
         "{first}"
     );
     assert_eq!(runs.load(Ordering::SeqCst), 2, "the read and one retry");
+    let observed = budgets.lock().unwrap();
+    assert_eq!(observed.len(), 2);
+    assert_eq!(observed[0].request_id, observed[1].request_id);
+    assert_eq!(
+        observed[0].expires_monotonic_ns,
+        observed[1].expires_monotonic_ns
+    );
+    assert_eq!(
+        observed[0].remaining_ns - observed[1].remaining_ns,
+        250_000_000
+    );
+    drop(observed);
     let mut again = select[1].clone();
     again["id"] = json!(id(0x0d));
     let second = client.ask(&again);

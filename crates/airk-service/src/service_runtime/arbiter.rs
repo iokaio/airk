@@ -15,11 +15,17 @@ mod download;
 pub(super) mod evaluation;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(any(feature = "local-inference", test))]
+mod joint_ledger;
+mod joint_scoring;
 #[cfg(feature = "local-inference")]
 mod lifecycle;
+pub(super) mod policy_delivery;
 mod scoring;
 
 pub(super) struct Owner {
+    #[cfg(feature = "local-inference")]
+    joint_ledger: Mutex<joint_ledger::Ledger>,
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
     evaluation: Option<airk_retrieval::arbiter::runtime::EvaluationCatalog>,
     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
@@ -48,6 +54,8 @@ impl Owner {
             clock.namespace,
         )?;
         Ok(Self {
+            #[cfg(feature = "local-inference")]
+            joint_ledger: Mutex::new(joint_ledger::Ledger::default()),
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
             evaluation: None,
             ownership: ownership.clone(),
@@ -139,9 +147,9 @@ impl Owner {
                     .iter()
                     .find(|profile| Some(profile.manifest) == configuration.selected_profile);
                 if let (Some(enrollment), Some(selected)) = (enrollment, selected)
-                    && !supports_next_read(&enrollment.tasks, &selected.tasks)
+                    && !supports_answer_task(&enrollment.tasks, &selected.tasks)
                 {
-                    (Availability::UnsupportedTask, "ContextNextRead is not supported by both this index enrollment and the selected native profile; no answer advice was applied.".to_string())
+                    (Availability::UnsupportedTask, "No current context task is supported by both this index enrollment and the selected native profile; no answer advice was applied.".to_string())
                 } else {
                     let status = match self.status() {
                         Ok(value) => value,
@@ -297,11 +305,11 @@ fn profile_for_index(
 }
 
 #[cfg(any(feature = "local-inference", test))]
-fn supports_next_read(
+fn supports_answer_task(
     enrollment: &std::collections::BTreeSet<Task>,
     profile: &std::collections::BTreeSet<Task>,
 ) -> bool {
-    enrollment.contains(&Task::ContextNextRead) && profile.contains(&Task::ContextNextRead)
+    enrollment.contains(&Task::ContextAction) && profile.contains(&Task::ContextAction)
 }
 
 pub(super) fn failure(error: anyhow::Error) -> ControlResponse {

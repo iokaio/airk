@@ -749,6 +749,93 @@ async fn global_and_step_verification_use_real_plan_handlers_and_bind_prepared_c
     Ok(())
 }
 
+#[tokio::test]
+async fn answer_verification_controls_reach_the_saved_source_owner_through_actual_sdk() -> Result<()>
+{
+    use airk_core::{
+        identity::Incarnation,
+        service::{ScopedReadRef, WorkerIdentity},
+    };
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path().join("source");
+    std::fs::create_dir_all(root.join("public"))?;
+    let path = root.join("public/policy.md");
+    std::fs::write(
+        &path,
+        "# Amber\namber_callback preserves the original revision.\n",
+    )?;
+    let base = Kernel::open(&root, Some(fixture.path().join("data")))?;
+    base.configure_vectors(false)?;
+    base.index()?;
+    let authority = super::scoped_observation_tests::authority(&base)?;
+    let kernel = base.with_scoped_reads(authority.clone())?;
+    let reference = ScopedReadRef {
+        schema: 1,
+        lease_generation: 1,
+        index_id: authority.index_id,
+        grant_id: Some(authority.grant.id),
+        grant_revision: Some(authority.grant.revision),
+        selection: None,
+        fingerprint: kernel.scoped_read_fingerprint()?.unwrap(),
+    };
+    let worker = WorkerIdentity {
+        service: Incarnation::from_bytes([8; 16]),
+        worker: Incarnation::from_bytes([9; 16]),
+        project: authority.backing,
+        fencing_generation: 1,
+    };
+    let kernel = kernel.with_native_arbiter(
+        worker,
+        reference,
+        std::sync::Arc::new(super::arbiter_handler_tests::Disabled),
+    )?;
+    let mut client = local::LocalTools::new(kernel).await?;
+    let mut arguments = json!({
+        "schema":airk_core::arbiter::context_action::REQUEST_SCHEMA_V2,
+        "question":"amber_callback", "budget":airk_core::arbiter::Budget::default(),
+        "response_mode":"full", "verification":"report"
+    });
+    let verified = client
+        .call("airk_answer".into(), arguments.as_object().unwrap().clone())
+        .await?;
+    ensure!(verified.is_error != Some(true), "{verified:?}");
+    let verified = body(&verified)?;
+    assert_eq!(verified["source_verification"]["status"], "verified");
+    assert!(
+        verified["source_verification"]["counts"]["checked_sources"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    std::fs::write(path, "changed saved source bytes\n")?;
+    arguments["verification"] = json!("off");
+    let off = client
+        .call("airk_answer".into(), arguments.as_object().unwrap().clone())
+        .await?;
+    ensure!(off.is_error != Some(true), "{off:?}");
+    assert!(body(&off)?.get("source_verification").is_none());
+    arguments["verification"] = json!("require");
+    let refused = client
+        .call("airk_answer".into(), arguments.as_object().unwrap().clone())
+        .await?;
+    assert_eq!(refused.is_error, Some(true));
+    let refused = body(&refused)?;
+    assert_eq!(
+        refused["source_verification"]["status"],
+        "requirements_unmet"
+    );
+    assert_eq!(
+        refused["source_verification"]["sources"][0]["state"],
+        "mismatch"
+    );
+    assert!(
+        refused.get("records").is_some(),
+        "failed verification retains the complete native packet"
+    );
+    client.close().await?;
+    Ok(())
+}
+
 #[test]
 fn only_evidence_and_parse_catalogs_offer_explicit_verification_controls() {
     for tool in local::tools() {

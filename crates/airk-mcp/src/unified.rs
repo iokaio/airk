@@ -1379,11 +1379,42 @@ mod tests {
     #[test]
     fn one_catalog_has_unique_unprefixed_names_and_honest_effect_annotations() {
         let catalog = tools();
-        assert_eq!(catalog.len(), 29);
+        let expected = [
+            "answer",
+            "capabilities",
+            "changes",
+            "code_facts",
+            "context",
+            "diagnostics",
+            "document_facts",
+            "draft_plan",
+            "draft_search",
+            "draft_strategy",
+            "file_info",
+            "get_handoff",
+            "get_template",
+            "help",
+            "imports",
+            "list_files",
+            "list_templates",
+            "outline",
+            "parse",
+            "projects",
+            "proposal_status",
+            "query_scope",
+            "read_file",
+            "references",
+            "relationships",
+            "search",
+            "status",
+            "suggest_view",
+            "symbols",
+            "validate_draft",
+        ];
+        assert_eq!(catalog.len(), 30);
         let names: std::collections::BTreeSet<_> =
             catalog.iter().map(|t| t.name.as_ref()).collect();
-        assert_eq!(names.len(), 29);
-        assert!(names.contains("query_scope"));
+        assert_eq!(names, expected.into_iter().collect());
         assert!(names.iter().all(|n| !n.starts_with("airk_")));
         for tool in catalog {
             let value = serde_json::to_value(&tool).unwrap();

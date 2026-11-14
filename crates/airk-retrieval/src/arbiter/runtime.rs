@@ -95,6 +95,13 @@ impl ExecutionProfile {
                 "Arbiter next-read task policy differs from qualified profile"
             );
         }
+        if description.tasks.contains(&Task::ContextAction) {
+            ensure!(
+                description.task_policies.get(&Task::ContextAction)
+                    == Some(&super::context_action::policy_digest()?),
+                "Arbiter joint action policy differs from qualified profile"
+            );
+        }
         ensure!(
             description.qualification.is_some() && description.cpu_fit.is_some(),
             "Arbiter release qualification missing"
@@ -182,6 +189,13 @@ impl EvaluationCatalog {
                 "evaluation task policy differs from native constructor"
             );
         }
+        if description.tasks.contains(&Task::ContextAction) {
+            ensure!(
+                description.task_policies.get(&Task::ContextAction)
+                    == Some(&super::context_action::policy_digest()?),
+                "evaluation joint action policy differs from native constructor"
+            );
+        }
         Ok(ExecutionProfile {
             description,
             release: false,
@@ -196,6 +210,8 @@ pub struct Scorer {
     session: Mutex<Session>,
     _environment: crate::onnx::SessionEnvironmentLease,
     physical_cores: usize,
+    joint_calibration:
+        Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
 }
 
 fn bytes(source: &dyn AssetSource, asset: &Asset, maximum: u64) -> Result<Vec<u8>> {
@@ -245,6 +261,13 @@ impl Scorer {
             &bytes(source, asset(AssetRole::Compiler)?, 64 << 10)?,
             &bytes(source, asset(AssetRole::Tokenizer)?, 64 << 20)?,
         )?;
+        let joint_calibration = if profile.description.tasks.contains(&Task::ContextAction) {
+            Some(Arc::new(airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+                &bytes(source, asset(AssetRole::Calibration)?, 64 << 10)?,
+                profile.description(), super::context_action::policy_digest()?)?))
+        } else {
+            None
+        };
         let expected_recipe = match profile.description.model {
             ModelChoice::SmallIntern | ModelChoice::LargeIntern => {
                 CompilerRecipe::InternSingleChoiceV1
@@ -411,6 +434,7 @@ impl Scorer {
             session: Mutex::new(session),
             _environment: environment,
             physical_cores,
+            joint_calibration,
         })
     }
     pub fn execution_identity(&self) -> Result<(String, usize)> {
@@ -426,6 +450,13 @@ impl Scorer {
     }
     pub fn profile(&self) -> &Profile {
         self.profile.description()
+    }
+    /// Metadata authenticated once during this actual resident's warm. No
+    /// asset-path reopen or whole-weight rehash on an assessment's deadline.
+    pub fn joint_calibration(
+        &self,
+    ) -> Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>> {
+        self.joint_calibration.clone()
     }
     pub fn release_qualified(&self) -> bool {
         self.profile.release_qualified()

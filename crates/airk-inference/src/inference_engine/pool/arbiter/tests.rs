@@ -333,3 +333,143 @@ fn resident_session_retains_exact_asset_pins_until_actual_scorer_teardown() {
     assert!(native_done.load(Ordering::Acquire));
     assert!(!pins.load(Ordering::Acquire));
 }
+
+fn observed_completion_fixture() -> CompiledReceipt {
+    CompiledReceipt {
+        input_digest: Sha256Digest::from_bytes([0x21; 32]),
+        input_tokens: 137,
+        queue_us: 5,
+        compile_us: 9,
+    }
+}
+fn expected_observed_completion() -> ScoreReceipt {
+    ScoreReceipt {
+        input_digest: Sha256Digest::from_bytes([0x21; 32]),
+        input_tokens: 137,
+        queue_us: 5,
+        compile_us: 9,
+        inference_us: 41,
+    }
+}
+
+#[test]
+fn actual_score_call_error_keeps_observed_work_and_original_cause() -> Result<()> {
+    let started = Instant::now();
+    let calls = std::cell::Cell::new(0);
+    let result = observed_score_call(
+        &observed_completion_fixture(),
+        started,
+        || started + Duration::from_micros(41),
+        || {
+            calls.set(calls.get() + 1);
+            Err(anyhow::anyhow!("synthetic native score failure"))
+        },
+    );
+    let Err(error) = result else {
+        anyhow::bail!("native score error was lost");
+    };
+    let failure = error
+        .downcast_ref::<KnownScoreFailure>()
+        .context("completed failure lost its private receipt")?;
+    assert_eq!(calls.get(), 1);
+    assert_eq!(failure.receipt, expected_observed_completion());
+    assert!(!failure.source_delivery_refused);
+    assert_eq!(
+        std::error::Error::source(failure).unwrap().to_string(),
+        "synthetic native score failure"
+    );
+    Ok(())
+}
+
+#[test]
+fn post_score_delivery_refusal_retains_known_success_or_failure_work() -> Result<()> {
+    let started = Instant::now();
+    for native_failed in [false, true] {
+        let result = observed_score_call(
+            &observed_completion_fixture(),
+            started,
+            || started + Duration::from_micros(41),
+            || {
+                if native_failed {
+                    Err(anyhow::anyhow!("synthetic native score failure"))
+                } else {
+                    Ok(vec![0.25, 0.5])
+                }
+            },
+        );
+        let Err(error) = finish_score_delivery(
+            result,
+            Err(anyhow::anyhow!("synthetic source delivery revoked")),
+        ) else {
+            anyhow::bail!("revoked delivery returned scores");
+        };
+        let failure = error
+            .downcast_ref::<KnownScoreFailure>()
+            .context("revoked completed score lost known work")?;
+        assert_eq!(failure.receipt, expected_observed_completion());
+        assert!(failure.source_delivery_refused);
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.to_string() == "synthetic source delivery revoked")
+        );
+        if native_failed {
+            assert!(
+                error
+                    .chain()
+                    .any(|cause| cause.to_string() == "synthetic native score failure")
+            );
+        }
+    }
+    let scored = finish_score_delivery(
+        observed_score_call(
+            &observed_completion_fixture(),
+            started,
+            || started + Duration::from_micros(41),
+            || Ok(vec![0.25, 0.5]),
+        ),
+        Ok(()),
+    )?;
+    assert_eq!(scored.scores, vec![0.25, 0.5]);
+    assert_eq!(scored.input_tokens, 137);
+    assert_eq!(scored.queue_us, 5);
+    assert_eq!(scored.compile_us, 9);
+    assert_eq!(scored.inference_us, 41);
+    Ok(())
+}
+
+#[test]
+fn canceled_or_expired_before_actual_score_cannot_mint_completion_receipt() -> Result<()> {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(1);
+    let calls = std::cell::Cell::new(0);
+    for (now, canceled) in [(deadline, false), (started, true)] {
+        let result = dispatch_before_original_deadline(
+            deadline,
+            || now,
+            || canceled,
+            || {
+                observed_score_call(
+                    &observed_completion_fixture(),
+                    started,
+                    || started + Duration::from_micros(41),
+                    || {
+                        calls.set(calls.get() + 1);
+                        Ok(vec![0.25, 0.5])
+                    },
+                )
+            },
+        );
+        let Err(error) = finish_score_delivery(
+            result,
+            Err(anyhow::anyhow!(
+                "synthetic delivery revoked before dispatch"
+            )),
+        ) else {
+            anyhow::bail!("pre-dispatch refusal returned scores");
+        };
+        assert!(error.downcast_ref::<KnownScoreFailure>().is_none());
+    }
+    assert_eq!(calls.get(), 0);
+    Ok(())
+}

@@ -14,12 +14,55 @@ use airk_core::{
     },
 };
 use airk_frontend::tool_call::{
-    call, is_local_help, local_help, project_backend, require_envelope, with_defaults,
+    call_with_context, is_local_help, local_help, project_backend, require_envelope, with_defaults,
 };
-use airk_mcp::{remote::RemoteTools, response::ResponseMode};
-use anyhow::{Result, ensure};
+use airk_mcp::{read_attempt::ReadAttemptContext, remote::RemoteTools, response::ResponseMode};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value};
 use std::{path::Path, sync::Arc};
+
+/// Decode a supplied original parent before any scope/backend work. None is
+/// the current standalone default, minted once here rather than after selection.
+pub(super) fn read_context(
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+) -> Result<ReadAttemptContext> {
+    let context = match attempt {
+        Some(attempt) => airk_host::read_attempt::decode(attempt)?,
+        None => ReadAttemptContext::new(
+            std::time::Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET,
+            Default::default(),
+        ),
+    };
+    require_live(&context)?;
+    Ok(context)
+}
+pub(super) fn require_live(context: &ReadAttemptContext) -> Result<()> {
+    ensure!(
+        !context.cancellation().is_cancelled() && std::time::Instant::now() < context.deadline(),
+        "Original canonical read deadline or cancellation before dispatch/delivery"
+    );
+    Ok(())
+}
+/// Capture a known Answer's narrower absolute carrier before any local Kernel
+/// dispatch. Host owns conversion; repeated ingress preserves captured expiry.
+pub(super) fn admit_context(
+    tool: &str,
+    arguments: &Map<String, Value>,
+    context: ReadAttemptContext,
+) -> Result<ReadAttemptContext> {
+    let context = airk_mcp::read_attempt::admit_tool_context(tool, arguments, context);
+    require_live(&context)?;
+    if !matches!(tool, "answer" | "airk_answer") {
+        return Ok(context);
+    }
+    let id = match context.request_id() {
+        Some(id) => id,
+        None => airk_kernel::service_broker::new_instance_id()?,
+    };
+    let context = context.with_request_id(id)?;
+    let wire = airk_host::read_attempt::encode(&context, id)?;
+    context.capture_transport_attempt(wire)
+}
 
 /// The longest M2/M3 failure message, as the CLI's error line bounded it.
 const MAX_MESSAGE_CHARS: usize = 4096;
@@ -98,7 +141,15 @@ pub(super) async fn response(
     selection: ToolSelection,
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
+    context: ReadAttemptContext,
 ) -> ControlResponse {
+    let context = match admit_context(&tool, &arguments, context) {
+        Ok(context) => context,
+        Err(error) => return failed(&error),
+    };
+    if let Err(error) = require_live(&context) {
+        return failed(&error);
+    }
     // The A2 grant belongs to an admin session; the pipe has none.
     if selection == ToolSelection::Admin {
         return ControlResponse::Failure {
@@ -112,7 +163,7 @@ pub(super) async fn response(
             code: super::scope_grant::SCOPE_UNAVAILABLE.into(),
         };
     }
-    match run(control, tool, arguments, selection, mode, client).await {
+    match run(control, tool, arguments, selection, mode, client, context).await {
         Ok(result) => ControlResponse::ToolResult { result },
         Err(error) => failed(&error),
     }
@@ -126,13 +177,21 @@ pub(super) async fn response(
 /// `window_scope_not_granted`, `scoped_read_unavailable`.
 pub(super) async fn window_response(
     state: &Arc<super::State>,
-    window_id: Incarnation,
-    lease: WindowLease,
+    window: (Incarnation, WindowLease),
     tool: String,
     arguments: Map<String, Value>,
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
+    context: ReadAttemptContext,
 ) -> ControlResponse {
+    let (window_id, lease) = window;
+    let context = match admit_context(&tool, &arguments, context) {
+        Ok(context) => context,
+        Err(error) => return failed(&error),
+    };
+    if let Err(error) = require_live(&context) {
+        return failed(&error);
+    }
     let control = state.control_root.clone();
     let (resolved, dropped) =
         super::window_plane::read_unlocked(&state.windows, &window_id, &lease, |selection| {
@@ -149,7 +208,7 @@ pub(super) async fn window_response(
         scope_identity: read.grant.scope_identity,
         selection_ref: read.grant.selection_ref,
     };
-    let result = match selection_read(state, &grant, tool, arguments, mode, client).await {
+    let result = match selection_read(state, &grant, tool, arguments, mode, client, context).await {
         Ok(result) => result,
         Err(SelectionRead::Refused(code)) => {
             return ControlResponse::Failure { code: code.into() };
@@ -190,7 +249,14 @@ pub(super) async fn selection_read(
     arguments: Map<String, Value>,
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
+    context: ReadAttemptContext,
 ) -> std::result::Result<Value, SelectionRead> {
+    let context = admit_context(&tool, &arguments, context).map_err(SelectionRead::Failed)?;
+    require_live(&context).map_err(SelectionRead::Failed)?;
+    if matches!(tool.as_str(), "answer" | "airk_answer") {
+        super::source_delivery::retain_selection(state, &context, grant.selection_ref)
+            .map_err(SelectionRead::Failed)?;
+    }
     let (backend, arguments) = match grant.selection.index_ids.as_slice() {
         [index_id] => {
             let arguments = match single_index_arguments(arguments) {
@@ -207,7 +273,7 @@ pub(super) async fn selection_read(
             arguments,
         ),
     };
-    read_through(backend, tool, arguments, mode).await
+    read_through(backend, tool, arguments, mode, context).await
 }
 
 /// U107: a one-index selection or open read applies `limit_per_index` as
@@ -259,16 +325,27 @@ pub(super) async fn read_through(
     tool: String,
     arguments: Map<String, Value>,
     mode: ToolResponseMode,
+    context: ReadAttemptContext,
 ) -> std::result::Result<Value, SelectionRead> {
+    require_live(&context).map_err(SelectionRead::Failed)?;
     let result = async {
-        let result = call(backend.as_ref(), tool, arguments, response_mode(mode)).await?;
+        let result = call_with_context(
+            backend.as_ref(),
+            tool,
+            arguments,
+            response_mode(mode),
+            context.clone(),
+        )
+        .await?;
         require_envelope(&result)?;
         Ok(result)
     }
     .await;
-    released(backend.as_ref(), result)
+    let result = released(backend.as_ref(), result)
         .await
-        .map_err(SelectionRead::Failed)
+        .map_err(SelectionRead::Failed);
+    require_live(&context).map_err(SelectionRead::Failed)?;
+    result
 }
 
 /// The service's in-process admission of one selection member: a fresh
@@ -417,7 +494,7 @@ async fn combined_selection_backend(
         selection_ref: grant.selection_ref,
         window_selection: grant.selection.clone(),
         connect: selection_connect(state),
-        issue: selection_issue(gate, state.instance),
+        issue: selection_issue(state, gate, state.instance),
     };
     let inner =
         airk_frontend::combined_frontend::resolve_selection(state.control_root.clone(), scope)
@@ -467,7 +544,7 @@ pub(super) async fn open_combined_backend(
                 })
             },
         ),
-        issue: selection_issue(gate, state.instance),
+        issue: selection_issue(state,gate, state.instance),
     };
     let inner = airk_frontend::combined_frontend::resolve_open(state.control_root.clone(), scope)
         .await
@@ -486,14 +563,18 @@ pub(super) async fn open_combined_backend(
 /// gate's clock at exactly the selection's revision, then an issue ticket
 /// and the live nonce checked together under the gate lock.
 fn selection_issue(
+    state: &Arc<super::State>,
     gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
     instance: airk_core::identity::Incarnation,
 ) -> airk_frontend::combined_frontend::SelectionIssue {
     use airk_core::scoped_reads::ScopeReadRefused;
+    let factory = super::arbiter::policy_delivery::factory(state);
     Arc::new(
         move |selection: &airk_core::scoped_reads::SelectionScopeRef,
               scope_identity: airk_core::identity::Sha256Digest,
-              result_digest: airk_core::identity::Sha256Digest|
+              result_digest: airk_core::identity::Sha256Digest,
+              expected: &[airk_core::combined_context::ContextDeliveryBinding],
+              context: Option<&ReadAttemptContext>|
               -> Result<airk_core::service::CombinedDeliveryReceipt> {
             let clock = gate.catalog_clock().ok_or(ScopeReadRefused)?;
             ensure!(
@@ -501,16 +582,44 @@ fn selection_issue(
                 ScopeReadRefused
             );
             let ticket = gate.begin_issue(clock.namespace, clock.revision)?;
-            gate.with_live_selection(ticket, selection, || {
-                airk_core::service::CombinedDeliveryReceipt {
-                    schema: 1,
-                    service_instance: instance,
-                    namespace: clock.namespace,
-                    catalog_revision: clock.revision,
-                    scope_identity,
-                    result_digest,
-                }
-            })
+            let receipt = || {
+                gate.with_live_selection(ticket, selection, || {
+                    airk_core::service::CombinedDeliveryReceipt {
+                        schema: 1,
+                        service_instance: instance,
+                        namespace: clock.namespace,
+                        catalog_revision: clock.revision,
+                        scope_identity,
+                        result_digest,
+                    }
+                })
+            };
+            if let Some(context) = context {
+                let guard = factory(expected, context)?;
+                let mut delivered = None;
+                let result = guard.poll(&mut || match receipt() {
+                    Ok(value) => {
+                        delivered = Some(value);
+                        std::task::Poll::Ready(Ok(0))
+                    }
+                    Err(_) => std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "native selection delivery revoked",
+                    ))),
+                });
+                ensure!(
+                    matches!(result, std::task::Poll::Ready(Ok(_))),
+                    "context delivery policy stale; original work must not replay"
+                );
+                context.retain_delivery_guard(guard)?;
+                delivered.context("native selection delivery receipt unavailable")
+            } else {
+                ensure!(
+                    expected.is_empty(),
+                    "context delivery requires original attempt"
+                );
+                receipt()
+            }
         },
     )
 }
@@ -588,7 +697,9 @@ async fn run(
     selection: ToolSelection,
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
+    context: ReadAttemptContext,
 ) -> Result<Value> {
+    require_live(&context)?;
     if matches!(
         selection,
         ToolSelection::Unselected | ToolSelection::Project { .. }
@@ -662,12 +773,21 @@ async fn run(
         }
     };
     let result = async {
-        let result = call(backend.as_ref(), tool, arguments, response_mode(mode)).await?;
+        let result = call_with_context(
+            backend.as_ref(),
+            tool,
+            arguments,
+            response_mode(mode),
+            context.clone(),
+        )
+        .await?;
         require_envelope(&result)?;
         Ok(result)
     }
     .await;
-    released(backend.as_ref(), result).await
+    let result = released(backend.as_ref(), result).await;
+    require_live(&context)?;
+    result
 }
 
 #[cfg(test)]

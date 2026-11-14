@@ -14,6 +14,7 @@ fn identity() -> airk_core::service::WorkerIdentity {
 
 fn query() -> Query {
     Query {
+        context_partition: None,
         read_attempt: None,
         frontend: None,
         tool: "airk_status".into(),

@@ -1786,7 +1786,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing context expands neighboring lines around one coordinate.",
+      "description": "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing context expands neighboring lines around one coordinate. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources without changing indexed evidence.",
       "inputSchema": {
         "$defs": {
           "Budget": {
@@ -1891,6 +1891,37 @@
           },
           "schema": {
             "type": "string"
+          },
+          "verification": {
+            "default": "report",
+            "description": "Report is the default: bounded dated saved-byte outcomes. Off skips source checks; require fails unless every returned file reference matches. No extraction, completeness or unsaved-buffer certification.",
+            "enum": [
+              "off",
+              "report",
+              "require"
+            ],
+            "type": "string"
+          },
+          "verification_deadline_ms": {
+            "default": 2000,
+            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 30000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "verification_max_bytes": {
+            "default": 16777216,
+            "description": "Aggregate raw-byte budget, 1..1073741824; default 16777216 (16 MiB).",
+            "maximum": 1073741824,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "verification_max_sources": {
+            "default": 8,
+            "description": "Maximum whole-source checks, 1..256; default 8.",
+            "maximum": 256,
+            "minimum": 1,
+            "type": "integer"
           }
         },
         "required": [
@@ -5856,7 +5887,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing context expands neighboring lines around one coordinate.",
+        "description": "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing context expands neighboring lines around one coordinate. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources without changing indexed evidence.",
         "inputSchema": {
           "$defs": {
             "Budget": {
@@ -5961,6 +5992,37 @@
             },
             "schema": {
               "type": "string"
+            },
+            "verification": {
+              "default": "report",
+              "description": "Report is the default: bounded dated saved-byte outcomes. Off skips source checks; require fails unless every returned file reference matches. No extraction, completeness or unsaved-buffer certification.",
+              "enum": [
+                "off",
+                "report",
+                "require"
+              ],
+              "type": "string"
+            },
+            "verification_deadline_ms": {
+              "default": 2000,
+              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 30000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "verification_max_bytes": {
+              "default": 16777216,
+              "description": "Aggregate raw-byte budget, 1..1073741824; default 16777216 (16 MiB).",
+              "maximum": 1073741824,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "verification_max_sources": {
+              "default": 8,
+              "description": "Maximum whole-source checks, 1..256; default 8.",
+              "maximum": 256,
+              "minimum": 1,
+              "type": "integer"
             }
           },
           "required": [

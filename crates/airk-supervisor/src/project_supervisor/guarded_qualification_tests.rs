@@ -305,6 +305,7 @@ async fn search_scope(
     local_ipc::write_message(
         stream,
         &protocol::Query {
+            context_partition: None,
             read_attempt: None,
             frontend: None,
             tool: "airk_search".into(),
@@ -1262,6 +1263,7 @@ async fn require_semantic_ready(stream: &mut local_ipc::Stream) -> Result<()> {
     local_ipc::write_message(
         stream,
         &protocol::Query {
+            context_partition: None,
             read_attempt: None,
             frontend: None,
             tool: "airk_status".into(),

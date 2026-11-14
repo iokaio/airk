@@ -70,7 +70,7 @@ fn dispatch(state: Arc<State>) -> airk_https::admin_plane::NativeDispatch {
             }
             let budget = method.response_frame_budget();
             let (response, shutdown) =
-                canonical_control(state.clone(), method, Some(check)).await?;
+                canonical_control(state.clone(), method, Some(check), None).await?;
             // As on the pipe, accepted lifecycle effects outlive reply delivery.
             if shutdown {
                 state.shutdown.notify_one();

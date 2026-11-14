@@ -487,7 +487,9 @@ fn selection_fixture() -> Backend<SelectionScope> {
             issue: Arc::new(
                 |_: &SelectionScopeRef,
                  _: Sha256Digest,
-                 _: Sha256Digest|
+                 _: Sha256Digest,
+                 _: &[airk_core::combined_context::ContextDeliveryBinding],
+                 _: Option<&airk_mcp::read_attempt::ReadAttemptContext>|
                  -> Result<CombinedDeliveryReceipt> {
                     Err(ScopeReadRefused.into())
                 },
@@ -646,7 +648,9 @@ fn open_fixture() -> Backend<OpenScope> {
             issue: Arc::new(
                 |_: &SelectionScopeRef,
                  _: Sha256Digest,
-                 _: Sha256Digest|
+                 _: Sha256Digest,
+                 _: &[airk_core::combined_context::ContextDeliveryBinding],
+                 _: Option<&airk_mcp::read_attempt::ReadAttemptContext>|
                  -> Result<CombinedDeliveryReceipt> {
                     Err(ScopeReadRefused.into())
                 },

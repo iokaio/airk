@@ -22,7 +22,9 @@ class WorkbenchEvidenceTests(unittest.TestCase):
             root = Path(directory)
             for name in ('scripts/peer.cjs', 'packages/vscode/out/workbenchView.js',
                          'packages/vscode/out/workbenchRender.js',
-                         'packages/vscode/package.json', 'packages/vscode/package-lock.json'):
+                         'packages/vscode/package.json', 'packages/vscode/package-lock.json',
+                         'fixtures/split/arbiter/public_answer_cases.json', 'fixtures/split/arbiter/context_action_cases.json',
+                         'packages/contracts-gen/arbiter.schema.json'):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(name, encoding='utf-8')
@@ -36,7 +38,7 @@ class WorkbenchEvidenceTests(unittest.TestCase):
                 (root / 'packages/vscode/out/newDependency.js').write_text('new', encoding='utf-8')
                 self.assertNotEqual(before, HARNESS.input_inventory())
 
-    def qualification(self, *, cleanup_fails):
+    def qualification(self, *, cleanup_fails, answers=2, sources=2, refused=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / 'runtime'; runtime.mkdir()
@@ -50,11 +52,13 @@ class WorkbenchEvidenceTests(unittest.TestCase):
 
             @contextmanager
             def owned():
-                yield owner
-                events.append('directory-cleanup')
-                self.assertFalse(report.exists(), 'pass was written before directory cleanup')
-                if cleanup_fails:
-                    raise OSError('observed directory cleanup failure')
+                try:
+                    yield owner
+                finally:
+                    events.append('directory-cleanup')
+                    self.assertFalse(report.exists(), 'pass was written before directory cleanup')
+                    if cleanup_fails:
+                        raise OSError('observed directory cleanup failure')
 
             class Fixture:
                 catalog_authority = True
@@ -75,14 +79,21 @@ class WorkbenchEvidenceTests(unittest.TestCase):
             package = SimpleNamespace(validate_runtime=lambda *_: ({'airkctl.exe': 'exact-original'}, None))
             def run(argv, **_):
                 request = json.loads(Path(argv[-1]).read_bytes())
-                Path(request['output']).write_text(json.dumps({'exactComparisons': 10}))
+                self.assertEqual(request['answer_request']['schema'], 'airk.arbiter.context.request/2')
+                self.assertEqual(request['answer_request']['question'], 'amber_marker')
+                self.assertTrue(all(request['answer_request']['question'] in Path(file).read_text() for file in request['source_hashes']))
+                Path(request['output']).write_text(json.dumps({'exactComparisons': 10, 'answerComparisons': answers, 'answerSourceOpens': sources}))
                 return SimpleNamespace(returncode=0, stdout='', stderr='')
             with patch.object(HARNESS, 'module', side_effect=lambda name, _: clients if name == 'workbench_native_clients' else package), \
                     patch.object(HARNESS, 'input_inventory', return_value={'compiled': 'sealed'}), \
                     patch.object(HARNESS.subprocess, 'run', side_effect=run), \
                     patch.object(HARNESS.subprocess, 'check_output', return_value='v24.15.0\n'), \
                     patch('sys.stdout', new=io.StringIO()):
-                if cleanup_fails:
+                if refused:
+                    with self.assertRaises(AssertionError):
+                        HARNESS.qualify(runtime, node, report, 'inert-test-target')
+                    self.assertFalse(report.exists(), 'partial Answer exercise cannot leave a pass')
+                elif cleanup_fails:
                     with self.assertRaisesRegex(OSError, 'observed directory cleanup failure'):
                         HARNESS.qualify(runtime, node, report, 'inert-test-target')
                     self.assertFalse(report.exists())
@@ -92,6 +103,12 @@ class WorkbenchEvidenceTests(unittest.TestCase):
                     self.assertEqual(value['fixture_cleanup'], 'completed')
                     self.assertEqual(value['runtime']['source'], 'original-artifact-source')
             self.assertEqual(events, ['native-cleanup', 'directory-cleanup'])
+
+    def test_missing_real_answer_routes_cannot_leave_a_pass_receipt(self):
+        self.qualification(cleanup_fails=False, answers=0, refused=True)
+
+    def test_missing_actual_answer_source_checks_cannot_leave_a_pass_receipt(self):
+        self.qualification(cleanup_fails=False, sources=1, refused=True)
 
     def test_failed_owned_directory_cleanup_cannot_leave_a_pass_receipt(self):
         self.qualification(cleanup_fails=True)

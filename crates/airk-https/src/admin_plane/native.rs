@@ -32,6 +32,7 @@ impl Drop for Reservation {
     }
 }
 struct Entry {
+    read_context: Option<airk_mcp::read_attempt::ReadAttemptContext>,
     deadline: u64,
     // 0: queued; 1: dispatch entered; 2/3: cancelled before/after dispatch.
     phase: Arc<AtomicU8>,
@@ -55,17 +56,23 @@ fn cancel(phase: &AtomicU8) {
         Some(if state == 0 || state == 2 { 2 } else { 3 })
     });
 }
+fn cancel_entry(entry: &Entry) {
+    cancel(&entry.phase);
+    if let Some(context) = &entry.read_context {
+        context.cancellation().cancel();
+    }
+}
 impl Requests {
     pub(super) fn end(&mut self) {
         for entry in self.entries.values() {
-            cancel(&entry.phase);
+            cancel_entry(entry);
         }
         self.entries.clear();
     }
     fn purge(&mut self, now: u64) {
         self.entries.retain(|_, entry| {
             if entry.deadline <= now {
-                cancel(&entry.phase);
+                cancel_entry(entry);
                 false
             } else {
                 true
@@ -77,7 +84,7 @@ impl Requests {
             return failure("admin_native_outcome_unknown");
         };
         if now().is_none_or(|timestamp| timestamp >= entry.deadline) {
-            cancel(&entry.phase);
+            cancel_entry(entry);
             entry.body = None;
             entry.reservation = None;
             return failure("admin_native_outcome_unknown");
@@ -149,6 +156,22 @@ impl AdminPlane {
         }
     }
 
+    /// Original custody for the owner-pipe writer of this exact native reply.
+    /// Lookup is not the policy cut; the caller must poll its guard around IO.
+    pub fn native_delivery_context(&self,session:&NativeAdminSessionSecret,request_id:Incarnation)
+        ->anyhow::Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
+        anyhow::ensure!(self.native_valid(session),"native Admin session invalid before delivery");
+        let key=(secrets::digest(session.cookie()),request_id);
+        let requests=self.native.lock().map_err(|_|anyhow::anyhow!("native Admin custody unavailable"))?;
+        let entry=requests.entries.get(&key).ok_or_else(||anyhow::anyhow!("native Admin original custody missing"))?;
+        anyhow::ensure!(now().is_some_and(|now|now<entry.deadline)&&entry.phase.load(Ordering::Acquire)<2,
+            "native Admin original deadline/cancellation before delivery");
+        anyhow::ensure!(entry.session.as_ref().is_some_and(|permit|permit.valid((self.clock)())),"native Admin original session permit expired");
+        let context=entry.read_context.as_ref().ok_or_else(||anyhow::anyhow!("native Admin original read context missing"))?;
+        anyhow::ensure!(!context.cancellation().is_cancelled(),"native Admin original read canceled");
+        Ok(Some(context.clone()))
+    }
+
     /// Runs the very same operation admission, confirmation, key custody and
     /// result projection as HTTP. `dispatch` is the service's direct canonical
     /// handler, avoiding a nested owner-pipe admission while it owns this call.
@@ -183,6 +206,23 @@ impl AdminPlane {
         else {
             return failure("admin_native_deadline");
         };
+        let read_context =
+            match airk_host::read_attempt::decode(airk_core::read_attempt::ReadAttemptBudget {
+                schema: 1,
+                request_id,
+                clock: if cfg!(windows) {
+                    airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+                } else {
+                    airk_core::read_attempt::ReadClock::UnixMonotonic
+                },
+                expires_monotonic_ns: deadline_ns,
+                remaining_ns: deadline_ns.saturating_sub(timestamp),
+                native_retry_expires_monotonic_ns: None,
+            }) {
+                Ok(context) => context,
+                Err(_) => return failure("admin_native_deadline"),
+            };
+        let read_context=match &self.delivery_guard_factory {Some(factory)=>read_context.with_delivery_guard_factory(factory.clone()),None=>read_context};
         let key = (secrets::digest(session.cookie()), request_id);
         let phase = Arc::new(AtomicU8::new(0));
         let _reservation = {
@@ -201,6 +241,7 @@ impl AdminPlane {
             requests.entries.insert(
                 key,
                 Entry {
+                    read_context: Some(read_context.clone()),
                     deadline: deadline_ns,
                     phase: phase.clone(),
                     body: None,
@@ -249,6 +290,22 @@ impl AdminPlane {
             })
         });
         let admission_phase = phase.clone();
+        // Selected reads bypass the generic dispatch closure, so bind its
+        // original native parent explicitly, including the same cancellation.
+        let selection_reader = self.selection_reader.as_ref().map(|reader| {
+            let reader = reader.clone();
+            let parent = read_context.clone();
+            Arc::new(move |mut read: SelectedRead| {
+                let reader = reader.clone();
+                let parent = read.parent_context.take().map_or_else(
+                    || parent.clone(),
+                    |earlier| parent.narrowed(earlier.deadline()),
+                );
+                read.parent_context = Some(parent);
+                Box::pin(async move { reader(read).await })
+                    as Pin<Box<dyn Future<Output = ControlResponse> + Send>>
+            }) as SelectionReader
+        });
         let view = Self {
             dispatch: guarded,
             instance: self.instance,
@@ -259,7 +316,9 @@ impl AdminPlane {
             scope_check: self.scope_check.clone(),
             trust_inspect: self.trust_inspect.clone(),
             selection: self.selection.clone(),
-            selection_reader: self.selection_reader.clone(),
+            selection_reader,
+            delivery_guard_factory:self.delivery_guard_factory.clone(),
+            read_parent:Some(read_context.clone()),
             native_admission: Some(Arc::new(move || {
                 if !live_service() {
                     Err(AdminCode::ServiceDraining)
@@ -381,7 +440,7 @@ impl AdminPlane {
         requests.purge(timestamp);
         let key = (secrets::digest(session.cookie()), request_id);
         if let Some(entry) = requests.entries.get_mut(&key) {
-            cancel(&entry.phase);
+            cancel_entry(entry);
             entry.body = None;
             entry.reservation = None;
         } else if requests.entries.len() < 128 {
@@ -390,6 +449,7 @@ impl AdminPlane {
             requests.entries.insert(
                 key,
                 Entry {
+                    read_context: None,
                     deadline: timestamp.saturating_add(MAX_DEADLINE_NS),
                     phase: Arc::new(AtomicU8::new(2)),
                     body: None,
@@ -414,7 +474,7 @@ impl AdminPlane {
             .entries
             .retain(|(owner, _), entry| {
                 if owner == &cookie {
-                    cancel(&entry.phase);
+                    cancel_entry(entry);
                     false
                 } else {
                     true

@@ -86,6 +86,7 @@ fn invoke(arguments: &[String]) -> (u8, String) {
     let mut stderr = Vec::new();
     let mut stdin = std::io::empty();
     let mut io = super::super::Io {
+        read_attempt: None,
         stdin: &mut stdin,
         stdout: &mut stdout,
         stderr: &mut stderr,
@@ -281,6 +282,7 @@ fn online_window_admission_preserves_original_bound_selection() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut io = Io {
+            read_attempt: None,
             stdin: &mut stdin,
             stdout: &mut stdout,
             stderr: &mut stderr,

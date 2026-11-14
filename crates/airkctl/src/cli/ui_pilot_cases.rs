@@ -25,6 +25,7 @@ fn ui_pilot_cli_semantic_cases() {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
             let mut io = Io {
+                read_attempt: None,
                 stdin: &mut stdin,
                 stdout: &mut stdout,
                 stderr: &mut stderr,

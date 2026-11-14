@@ -39,6 +39,7 @@ fn ui_pilot_help_native_cases() {
         }
         let response = ControlResponse::ToolResult { result };
         let method = ControlMethod::ToolsCall {
+            read_attempt: None,
             tool: "airk_help".into(),
             arguments: args.as_object().unwrap().clone(),
             selection: ToolSelection::Unselected,

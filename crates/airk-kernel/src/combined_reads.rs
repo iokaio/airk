@@ -134,6 +134,8 @@ pub struct CombinedReadResult {
     /// Safe only for the exact sole failed required member; all native detail remains inline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_retry: Option<airk_core::combined_reads::read_retry::SingleRequiredMemberRetry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<airk_core::combined_context::CombinedContextSummary>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -153,6 +155,22 @@ impl std::fmt::Display for CombinedReplyBudget {
     }
 }
 impl std::error::Error for CombinedReplyBudget {}
+
+/// Full bounded prepared result retained privately on context delivery failure.
+pub struct ContextReplyBudget {
+    pub result: Box<CombinedReadResult>,
+}
+impl std::fmt::Debug for ContextReplyBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ContextReplyBudget")
+    }
+}
+impl std::fmt::Display for ContextReplyBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("complete context result exceeds original delivery budget")
+    }
+}
+impl std::error::Error for ContextReplyBudget {}
 impl CombinedReplyBudget {
     pub fn receipt(&self) -> Value {
         json!({"error":{"code":"combined_reply_budget","retryable":false,"query_replay_safe":false}})
@@ -193,6 +211,24 @@ fn canonicalize_envelope(result: &mut Value) -> Result<()> {
 }
 
 fn publication(body: &Value) -> Result<Option<RevisionEnvelope>> {
+    if body.get("schema").and_then(Value::as_str)
+        == Some(airk_core::arbiter::context_action::CONTEXT_SCHEMA_V2)
+    {
+        let scope: airk_core::arbiter::ScopeBinding =
+            serde_json::from_value(body["assessment"]["scope"].clone())?;
+        for record in body["records"]
+            .as_array()
+            .context("context records missing")?
+        {
+            let actual: airk_core::arbiter::ScopeBinding =
+                serde_json::from_value(record["scope"].clone())?;
+            ensure!(
+                actual == scope,
+                "combined context contains foreign partition evidence"
+            );
+        }
+        return Ok(Some(scope.publication));
+    }
     if body.get("publication").is_none()
         && body.get("read").is_none()
         && let Some(evidence) = body.get("evidence").filter(|value| value.is_object())
@@ -346,6 +382,31 @@ fn qualify(
 /// One canonical evidence list per native result. Auxiliary file/provenance
 /// tables and reference summaries remain complete inside the member result.
 fn records(body: &Value) -> Result<Vec<(String, &Value, &str)>> {
+    if body.get("schema").and_then(Value::as_str)
+        == Some(airk_core::arbiter::context_action::CONTEXT_SCHEMA_V2)
+    {
+        let mut found = Vec::new();
+        for (offset, record) in body["records"]
+            .as_array()
+            .context("context records missing")?
+            .iter()
+            .enumerate()
+        {
+            let (canonical, prefix) = self::body(&record["canonical_result"]);
+            found.extend(
+                records(canonical)?
+                    .into_iter()
+                    .map(|(pointer, value, path)| {
+                        (
+                            format!("/records/{offset}/canonical_result{prefix}{pointer}"),
+                            value,
+                            path,
+                        )
+                    }),
+            );
+        }
+        return Ok(found);
+    }
     if let Some(evidence) = body.get("evidence").filter(|value| value.is_object()) {
         return Ok(records(evidence)?
             .into_iter()
@@ -433,7 +494,17 @@ pub fn compose(
     request: &CompositionRequest,
     inputs: Vec<MemberInput>,
 ) -> Result<CombinedReadResult> {
-    compose_inner(request, inputs, false)
+    compose_inner(request, inputs, false, None)
+}
+
+/// One whole-selection context result. Full packets remain inline; the bounded
+/// ranking may name a disclosed subset of their complete evidence.
+pub fn compose_context(
+    request: &CompositionRequest,
+    inputs: Vec<MemberInput>,
+    summary: airk_core::combined_context::CombinedContextSummary,
+) -> Result<CombinedReadResult> {
+    compose_inner(request, inputs, false, Some(summary))
 }
 
 /// The actual capabilities route may share exactly equal native field groups.
@@ -442,16 +513,49 @@ pub fn compose_capabilities(
     request: &CompositionRequest,
     inputs: Vec<MemberInput>,
 ) -> Result<CombinedReadResult> {
-    compose_inner(request, inputs, true)
+    compose_inner(request, inputs, true, None)
 }
 
 fn compose_inner(
     request: &CompositionRequest,
     inputs: Vec<MemberInput>,
     capabilities: bool,
+    context: Option<airk_core::combined_context::CombinedContextSummary>,
 ) -> Result<CombinedReadResult> {
     request.selection.validate()?;
-    let allocations = request.budgets.allocate(&request.selection)?;
+    let mut allocations = request.budgets.allocate(&request.selection)?;
+    if let Some(summary) = &context {
+        let ids: Vec<_> = request
+            .selection
+            .members
+            .iter()
+            .map(|member| member.index_id)
+            .collect();
+        summary.validate(&ids)?;
+        ensure!(
+            summary.selection == request.authority,
+            "combined context selection mismatch"
+        );
+        for (allocation, report) in allocations.iter_mut().zip(&summary.members) {
+            match &report.allowance {
+                Some(allowance) => {
+                    let count = inputs
+                        .iter()
+                        .find(|input| input.index_id == report.index_id)
+                        .map(|input| records(body(&input.result).0).map(|rows| rows.len()))
+                        .transpose()?
+                        .unwrap_or(0);
+                    allocation.limit = count.max(1);
+                    allocation.max_bytes = allowance.resources.bytes;
+                    allocation.deadline_ms = summary.budget.deadline_ms;
+                }
+                None => {
+                    allocation.limit = 0;
+                    allocation.max_bytes = 0;
+                }
+            }
+        }
+    }
     ensure!(
         request.observed_to_unix_ms >= request.observed_from_unix_ms,
         "invalid combined observation interval"
@@ -645,6 +749,7 @@ fn compose_inner(
         partial,
         truncated,
         read_retry: None,
+        context,
         error: (partial && request.selection.member_availability == MemberAvailability::Require)
             .then(|| CombinedReadFailure {
                 code: "member_unavailable".into(),
@@ -652,6 +757,32 @@ fn compose_inner(
                 failed_members: failed,
             }),
     };
+    if let Some(summary) = &result.context {
+        if result.ranking.len() > request.budgets.limit {
+            result.ranking.truncate(request.budgets.limit);
+            result.truncated = true;
+        }
+        if summary.termination != airk_core::combined_context::Termination::Complete {
+            result.partial = true;
+        }
+        if summary.termination == airk_core::combined_context::Termination::AccountingViolation {
+            result.error = Some(CombinedReadFailure {
+                code: "budget_accounting_violation".into(),
+                retryable: false,
+                failed_members: summary
+                    .members
+                    .iter()
+                    .filter(|member| {
+                        matches!(
+                            &member.outcome,
+                            airk_core::combined_context::PartitionOutcome::KnownViolation { .. }
+                        )
+                    })
+                    .map(|member| member.index_id)
+                    .collect(),
+            });
+        }
+    }
     if capabilities {
         let mut bodies = result
             .members
@@ -696,7 +827,25 @@ fn compose_inner(
     result.publication_vector.validate()?;
     result.read_retry =
         airk_core::combined_reads::read_retry::proposed_retry(&serde_json::to_value(&result)?);
-    encoded_size(&result, airk_core::MAX_RESPONSE_BYTES).map_err(|_| CombinedReplyBudget)?;
+    if result.context.is_some() {
+        result.read_retry = None;
+        airk_core::combined_context::context_delivery_bindings(&serde_json::to_value(&result)?)?;
+    }
+    let maximum = result
+        .context
+        .as_ref()
+        .map_or(airk_core::MAX_RESPONSE_BYTES, |summary| {
+            summary.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES)
+        });
+    if encoded_size(&result, maximum).is_err() {
+        if result.context.is_some() {
+            return Err(ContextReplyBudget {
+                result: Box::new(result),
+            }
+            .into());
+        }
+        return Err(CombinedReplyBudget.into());
+    }
     Ok(result)
 }
 

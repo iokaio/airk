@@ -652,6 +652,75 @@ class ServiceClientTests(unittest.TestCase):
         self.assertNotIn("airk_answer", CLIENTS.RETRYABLE_TOOLS)
         self.assertNotIn("airk_parse", CLIENTS.RETRYABLE_TOOLS)
 
+    def test_answer_request_consumes_current_rust_case_without_changing_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "request.json"
+            original = {"schema":"airk.arbiter.context.request/2", "question":"Rust fixture", "budget":{"deadline_ms":20000,"calls":3}}
+            path.write_text(json.dumps({"examples":[{"name":"complete_native_request","accepted":True,"arguments":original}]}),encoding="utf-8")
+            actual = CLIENTS.current_answer_arguments("polaronlymarker", path)
+            self.assertEqual(actual, {**original,"question":"polaronlymarker","response_mode":"full"})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["examples"][0]["arguments"], original)
+            original["schema"] = "airk.arbiter.context.request/1"
+            path.write_text(json.dumps({"examples":[{"name":"complete_native_request","accepted":True,"arguments":original}]}),encoding="utf-8")
+            with self.assertRaisesRegex(AssertionError,"Current /2"):
+                CLIENTS.current_answer_arguments("polaronlymarker", path)
+
+    def test_finite_answer_never_uses_retry_path_or_replays_a_failure(self):
+        fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+        fixture.arguments = Mock(return_value=["--catalog-session","native-owned-selection"])
+        fixture.query = Mock(side_effect=AssertionError("finite call reached retry owner"))
+        response = {"content":[{"type":"text","text":"{}"}]}
+        fixture.run = Mock(return_value=subprocess.CompletedProcess([],0,json.dumps(response),""))
+        self.assertEqual(fixture.answer_once("project", {"original":"request"}),response)
+        self.assertEqual(fixture.run.call_count,1)
+        self.assertIn("airk_answer",fixture.run.call_args.args)
+        fixture.run = Mock(return_value=subprocess.CompletedProcess([],1,json.dumps({"isError":True}),""))
+        with self.assertRaisesRegex(AssertionError,"without retry"):
+            fixture.answer_once("project", {"original":"request"})
+        self.assertEqual(fixture.run.call_count,1)
+        fixture.query.assert_not_called()
+
+    def test_answer_packet_keeps_complete_fields_and_authenticates_duplicate(self):
+        packet={"schema":"airk.arbiter.context/2","records":[{"future":{"request_id":"evidence-owned"}}],"future":{"coverage":"unknown"}}
+        envelope={"content":[{"type":"text","text":json.dumps(packet)}],"structuredContent":copy.deepcopy(packet)}
+        self.assertEqual(CLIENTS.answer_packet(envelope),packet)
+        envelope["structuredContent"]["future"]["coverage"]="invented"
+        with self.assertRaisesRegex(AssertionError,"duplicates differ"):
+            CLIENTS.answer_packet(envelope)
+
+    def test_answer_validator_binds_exact_rust_input_image_and_compiled_sources_without_cargo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            executable=root / "owned-validator.bin"
+            executable.write_bytes(b"identified prebuilt Rust test image")
+            fixture=type("Captured",(),{"owner":root,"answer_validator":executable,"environment":{},"answer_comparisons":[]})()
+            packet={"schema":"airk.arbiter.context/2","future":{"request_id":"evidence-owned"}}
+            envelope={"content":[{"type":"text","text":json.dumps(packet)}],"structuredContent":packet}
+            wrong_source=False
+            def run(command,**options):
+                self.assertEqual(command,[str(executable.resolve()),"--exact","retained_current_answer_pair_validates_full_transport_results","--ignored","--nocapture","--test-threads=1"])
+                capture=Path(options["env"]["AIRK_CONTEXT_PARITY_CAPTURE"])
+                captured=json.loads(capture.read_text(encoding="utf-8"))
+                self.assertEqual(captured,{"arguments":{"original":"request"},"left":envelope,"right":envelope,"right_mcp_protocol":"2025-11-25"})
+                sources={name:CLIENTS.file_sha256(Path(CLIENTS.__file__).parents[1]/name) for name in CLIENTS.ANSWER_VALIDATOR_SOURCES}
+                if wrong_source:sources["crates/airk-cli/tests/common/parity/context.rs"]="00"*32
+                proof={"schema":1,"full_envelopes_equal":True,"scope":"validated-unassessed-fallback-only","compiled_sources":sources,
+                       "input_sha256":CLIENTS.file_sha256(capture),"validator_sha256":CLIENTS.file_sha256(executable)}
+                return subprocess.CompletedProcess(command,0,"AIRK_CONTEXT_PARITY_VALIDATED "+json.dumps(proof)+"\n","")
+            with patch.object(CLIENTS.subprocess,"run",side_effect=run) as observed:
+                CLIENTS.validate_answer_pair(fixture,"real wire",{"original":"request"},envelope,envelope,"2025-11-25")
+                self.assertEqual(observed.call_count,1)
+                self.assertEqual(len(fixture.answer_comparisons),1)
+                wrong_source=True
+                with self.assertRaisesRegex(AssertionError,"compiled source/fixture"):
+                    CLIENTS.validate_answer_pair(fixture,"stale binary",{"original":"request"},envelope,envelope,"2025-11-25")
+                self.assertEqual(observed.call_count,2)
+                self.assertEqual(len(fixture.answer_comparisons),1,"refused evidence cannot become a parity pass")
+            with patch.object(CLIENTS.subprocess,"run",side_effect=subprocess.TimeoutExpired([str(executable)],30)) as observed:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    CLIENTS.validate_answer_pair(fixture,"unknown helper outcome",{"original":"request"},envelope,envelope)
+                self.assertEqual(observed.call_count,1,"validator failures are never replayed")
+
     def test_legacy_query_scope_never_accepts_catalog_expansion_or_false_completeness(self):
         reply = {"schema": "airk.query-scope/1", "mode": "legacy", "status": "configuration_required",
                  "projects": [], "indexes": [], "sources": [], "grant": None, "scope_revision": None,

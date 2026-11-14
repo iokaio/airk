@@ -250,7 +250,9 @@ fn call(
     tool: &str,
     arguments: Map<String, Value>,
 ) -> Result<(), String> {
+    let read_attempt = super::read_budget(cx).map_err(|line| line.message)?;
     let method = ControlMethod::ToolsCall {
+        read_attempt,
         tool: tool.into(),
         arguments,
         selection: console.selection.clone(),

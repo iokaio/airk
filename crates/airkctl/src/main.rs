@@ -31,6 +31,7 @@ fn command_main() -> ExitCode {
     let stderr = std::io::stderr();
     let stdin = std::io::stdin();
     let mut io = airkctl::cli::Io {
+        read_attempt: None,
         stdin: &mut stdin.lock(),
         stdout: &mut stdout.lock(),
         stderr: &mut stderr.lock(),

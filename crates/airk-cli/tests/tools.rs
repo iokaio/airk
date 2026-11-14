@@ -530,6 +530,7 @@ fn control_outcome(
         .block_on(airk_cli::service_runtime::request(
             control,
             airk_core::service::ControlMethod::ToolsCall {
+                read_attempt: None,
                 tool: tool.into(),
                 arguments: arguments.as_object().unwrap().clone(),
                 selection,
@@ -704,6 +705,7 @@ fn airkctl_outcome(parity: &Parity, arguments: &[&str]) -> (Option<i32>, Option<
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut io = airkctl::cli::Io {
+        read_attempt: None,
         stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,
@@ -990,6 +992,7 @@ fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
         line.extend(command.iter().copied());
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -1172,6 +1175,7 @@ fn airkctl_jobs_and_requests_match_airk() -> anyhow::Result<()> {
     let ctl = |arguments: &[&str]| -> (u8, String, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -1330,6 +1334,7 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
     let ctl = |arguments: &[&str]| -> (u8, String, Vec<u8>) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -1601,6 +1606,7 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
         // `common::command` and `scoped_command` run `airk` with
         // `AIRK_MCP_RESPONSE_MODE=full`; `airkctl` reads the same setting.
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut stdin,
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -1727,6 +1733,7 @@ fn airkctl_configuration_matches_airk() -> anyhow::Result<()> {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut input = stdin.as_bytes();
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut input,
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -1944,6 +1951,7 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
     let ctl = |selection: &[&str], arguments: &[&str]| -> (u8, String, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -2070,6 +2078,7 @@ fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
     assert!(before.success);
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let mut io = airkctl::cli::Io {
+        read_attempt: None,
         stdin: &mut std::io::empty(),
         stdout: &mut stdout,
         stderr: &mut stderr,
@@ -2105,6 +2114,7 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
     let ctl = |arguments: &[&str]| -> (u8, String, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -2286,6 +2296,7 @@ fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
     let ctl = |arguments: &[&str]| -> (u8, String, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -2549,6 +2560,7 @@ fn airkctl_trust_and_issuer_rotation_match_airk() -> anyhow::Result<()> {
     let ctl = |arguments: &[&str]| -> (u8, String, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -2665,6 +2677,7 @@ fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Resu
     let ctl = |arguments: &[&str]| -> (u8, Value, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,
@@ -2816,6 +2829,7 @@ fn airkctl_explorer_get_handoff_reads_a_published_handoff() -> anyhow::Result<()
     let get = |id: String, file: &std::path::Path| -> (u8, String, String) {
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
         let mut io = airkctl::cli::Io {
+            read_attempt: None,
             stdin: &mut std::io::empty(),
             stdout: &mut stdout,
             stderr: &mut stderr,

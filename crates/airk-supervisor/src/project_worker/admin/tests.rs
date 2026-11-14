@@ -28,6 +28,7 @@ fn grant() -> ConnectionGrant {
 }
 fn query(native: Option<NativeRead>, tool: &str) -> protocol::Query {
     protocol::Query {
+        context_partition: None,
         read_attempt: None,
         frontend: None,
         tool: tool.into(),
@@ -49,6 +50,107 @@ fn administrative_purpose_accepts_only_native_reads_without_status_slot_camoufla
         .arguments
         .insert("query".into(), serde_json::json!("private evidence"));
     assert!(validate_request(role, &mixed).is_err());
+    Ok(())
+}
+
+#[test]
+fn combined_context_partition_is_refused_before_any_backend_admission() -> Result<()> {
+    use airk_core::{
+        arbiter::Budget, combined_context::initial_allocations, index_catalog::IndexId,
+    };
+    let mut request = query(None, "airk_answer");
+    validate_request(SessionPurpose::Evidence, &request)?;
+    request.context_partition = initial_allocations(
+        Incarnation::from_bytes([9; 16]),
+        Sha256Digest::from_bytes([8; 32]),
+        &[IndexId::from_identity(Incarnation::from_bytes([1; 16]))],
+        &Budget::default(),
+    )?
+    .remove(0);
+    let mut backend_entries = 0;
+    for purpose in [
+        SessionPurpose::Evidence,
+        SessionPurpose::NativeAdministrativeRead,
+    ] {
+        let outcome = validate_request(purpose, &request);
+        if outcome.is_ok() {
+            backend_entries += 1;
+        }
+        assert_eq!(
+            outcome.unwrap_err().to_string(),
+            match purpose {
+                SessionPurpose::Evidence => "context partition original attempt missing",
+                _ => "context partition requires scoped canonical Answer",
+            }
+        );
+    }
+    assert_eq!(backend_entries, 0);
+    Ok(())
+}
+
+#[test]
+fn combined_context_partition_admission_binds_attempt_index_and_actual_nested_budget() -> Result<()>
+{
+    use airk_core::{
+        arbiter::{
+            Budget,
+            context_action::{ContextRequestV2, REQUEST_SCHEMA_V2},
+        },
+        combined_context::initial_allocations,
+        index_catalog::{CatalogRevision, GrantId, IndexId},
+        read_attempt::{ReadAttemptBudget, ReadClock},
+        service::ScopedReadRef,
+    };
+    let index = IndexId::from_identity(Incarnation::from_bytes([1; 16]));
+    let budget = Budget::default();
+    let mut request = query(None, "airk_answer");
+    request.arguments = serde_json::to_value(ContextRequestV2 {
+        schema: REQUEST_SCHEMA_V2.into(),
+        question: "original question".into(),
+        budget: budget.clone(),
+    })?
+    .as_object()
+    .unwrap()
+    .clone();
+    request.context_partition = initial_allocations(
+        Incarnation::from_bytes([9; 16]),
+        Sha256Digest::from_bytes([8; 32]),
+        &[index],
+        &budget,
+    )?
+    .remove(0);
+    request.read_attempt = Some(ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([9; 16]),
+        clock: ReadClock::UnixMonotonic,
+        expires_monotonic_ns: 3_000_000_000,
+        remaining_ns: 2_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    });
+    let authority = ScopedReadRef {
+        schema: 1,
+        lease_generation: 1,
+        index_id: index,
+        grant_id: Some(GrantId::from_identity(Incarnation::from_bytes([4; 16]))),
+        grant_revision: Some(CatalogRevision::INITIAL),
+        selection: None,
+        fingerprint: Sha256Digest::from_bytes([5; 32]),
+    };
+    validate_request(SessionPurpose::Evidence, &request)?;
+    validate_context_partition(&request, Some(authority))?;
+    assert!(validate_context_partition(&request, None).is_err());
+    let mut foreign = authority;
+    foreign.index_id = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
+    assert!(validate_context_partition(&request, Some(foreign)).is_err());
+    let mut wrong = request.clone();
+    wrong.read_attempt.as_mut().unwrap().request_id = Incarnation::from_bytes([7; 16]);
+    assert!(validate_request(SessionPurpose::Evidence, &wrong).is_err());
+    let mut over = request.clone();
+    over.context_partition.as_mut().unwrap().resources.calls = 1;
+    assert!(validate_request(SessionPurpose::Evidence, &over).is_err());
+    let mut wrong_tool = request;
+    wrong_tool.tool = "airk_search".into();
+    assert!(validate_request(SessionPurpose::Evidence, &wrong_tool).is_err());
     Ok(())
 }
 

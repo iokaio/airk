@@ -13,7 +13,7 @@
           "rounds": 1
         },
         "question": "amber_marker",
-        "schema": "airk.arbiter.context.request/1"
+        "schema": "airk.arbiter.context.request/2"
       },
       "name": "complete_native_request"
     },
@@ -138,6 +138,37 @@
       },
       "schema": {
         "type": "string"
+      },
+      "verification": {
+        "default": "report",
+        "description": "Report is the default: bounded dated saved-byte outcomes. Off skips source checks; require fails unless every returned file reference matches. No extraction, completeness or unsaved-buffer certification.",
+        "enum": [
+          "off",
+          "report",
+          "require"
+        ],
+        "type": "string"
+      },
+      "verification_deadline_ms": {
+        "default": 2000,
+        "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+        "maximum": 30000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "verification_max_bytes": {
+        "default": 16777216,
+        "description": "Aggregate raw-byte budget, 1..1073741824; default 16777216 (16 MiB).",
+        "maximum": 1073741824,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "verification_max_sources": {
+        "default": 8,
+        "description": "Maximum whole-source checks, 1..256; default 8.",
+        "maximum": 256,
+        "minimum": 1,
+        "type": "integer"
       }
     },
     "required": [

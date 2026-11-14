@@ -188,6 +188,7 @@ impl Owner {
                 gate,
                 admit,
                 settle: state.supervisor.read_settlement_requester(),
+                delivery_guard_factory: super::arbiter::policy_delivery::factory(state),
             },
         )?;
         gateway.set_admin(state.admin.clone());
