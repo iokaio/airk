@@ -89,6 +89,7 @@ fn task_and_four_choice_catalogs_are_independently_fixed() -> Result<()> {
         ("airk.evidence_role.v1", Task::EvidenceRole),
         ("airk.context_next_read.v1", Task::ContextNextRead),
         ("airk.context_gap.v1", Task::ContextGap),
+        ("airk.context_action.v1", Task::ContextAction),
     ] {
         assert_eq!(serde_json::to_value(task)?, json);
     }

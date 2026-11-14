@@ -59,6 +59,179 @@
       ],
       "type": "object"
     },
+    "AssessmentApplicability": {
+      "enum": [
+        "current",
+        "historical_after_read",
+        "basis_omitted"
+      ],
+      "type": "string"
+    },
+    "AssessmentBasis": {
+      "additionalProperties": false,
+      "properties": {
+        "read_choices_available": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "read_choices_omitted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "read_choices_scored": {
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "source_units_available": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_units_omitted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_units_partial": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_units_presented": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "source_units_available",
+        "source_units_presented",
+        "source_units_omitted",
+        "source_units_partial",
+        "read_choices_available",
+        "read_choices_scored",
+        "read_choices_omitted"
+      ],
+      "type": "object"
+    },
+    "AssessmentEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "applicability": {
+          "$ref": "#/$defs/AssessmentApplicability"
+        },
+        "basis": {
+          "$ref": "#/$defs/AssessmentBasis"
+        },
+        "ordinal": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "partition": {
+          "$ref": "#/$defs/ScopeBinding"
+        },
+        "result": {
+          "$ref": "#/$defs/AssessmentResult"
+        }
+      },
+      "required": [
+        "ordinal",
+        "partition",
+        "basis",
+        "result",
+        "applicability"
+      ],
+      "type": "object"
+    },
+    "AssessmentResult": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "advice": {
+              "$ref": "#/$defs/ContextActionAdvice"
+            },
+            "card": {
+              "$ref": "#/$defs/ContextActionCard"
+            },
+            "status": {
+              "const": "selected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "card",
+            "advice"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "advice": {
+              "$ref": "#/$defs/ContextActionAdvice"
+            },
+            "status": {
+              "const": "abstained",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "advice"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/AssessmentUnavailable"
+            },
+            "status": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "work": {
+              "$ref": "#/$defs/Work"
+            },
+            "work_unknown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "status",
+            "reason",
+            "work",
+            "work_unknown"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AssessmentUnavailable": {
+      "enum": [
+        "disabled",
+        "not_enrolled",
+        "task_unsupported",
+        "no_evidence",
+        "abstained",
+        "unavailable",
+        "token_budget",
+        "deadline",
+        "new_evidence",
+        "basis_omitted"
+      ],
+      "type": "string"
+    },
     "Asset": {
       "additionalProperties": false,
       "properties": {
@@ -326,7 +499,228 @@
       ],
       "type": "object"
     },
+    "ContextAction": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "choice": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "kind": {
+              "const": "read",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "choice"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "sufficient",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "clarify",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "no_justified_read",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ContextActionAdvice": {
+      "additionalProperties": false,
+      "description": "Same immutable native bindings as Advice, with a distinct joint-task schema.",
+      "properties": {
+        "calibration": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "input_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "profile": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        },
+        "task": {
+          "$ref": "#/$defs/Task"
+        },
+        "work": {
+          "$ref": "#/$defs/Work"
+        }
+      },
+      "required": [
+        "schema",
+        "task",
+        "profile",
+        "runtime",
+        "compiler",
+        "calibration",
+        "policy",
+        "scope",
+        "input_digest",
+        "evidence",
+        "work",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "ContextActionCard": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ContextAction"
+        },
+        "assessments": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAssessment"
+          },
+          "type": "array"
+        },
+        "gap": {
+          "$ref": "#/$defs/Gap"
+        },
+        "id": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "reason": {
+          "$ref": "#/$defs/ContextReason"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "gap",
+        "reason",
+        "assessments"
+      ],
+      "type": "object"
+    },
+    "ContextActionRoster": {
+      "additionalProperties": false,
+      "description": "Frozen native alternatives, not an arbitrary model-supplied operation list.",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/AssessmentBasis"
+        },
+        "cards": {
+          "items": {
+            "$ref": "#/$defs/ContextActionCard"
+          },
+          "type": "array"
+        },
+        "input_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "input_digest",
+        "policy",
+        "basis",
+        "cards"
+      ],
+      "type": "object"
+    },
+    "ContextReason": {
+      "enum": [
+        "retained_evidence_covers_question",
+        "missing_definition",
+        "missing_constraint",
+        "missing_example",
+        "missing_test",
+        "missing_counterevidence",
+        "conflicting_evidence",
+        "ambiguous_question",
+        "no_verified_useful_read"
+      ],
+      "type": "string"
+    },
     "ContextRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "question": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "question",
+        "budget"
+      ],
+      "type": "object"
+    },
+    "ContextRequestV2": {
       "additionalProperties": false,
       "properties": {
         "budget": {
@@ -417,6 +811,85 @@
         "candidate_count",
         "omitted_count",
         "advice",
+        "applications"
+      ],
+      "type": "object"
+    },
+    "ContextResponseV2": {
+      "additionalProperties": false,
+      "properties": {
+        "applications": {
+          "items": {
+            "$ref": "#/$defs/IndexApplication"
+          },
+          "type": "array"
+        },
+        "assessment": {
+          "$ref": "#/$defs/PartitionAssessment"
+        },
+        "assessment_history": {
+          "items": {
+            "$ref": "#/$defs/AssessmentEvent"
+          },
+          "type": "array"
+        },
+        "candidate_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gaps": {
+          "items": {
+            "$ref": "#/$defs/Gap"
+          },
+          "type": "array"
+        },
+        "omitted_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "packet_schema": {
+          "type": "string"
+        },
+        "paragraphs": {
+          "items": {
+            "$ref": "#/$defs/GroundedParagraph"
+          },
+          "type": "array"
+        },
+        "question": {
+          "type": "string"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRecord"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "stop": {
+          "$ref": "#/$defs/PartitionTermination"
+        },
+        "work": {
+          "$ref": "#/$defs/Work"
+        }
+      },
+      "required": [
+        "schema",
+        "packet_schema",
+        "question",
+        "records",
+        "paragraphs",
+        "gaps",
+        "stop",
+        "work",
+        "candidate_count",
+        "omitted_count",
+        "assessment_history",
+        "assessment",
         "applications"
       ],
       "type": "object"
@@ -561,6 +1034,23 @@
             "value"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "context_action",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/Sha256Digest"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -581,6 +1071,26 @@
       "required": [
         "index_id",
         "tasks"
+      ],
+      "type": "object"
+    },
+    "EvidenceAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/EvidenceRef"
+        },
+        "relevance": {
+          "$ref": "#/$defs/RelevanceHypothesis"
+        },
+        "role": {
+          "$ref": "#/$defs/EvidenceRole"
+        }
+      },
+      "required": [
+        "evidence",
+        "role",
+        "relevance"
       ],
       "type": "object"
     },
@@ -612,6 +1122,38 @@
         "arguments",
         "role",
         "canonical_result"
+      ],
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SourceUnitKind"
+        },
+        "record": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "result_pointer": {
+          "type": "string"
+        },
+        "utf8_end": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "utf8_start": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "record",
+        "kind",
+        "result_pointer",
+        "utf8_start",
+        "utf8_end"
       ],
       "type": "object"
     },
@@ -951,6 +1493,82 @@
         }
       ]
     },
+    "PartitionAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/PartitionCoverage"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        },
+        "termination": {
+          "$ref": "#/$defs/PartitionTermination"
+        }
+      },
+      "required": [
+        "scope",
+        "coverage",
+        "termination"
+      ],
+      "type": "object"
+    },
+    "PartitionCoverage": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/AssessmentUnavailable"
+            },
+            "status": {
+              "const": "unassessed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ordinal": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "status": {
+              "const": "assessed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "ordinal"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PartitionTermination": {
+      "enum": [
+        "pending",
+        "covered",
+        "clarification_required",
+        "no_justified_read",
+        "no_progress",
+        "budget",
+        "deadline",
+        "refused",
+        "stale",
+        "unsupported"
+      ],
+      "type": "string"
+    },
     "Profile": {
       "additionalProperties": false,
       "properties": {
@@ -1039,6 +1657,9 @@
         "task_policies": {
           "additionalProperties": false,
           "properties": {
+            "airk.context_action.v1": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
             "airk.context_gap.v1": {
               "$ref": "#/$defs/Sha256Digest"
             },
@@ -1170,6 +1791,15 @@
       ],
       "type": "string"
     },
+    "RelevanceHypothesis": {
+      "enum": [
+        "useful",
+        "complementary",
+        "redundant",
+        "uncertain"
+      ],
+      "type": "string"
+    },
     "RevisionEnvelope": {
       "additionalProperties": false,
       "properties": {
@@ -1265,6 +1895,12 @@
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
+    "SourceUnitKind": {
+      "enum": [
+        "hit"
+      ],
+      "type": "string"
+    },
     "Status": {
       "additionalProperties": false,
       "properties": {
@@ -1349,7 +1985,8 @@
         "airk.evidence_relevance.v1",
         "airk.evidence_role.v1",
         "airk.context_next_read.v1",
-        "airk.context_gap.v1"
+        "airk.context_gap.v1",
+        "airk.context_action.v1"
       ],
       "type": "string"
     },
@@ -1472,7 +2109,10 @@
     "ContextResponse",
     "Advice",
     "ManagementRequest",
-    "Status"
+    "Status",
+    "ContextRequestV2",
+    "ContextResponseV2",
+    "ContextActionRoster"
   ],
   "title": "AIRK Arbiter Core contract"
 }

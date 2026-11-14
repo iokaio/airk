@@ -41,6 +41,10 @@ names `crate::read_limits::<constant>`.
 
 ## Dependencies (allowed edges)
 
+The separate [combined context allocation owner](../combined_context/CONTRACT.md)
+defines additive nested Answer reservations and global assessment ordinals.
+It consumes existing budgets; none of this leaf's constants change.
+
 None. Every other Core module may depend on this leaf; it depends on nothing.
 
 ## Conformance applicability

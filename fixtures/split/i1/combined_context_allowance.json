@@ -1,0 +1,56 @@
+{
+  "schema": "airk.split-fixture.combined-context/1",
+  "ordinary_query_bytes": "{\"frontend\":null,\"tool\":\"airk_status\",\"arguments\":{},\"native\":null,\"status_receipt\":{}}",
+  "allowance": {
+    "schema":"airk.context-partition-allowance/1",
+    "attempt":"09090909090909090909090909090909",
+    "selection":"0808080808080808080808080808080808080808080808080808080808080808",
+    "index_id":"idx_01010101010101010101010101010101",
+    "parent_budget":{"calls":8,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000},
+    "resources":{"calls":4,"input_tokens":1024,"candidates":16,"bytes":131072},
+    "assessment_ordinals":[1,2]
+  },
+  "malformed_allowance": [
+    {"path":"/schema","value":"airk.context-partition-allowance/9"},
+    {"path":"/resources/calls","value":9},
+    {"path":"/resources/input_tokens","value":0},
+    {"path":"/resources/bytes","value":1023},
+    {"path":"/assessment_ordinals","value":[1,1]},
+    {"path":"/assessment_ordinals","value":[4]},
+    {"path":"/assessment_ordinals","value":[]},
+    {"path":"/parent_budget/deadline_ms","value":30001}
+  ],
+  "allocations": [
+    {
+      "name": "two_members_eight_calls_2048_tokens_three_assessments",
+      "members": 2,
+      "budget": {"calls":8,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000},
+      "expected": [
+        {"calls":4,"input_tokens":1024,"candidates":16,"bytes":131072,"ordinals":[1,2]},
+        {"calls":4,"input_tokens":1024,"candidates":16,"bytes":131072,"ordinals":[3]}
+      ]
+    },
+    {
+      "name": "four_members_three_assessments_last_deterministic",
+      "members": 4,
+      "budget": {"calls":8,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000},
+      "expected": [
+        {"calls":2,"input_tokens":683,"candidates":8,"bytes":65536,"ordinals":[1]},
+        {"calls":2,"input_tokens":683,"candidates":8,"bytes":65536,"ordinals":[2]},
+        {"calls":2,"input_tokens":682,"candidates":8,"bytes":65536,"ordinals":[3]},
+        {"calls":2,"input_tokens":0,"candidates":8,"bytes":65536,"ordinals":[]}
+      ]
+    },
+    {
+      "name": "more_members_than_calls_remain_in_roster",
+      "members": 4,
+      "budget": {"calls":2,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000},
+      "expected": [
+        {"calls":1,"input_tokens":1024,"candidates":16,"bytes":131072,"ordinals":[1,2]},
+        {"calls":1,"input_tokens":1024,"candidates":16,"bytes":131072,"ordinals":[3]},
+        null,
+        null
+      ]
+    }
+  ]
+}

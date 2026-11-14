@@ -18,6 +18,42 @@ export type Advice = {
     work: Work;
 };
 
+export type AssessmentApplicability = "current" | "historical_after_read" | "basis_omitted";
+
+export type AssessmentBasis = {
+    read_choices_available: number;
+    read_choices_omitted: number;
+    read_choices_scored: Array<Sha256Digest>;
+    source_units_available: number;
+    source_units_omitted: number;
+    source_units_partial: number;
+    source_units_presented: Array<EvidenceRef>;
+};
+
+export type AssessmentEvent = {
+    applicability: AssessmentApplicability;
+    basis: AssessmentBasis;
+    ordinal: number;
+    partition: ScopeBinding;
+    result: AssessmentResult;
+};
+
+export type AssessmentResult = {
+    advice: ContextActionAdvice;
+    card: ContextActionCard;
+    status: "selected";
+} | {
+    advice: ContextActionAdvice;
+    status: "abstained";
+} | {
+    reason: AssessmentUnavailable;
+    status: "unavailable";
+    work: Work;
+    work_unknown: boolean;
+};
+
+export type AssessmentUnavailable = "disabled" | "not_enrolled" | "task_unsupported" | "no_evidence" | "abstained" | "unavailable" | "token_budget" | "deadline" | "new_evidence" | "basis_omitted";
+
 export type Asset = {
     bytes: number;
     name: string;
@@ -77,7 +113,64 @@ export type Configuration = {
     selected_profile?: Sha256Digest | null;
 };
 
+export type ContextAction = {
+    choice: Sha256Digest;
+    kind: "read";
+} | {
+    kind: "sufficient";
+} | {
+    kind: "clarify";
+} | {
+    kind: "no_justified_read";
+};
+
+/**
+ * Same immutable native bindings as Advice, with a distinct joint-task schema.
+ */
+export type ContextActionAdvice = {
+    calibration: Sha256Digest;
+    compiler: Sha256Digest;
+    evidence: Array<Sha256Digest>;
+    input_digest: Sha256Digest;
+    outcome: Outcome;
+    policy: Sha256Digest;
+    profile: Sha256Digest;
+    runtime: string;
+    schema: string;
+    scope: ScopeBinding;
+    task: Task;
+    work: Work;
+};
+
+export type ContextActionCard = {
+    action: ContextAction;
+    assessments: Array<EvidenceAssessment>;
+    gap: Gap;
+    id: Sha256Digest;
+    reason: ContextReason;
+};
+
+/**
+ * Frozen native alternatives, not an arbitrary model-supplied operation list.
+ */
+export type ContextActionRoster = {
+    basis: AssessmentBasis;
+    cards: Array<ContextActionCard>;
+    input_digest: Sha256Digest;
+    policy: Sha256Digest;
+    schema: string;
+    scope: ScopeBinding;
+};
+
+export type ContextReason = "retained_evidence_covers_question" | "missing_definition" | "missing_constraint" | "missing_example" | "missing_test" | "missing_counterevidence" | "conflicting_evidence" | "ambiguous_question" | "no_verified_useful_read";
+
 export type ContextRequest = {
+    budget: Budget;
+    question: string;
+    schema: string;
+};
+
+export type ContextRequestV2 = {
     budget: Budget;
     question: string;
     schema: string;
@@ -95,6 +188,22 @@ export type ContextResponse = {
     records: Array<EvidenceRecord>;
     schema: string;
     stop: StopReason;
+    work: Work;
+};
+
+export type ContextResponseV2 = {
+    applications: Array<IndexApplication>;
+    assessment: PartitionAssessment;
+    assessment_history: Array<AssessmentEvent>;
+    candidate_count: number;
+    gaps: Array<Gap>;
+    omitted_count: number;
+    packet_schema: string;
+    paragraphs: Array<GroundedParagraph>;
+    question: string;
+    records: Array<EvidenceRecord>;
+    schema: string;
+    stop: PartitionTermination;
     work: Work;
 };
 
@@ -124,11 +233,20 @@ export type Decision = {
 } | {
     kind: "gap";
     value: Gap;
+} | {
+    kind: "context_action";
+    value: Sha256Digest;
 };
 
 export type Enrollment = {
     index_id: IndexId;
     tasks: Array<Task>;
+};
+
+export type EvidenceAssessment = {
+    evidence: EvidenceRef;
+    relevance: RelevanceHypothesis;
+    role: EvidenceRole;
 };
 
 export type EvidenceRecord = {
@@ -138,6 +256,14 @@ export type EvidenceRecord = {
     operation: NativeRead;
     role: EvidenceRole;
     scope: ScopeBinding;
+};
+
+export type EvidenceRef = {
+    kind: SourceUnitKind;
+    record: Sha256Digest;
+    result_pointer: string;
+    utf8_end: number;
+    utf8_start: number;
 };
 
 export type EvidenceRole = "definition" | "constraint" | "example" | "test" | "counterevidence" | "document" | "unknown";
@@ -206,6 +332,22 @@ export type Outcome = {
     status: "unavailable";
 };
 
+export type PartitionAssessment = {
+    coverage: PartitionCoverage;
+    scope: ScopeBinding;
+    termination: PartitionTermination;
+};
+
+export type PartitionCoverage = {
+    reason: AssessmentUnavailable;
+    status: "unassessed";
+} | {
+    ordinal: number;
+    status: "assessed";
+};
+
+export type PartitionTermination = "pending" | "covered" | "clarification_required" | "no_justified_read" | "no_progress" | "budget" | "deadline" | "refused" | "stale" | "unsupported";
+
 export type Profile = {
     abi: ScoreAbi;
     assets: Array<Asset>;
@@ -225,6 +367,7 @@ export type Profile = {
     qualified_targets?: Array<QualifiedTarget>;
     runtime: string;
     task_policies?: {
+        "airk.context_action.v1"?: Sha256Digest;
         "airk.context_gap.v1"?: Sha256Digest;
         "airk.context_next_read.v1"?: Sha256Digest;
         "airk.evidence_relevance.v1"?: Sha256Digest;
@@ -254,6 +397,8 @@ export type QualifiedTarget = {
 
 export type Readout = "decision_symbol" | "pointer_head";
 
+export type RelevanceHypothesis = "useful" | "complementary" | "redundant" | "uncertain";
+
 export type RevisionEnvelope = {
     collection: string;
     generation: number;
@@ -281,6 +426,8 @@ export type ScoreAbi = {
 
 export type Sha256Digest = string;
 
+export type SourceUnitKind = "hit";
+
 export type Status = {
     active_profile?: Sha256Digest | null;
     availability: Availability;
@@ -295,7 +442,7 @@ export type Status = {
 
 export type StopReason = "covered" | "no_progress" | "no_valid_read" | "budget" | "deadline" | "stale" | "refused" | "unsupported";
 
-export type Task = "airk.request_supported.v1" | "airk.retrieval_route.v1" | "airk.recipe_choice.v1" | "airk.evidence_relevance.v1" | "airk.evidence_role.v1" | "airk.context_next_read.v1" | "airk.context_gap.v1";
+export type Task = "airk.request_supported.v1" | "airk.retrieval_route.v1" | "airk.recipe_choice.v1" | "airk.evidence_relevance.v1" | "airk.evidence_role.v1" | "airk.context_next_read.v1" | "airk.context_gap.v1" | "airk.context_action.v1";
 
 export type TensorContract = {
     /**

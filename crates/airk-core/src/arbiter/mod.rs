@@ -40,6 +40,8 @@ pub enum Task {
     ContextNextRead,
     #[serde(rename = "airk.context_gap.v1")]
     ContextGap,
+    #[serde(rename = "airk.context_action.v1")]
+    ContextAction,
 }
 
 #[derive(
@@ -747,6 +749,7 @@ pub enum Decision {
     Role(EvidenceRole),
     NextRead(Sha256Digest),
     Gap(Gap),
+    ContextAction(Sha256Digest),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -956,6 +959,7 @@ impl ContextResponse {
     }
 }
 
+pub mod context_action;
 pub mod literal;
 pub mod schema;
 #[cfg(test)]

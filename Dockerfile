@@ -60,6 +60,7 @@ COPY third_party/licenses ./third_party/licenses
 
 # Exact external test inputs are reviewed in scripts/container-inputs.json.
 COPY fixtures/split/arbiter/public_answer_cases.json ./fixtures/split/arbiter/public_answer_cases.json
+COPY fixtures/split/arbiter/context_action_cases.json ./fixtures/split/arbiter/context_action_cases.json
 COPY packages/admin/src/arbiter.tsx ./packages/admin/src/arbiter.tsx
 COPY packages/admin/src/preparedActions.tsx ./packages/admin/src/preparedActions.tsx
 COPY packages/admin/src/preparedMutations.ts ./packages/admin/src/preparedMutations.ts
@@ -137,6 +138,7 @@ COPY fixtures/split/i3/recovery_reviews.json ./fixtures/split/i3/recovery_review
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
 COPY fixtures/split/i1/control_methods.json ./fixtures/split/i1/control_methods.json
 COPY fixtures/split/i1/tools_call_read_attempt.json ./fixtures/split/i1/tools_call_read_attempt.json
+COPY fixtures/split/i1/combined_context_allowance.json ./fixtures/split/i1/combined_context_allowance.json
 COPY fixtures/split/i1/window_plane.json ./fixtures/split/i1/window_plane.json
 COPY fixtures/split/i1/admin_launch_code.json ./fixtures/split/i1/admin_launch_code.json
 COPY fixtures/split/agents/config_cases.json ./fixtures/split/agents/config_cases.json

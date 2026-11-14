@@ -5,6 +5,156 @@ to complete the advanced split; primary reviewed the static ONNX Runtime
 1.30.0 choice. This is a new contract, not an `airk-state/1` migration.
 Model and platform qualification remain separate from implementing this contract.
 
+## Joint ContextAction foundation decision
+
+Recorded current-version decision: the user explicitly does not require previous
+version compatibility; native replacement/regeneration may be used when an upgrade
+is unavailable. The current matched ContextAction request, local response and
+advice are `/2`. Historical receipts remain facts under their original identities;
+they are not reinterpreted or relabeled. This foundation does not promise older
+packet decoding/migration and does not authorize deleting current user work.
+
+`context_action` owns the inert `ContextRequestV2`, `ContextResponseV2`,
+`ContextActionRoster`, exact source-unit references, whole-card hypotheses,
+assessment history and validators. New `Task::ContextAction` is
+`airk.context_action.v1`; `Decision::ContextAction` names one frozen native card.
+It does not inherit `ContextNextRead` qualification, policy/calibration, prompt or
+resource evidence. Old Advice cannot admit the new decision: joint advice uses
+`airk.arbiter.advice/2` with complete native profile/compiler/calibration/policy,
+scope/input/evidence/work bindings. Contract presence grants no execution authority.
+
+One assessment is ONE joint scoring invocation over at most EIGHT TOTAL cards,
+including reads and terminals. A card is a native-generated Read(choice),
+Sufficient, Clarify or NoJustifiedRead, with a typed gap/reason and at most eight
+source-unit role/relevance hypotheses. No model-supplied operation, argument,
+path, pointer, evidence identity, arbitrary explanation or independent field
+probability is admitted. At most one card per terminal action is permitted (three
+terminals total), and one per verified read choice; changing an ID cannot duplicate
+an alternative. Native frozen-roster membership and full selected-card
+equality are checked before effects; its IDs/digest domain must bind question,
+input, source basis, scope/publication and the new policy. The compiler/policy
+owner, not a renderer or inference score, creates this binding and masks classes
+without qualified annotation/calibration support.
+
+EvidenceRef resolves within one exact scoped record's COMPLETE canonical result
+to an actual Core Hit, with a nonempty exact UTF-8 text window and typed citation.
+The supported pointer is exactly `/hits/<canonical nonnegative integer>` in a
+Search, Context or ReadEvidence record. Nested/future metadata, leading-zero
+aliases and other read operations cannot supply source units even when their
+values happen to deserialize as a Hit; future support needs an owning contract.
+Metadata/scalars cannot substitute for source units. This is structural validation,
+not new source authority: canonical read/publication/citation owners establish the
+record's actual provenance, current scope and source-read permission. Omission
+counts distinguish available/presented/partial source units and available/scored/
+omitted verified choices. The count universe is the native recipe's bounded
+source-unit population, not all facts in the index. Full canonical results,
+including unknown fields, remain unchanged in copies and exports.
+
+Sufficient requires nonempty retained useful/complementary source support and a
+matching reason; it is a fallible question-relative assessment, not exhaustive
+coverage, empty gaps, a useful-read score or budget exhaustion. Clarify requires
+qualified ambiguity/conflict semantics; an unanswerable label is not that proof.
+NoJustifiedRead is forbidden while ANY remaining verified choice is omitted from
+the scored roster, and speaks only about that current recipe. Read requires the
+exact frozen verified choice and matching missing-need reason. Role/relevance are
+whole-card hypotheses, not source facts; roles may have legitimate alternatives
+or overlap, so training labels cannot fabricate exclusive human truth.
+
+The original public Budget ranges are unchanged, including canonical rounds1..4,
+16,384 UTF-8 question bytes and all existing maxima. Joint optional decisions have
+the explicit policy cap min(3, requested rounds), not a fourth model invocation.
+All partitions share ORIGINAL total input-token/call/round/fanout/candidate/byte
+limits and the earliest admitted absolute deadline (at most30s). One joint
+decision per assessment does not cap the entire answer at one assessment; further
+assessments require actual remaining original budgets. No fresh duration after
+queueing, forced follow-up, extra time reserve or compulsory second large pass.
+
+The native service's private reservation ledger is keyed by the ACTUAL earliest
+admitted attempt and ordinal, not a public request/digest/renderer ID. Bind each
+ordinal1..min(3,requested rounds) once to its partition, frozen input/policy/profile
+and original remaining allowance. Concurrent partitions cannot reset totals.
+Unknown postdispatch work retains its charge/reservation and blocks more optional
+decisions; cancellation/timeout never permits replay. Ledger admission, worker
+identity and actual deadlines are future private native hook responsibilities,
+not execution capabilities embedded in this pure public contract.
+
+Nested assessment Work describes SCORING only: input_tokens and measured phase
+timings are additive across distinct ordinals and must remain in aggregate Work.
+Known timings cannot disappear into None or overflow. A successful learned terminal
+cannot retain over-deadline timing. Failed/expired/unknown work may actually overrun;
+retain that measurement without a success/coverage claim, deadline extension or
+permission to replay. Nested calls/rounds/fanout/candidates/bytes are zero: scoring
+does not perform canonical reads. Kernel accounts canonical calls/retained bytes
+additively and round depth/fanout/candidates as peaks once in response Work,
+avoiding duplication of those counters in every scorer observation. Unknown
+postdispatch cost remains explicit and conservatively reserved by the ledger.
+
+Local history is bounded, append-only and ordered by sparse global ordinals;
+each Kernel stores ONLY its own partition's subset, not a fabricated remote roster.
+Selected events retain full card/advice; abstention/unavailable retain measured
+work and explicit uncertainty. Only the latest local event can remain Current;
+coverage references that selected latest ordinal in the same partition. Later
+read/abstention/unavailability cannot leave an earlier sufficiency claim current.
+All non-Covered terminals reject a Sufficient gap; learned terminal gaps equal the
+selected whole card's gap. A read makes pre-read assessment historical;
+new evidence is not automatically sufficient. Unit omission invalidates every
+dependent paragraph/role/coverage projection, marks the event BasisOmitted and
+coverage unassessed. Publication change applies existing delivery refusals. The
+Kernel keeps exact source-unit/assessment dependencies for its native extractive
+paragraph templates; a different unit at the same path/pointer cannot repair them.
+Measured history remains historical, never reconstituted live authority. Packing
+must preserve mandatory initial canonical evidence and cannot retain Covered after
+removing its source support.
+
+### Local and combined Answer ownership
+
+Actual singleton path: MCP `airk_answer` -> `execute_verification_aware` ->
+`Kernel::answer_with_reader` -> one local ContextResponse. The new local /2
+response retains complete records, arguments, paragraphs, gaps, work, omissions
+and applications, plus local assessment/history/termination. It cannot assert
+whole-scope coverage for other authorized partitions.
+
+Current selected mixed reads use frontend `combined_frontend::Backend::dispatch`
+-> `execute_read` -> `read_member` -> Kernel `combined_reads::compose`. CURRENT
+Answer is excluded from that multi-member admission list and the MCP combined
+typed validator; thus mixed Answer currently refuses. Full mixed Answer is
+REQUIRED by the plan and remains an explicit consumer obligation after this
+foundation, not an invented already working property or a local-Kernel fallback.
+
+The existing combined frontend owns the actual eligible partition roster and
+original ReadAttemptContext. Its native service ledger must coordinate aggregate
+budgets/ordinals; independently invoking full per-member budgets is forbidden.
+Private disjoint allowances may contain zero optional decisions even though the
+public canonical rounds lower bound remains1. No partition observes another's
+content in tokenization/features/cache/scoring. Exactly-once member execution or
+a reviewed private resume seam must prevent rerunning initial reads to reclaim
+unused resources. The consumer owner must review that allocation shape first.
+
+The existing native combined compositor owns any whole-answer summary INSIDE its
+complete combined wrapper: selection, publication_vector, rank_policy, members
+with full native results, ranking, shared_values, partial/truncated, failure and
+read_retry, plus frontend continuation/verification/delivery fields. No parallel
+outer response or flattened substitute is introduced here. Local Sufficient,
+Clarify and NoJustifiedRead cannot cancel/relabel pending authorized partitions.
+All currently Covered partitions may yield whole Covered; mixed settled outcomes
+remain Partial with exact states; unvisited/pending/budget/deadline/failure and
+omitted choices stay explicit. Unknown member effects/work never become zero work
+or permission to replay the query.
+
+### Foundation and qualification boundary
+
+Land reviewed Core types, schema and independent Rust-emitted semantic cases
+before service/compiler/Kernel/frontend consumers. This substep does not activate
+ContextAction, declare any optional profile qualified, or qualify mixed transport.
+Current human support/answer annotations do not establish broad human gap,
+ambiguity, role, relevance or sufficiency labels. Mechanical support episodes are
+identified as projections; preserve alternative annotation families rather than
+unioning them. Whole-card correctness includes every reason/role/relevance claim.
+Unsupported classes stay masked and full A6 remains incomplete until independently
+qualified. New native-consumed per-model policy/calibration and composed aggregate
+resource/deadline/cancellation proofs are required; old one-pass or NextRead
+receipts retain only their original measured scope and identity.
+
 The private I1 `NativeNextReadRequest` adapter is owned by `service`; this
 module owns its inert ScopeBinding, evidence records and read choices. The
 adapter's worker identity and scoped authority do not create a dependency from

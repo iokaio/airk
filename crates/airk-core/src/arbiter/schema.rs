@@ -39,6 +39,9 @@ pub fn document() -> serde_json::Value {
     root::<Advice>(&mut generator, &mut roots);
     root::<ManagementRequest>(&mut generator, &mut roots);
     root::<Status>(&mut generator, &mut roots);
+    root::<context_action::ContextRequestV2>(&mut generator, &mut roots);
+    root::<context_action::ContextResponseV2>(&mut generator, &mut roots);
+    root::<context_action::ContextActionRoster>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()

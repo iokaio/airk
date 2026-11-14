@@ -20,6 +20,7 @@ pub mod catalog_split;
 pub mod catalog_split_draft;
 pub mod changes;
 pub mod code;
+pub mod combined_context;
 pub mod combined_reads;
 pub mod compression;
 pub mod continuity;

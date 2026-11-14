@@ -3372,3 +3372,21 @@ Receipt: `models/a1-next-experiment-blind-metadata-r5/execution-receipt.json`.
 No new question outcomes, model scoring or weight training were consumed.
 These metadata counts do not overturn the original failed 205-question result
 or establish an eligible new final population.
+
+### 2026-11-14 — joint-context contract foundation and current native checks
+
+Core owns the new current-version context /2 request, response and bounded
+action roster, plus whole-selection allocation/accounting contracts. Literal
+allocation fixtures and six Rust-emitted semantic cases precede consumers;
+the reviewed Rust schema generated both TypeScript declarations. These are
+inert contracts: joint-action runtime and mixed-index Answer execution are
+still incomplete. No model promotion or quality pass is implied.
+
+Workspace all-target/all-feature Clippy passed in 44.955s. All 281 Core tests
+passed (7.161s), including strict schema equality after reviewed regeneration.
+The native consumer selection passed 51 tests (2.416s); the current CLI
+comparison passed two tests (13.060s, 48 excluded). Inputs remained unchanged
+within each run. Receipts and Cargo timing reports are retained under
+`receipts/native-context-r3/`, with target `artifacts/v190/p10-target` and
+incremental enabled. These scoped results do not replace the pending final
+workspace, real-transport, installed-product or platform qualification.
