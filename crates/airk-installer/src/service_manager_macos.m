@@ -30,7 +30,7 @@ static NSString *loginEntry(NSString *version) {
     return direct ? @"login-serve" : @"login-foreground";
 }
 
-int airk_macos_login(int action, const char *plist_name, const char *expected_bundle,
+int airk_macos_login(int action, int split, const char *plist_name, const char *expected_bundle,
                      int *observed, int64_t *error_code) {
     @autoreleasepool {
         *observed = -1;
@@ -41,7 +41,7 @@ int airk_macos_login(int action, const char *plist_name, const char *expected_bu
             NSBundle *bundle = [NSBundle mainBundle];
             NSString *version = bundle.infoDictionary[@"CFBundleVersion"];
             NSString *entry = loginEntry(version);
-            if (expected == nil || plist == nil ||
+            if ((split != 0 && split != 1) || expected == nil || plist == nil ||
                 entry == nil || ![version isEqual:bundle.infoDictionary[@"CFBundleShortVersionString"]] ||
                 ![bundle.bundleIdentifier isEqualToString:@"io.iokaio.airk.service"] ||
                 ![bundle.infoDictionary[@"CFBundleExecutable"] isEqualToString:@"airk"] ||
@@ -67,7 +67,7 @@ int airk_macos_login(int action, const char *plist_name, const char *expected_bu
             NSDictionary *expectedDefinition = @{
                 @"Label": [@"io.iokaio.airk.service." stringByAppendingString:channel],
                 @"BundleProgram": @"Contents/MacOS/airk",
-                @"ProgramArguments": @[@"airk", @"runtime", entry, @"--channel", channel],
+                @"ProgramArguments": split ? @[@"airk", @"__airk_role", @"service-login-current"] : @[@"airk", @"runtime", entry, @"--channel", channel],
                 @"RunAtLoad": @YES, @"KeepAlive": @{@"SuccessfulExit": @NO},
                 @"ThrottleInterval": @30, @"ProcessType": @"Background"
             };

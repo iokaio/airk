@@ -31,7 +31,9 @@ impl VerifiedManagedReservation {
         let (main, _, inventory) = policy.verify_inventory()?;
         let (_, _, pair) = runtime_pair::read_installed_pair(&main, &inventory.version)?;
         let origin = ManagedGenesisOrigin {
-            schema: pair.schema,
+            // Genesis schema describes engine ownership, not packaging. The
+            // split service/CLI payload still has one in-process engine.
+            schema: if pair.is_single_executable() { 2 } else { 1 },
             install: authority.root.canonicalize()?,
             state: state.to_path_buf(),
             control: state.join("control"),
@@ -186,6 +188,17 @@ pub(in crate::runtime_install) fn verify_origin(
     let (_, helper, pair) = runtime_pair::read_installed_pair(&main, &inventory.version)?;
     let helper_matches = match (pair.schema, origin.schema, origin.helper_sha256) {
         (2, 2, None) => !inventory.files.contains_key(helper_name()),
+        (airk_core::runtime_metadata::SPLIT_RUNTIME_SCHEMA, 2, None) => {
+            let split = pair
+                .split
+                .as_ref()
+                .context("split runtime metadata missing")?;
+            // engine_identity_at_version below additionally checks the actual
+            // CLI bytes; the approved inventory must name that exact image.
+            !inventory.files.contains_key(helper_name())
+                && inventory.files.get(split.cli_relative_path()?)
+                    == Some(&split.airkctl_sha256.to_string())
+        }
         (1, 1, Some(expected)) => {
             inventory.files.get(helper_name()) == Some(&expected.to_string())
                 && runtime_pair::digest_file(&helper)? == expected.to_string()

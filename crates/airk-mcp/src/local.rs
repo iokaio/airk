@@ -142,6 +142,17 @@ impl LocalTools {
     pub fn revoke_scoped_reads(&self) {
         self.kernel.revoke_scoped_reads();
     }
+    /// The native worker supplies this only after redeeming the connection's
+    /// real grant; public MCP arguments never contain installation leases.
+    pub async fn native_arbiter_session(
+        &self,
+        worker: airk_core::service::WorkerIdentity,
+        authority: airk_core::service::ScopedReadRef,
+        owner: std::sync::Arc<dyn airk_kernel::arbiter::NativeController>,
+    ) -> anyhow::Result<Self> {
+        let kernel = self.kernel.with_native_arbiter(worker, authority, owner)?;
+        Self::with_admission(kernel, self.family, self.admission.clone(), false).await
+    }
 
     /// In-process fence handle for the owning native worker; no transport authority.
     pub fn scoped_read_revocation_handle(&self) -> Kernel {

@@ -1,15 +1,32 @@
 {
-  "schema": 1,
-  "default_profile": "minilm-l6-v2-u8-v1",
+  "schema": 2,
+  "default_profile": "minilm-l6-v2-u8-v2",
   "profiles": [
     {
-      "id": "minilm-l6-v2-u8-v1",
-      "precision": "uint8",
-      "runtime": "onnxruntime-cpu/1.22.1/airk-int8-b1-1",
+      "id": "minilm-l6-v2-u8-v2",
+      "precision": "mixed-u8",
+      "runtime": "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2",
       "qualification": {
         "verified_platforms": [],
-        "evidence": "docs/releases/release-1.6.0.md",
-        "scope": "Native INT8 qualification pending; experimental Windows AVX2 results are not installed-platform qualification."
+        "evidence": "docs/split/codex-plan.md#9-arbiter-and-local-models",
+        "scope": "Trained v2 candidate; native full205 retrieval, semantic readiness/migration, resource and installed-platform qualification pending. Numerical smoke is not final qualification."
+      },
+      "quantization": {
+        "activation_precision": "unsigned asymmetric INT8",
+        "signed_lowering": null,
+        "fp32_embeddings_retained": true,
+        "protected_fp32_nodes": [
+          "/inner/encoder/layer.0/output/dense/MatMul",
+          "/inner/encoder/layer.1/output/dense/MatMul",
+          "/inner/encoder/layer.2/output/dense/MatMul",
+          "/inner/encoder/layer.3/output/dense/MatMul",
+          "/inner/encoder/layer.4/output/dense/MatMul",
+          "/inner/encoder/layer.5/output/dense/MatMul"
+        ],
+        "constant_linear_parameters": 10616832,
+        "quantized_linear_parameters": 7077888,
+        "schema": "airk.minilm.quantization/2",
+        "trained_checkpoint_sha256": "51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906"
       },
       "manifest": {
         "schema": 2,
@@ -17,9 +34,9 @@
         "license": "Apache-2.0",
         "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
         "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
-        "model_sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
+        "model_sha256": "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
         "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
-        "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "license_sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
         "dimensions": 384,
         "max_tokens": 256,
         "pooling": "attention-mask-mean-l2",
@@ -31,32 +48,56 @@
       "assets": [
         {
           "name": "model.onnx",
-          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/onnx/model_quint8_avx2.onnx",
-          "bytes": 23046789,
-          "sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21"
+          "bytes": 69325926,
+          "sha256": "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+          "url": null
         },
         {
           "name": "tokenizer.json",
-          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/tokenizer.json",
           "bytes": 466247,
-          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+          "url": null
         },
         {
           "name": "LICENSE",
-          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
-          "bytes": 11358,
-          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          "bytes": 34889,
+          "sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
+          "url": null
         }
       ]
     },
     {
-      "id": "minilm-l6-v2-s8-v1",
-      "precision": "int8",
-      "runtime": "onnxruntime-cpu/1.22.1/airk-int8-b1-1",
+      "id": "minilm-l6-v2-s8-v2",
+      "precision": "mixed-s8",
+      "runtime": "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2",
       "qualification": {
         "verified_platforms": [],
-        "evidence": "docs/releases/release-1.6.0.md",
-        "scope": "Native INT8 qualification pending; experimental Windows AVX2 results are not installed-platform qualification."
+        "evidence": "docs/split/codex-plan.md#9-arbiter-and-local-models",
+        "scope": "Trained v2 candidate; native full205 retrieval, semantic readiness/migration, resource and installed-platform qualification pending. Numerical smoke is not final qualification."
+      },
+      "quantization": {
+        "activation_precision": "unsigned asymmetric8bit split into exact low7/high1 MatMulInteger passes",
+        "signed_lowering": {
+          "split_matmul_nodes": 30,
+          "shared_activation_splits": 18,
+          "maximum_inner_dimension": 32768,
+          "identity": "(Alo-Zlo)(B-Zb)+128(Ahi-Zhi)(B-Zb)=(A-Za)(B-Zb); Alo,Zlo<=127, Ahi,Zhi<=1, signed weights/zero-points[-128,127]",
+          "converted_weight_parameters": 60,
+          "weight_identity": "Qs=Qu-128; Zs=Zu-128; identical scale bytes, so S(Qs-Zs)=S(Qu-Zu) exactly"
+        },
+        "fp32_embeddings_retained": true,
+        "protected_fp32_nodes": [
+          "/inner/encoder/layer.0/output/dense/MatMul",
+          "/inner/encoder/layer.1/output/dense/MatMul",
+          "/inner/encoder/layer.2/output/dense/MatMul",
+          "/inner/encoder/layer.3/output/dense/MatMul",
+          "/inner/encoder/layer.4/output/dense/MatMul",
+          "/inner/encoder/layer.5/output/dense/MatMul"
+        ],
+        "constant_linear_parameters": 10616832,
+        "quantized_linear_parameters": 7077888,
+        "schema": "airk.minilm.quantization/2",
+        "trained_checkpoint_sha256": "51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906"
       },
       "manifest": {
         "schema": 2,
@@ -64,9 +105,9 @@
         "license": "Apache-2.0",
         "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
         "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
-        "model_sha256": "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
+        "model_sha256": "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
         "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
-        "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "license_sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
         "dimensions": 384,
         "max_tokens": 256,
         "pooling": "attention-mask-mean-l2",
@@ -78,21 +119,21 @@
       "assets": [
         {
           "name": "model.onnx",
-          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/onnx/model_qint8_avx512_vnni.onnx",
-          "bytes": 23026053,
-          "sha256": "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474"
+          "bytes": 69355444,
+          "sha256": "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
+          "url": null
         },
         {
           "name": "tokenizer.json",
-          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/tokenizer.json",
           "bytes": 466247,
-          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+          "url": null
         },
         {
           "name": "LICENSE",
-          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
-          "bytes": 11358,
-          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          "bytes": 34889,
+          "sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
+          "url": null
         }
       ]
     }

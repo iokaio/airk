@@ -39,7 +39,7 @@ trusted digest. The native release allowlist pins each complete manifest,
 asset length/hash/role, approved source, license/notice, compiler, calibration,
 policy, task and qualification identity. Initially unqualified profiles remain
 visible but unavailable; acquisition alone does not add them to the allowlist.
-Profiles describe exactly the two smaller and two larger choices in plan ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§9.1.
+Profiles describe exactly the two smaller and two larger choices in plan ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§9.1.
 Downloads contain data only, never code, DLLs, scripts or custom operators.
 
 ## Advice and bounded gathering
@@ -208,7 +208,11 @@ The verified-memory loader preserves original ONNX bytes. For external tensors
 at or above 2 GiB it uses ORT 1.30 AddExternalInitializers with typed OrtValues
 created from the exact authenticated tensor slice and declared shape. The pinned
 ORT implementation injects these values before file-in-memory initializers and
-keeps large data as external memory, avoiding TensorProto's embedded-data cap.
+keeps the native TensorProto bound to an in-memory tensor instead of embedding
+its raw_data. With the current Rust tensor-buffer adapter, ORT 1.30 makes a full
+native CPU tensor copy; this is not zero-copy. The verified file buffer, supplied
+typed tensor buffer and native copy can coexist, and their actual process peak
+is included in resource measurement.
 The remaining authenticated blob is supplied through the existing memory API;
 its pass skips tensors already replaced by in-memory external data. No source
 path is reopened, model bytes are rewritten or precision changed. Admission
@@ -278,3 +282,13 @@ IDs/policy/manifest identities bind CPU16; CPU8 profiles and their failed eviden
 remain unchanged and unqualified. There is no fallback or qualification transfer.
 A separate native developer probe uses one warmup and three observations only;
 it cannot produce a 20-sample resource qualification claim.
+
+
+The CPU16 Intern-4B full twenty-sample gate also failed (p95 30.576960s against
+30s); all samples, including the slow first two after the single frozen warmup,
+remain counted. Before any CPU24 measurement, a distinct closed physical24/intra24
+large-model tier is approved, inter1/sequential/spinning0. It preserves the same
+T2048/B1/N8, one-warmup/twenty-sample/rank19, 30s, 24-GiB and quality floors.
+Only new profile IDs/policy/manifest bytes bind CPU24; CPU8/16 identities and
+failures remain unchanged. No retry, extra warmups, discarded samples, automatic
+fallback or qualification transfer applies.

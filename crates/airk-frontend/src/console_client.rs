@@ -24,10 +24,7 @@ fn failure(code: &str) -> ControlResponse {
     ControlResponse::Failure { code: code.into() }
 }
 fn metadata_only(response: ControlResponse) -> ControlResponse {
-    match response {
-        ControlResponse::Connection { .. } => failure("console_brokerage_forbidden"),
-        response => response,
-    }
+    response.public_metadata()
 }
 async fn handle(
     root: &Path,

@@ -9,7 +9,20 @@ fn main() {
     let catalog = workspace.join("crates/airk-retrieval/src/model_catalog.json");
     println!("cargo:rerun-if-changed={}", catalog.display());
     let catalog: serde_json::Value = serde_json::from_slice(&fs::read(catalog).unwrap()).unwrap();
-    assert_eq!(catalog["schema"], 1);
+    assert_eq!(catalog["schema"], 2);
+    if env::var_os("CARGO_FEATURE_BUNDLED_MODEL").is_some() {
+        let capture = workspace.join("fixtures/models/model-policy.json");
+        println!("cargo:rerun-if-changed={}", capture.display());
+        let capture: serde_json::Value = serde_json::from_slice(
+            &fs::read(capture).expect("Capture reviewed native model policy before bundled builds"),
+        )
+        .unwrap();
+        assert_eq!(capture["schema"], "airk.minilm.native-policy/2");
+        assert_eq!(
+            capture["catalog"], catalog,
+            "bundled model inputs differ from native approved policy"
+        );
+    }
     let profiles = catalog["profiles"].as_array().unwrap();
     assert_eq!(profiles.len(), 2);
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -21,33 +34,25 @@ fn main() {
     );
     for profile in profiles {
         let id = profile["id"].as_str().unwrap();
-        assert!(["minilm-l6-v2-u8-v1", "minilm-l6-v2-s8-v1"].contains(&id));
-        let (precision, digest, size) = match id {
-            "minilm-l6-v2-u8-v1" => (
-                "uint8",
-                "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
-                23_046_789,
-            ),
-            "minilm-l6-v2-s8-v1" => (
-                "int8",
-                "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
-                23_026_053,
-            ),
+        assert!(["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"].contains(&id));
+        let precision = match id {
+            "minilm-l6-v2-u8-v2" => "mixed-u8",
+            "minilm-l6-v2-s8-v2" => "mixed-s8",
             _ => panic!("only the two pinned INT8 models may be embedded"),
         };
         assert_eq!(profile["precision"], precision);
-        assert_eq!(
-            profile["manifest"]["model_sha256"], digest,
-            "FP32 or unapproved model forbidden"
-        );
         let weight = profile["assets"]
             .as_array()
             .unwrap()
             .iter()
             .find(|a| a["name"] == "model.onnx")
             .unwrap();
-        assert_eq!(weight["bytes"], size);
-        assert_eq!(weight["sha256"], digest);
+        assert_eq!(weight["sha256"], profile["manifest"]["model_sha256"]);
+        assert!(
+            profile["quantization"]["fp32_embeddings_retained"]
+                .as_bool()
+                .unwrap()
+        );
         let destination = output.join(id);
         fs::create_dir_all(&destination).unwrap();
         fs::write(
@@ -61,7 +66,7 @@ fn main() {
         let prepared = directory.join(id);
         let manifest_path = prepared.join("model.json");
         println!("cargo:rerun-if-changed={}", manifest_path.display());
-        let manifest = fs::read(manifest_path).expect("Prepare BOTH INT8 models: python scripts/provision-local-model.py --destination target/local-vector-model --download (or verified offline AIRK_BUNDLED_MODEL_DIR)");
+        let manifest = fs::read(manifest_path).expect("Prepare BOTH trained mixed-INT8 models from explicit authenticated local inputs using scripts/provision-local-model.py, then set AIRK_BUNDLED_MODEL_DIR");
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&manifest).unwrap(),
             profile["manifest"]

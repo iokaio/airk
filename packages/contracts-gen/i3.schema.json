@@ -1,5 +1,19 @@
 {
   "$defs": {
+    "AcknowledgedMutationCall": {
+      "additionalProperties": false,
+      "description": "The client has retained the complete known final outcome. This releases\npinned custody; it never accepts an uncertain or in-flight operation.",
+      "properties": {
+        "acknowledged": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "acknowledged"
+      ],
+      "type": "object"
+    },
     "AdminCode": {
       "description": "Codes the admin plane itself produces. Native refusals keep their own\ncode with class `refused`.",
       "oneOf": [
@@ -207,6 +221,18 @@
         }
       ]
     },
+    "EventStreamRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ExchangeRequest": {
       "additionalProperties": false,
       "description": "`POST /admin/api/v1/session` body. `Debug` redacts the code.",
@@ -304,6 +330,27 @@
         }
       ]
     },
+    "MutationPreparation": {
+      "additionalProperties": false,
+      "description": "Acknowledgment issued before a non-journaled keyed mutation can execute.\nThe handle names an immutable operation and native method in this session;\nit contains no request identity and expires with the cookie/service.",
+      "properties": {
+        "preparation": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "receipt_operation": {
+          "description": "The exact native receipt read available after uncertainty. Absence is\nhonest lack of a canonical receipt, never permission to replay.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "preparation"
+      ],
+      "type": "object"
+    },
     "OperationRow": {
       "additionalProperties": false,
       "properties": {
@@ -391,6 +438,34 @@
           "type": "string"
         }
       ]
+    },
+    "PreparedMutationCall": {
+      "additionalProperties": false,
+      "description": "Explicit dispatch after the client has retained the preparation handle.",
+      "properties": {
+        "prepared": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prepared"
+      ],
+      "type": "object"
+    },
+    "RecoverMutationCall": {
+      "additionalProperties": false,
+      "description": "Observe the same prepared operation without repeating its mutation.",
+      "properties": {
+        "recover": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recover"
+      ],
+      "type": "object"
     },
     "RequestKeyRule": {
       "additionalProperties": false,
@@ -531,7 +606,9 @@
       "enum": [
         "overflow",
         "native_gap",
-        "service_restarted"
+        "service_restarted",
+        "session_expired",
+        "session_ended"
       ],
       "type": "string"
     },
@@ -596,8 +673,13 @@
     "ExchangeRequest",
     "ExchangeResponse",
     "StreamLine",
+    "EventStreamRequest",
     "OperationRow",
-    "ReviewedCall"
+    "ReviewedCall",
+    "MutationPreparation",
+    "PreparedMutationCall",
+    "RecoverMutationCall",
+    "AcknowledgedMutationCall"
   ],
   "title": "airk admin I3 contract"
 }

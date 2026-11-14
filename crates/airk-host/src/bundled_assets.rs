@@ -36,7 +36,7 @@ pub fn verify_model_smoke() -> Result<serde_json::Value> {
                 "embedded model smoke output differs from approved contract"
             );
             Ok(
-                serde_json::json!({"schema":1,"source":"embedded","engine":"onnxruntime-cpu/1.22.1","profile":airk_retrieval::model_catalog::selected_profile()?.id,"legacy_identity":plan.legacy_identity,"pipeline_digest":plan.pipeline_digest,"dimensions":first.len(),"repeat_equal":true}),
+                serde_json::json!({"schema":1,"source":"embedded","engine":airk_retrieval::model::ONNX_RUNTIME_ENGINE,"profile":airk_retrieval::model_catalog::selected_profile()?.id,"legacy_identity":plan.legacy_identity,"pipeline_digest":plan.pipeline_digest,"dimensions":first.len(),"repeat_equal":true}),
             )
         },
     )??;
@@ -59,11 +59,11 @@ fn manifest_bytes() -> Result<&'static [u8]> {
             .id
             .as_str()
         {
-            "minilm-l6-v2-u8-v1" => {
-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v1/model.json"))
+            "minilm-l6-v2-u8-v2" => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v2/model.json"))
             }
-            "minilm-l6-v2-s8-v1" => {
-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v1/model.json"))
+            "minilm-l6-v2-s8-v2" => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v2/model.json"))
             }
             _ => anyhow::bail!("unsupported bundled model"),
         },

@@ -71,8 +71,8 @@ impl Owner {
                     TH32CS_SNAPPROCESS,
                 },
                 Threading::{
-                    GetCurrentProcess, GetProcessTimes, OpenProcess,
-                    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+                    GetCurrentProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+                    PROCESS_SYNCHRONIZE,
                 },
             },
         };
@@ -93,20 +93,8 @@ impl Owner {
             parents.insert(entry.th32ProcessID, entry.th32ParentProcessID);
             found = unsafe { Process32NextW(snapshot.as_raw_handle(), &mut entry) };
         }
-        let created = |process| -> Result<u64> {
-            let mut birth = unsafe { std::mem::zeroed() };
-            let mut exit = unsafe { std::mem::zeroed() };
-            let mut kernel = unsafe { std::mem::zeroed() };
-            let mut user = unsafe { std::mem::zeroed() };
-            anyhow::ensure!(
-                unsafe { GetProcessTimes(process, &mut birth, &mut exit, &mut kernel, &mut user) }
-                    != 0,
-                "MCP owner creation identity unavailable"
-            );
-            Ok((u64::from(birth.dwHighDateTime) << 32) | u64::from(birth.dwLowDateTime))
-        };
         let mut pid = std::process::id();
-        let mut child_birth = created(unsafe { GetCurrentProcess() })?;
+        let mut child_birth = windows_created(unsafe { GetCurrentProcess() })?;
         let mut handles = Vec::new();
         for _ in 0..4 {
             let parent = *parents
@@ -126,7 +114,7 @@ impl Owner {
                 std::io::Error::last_os_error()
             );
             let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
-            let birth = created(handle.as_raw_handle())?;
+            let birth = windows_created(handle.as_raw_handle())?;
             anyhow::ensure!(birth <= child_birth, "MCP owner PID was reused");
             child_birth = birth;
             let mut image = vec![0u16; 32768];
@@ -165,6 +153,81 @@ impl Owner {
                 == 0
         })
     }
+}
+
+#[cfg(windows)]
+fn windows_created(process: windows_sys::Win32::Foundation::HANDLE) -> Result<u64> {
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    let mut birth = unsafe { std::mem::zeroed() };
+    let mut exit = unsafe { std::mem::zeroed() };
+    let mut kernel = unsafe { std::mem::zeroed() };
+    let mut user = unsafe { std::mem::zeroed() };
+    anyhow::ensure!(
+        unsafe { GetProcessTimes(process, &mut birth, &mut exit, &mut kernel, &mut user) } != 0,
+        "MCP owner creation identity unavailable"
+    );
+    Ok((u64::from(birth.dwHighDateTime) << 32) | u64::from(birth.dwLowDateTime))
+}
+
+/// Transfer one already-validated kernel handle to the actual launching client.
+/// Parent identity is captured from the kernel and checked by creation time;
+/// no supplied PID/name can select a recipient.
+#[cfg(windows)]
+pub fn duplicate_to_launcher(
+    handle: std::os::windows::io::BorrowedHandle<'_>,
+    access: u32,
+) -> Result<usize> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::Foundation::DuplicateHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetProcessId, OpenProcess, PROCESS_DUP_HANDLE,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let owner = Owner::capture()?;
+    anyhow::ensure!(!owner.exited(), "launcher already exited");
+    let original = owner
+        .0
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("launcher handle missing"))?;
+    // SAFETY: original is an owned captured live process object.
+    let pid = unsafe { GetProcessId(original.as_raw_handle()) };
+    // SAFETY: scalar rights/PID; successful handle becomes owned below.
+    let raw = unsafe {
+        OpenProcess(
+            PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        )
+    };
+    anyhow::ensure!(
+        !raw.is_null(),
+        "launcher handle transfer unavailable: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: successful OpenProcess returned this new owned handle.
+    let target = unsafe { OwnedHandle::from_raw_handle(raw) };
+    anyhow::ensure!(
+        windows_created(target.as_raw_handle())? == windows_created(original.as_raw_handle())?,
+        "launcher process identity changed"
+    );
+    let mut remote = std::ptr::null_mut();
+    // SAFETY: live source/current and exact target process handles; no inheritance.
+    anyhow::ensure!(
+        unsafe {
+            DuplicateHandle(
+                GetCurrentProcess(),
+                handle.as_raw_handle(),
+                target.as_raw_handle(),
+                &mut remote,
+                access,
+                0,
+                0,
+            )
+        } != 0,
+        "launcher handle transfer failed: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(remote as usize)
 }
 
 #[cfg(test)]

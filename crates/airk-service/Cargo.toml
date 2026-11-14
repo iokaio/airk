@@ -43,6 +43,7 @@ tempfile.workspace = true
 sha2.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
+webpki-roots = "=1.0.9"
 ring.workspace = true
 rcgen.workspace = true
 schemars = "1.2.2"
@@ -53,7 +54,7 @@ bytes.workspace = true
 http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
-hyper.workspace = true
+hyper = { workspace = true, features = ["client"] }
 hyper-util.workspace = true
 tokio-util.workspace = true
 

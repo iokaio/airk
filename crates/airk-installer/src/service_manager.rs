@@ -1281,6 +1281,135 @@ pub fn check_executable_identity(program: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 
+/// Actual SMAppService state; API success does not imply approved registration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacLoginState {
+    NotRegistered,
+    Enabled,
+    RequiresApproval,
+    NotFound,
+}
+
+/// I4 adapter to the same native bridge used by managed legacy bundles.
+/// The caller verifies strict I4, exact executing bundle/C10 and mutation fence.
+pub fn macos_i4_login(bundle: &Path, channel: &str, action: &str) -> Result<MacLoginState> {
+    ensure!(
+        matches!(channel, "stable" | "preview"),
+        "invalid Mac login channel"
+    );
+    let operation = match action {
+        "status" => 0,
+        "register" => 1,
+        "unregister" => 2,
+        _ => bail!("invalid Mac login action"),
+    };
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (bundle, operation);
+        bail!("Mac login requires macOS 13 or later")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        unsafe extern "C" {
+            fn airk_macos_login(
+                action: i32,
+                split: i32,
+                plist: *const std::ffi::c_char,
+                bundle: *const std::ffi::c_char,
+                observed: *mut i32,
+                error: *mut i64,
+            ) -> i32;
+        }
+        let main = bundle.join("Contents/MacOS/airk");
+        let target = format!(
+            "gui/{}/io.iokaio.airk.service.{channel}",
+            crate::local_ipc::current_user()?
+        );
+        let observe = || -> Result<Option<String>> {
+            let (present, text) = airk_host::native_command::execute_native_observation(
+                Path::new("/bin/launchctl"),
+                &["print", &target],
+            )?;
+            if present {
+                verify_split_mac_job(&text, &main, bundle, channel)?;
+                Ok(Some(text))
+            } else {
+                ensure!(
+                    text.contains(&format!(
+                        "Could not find service \"io.iokaio.airk.service.{channel}\""
+                    )),
+                    "login_startup_ownership_unproven: launchd absence unverified"
+                );
+                Ok(None)
+            }
+        };
+        let _prior = observe()?;
+        let plist = CString::new(format!("io.iokaio.airk.service.{channel}.plist"))?;
+        let native_bundle = CString::new(bundle.to_str().context("non-UTF-8 Mac bundle")?)?;
+        let mut observed = -1;
+        let mut error = 0;
+        // SAFETY: live terminated inputs and exact initialized native outputs.
+        let result = unsafe {
+            airk_macos_login(
+                operation,
+                1,
+                plist.as_ptr(),
+                native_bundle.as_ptr(),
+                &mut observed,
+                &mut error,
+            )
+        };
+        match result {
+            0 => {}
+            -1 => bail!("login_startup_unsupported: macOS 13 or later required"),
+            -2 => bail!("login_startup_identity_mismatch: exact signed bundle/plist required"),
+            -5 => {
+                bail!("login_startup_consent_required: approve AIRK in System Settings Login Items")
+            }
+            _ => {
+                bail!("login_startup_failed: SMAppService returned {result}, native error {error}")
+            }
+        }
+        if observed == 1 {
+            ensure!(
+                observe()?.is_some(),
+                "login_startup_ownership_unproven: enabled registration has no exact launchd job"
+            );
+        }
+        if observed == 0 {
+            ensure!(
+                observe()?.is_none(),
+                "login_startup_ownership_unproven: launchd job remains after unregister"
+            );
+        }
+        Ok(match observed {
+            0 => MacLoginState::NotRegistered,
+            1 => MacLoginState::Enabled,
+            2 => MacLoginState::RequiresApproval,
+            3 => MacLoginState::NotFound,
+            _ => bail!("unknown SMAppService state"),
+        })
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn verify_split_mac_job(text: &str, main: &Path, bundle: &Path, channel: &str) -> Result<()> {
+    ensure!(
+        matches!(channel, "stable" | "preview"),
+        "invalid Mac channel"
+    );
+    let plist = bundle
+        .join("Contents/Library/LaunchAgents")
+        .join(format!("io.iokaio.airk.service.{channel}.plist"));
+    crate::runtime_install::macos_login::verify_job_scope(
+        text,
+        main,
+        &plist,
+        &["airk", "__airk_role", "service-login-current"],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

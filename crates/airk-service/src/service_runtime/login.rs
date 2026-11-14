@@ -2,7 +2,8 @@
 //! M21 (U101): login startup status, install and uninstall, served on
 //! Windows through the setup role's registration (`setup_role::login_*`:
 //! the same `ServiceManager::for_installation` identity and effects the
-//! installer uses). macOS and Linux answer `supported: false`. Blocking.
+//! installer uses). macOS reuses the bundle-scoped SMAppService adapter; Linux
+//! answers `supported: false` on this service-facing management surface. Blocking.
 use airk_core::storage_admin::{LoginStartupAction, LoginStartupStatus, STORAGE_SCHEMA};
 use anyhow::{Result, bail};
 use std::path::Path;
@@ -18,7 +19,7 @@ fn unsupported() -> LoginStartupStatus {
         registered: false,
         command: None,
         detail: Some(
-            "login startup is managed on Windows only in this build; start the service with `airkctl service start`"
+            "login startup is managed on Windows and macOS in this build; start the service with `airkctl service start`"
                 .into(),
         ),
     }
@@ -60,7 +61,7 @@ pub(super) fn login_startup(
     action: LoginStartupAction,
     control: &Path,
 ) -> Result<LoginStartupStatus> {
-    if !cfg!(windows) {
+    if !cfg!(any(windows, target_os = "macos")) {
         return Ok(unsupported());
     }
     let Some(target) = crate::setup_role::login_target(control)? else {
@@ -121,7 +122,7 @@ mod tests {
         assert!(crate::setup_role::login_uninstall_allowed(None));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
     fn other_platforms_answer_unsupported_for_every_action() -> Result<()> {
         let control = Path::new("/nonexistent/airk-state");

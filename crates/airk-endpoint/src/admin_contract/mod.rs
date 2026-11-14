@@ -42,6 +42,12 @@ pub const MAX_STREAMS: usize = 16;
 pub const STREAM_BUFFER_EVENTS: usize = 256;
 pub const STREAM_BUFFER_BYTES: usize = 1024 * 1024;
 pub const STREAM_SECONDS: u64 = 120;
+pub const EVENT_POLL_MS: u64 = 1_000;
+pub const NATIVE_EVENT_PAGE_LIMIT: usize = 32;
+pub const MAX_ADMIN_REQUESTS: usize = MAX_SESSIONS;
+pub const MAX_LAUNCH_CODES: usize = 8;
+pub const EXCHANGE_BURST: usize = MAX_LAUNCH_CODES;
+pub const EXCHANGE_WINDOW_MS: u64 = LAUNCH_CODE_TTL_MS;
 pub const MAX_ASSET_NAME_BYTES: usize = 128;
 pub const MAX_OPERATION_BYTES: usize = 64;
 /// U98: the typed confirmation text of a destructive call.
@@ -371,6 +377,44 @@ pub struct ReviewedCall {
     pub confirm_text: Option<String>,
 }
 
+/// Acknowledgment issued before a non-journaled keyed mutation can execute.
+/// The handle names an immutable operation and native method in this session;
+/// it contains no request identity and expires with the cookie/service.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MutationPreparation {
+    #[schemars(schema_with = "schema::incarnation")]
+    pub preparation: String,
+    /// The exact native receipt read available after uncertainty. Absence is
+    /// honest lack of a canonical receipt, never permission to replay.
+    pub receipt_operation: Option<String>,
+}
+
+/// Explicit dispatch after the client has retained the preparation handle.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedMutationCall {
+    #[schemars(schema_with = "schema::incarnation")]
+    pub prepared: String,
+}
+
+/// Observe the same prepared operation without repeating its mutation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverMutationCall {
+    #[schemars(schema_with = "schema::incarnation")]
+    pub recover: String,
+}
+
+/// The client has retained the complete known final outcome. This releases
+/// pinned custody; it never accepts an uncertain or in-flight operation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AcknowledgedMutationCall {
+    #[schemars(schema_with = "schema::incarnation")]
+    pub acknowledged: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorBody {
@@ -418,6 +462,7 @@ pub fn is_unknown_outcome_code(code: &str) -> bool {
     matches!(
         code,
         "service_request_outcome_unknown"
+            | "admin_prepared_reply_unavailable"
             | "catalog_apply_outcome_unknown"
             | "catalog_index_setup_outcome_unknown"
             | "catalog_split_apply_outcome_unknown"
@@ -547,6 +592,15 @@ pub enum StreamResync {
     Overflow,
     NativeGap,
     ServiceRestarted,
+    SessionExpired,
+    SessionEnded,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EventStreamRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 /// `POST /admin/api/v1/session` body. `Debug` redacts the code.

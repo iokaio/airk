@@ -9,6 +9,23 @@ use std::sync::{
 };
 
 pub type NativePolicyPredicate = fn(&SourcePolicy, &str, &str, bool) -> bool;
+
+/// Authenticated source projection frozen before this reader is exposed.
+pub(super) struct ReadSources {
+    pub primary_root: String,
+    pub aliases: std::collections::BTreeMap<String, String>,
+    pub has_configuration: bool,
+}
+
+impl ReadSources {
+    fn public(&self) -> bool {
+        !airk_core::source_policy::source_root_is_reserved(&self.primary_root)
+            && self
+                .aliases
+                .values()
+                .all(|root| !airk_core::source_policy::source_root_is_reserved(root))
+    }
+}
 #[derive(Clone, Copy, Debug)]
 pub struct SourcePolicyReadUnavailable;
 impl std::fmt::Display for SourcePolicyReadUnavailable {
@@ -54,11 +71,14 @@ impl CurrentRead {
         revoked: Arc<AtomicBool>,
     ) -> Result<()> {
         policy.validate()?;
-        let state = self
-            .collection_state()?
+        self.require_source_policy_live()?;
+        let sources = self
+            .frozen_sources
+            .get()
             .ok_or(SourcePolicyReadUnavailable)?;
-        let primary_root = self.head().scope.root.clone();
-        let aliases = state.configuration.roots;
+        ensure!(sources.has_configuration, SourcePolicyReadUnavailable);
+        let primary_root = sources.primary_root.clone();
+        let aliases = sources.aliases.clone();
         let restricts = !policy.denies.is_empty()
             || policy.positive_includes.is_some()
             || !predicate(&policy, &primary_root, "", true)
@@ -88,6 +108,10 @@ impl CurrentRead {
 
     pub(super) fn require_source_policy_live(&self) -> Result<()> {
         ensure!(
+            self.frozen_sources.get().is_some_and(ReadSources::public),
+            airk_core::scoped_reads::ScopeReadRefused
+        );
+        ensure!(
             self.source_policy_fence
                 .get()
                 .is_none_or(|fence| !fence.load(Ordering::Acquire)),
@@ -112,6 +136,8 @@ impl CurrentRead {
 
     pub fn source_policy_allows_source(&self, root: &str, path: &str) -> bool {
         self.require_source_policy_live().is_ok()
+            && !airk_core::source_policy::source_root_is_reserved(root)
+            && !airk_core::source_policy::source_root_is_reserved(path)
             && self
                 .source_policy
                 .get()
@@ -119,6 +145,9 @@ impl CurrentRead {
     }
 
     pub(super) fn source_policy_allows_path(&self, path: &str) -> bool {
+        if airk_core::source_policy::source_root_is_reserved(path) {
+            return false;
+        }
         let Some(policy) = self.source_policy.get() else {
             return true;
         };

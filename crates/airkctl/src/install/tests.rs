@@ -124,6 +124,21 @@ fn a_missing_pointer_is_not_found() {
 }
 
 #[test]
+fn metadata_only_repair_observation_never_marks_a_damaged_pair_verified() {
+    let installed = fixture(windows_signing());
+    std::fs::write(installed.program.join("bin/airkctl.exe"), b"damaged CLI").unwrap();
+    let image = airk_ipc::install_reader::read_metadata(&installed.pointer)
+        .unwrap()
+        .unwrap();
+    image.validate().unwrap();
+    assert!(matches!(
+        read(&installed.pointer, accept),
+        Discovery::Unverified { .. }
+    ));
+    assert_eq!(image.pointer.program, installed.program.to_string_lossy());
+}
+
+#[test]
 fn a_complete_installation_verifies_its_pair() {
     let installed = fixture(windows_signing());
     let verified = match read(&installed.pointer, accept) {

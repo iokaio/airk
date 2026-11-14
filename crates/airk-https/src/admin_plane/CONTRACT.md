@@ -11,6 +11,26 @@ observations and carries out the admitted route.
 
 ## Interface
 
+Applicability review (§5.1): the reviewed table has 85 rows, of which 79 admit
+Admin (49 reads, 26 mutations, 4 destructive calls). Every admitted method
+names a native ControlMethod or one of the four approved mappings below.
+Destructive rows remain catalog.apply, catalog.split_apply,
+recovery.plan_execute and storage.purge with their owning confirmation rules.
+The six deliberately non-Admin rows remain indexes.watch_state,
+indexes.resolve, explorer.handoff, evidence.native_read_scoped,
+requests.prepare and agents.connection_defaults. Search/trust capability hooks
+retain honest unavailable behavior when their native owner is absent; the
+resident service supplies those hooks. This static applicability review and
+injected-handler tests do not qualify every operation through a live listener
+or establish read transport parity.
+
+The Usage/Help pilot's [Rust-emitted semantic cases](../../../../fixtures/split/ui_pilot/README.md)
+retain full I3 handler envelopes alongside I2 output. Read success retains the
+complete native response in `result`; native Usage failure retains it in
+`error.native`. Authentication remains native-held. Forbidden request fields and
+browser project selection for Help are refused as whole packets before dispatch.
+Injected-dispatch handler evidence does not establish live-listener qualification.
+
 - `AdminPlane::new(dispatch, instance)` / `with_sources(…, clock, random)`:
   one per service instance, held by `service_runtime::State`. `Dispatch` is
   injected by `service_runtime` (its own control endpoint through
@@ -28,6 +48,13 @@ observations and carries out the admitted route.
   blocking thread). Without it a grant holds no read authority.
 - `AdminPlane::end()`: service end; every session ends and every grant's
   nonce is revoked.
+  Native call admission can capture a private in-memory `SessionPermit` after
+  validating actual cookie/CSRF facts and renewing idle lifetime once. Its
+  pure live-bit/expiry check takes no mutex, so canonical actor/worker gates
+  can recheck it without reversing the secrets-to-catalog lock order. Logout,
+  expiry observation, eviction and owner drop invalidate every cloned permit;
+  no permit extends the session's absolute expiry. Full session purging still
+  runs through SecretsGuard so A2 revocation occurs after the secrets lock.
 - `with_trust_inspect(TrustInspect)`: `https.trust_status`, injected by
   `service_runtime` (`http_endpoint::trust::saved_identity` then
   `trust::manage(Inspect)`, the callers `airk runtime http-trust --action
@@ -81,6 +108,32 @@ observations and carries out the admitted route.
   | `https.trust_status` | `HttpTrust.Inspect` | the trust inspection above; body exactly `{"http_trust":{"action":"inspect"}}`; a failure is 409 `operation_failed` with `native: {message}` (the CLI's message, ≤ 4,096 characters) |
 
 - **Request identities** (`mutations`; contracts §2.4, §4.3b, U98).
+  - **R17 acknowledgment before dispatch:** effectful generate-mode rows
+    (except native-journaled Enqueue/ConfigureProject) first return the Rust
+    `MutationPreparation` result without sending the mutation. The browser
+    retains it before an explicit same-operation `{prepared: handle}` call.
+    Session custody stores the immutable native method/original key and claims
+    it once under the session mutex. Concurrent/repeated submits never dispatch
+    again. `{recover: handle}` observes cached native evidence or calls only
+    the exact policy-resume, split-recovery or retry receipt read. Missing,
+    expired, mismatched or still-unknown receipts remain nonretryable unknown
+    outcomes with all native evidence preserved. Lifecycle, plan creation and
+    journal preparation have no canonical receipt here and remain honestly
+    unknown after a lost reply; status is never substituted for a receipt.
+    Prepared handles are distinct from ordinary review authority, share one
+    pinned slot in the existing 32-slot session budget, and end with the cookie
+    or service. Known replies cache at most 65,536 encoded bytes per slot
+    (32 MiB globally across 16 sessions); larger original replies are delivered
+    in full, then `admin_prepared_reply_unavailable` discloses absent cached
+    bytes without replay or truncation. Read previews, reviewed calls and
+    natural mutations retain their existing protocol.
+    Only an explicit same-operation `{acknowledged: handle}` after the client
+    retains the full known final outcome releases pinned custody. Known
+    refusal removes its slot; known success becomes evictable receipt-only
+    custody, with the original mapping valid until actual eviction. Ready,
+    Submitted and Unknown cannot be acknowledged. Every eviction/release
+    removes the paired preparation/cache, keeping both maps within 32 slots;
+    32 content-free acknowledgment tombstones bound safe lost-ack retries.
   - The browser never sends a request identity. Each row's reviewed
     `request_key` rule says where the caller and key live. A body that names
     a rule path is 400 `admin_malformed_request` before anything is sent.
@@ -94,6 +147,13 @@ observations and carries out the admitted route.
     mutation is sent. Normal success converts the slot to an ordinary token;
     an ordinary no-effect refusal releases it. The handler removes the exact
     key, and the caller beside it, before serializing any result or failure.
+    R18 additionally enumerates native identities through their typed record
+    owners (catalog/fence/source/setup/split/lifecycle), including historical
+    and other-operation keys. Exact known identities and their `request_key`
+    aliases leave opaque result data; unrelated public/unknown data remains
+    complete. Only a caller beside the current expected key can become review
+    custody. Unexpected private transport or Admin bridge responses refuse
+    `admin_internal` before public serialization.
     A selection-key-only draft retains the native reply's caller, rather than
     its unused generated caller draw.
   - **`review`** rows: apply and receipt rows. The body is a `ReviewedCall`
@@ -220,7 +280,22 @@ observations and carries out the admitted route.
 
 ## Not served yet
 
-- `/admin/api/v1/events` answers `not_yet_served`.
+- `/admin/api/v1/events` accepts the Rust `EventStreamRequest`, serves bounded
+  NDJSON through the existing canonical `Events` read, and preserves complete
+  native ServiceEvent data. Its opaque reconnect cursors stay session/service
+  scoped. Native pages are 32 events, polled every 1,000 ms, draining `next`
+  before advancing to `tail`. Existing limits are 2 streams per session,
+  16 globally, 256 queued lines / 1 MiB, and 120 seconds. Stream reservations
+  remain globally counted until body end/drop, including expired sessions;
+  canceling a body aborts its read observer. Overflow, native gaps, namespace
+  replacement, session expiry and logout/end are explicit resync reasons,
+  followed by Closing. A retained-prefix gap moves to the native live tail
+  after resync, without presenting incomplete retained history as complete.
+  A stream does not renew session idle lifetime. Admin requests have a separate
+  16-active-call admission budget (`admin_stream_limit` at capacity); session
+  exchange permits 8 attempts per 60-second code lifetime before body/secret
+  work (`admin_exchange_rate_limited`). These budgets never alter public-read
+  plane admission.
 - Peer proof qualification: the macOS own-socket observer is implemented
   but not yet qualified on a macOS host; other platforms (no observer) are
   refused with `admin_peer_refused` (fail closed, H1).
@@ -235,3 +310,7 @@ cargo test -p airk-cli --test admin_plane --locked
 Each Cargo selection must report nonzero selected tests. Record selected test
 identities and outcomes; compatibility re-exports do not include dependency
 unit tests. Platform-only cases require their native host.
+
+## Optional Arbiter management (2026-11-14)
+
+The additive management rows are arbiter.status/configure/provision/cancel/remove/recover. Their canonical body is `{ "arbiter": { "request": <Rust ManagementRequest> } }`, matched exhaustively on request.operation. Status is read-only; other rows are naturally revision-fenced mutations. Remove affects only optional private model assets, never indexed sources. Owner pipe or authenticated Admin session plus CSRF applies. Dispatch rechecks the pure admission callback at the configuration CAS or before accepting a background native job; the accepted job subsequently owns its ServiceLease/configuration/cancellation authority. ArbiterApplication and ArbiterNextRead remain native owner-pipe internals and never receive HTTP routes. No browser field creates worker scope or model qualification.

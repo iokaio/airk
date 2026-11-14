@@ -10,7 +10,9 @@
 //! handlers as the pipe. See `CONTRACT.md`.
 mod assets;
 mod confirm;
+mod events;
 mod mutations;
+mod native;
 mod operations;
 mod peer;
 mod secrets;
@@ -19,6 +21,7 @@ mod tests;
 
 /// The embedded admin bundle's I4 digests `(inventory, bundle)` (split Phase 7).
 pub use assets::digests as embedded_asset_digests;
+pub use native::{NativeDispatch, NativeDispatchCheck, NativeServiceLive};
 pub(crate) use peer::ConnectionPeer;
 
 use airk_core::{
@@ -114,10 +117,24 @@ const BODY_SECONDS: u64 = 15;
 const CHUNK_BYTES: usize = 256 * 1024;
 /// A native failure message in an envelope, bounded as the CLI's error line.
 const MAX_MESSAGE_CHARS: usize = 4096;
+/// At most 32 slots × 16 sessions × 64 KiB = 32 MiB of cached reply bodies.
+const MAX_PREPARED_REPLY_BYTES: usize = 64 * 1024;
 
 struct Secrets {
     codes: secrets::LaunchCodes,
     sessions: secrets::Sessions,
+    active_requests: usize,
+    active_streams: usize,
+    exchange_attempts: std::collections::VecDeque<u64>,
+    event_wait: Option<events::Wait>,
+}
+
+struct AdminRequestPermit(Arc<Mutex<Secrets>>);
+impl Drop for AdminRequestPermit {
+    fn drop(&mut self) {
+        let mut secrets = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        secrets.active_requests = secrets.active_requests.saturating_sub(1);
+    }
 }
 
 /// The admin plane of one service instance. Codes and sessions live only
@@ -127,7 +144,9 @@ pub struct AdminPlane {
     instance: Incarnation,
     clock: Clock,
     random: Random,
-    secrets: Mutex<Secrets>,
+    secrets: Arc<Mutex<Secrets>>,
+    native: Arc<Mutex<native::Requests>>,
+    native_admission: Option<Arc<dyn Fn() -> Result<(), AdminCode> + Send + Sync>>,
     /// Without it `search.select_scope` answers `not_yet_served`.
     scope_check: Option<ScopeCheck>,
     /// Without it `https.trust_status` answers `not_yet_served`.
@@ -266,10 +285,16 @@ impl AdminPlane {
             instance,
             clock,
             random,
-            secrets: Mutex::new(Secrets {
+            secrets: Arc::new(Mutex::new(Secrets {
                 codes: secrets::LaunchCodes::new(instance),
                 sessions: secrets::Sessions::new(instance),
-            }),
+                active_requests: 0,
+                active_streams: 0,
+                exchange_attempts: std::collections::VecDeque::new(),
+                event_wait: None,
+            })),
+            native: Arc::new(Mutex::new(native::Requests::default())),
+            native_admission: None,
             scope_check: None,
             trust_inspect: None,
             selection: None,
@@ -294,6 +319,10 @@ impl AdminPlane {
     /// revoked once the lock is released.
     pub fn end(&self) {
         self.secrets().sessions.end();
+        self.native
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .end();
     }
 
     /// Serve A2 grants with the shared catalog check.
@@ -404,6 +433,14 @@ impl AdminPlane {
         if draining && is_api(&route) {
             return refusal(AdminCode::ServiceDraining);
         }
+        let _permit = if is_api(&route) {
+            match self.admit_admin_request(matches!(route, Route::Exchange)) {
+                Ok(permit) => Some(permit),
+                Err(code) => return refusal(code),
+            }
+        } else {
+            None
+        };
         match route {
             Route::Redirect => respond(308, ResponseKind::Redirect, None, None, Bytes::new()),
             Route::Shell | Route::Launch => static_asset(assets::SHELL, ResponseKind::Shell),
@@ -433,9 +470,47 @@ impl AdminPlane {
                     Err(code) => refusal(code),
                 }
             }
-            // The bounded event stream (§4.8) is not served yet.
-            Route::Events => refusal(AdminCode::NotYetServed),
+            Route::Events => {
+                let cookie = match cookies.as_slice() {
+                    [cookie] => cookie.as_str(),
+                    _ => return refusal(AdminCode::AdminSessionInvalid),
+                };
+                match self.event_stream(cookie, request.into_body()).await {
+                    Ok(response) => response,
+                    Err(code) => refusal(code),
+                }
+            }
         }
+    }
+
+    fn admit_admin_request(&self, exchange: bool) -> Result<AdminRequestPermit, AdminCode> {
+        let now = (self.clock)();
+        let mut secrets = self.secrets();
+        if exchange {
+            secrets
+                .exchange_attempts
+                .retain(|at| now.saturating_sub(*at) < contract::EXCHANGE_WINDOW_MS);
+            if secrets.exchange_attempts.len() >= contract::EXCHANGE_BURST {
+                return Err(AdminCode::AdminExchangeRateLimited);
+            }
+            secrets.exchange_attempts.push_back(now);
+        }
+        if secrets.active_requests >= contract::MAX_ADMIN_REQUESTS {
+            return Err(AdminCode::AdminStreamLimit);
+        }
+        secrets.active_requests += 1;
+        Ok(AdminRequestPermit(self.secrets.clone()))
+    }
+
+    async fn event_stream<B>(&self, cookie: &str, body: B) -> Result<HttpResponse, AdminCode>
+    where
+        B: Body<Data = Bytes> + Send + 'static,
+        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let bytes = read_body(body, MAX_REQUEST_BODY_BYTES).await?;
+        let request: contract::EventStreamRequest =
+            serde_json::from_slice(&bytes).map_err(|_| AdminCode::AdminMalformedRequest)?;
+        events::open(self, cookie, request)
     }
 
     /// §4.5 step 3-4: consume the code, then mint a fresh session.
@@ -478,6 +553,7 @@ impl AdminPlane {
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
+        self.require_native_admission()?;
         let table = operations::table().map_err(|_| AdminCode::AdminInternal)?;
         let row = table
             .admin_row(operation)
@@ -485,6 +561,12 @@ impl AdminPlane {
         let body = read_body(body, MAX_REQUEST_BODY_BYTES).await?;
         let body: Value =
             serde_json::from_slice(&body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+        if body.get("prepared").is_some()
+            || body.get("recover").is_some()
+            || body.get("acknowledged").is_some()
+        {
+            return self.prepared_call(operation, cookie, body).await;
+        }
         // U98: a review-mode or destructive row takes a `ReviewedCall`; every
         // other row takes the bare method object.
         let review_rule = row
@@ -568,6 +650,18 @@ impl AdminPlane {
                 )
             })
             .transpose()?;
+        if row.effect != Effect::Read
+            && generate.is_some()
+            && !mutations::JOURNALED.contains(
+                &mutations::variant(
+                    &serde_json::to_value(&method).map_err(|_| AdminCode::AdminInternal)?,
+                )
+                .unwrap_or_default(),
+            )
+        {
+            let generated = generated.take().ok_or(AdminCode::AdminInternal)?;
+            return self.prepare_mutation(operation, cookie, method, generated);
+        }
         if row.effect == Effect::Read {
             let Some(mut generated) = generated else {
                 return self
@@ -623,6 +717,221 @@ impl AdminPlane {
         }
     }
 
+    fn prepare_mutation(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+        method: ControlMethod,
+        generated: GeneratedReview<'_>,
+    ) -> Result<HttpResponse, AdminCode> {
+        let cookie = cookie.ok_or(AdminCode::AdminSessionInvalid)?;
+        let GeneratedReview {
+            key,
+            mut reservation,
+            ..
+        } = generated;
+        let (receipt_operation, receipt_method) = prepared_receipt(&method);
+        let token = reservation.token;
+        self.require_native_admission()?;
+        self.secrets().sessions.store_preparation(
+            cookie,
+            secrets::PreparedMutation {
+                token,
+                operation: operation.to_owned(),
+                method,
+                key,
+                receipt_operation,
+                receipt_method,
+                state: secrets::PreparedState::Ready,
+            },
+            (self.clock)(),
+        )?;
+        reservation.release_on_drop = false;
+        preparation_response(operation, token, receipt_operation)
+    }
+
+    async fn prepared_call(
+        &self,
+        operation: &str,
+        cookie: Option<&str>,
+        body: Value,
+    ) -> Result<HttpResponse, AdminCode> {
+        let cookie = cookie.ok_or(AdminCode::AdminSessionInvalid)?;
+        if body.get("acknowledged").is_some() {
+            let call: contract::AcknowledgedMutationCall =
+                serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+            let token: Incarnation = call
+                .acknowledged
+                .parse()
+                .map_err(|_| AdminCode::AdminReviewUnknown)?;
+            self.require_native_admission()?;
+            self.secrets().sessions.acknowledge_preparation(
+                cookie,
+                token,
+                operation,
+                (self.clock)(),
+            )?;
+            return Ok(success(
+                operation,
+                serde_json::json!({"acknowledged":token}),
+                None,
+            ));
+        }
+        let (token, submit) = if body.get("prepared").is_some() {
+            let call: contract::PreparedMutationCall =
+                serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+            (call.prepared, true)
+        } else {
+            let call: contract::RecoverMutationCall =
+                serde_json::from_value(body).map_err(|_| AdminCode::AdminMalformedRequest)?;
+            (call.recover, false)
+        };
+        let token: Incarnation = token.parse().map_err(|_| AdminCode::AdminReviewUnknown)?;
+        self.require_native_admission()?;
+        let prepared = {
+            let mut secrets = self.secrets();
+            self.require_native_admission()?;
+            secrets
+                .sessions
+                .preparation(cookie, token, operation, submit, (self.clock)())?
+        };
+        let identity = secrets::Review {
+            token,
+            caller: Some(serde_json::json!(prepared.key.caller)),
+            key: serde_json::json!(prepared.key.key),
+            purpose: secrets::ReviewPurpose::Prepared,
+        };
+        match prepared.state {
+            secrets::PreparedState::Known { status, envelope } => Ok(api(status, &envelope, None)),
+            secrets::PreparedState::Ready if !submit => {
+                preparation_response(operation, token, prepared.receipt_operation)
+            }
+            secrets::PreparedState::Ready => {
+                let executed = mutations::execute(
+                    &self.dispatch,
+                    &self.random,
+                    prepared.method,
+                    Some(prepared.key),
+                )
+                .await;
+                let (state, response) = match executed {
+                    Ok(mutations::Executed::Answered(response, request)) => {
+                        let disposition = mutations::outcome(&response);
+                        let mut unknown =
+                            matches!(disposition, mutations::NativeOutcome::Unknown(_));
+                        let refused = matches!(disposition, mutations::NativeOutcome::Refused(_));
+                        let result =
+                            match mutations::public_projection(&response, Some(&identity.key)) {
+                                Ok((value, _)) => native_value(
+                                    operation,
+                                    value,
+                                    request,
+                                    (unknown || (!refused && prepared.receipt_operation.is_some()))
+                                        .then(|| token.to_string()),
+                                    disposition,
+                                ),
+                                Err(code) => {
+                                    unknown = true;
+                                    refusal(code)
+                                }
+                            };
+                        let (parts, body) = result.into_parts();
+                        let bytes = body
+                            .collect()
+                            .await
+                            .map_err(|_| AdminCode::AdminInternal)?
+                            .to_bytes();
+                        let state = if unknown {
+                            secrets::PreparedState::Unknown
+                        } else if bytes.len() <= MAX_PREPARED_REPLY_BYTES {
+                            secrets::PreparedState::Known {
+                                status: parts.status.as_u16(),
+                                envelope: serde_json::from_slice(&bytes)
+                                    .map_err(|_| AdminCode::AdminInternal)?,
+                            }
+                        } else {
+                            secrets::PreparedState::BodyUnavailable { refused }
+                        };
+                        (state, Response::from_parts(parts, Chunks { bytes }.boxed()))
+                    }
+                    Ok(mutations::Executed::Unknown) | Err(_) => (
+                        secrets::PreparedState::Unknown,
+                        outcome_unknown(Some(token.to_string())),
+                    ),
+                };
+                self.secrets().sessions.settle_preparation(
+                    cookie,
+                    token,
+                    state,
+                    false,
+                    (self.clock)(),
+                )?;
+                Ok(response)
+            }
+            secrets::PreparedState::Submitted
+            | secrets::PreparedState::Unknown
+            | secrets::PreparedState::BodyUnavailable { .. } => {
+                let unavailable = matches!(
+                    prepared.state,
+                    secrets::PreparedState::BodyUnavailable { .. }
+                );
+                if submit {
+                    return Ok(prepared_unavailable(token, unavailable));
+                }
+                let Some(method) = prepared.receipt_method else {
+                    return Ok(prepared_unavailable(token, unavailable));
+                };
+                let response = (self.dispatch)(method.clone()).await;
+                // A receipt read cannot settle custody by absence or imply
+                // mutation completion. Preserve its complete native evidence.
+                Ok(match response {
+                    Ok(response) => {
+                        if prepared_receipt_known(&method, &response) {
+                            let result = native_request(operation, response, None, Some(&identity));
+                            let (parts, body) = result.into_parts();
+                            let bytes = body
+                                .collect()
+                                .await
+                                .map_err(|_| AdminCode::AdminInternal)?
+                                .to_bytes();
+                            let state = if bytes.len() <= MAX_PREPARED_REPLY_BYTES {
+                                secrets::PreparedState::Known {
+                                    status: parts.status.as_u16(),
+                                    envelope: serde_json::from_slice(&bytes)
+                                        .map_err(|_| AdminCode::AdminInternal)?,
+                                }
+                            } else {
+                                secrets::PreparedState::BodyUnavailable { refused: false }
+                            };
+                            self.secrets().sessions.settle_preparation(
+                                cookie,
+                                token,
+                                state,
+                                true,
+                                (self.clock)(),
+                            )?;
+                            Response::from_parts(parts, Chunks { bytes }.boxed())
+                        } else {
+                            match mutations::public_projection(&response, Some(&identity.key)) {
+                                Ok((value, _)) => native_value(
+                                    operation,
+                                    value,
+                                    None,
+                                    Some(token.to_string()),
+                                    mutations::NativeOutcome::Unknown(
+                                        "service_request_outcome_unknown".into(),
+                                    ),
+                                ),
+                                Err(code) => refusal(code),
+                            }
+                        }
+                    }
+                    Err(_) => prepared_unavailable(token, unavailable),
+                })
+            }
+        }
+    }
+
     fn reserve_review<'a>(
         &'a self,
         cookie: Option<&str>,
@@ -669,7 +978,6 @@ impl AdminPlane {
         request: Option<RequestProgress>,
     ) -> Result<HttpResponse, AdminCode> {
         let disposition = mutations::outcome(&response);
-        let mut value = serde_json::to_value(&response).map_err(|_| AdminCode::AdminInternal)?;
         let GeneratedReview {
             key,
             caller_generated,
@@ -677,7 +985,7 @@ impl AdminPlane {
             recovery_receipt,
         } = generated;
         let key_value = serde_json::json!(key.key);
-        let redacted = mutations::redact(&mut value, &key_value);
+        let (value, redacted) = mutations::public_projection(&response, Some(&key_value))?;
         let caller = caller_generated
             .then(|| serde_json::json!(key.caller))
             .or(redacted);
@@ -795,6 +1103,7 @@ impl AdminPlane {
             Ok(checked) => checked,
             Err(code) => return Ok(native(operation, ControlResponse::Failure { code })),
         };
+        self.require_native_admission()?;
         // A fresh nonce per stored grant (§3.1); a re-selection gets a new one.
         let selection_ref = match &self.selection {
             Some(_) => {
@@ -820,6 +1129,7 @@ impl AdminPlane {
         };
         let now = (self.clock)();
         let mut secrets = self.secrets();
+        self.require_native_admission()?;
         // Registered nested inside the plane's lock (owner, then gate), so a
         // concurrent replacement or logout revokes it after this store.
         if let (Some(selection), Some(selection_ref)) = (&self.selection, &selection_ref)
@@ -847,6 +1157,12 @@ impl AdminPlane {
                 expires_at_ms,
             },
         ))
+    }
+
+    fn require_native_admission(&self) -> Result<(), AdminCode> {
+        self.native_admission
+            .as_ref()
+            .map_or(Ok(()), |admit| admit())
     }
 
     /// `https.trust_status` (mapping `HttpTrust.Inspect`): the inspection's
@@ -896,6 +1212,123 @@ fn is_api(route: &Route) -> bool {
         route,
         Route::Exchange | Route::Logout | Route::Call { .. } | Route::Events
     )
+}
+
+fn preparation_response(
+    operation: &str,
+    token: Incarnation,
+    receipt: Option<&str>,
+) -> Result<HttpResponse, AdminCode> {
+    let result = contract::MutationPreparation {
+        preparation: token.to_string(),
+        receipt_operation: receipt.map(str::to_owned),
+    };
+    Ok(success(
+        operation,
+        serde_json::to_value(result).map_err(|_| AdminCode::AdminInternal)?,
+        None,
+    ))
+}
+
+fn prepared_receipt(method: &ControlMethod) -> (Option<&'static str>, Option<ControlMethod>) {
+    let (operation, method) = match method {
+        ControlMethod::CatalogPolicyResume {
+            index_id,
+            operation_id,
+            caller,
+            key,
+        } => (
+            "catalog.policy_resume_receipt",
+            ControlMethod::CatalogPolicyResumeReceipt {
+                index_id: *index_id,
+                operation_id: *operation_id,
+                caller: *caller,
+                key: key.clone(),
+            },
+        ),
+        ControlMethod::CatalogSplitRecover { request } => (
+            "catalog.split_recovery_receipt",
+            ControlMethod::CatalogSplitRecoveryReceipt {
+                operation_id: request.operation_id,
+                caller: request.caller,
+                key: request.key.clone(),
+            },
+        ),
+        ControlMethod::Retry { caller, key, .. } => (
+            "requests.receipt",
+            ControlMethod::RequestReceipt {
+                caller: *caller,
+                key: key.clone(),
+                project: None,
+            },
+        ),
+        // Neither lifecycle nor plan/journal preparation has a canonical
+        // exact-key receipt read in this plane. Never substitute status or
+        // invent a receipt, and never replay an uncertain mutation.
+        _ => return (None, None),
+    };
+    (Some(operation), Some(method))
+}
+
+fn prepared_receipt_known(method: &ControlMethod, response: &ControlResponse) -> bool {
+    match (method, response) {
+        (
+            ControlMethod::CatalogPolicyResumeReceipt {
+                index_id,
+                operation_id,
+                caller,
+                key,
+            },
+            ControlResponse::CatalogPolicyResumeReceipt {
+                index_id: found_index,
+                operation_id: found_operation,
+                caller: found_caller,
+                key: found_key,
+                receipt: Some(_),
+                expired: false,
+            },
+        ) => {
+            index_id == found_index
+                && operation_id == found_operation
+                && caller == found_caller
+                && key == found_key
+        }
+        (
+            ControlMethod::CatalogSplitRecoveryReceipt {
+                operation_id,
+                caller,
+                key,
+            },
+            ControlResponse::CatalogSplitRecoveryReceipt {
+                operation_id: found_operation,
+                caller: found_caller,
+                key: found_key,
+                receipt: Some(receipt),
+                expired: false,
+                ..
+            },
+        ) => {
+            operation_id == found_operation
+                && caller == found_caller
+                && key == found_key
+                && receipt.request.operation_id == *operation_id
+                && receipt.request.caller == *caller
+                && receipt.request.key == *key
+                && !matches!(
+                    receipt.outcome,
+                    airk_core::catalog_split::SplitRecoveryOutcome::Unknown { .. }
+                )
+        }
+        (
+            ControlMethod::RequestReceipt { .. },
+            ControlResponse::RequestReceipt {
+                job: Some(_),
+                expired: false,
+                ..
+            },
+        ) => true,
+        _ => false,
+    }
 }
 
 fn values(headers: &HeaderMap, name: &'static str) -> Vec<String> {
@@ -1091,6 +1524,18 @@ fn outcome_unknown(review: Option<String>) -> HttpResponse {
     api(ErrorClass::Unavailable.status(), &envelope, None)
 }
 
+fn prepared_unavailable(token: Incarnation, body_unavailable: bool) -> HttpResponse {
+    if !body_unavailable {
+        return outcome_unknown(Some(token.to_string()));
+    }
+    let mut envelope = FailureEnvelope::new(AdminCode::AdminInternal);
+    envelope.error.code = "admin_prepared_reply_unavailable".into();
+    envelope.error.class = ErrorClass::Unavailable;
+    envelope.error.retryable = false;
+    envelope.review = Some(token.to_string());
+    api(ErrorClass::Unavailable.status(), &envelope, None)
+}
+
 fn static_asset(name: &str, kind: ResponseKind) -> HttpResponse {
     match assets::find(name) {
         Some(asset) => {
@@ -1130,12 +1575,11 @@ fn native_request(
     identity: Option<&secrets::Review>,
 ) -> HttpResponse {
     let disposition = mutations::outcome(&response);
-    let Ok(mut value) = serde_json::to_value(&response) else {
+    let Ok((value, _)) =
+        mutations::public_projection(&response, identity.map(|identity| &identity.key))
+    else {
         return refusal(AdminCode::AdminInternal);
     };
-    if let Some(identity) = identity {
-        mutations::redact(&mut value, &identity.key);
-    }
     native_value(operation, value, request, None, disposition)
 }
 

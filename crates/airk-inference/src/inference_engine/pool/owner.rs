@@ -39,6 +39,7 @@ pub struct InferenceOwner {
     failure: bool,
     barrier_sent: bool,
     completion: Option<NativeCompletionWitness>,
+    arbiter: arbiter::Lane,
     // The actual service lease remains owned through any pending FFI drain.
     _lease: Arc<airk_store::service::ServiceLease>,
 }
@@ -81,7 +82,10 @@ impl InferenceOwner {
         let engine_threads = threads.clone();
         let engine_observation = observation.clone();
         let owner_state = state.clone();
-        let compute_ownership = lease.clone();
+        let compute_ownership =
+            airk_kernel::inference_owner::NativeInferenceOwner::admit(lease.clone())?;
+        let arbiter = arbiter::Lane::start(compute_ownership.clone(), &state)?;
+        let optional_shutdown = arbiter.handle.clone();
         let (ready, readiness) = std::sync::mpsc::sync_channel(1);
         let owner = std::thread::Builder::new().name("airk-inference-owner".into()).spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -94,7 +98,7 @@ impl InferenceOwner {
                 engine.inference_threads = engine_threads;
                 let (compute_ready, compute_start) = std::sync::mpsc::sync_channel(1);
                 let compute = std::thread::Builder::new().name("airk-inference-compute".into()).stack_size(8 << 20).spawn(move || {
-                    airk_kernel::inference_owner::run_service_inference(compute_ownership, move || {
+                    compute_ownership.run(move || {
                     let _ = compute_ready.send(());
                     while let Some(work) = receiver.blocking_recv() {
                         if let Work::StopEngine { reply } = work {
@@ -155,6 +159,7 @@ impl InferenceOwner {
                 let stop_sent = owner_state.sender.send(Work::StopEngine { reply }).await.is_ok();
                 if stop_sent { let _ = complete.await; }
                 compute.join().map_err(|_| anyhow::anyhow!("inference compute panicked"))??;
+                optional_shutdown.close_and_wait();
                 ensure!(stop_sent, "inference engine unavailable during shutdown");
                 if let Some(error) = failure { return Err(error); }
                 Ok(())
@@ -180,11 +185,15 @@ impl InferenceOwner {
             failure: false,
             barrier_sent: false,
             completion: None,
+            arbiter,
             _lease: lease,
         })
     }
     pub fn generation(&self) -> Incarnation {
         self.provider.provider_generation
+    }
+    pub fn arbiter(&self) -> arbiter::Handle {
+        self.arbiter.handle.clone()
     }
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_compute_hook(&self, hook: ComputeHook) -> Result<()> {
@@ -380,6 +389,7 @@ impl InferenceOwner {
         };
         capture.validate()?;
         accounting.close(operation, workers)?;
+        self.arbiter.handle.close();
         if self.stopped {
             accounting.mark_engine_barrier();
         }
@@ -414,6 +424,7 @@ impl InferenceOwner {
                 .is_some_and(std::thread::JoinHandle::is_finished);
         self.stop_requested = true;
         self.state.closing.store(true, Ordering::Release);
+        let arbiter_stopped = self.arbiter.poll_stop()?;
         if self
             .owner
             .as_ref()
@@ -437,11 +448,14 @@ impl InferenceOwner {
                     return Err(error);
                 }
             }
-            self.stopped = true;
+            self.stopped = arbiter_stopped;
             if let Some(accounting) = &self.state.accounting {
                 accounting.model_cached(false);
                 accounting.mark_engine_barrier();
             }
+        }
+        if self.owner.is_none() && arbiter_stopped {
+            self.stopped = true;
         }
         Ok(self.stopped)
     }

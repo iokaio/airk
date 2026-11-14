@@ -71,6 +71,7 @@ fn approved_single_image_version_is_explicit_and_digest_bound() -> Result<()> {
         arch: std::env::consts::ARCH.into(),
         airk_sha256: digest_file(&main)?,
         embed_sha256: String::new(),
+        split: None,
     };
     let bytes = serde_json::to_vec(&pair)?;
     fs::write(owner.path().join("airk-runtime.json"), &bytes)?;

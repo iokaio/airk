@@ -270,7 +270,8 @@ impl CpuFit {
         ensure!(
             (self.minimum_physical_cores == 1 && self.intra_threads == 1
                 || self.minimum_physical_cores == 8 && self.intra_threads == 8
-                || self.minimum_physical_cores == 16 && self.intra_threads == 16)
+                || self.minimum_physical_cores == 16 && self.intra_threads == 16
+                || self.minimum_physical_cores == 24 && self.intra_threads == 24)
                 && self.inter_threads == 1
                 && self.sequential
                 && !self.spinning,

@@ -86,6 +86,14 @@ pub fn request_fenced(
 /// failure, an incompatible protocol, or an unexpected response. The complete
 /// native response is kept.
 pub fn refusal(response: &ControlResponse) -> ErrorLine {
+    if response.carries_private_transport_secret() {
+        return ErrorLine::new(
+            ExitClass::Internal,
+            "console_private_response_forbidden",
+            false,
+            "Unexpected private native response was refused.",
+        );
+    }
     let mut line = match response {
         ControlResponse::Failure { code } if code == "not_yet_served" => ErrorLine::new(
             ExitClass::UnsupportedCapability,

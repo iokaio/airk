@@ -114,6 +114,7 @@ pub fn require_job_user(handle: BorrowedHandle<'_>, expected_user: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use std::os::windows::io::{AsHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Win32::{
         Storage::FileSystem::READ_CONTROL,
@@ -190,6 +191,139 @@ mod tests {
                 "unsafe ACL accepted: {sddl}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn wrapper_mutex_transfer_fixture() -> Result<()> {
+        let Ok(name) = std::env::var("AIRK_WRAPPER_MUTEX_FIXTURE") else {
+            return Ok(());
+        };
+        let role = std::env::var("AIRK_WRAPPER_MUTEX_ROLE")?;
+        with_current_user_job_security(|attributes, user| {
+            let handle = airk_process::named_mutex::create(attributes, &name)
+                .context("fixture create protected Global mutex")?;
+            require_job_user(handle.as_handle(), user)
+                .context("fixture validate created Global mutex ACL")?;
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::System::Threading::{ReleaseMutex, WaitForSingleObject};
+            if role == "probe" {
+                let status = unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) };
+                println!("AIRK_MUTEX_PROBE={status}");
+                if matches!(status, 0 | 128) {
+                    ensure!(
+                        unsafe { ReleaseMutex(handle.as_raw_handle()) } != 0,
+                        "probe release failed"
+                    );
+                }
+                return Ok(());
+            }
+            if role == "abandon" {
+                ensure!(
+                    unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) } == 0,
+                    "abandon acquisition failed"
+                );
+            }
+            let remote = airk_process::client_owner::duplicate_to_launcher(
+                handle.as_handle(),
+                0x0010_0001 | READ_CONTROL,
+            )
+            .context(
+                "fixture duplicate synchronization plus ACL-inspection handle to actual launcher",
+            )?;
+            println!("AIRK_MUTEX_TRANSFER_HANDLE={remote}");
+            Ok(())
+        })
+    }
+
+    fn mutex_worker(name: &str, role: &str) -> std::process::Output {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "endpoint::windows::job::tests::wrapper_mutex_transfer_fixture",
+                "--nocapture",
+            ])
+            .env("AIRK_WRAPPER_MUTEX_FIXTURE", name)
+            .env("AIRK_WRAPPER_MUTEX_ROLE", role)
+            .output()
+            .unwrap()
+    }
+    fn worker_value(output: &std::process::Output, key: &str) -> usize {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .expect("actual native worker result")
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn global_mutex_creator_exit_does_not_replace_parent_thread_ownership_or_allow_second_launcher()
+    -> Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Threading::{ReleaseMutex, WaitForSingleObject};
+        let name = format!(
+            "Global\\AIRK-wrapper-lease-test-{}-{}",
+            current_user()?,
+            std::process::id()
+        );
+        let creator = mutex_worker(&name, "transfer");
+        let remote = worker_value(&creator, "AIRK_MUTEX_TRANSFER_HANDLE=");
+        // SAFETY: actual kernel DuplicateHandle placed this owned handle into
+        // this exact parent; creator exit has been observed by Output::status.
+        let handle = unsafe { OwnedHandle::from_raw_handle(remote as *mut std::ffi::c_void) };
+        require_job_user(handle.as_handle(), &current_user()?)
+            .context("parent inspect transferred handle ACL")?;
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) },
+            0,
+            "creator must NOT own/abandon the mutex"
+        );
+        assert_eq!(
+            worker_value(&mutex_worker(&name, "probe"), "AIRK_MUTEX_PROBE="),
+            258,
+            "second actual launcher must remain excluded"
+        );
+        ensure!(
+            unsafe { ReleaseMutex(handle.as_raw_handle()) } != 0,
+            "same producer thread release failed"
+        );
+        assert_eq!(
+            worker_value(&mutex_worker(&name, "probe"), "AIRK_MUTEX_PROBE="),
+            0,
+            "normal same-thread release permits the next producer"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn abandoned_global_mutex_is_observed_only_after_the_actual_owning_process_exits() -> Result<()>
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Threading::{ReleaseMutex, WaitForSingleObject};
+        let name = format!(
+            "Global\\AIRK-wrapper-abandon-test-{}-{}",
+            current_user()?,
+            std::process::id()
+        );
+        let exited = mutex_worker(&name, "abandon");
+        let remote = worker_value(&exited, "AIRK_MUTEX_TRANSFER_HANDLE=");
+        // SAFETY: same exact-parent native transfer as the preceding test.
+        let handle = unsafe { OwnedHandle::from_raw_handle(remote as *mut std::ffi::c_void) };
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) },
+            128,
+            "kernel abandonment follows actual owner death, never expiry/PID guess"
+        );
+        ensure!(
+            unsafe { ReleaseMutex(handle.as_raw_handle()) } != 0,
+            "abandoned ownership release failed"
+        );
         Ok(())
     }
 }

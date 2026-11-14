@@ -25,11 +25,13 @@ pub const SELECTOR: &str = "__airk_role";
 /// or developer owners; the `airk` binary parses its arguments.
 pub const INTERIM: &str = "setup-interim";
 /// Roles named by the contract, in the order of `fixtures/split/i4/role_admission.json`.
-pub const ROLES: [&str; 7] = [
+pub const ROLES: [&str; 9] = [
     "service-detached",
     "service-foreground",
     "setup-interim",
     "service-login",
+    "service-login-current",
+    "service-login-control",
     "pdf-child",
     "record-error",
     "setup",
@@ -56,7 +58,15 @@ pub enum RoleRequest {
     /// Phase 7 (U33): run one setup operation file (`setup_role`).
     Setup(crate::setup_role::SetupRequest),
     /// Phase 7: the login registration's entry (`setup_role::serve_login`).
-    ServiceLogin { install_id: Incarnation },
+    ServiceLogin {
+        install_id: Incarnation,
+    },
+    ServiceLoginCurrent,
+    ServiceLoginControl {
+        install_id: Incarnation,
+        action: String,
+        operation: PathBuf,
+    },
 }
 
 /// Classify the process arguments (including the program name). `None` means
@@ -181,6 +191,8 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
         "setup" => {
             let mut operation = None;
             let mut mode = None;
+            let mut wrapper_script = None;
+            let mut wrapper_silent = false;
             let mut rest = arguments[1..].iter();
             while let Some(flag) = rest.next() {
                 match flag.to_str() {
@@ -190,15 +202,48 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
                                 .context("role_admission_refused: missing role argument value")?,
                         ));
                     }
+                    Some("--recovery-field") if mode.is_none() => {
+                        let field = rest
+                            .next()
+                            .and_then(|value| value.to_str())
+                            .context("role_admission_refused: recovery field required")?
+                            .parse()?;
+                        mode = Some(crate::setup_role::SetupMode::RecoveryField(field));
+                    }
+                    Some("--wrapper-silent") if !wrapper_silent => {
+                        wrapper_silent = true;
+                    }
+                    Some("--wrapper-lease-script") if mode.is_none() => {
+                        let script = PathBuf::from(
+                            rest.next()
+                                .context("role_admission_refused: wrapper script required")?,
+                        );
+                        ensure!(
+                            script.is_absolute(),
+                            "role_admission_refused: wrapper script must be absolute"
+                        );
+                        wrapper_script = Some(script);
+                        mode = Some(crate::setup_role::SetupMode::WrapperLease);
+                    }
                     Some("--plan") if mode.is_none() => {
                         mode = Some(crate::setup_role::SetupMode::Plan);
                     }
                     Some("--prepare") if mode.is_none() => {
                         mode = Some(crate::setup_role::SetupMode::Prepare);
                     }
+                    Some("--seal-inno") if mode.is_none() => {
+                        mode = Some(crate::setup_role::SetupMode::SealInno);
+                    }
+                    Some("--admit-removal") if mode.is_none() => {
+                        mode = Some(crate::setup_role::SetupMode::AdmitRemoval);
+                    }
                     _ => bail!("role_admission_refused: unexpected role argument"),
                 }
             }
+            ensure!(
+                !wrapper_silent || mode == Some(crate::setup_role::SetupMode::WrapperLease),
+                "role_admission_refused: --wrapper-silent requires wrapper lease script"
+            );
             let operation = operation.context("role_admission_refused: --operation is required")?;
             ensure!(
                 operation.is_absolute(),
@@ -207,7 +252,59 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
             Ok(RoleRequest::Setup(crate::setup_role::SetupRequest {
                 operation,
                 mode: mode.unwrap_or(crate::setup_role::SetupMode::Complete),
+                wrapper_script,
+                wrapper_silent,
             }))
+        }
+        "service-login-current" => {
+            ensure!(
+                arguments.len() == 1,
+                "role_admission_refused: static login takes no arguments"
+            );
+            Ok(RoleRequest::ServiceLoginCurrent)
+        }
+        "service-login-control" => {
+            let (mut id, mut action, mut operation) = (None, None, None);
+            let mut rest = arguments[1..].iter();
+            while let Some(flag) = rest.next() {
+                let value = rest
+                    .next()
+                    .context("role_admission_refused: missing login control argument")?;
+                match flag.to_str() {
+                    Some("--install-id") if id.is_none() => {
+                        id = Some(
+                            value
+                                .to_str()
+                                .and_then(|value| value.parse::<Incarnation>().ok())
+                                .context("role_admission_refused: invalid install ID")?,
+                        )
+                    }
+                    Some("--action") if action.is_none() => {
+                        let value = value
+                            .to_str()
+                            .context("role_admission_refused: invalid action")?;
+                        ensure!(
+                            matches!(value, "status" | "register" | "unregister"),
+                            "role_admission_refused: invalid login action"
+                        );
+                        action = Some(value.to_owned());
+                    }
+                    Some("--operation") if operation.is_none() => {
+                        let path = PathBuf::from(value);
+                        ensure!(
+                            path.is_absolute(),
+                            "role_admission_refused: operation must be absolute"
+                        );
+                        operation = Some(path);
+                    }
+                    _ => bail!("role_admission_refused: unexpected login control argument"),
+                }
+            }
+            Ok(RoleRequest::ServiceLoginControl {
+                install_id: id.context("role_admission_refused: install ID required")?,
+                action: action.context("role_admission_refused: action required")?,
+                operation: operation.context("role_admission_refused: operation required")?,
+            })
         }
         "service-login" => {
             let mut install_id = None;
@@ -337,6 +434,12 @@ pub async fn run(request: RoleRequest) -> Result<()> {
             crate::service_logs::record_client_error(&runtime_dir, &operation, &input)
         }
         RoleRequest::Setup(request) => crate::setup_role::run(request).await,
+        RoleRequest::ServiceLoginCurrent => crate::setup_role::serve_login_current().await,
+        RoleRequest::ServiceLoginControl {
+            install_id,
+            action,
+            operation,
+        } => crate::setup_role::control_login(install_id, &action, &operation),
         RoleRequest::ServiceLogin { install_id } => {
             crate::setup_role::serve_login(install_id).await
         }

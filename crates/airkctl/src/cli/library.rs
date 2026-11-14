@@ -196,6 +196,15 @@ fn control(
     selection: &Selection,
     runtime_dir: Option<PathBuf>,
 ) -> Result<PathBuf, u8> {
+    let control = resolve_control(cx, selection, runtime_dir)?;
+    super::online_control(cx, control)
+}
+
+fn resolve_control(
+    cx: &mut Context,
+    selection: &Selection,
+    runtime_dir: Option<PathBuf>,
+) -> Result<PathBuf, u8> {
     if let Some(control) = runtime_dir.or_else(|| selection.control.clone()) {
         return Ok(control);
     }
@@ -475,15 +484,12 @@ fn setup(
     choice: Setup,
     runtime_dir: Option<PathBuf>,
 ) -> Result<u8, u8> {
-    let explicit = runtime_dir.is_some() || selection.control.is_some();
-    let control = control(cx, selection, runtime_dir)?;
+    let control = resolve_control(cx, selection, runtime_dir)?;
     let data_root = match &selection.data_dir {
         Some(data) => data.clone(),
         None => installed(cx).map(|verified| PathBuf::from(&verified.record.locations.data))?,
     };
-    if !explicit {
-        running(cx, &control, &mut None)?;
-    }
+    running(cx, &control, &mut None)?;
     let additional_roots = choice
         .additional
         .iter()

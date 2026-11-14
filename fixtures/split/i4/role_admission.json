@@ -4,12 +4,59 @@
   "selector": "__airk_role",
   "note": "Reviewed private roles of airk. A served role starts only after its authority check; a pending role answers role_not_available until its step lands; a bare or unknown selector answers role_admission_refused. Existing hidden commands keep working until Phase 4.",
   "roles": [
-    {"name": "service-detached", "status": "served", "started_by": "airk with no arguments, or airkctl service start", "authority": "--runtime-dir <absolute control root> and --start-request <nonce>: an owner-private airk-start-request/1 file at <control>/start/<nonce>.json, at most 30 s old, consumed atomically before any state is opened; explicit mode clears a saved Stop, automatic mode honors it"},
-    {"name": "service-foreground", "status": "served", "started_by": "development, tests and an external supervisor in the foreground (was `airk serve`)", "authority": "--runtime-dir <absolute control root> [--idle-exit-seconds 1..3600]: the service's own admission, as `serve` had it: the control root is created or verified owner-only for the current user and the single-instance lease refuses a second resident; no installation is read"},
-    {"name": "setup-interim", "status": "served", "started_by": "tests, harnesses and pre-split installer flows until Phase 7 (U93); not a user interface", "authority": "the remaining arguments are the pre-split airk command line, limited to runtime, setup, uninstall, host, service legacy, the developer dump-vocab and the process-fixture workers; each keeps its own pre-split checks; interim and non-shippable, removed when the Phase 7 setup role owns these operations"},
-    {"name": "service-login", "status": "served", "started_by": "Task Scheduler task or systemd user unit registered by setup (the macOS SMAppService agent is not implemented yet)", "authority": "--install-id <32 hex> equal to the verified install pointer's; own canonical image path and SHA-256 equal to the install record's airk; the owner-private login receipt in <state>/login/ names this registration; then serves in automatic mode (a saved Stop is honored) (Phase 7)"},
-    {"name": "pdf-child", "status": "pending", "started_by": "the service", "authority": "stdin and stdout are pipes; first frame {schema: airk-pdf-child/1, parent_instance, nonce} within 5 s; opens no file (today the admission-free __airk_pdf_worker selector)"},
-    {"name": "record-error", "status": "served", "started_by": "airkctl service record-error while the service is down (U75)", "authority": "--runtime-dir <absolute owner-only control root> and --operation <snake-case name>; stdin carries at most 16 KiB of {code, detail}; appends only to the raw job-error ring after its ownership proof, through the service's own writer (split step 3b.2)"},
-    {"name": "setup", "status": "served", "started_by": "the installer wrapper or airkctl service uninstall", "authority": "--operation <absolute path> [--plan | --prepare | --admit-removal | --seal-inno]: --admit-removal captures exact private canonical original I4 snapshots under the native lock before a detached wrapper; --seal-inno seals both finalized Inno EXE and DAT after successful closed native setup with settled owner/current I4 proof; an owner-private regular airk-setup-operation/1 file, within its ten-minute lifetime at first admission; own image SHA-256 equal to the airk the operation-pinned payload inventory lists (and, once placed, running from the program folder; for removals, the installed record's airk); single use: the receipt binds the operation bytes and a closed receipt refuses a replay (Phase 7)"}
+    {
+      "name": "service-detached",
+      "status": "served",
+      "started_by": "airk with no arguments, or airkctl service start",
+      "authority": "--runtime-dir <absolute control root> and --start-request <nonce>: an owner-private airk-start-request/1 file at <control>/start/<nonce>.json, at most 30 s old, consumed atomically before any state is opened; explicit mode clears a saved Stop, automatic mode honors it"
+    },
+    {
+      "name": "service-foreground",
+      "status": "served",
+      "started_by": "development, tests and an external supervisor in the foreground (was `airk serve`)",
+      "authority": "--runtime-dir <absolute control root> [--idle-exit-seconds 1..3600]: the service's own admission, as `serve` had it: the control root is created or verified owner-only for the current user and the single-instance lease refuses a second resident; no installation is read"
+    },
+    {
+      "name": "setup-interim",
+      "status": "served",
+      "started_by": "tests, harnesses and pre-split installer flows until Phase 7 (U93); not a user interface",
+      "authority": "the remaining arguments are the pre-split airk command line, limited to runtime, setup, uninstall, host, service legacy, the developer dump-vocab and the process-fixture workers; each keeps its own pre-split checks; interim and non-shippable, removed when the Phase 7 setup role owns these operations"
+    },
+    {
+      "name": "service-login",
+      "status": "served",
+      "started_by": "Task Scheduler task or systemd user unit registered by setup; split macOS uses service-login-current",
+      "authority": "--install-id <32 hex> equal to the verified install pointer's; own canonical image path and SHA-256 equal to the install record's airk; the owner-private login receipt in <state>/login/ names this registration; then serves in automatic mode (a saved Stop is honored) (Phase 7)"
+    },
+    {
+      "name": "service-login-current",
+      "status": "served",
+      "started_by": "fixed signed split macOS SMAppService plist",
+      "authority": "No arguments. macOS only; strict current I4 and exact executing image path/hash/C10 derive install ID, exact signed bundle and enabled SMAppService registration; automatic startup uses the active setup fence."
+    },
+    {
+      "name": "service-login-control",
+      "status": "served",
+      "started_by": "exact original setup owner invoking placed AIRK.app",
+      "authority": "--install-id <32 hex> --action status|register|unregister --operation <absolute original request>; exact active operation/digest, live roots, eligible stage/options, exact current I4 and executing signed app. The parent retains install.lock. No arbitrary path or legacy adoption."
+    },
+    {
+      "name": "pdf-child",
+      "status": "pending",
+      "started_by": "the service",
+      "authority": "stdin and stdout are pipes; first frame {schema: airk-pdf-child/1, parent_instance, nonce} within 5 s; opens no file (today the admission-free __airk_pdf_worker selector)"
+    },
+    {
+      "name": "record-error",
+      "status": "served",
+      "started_by": "airkctl service record-error while the service is down (U75)",
+      "authority": "--runtime-dir <absolute owner-only control root> and --operation <snake-case name>; stdin carries at most 16 KiB of {code, detail}; appends only to the raw job-error ring after its ownership proof, through the service's own writer (split step 3b.2)"
+    },
+    {
+      "name": "setup",
+      "status": "served",
+      "started_by": "the installer wrapper or airkctl service uninstall",
+      "authority": "--operation <absolute path> [--plan | --prepare | --admit-removal | --seal-inno | --recovery-field <closed selector> | --wrapper-lease-script <absolute script> [--wrapper-silent]]: native-owned recovery scalars use exact original private Core operation/admitted root proof; wrapper lease is an actual kernel-held producer exclusion, never an env/PID/TTL authority; --admit-removal captures exact private canonical original I4 snapshots under the native lock before a detached wrapper; --seal-inno seals both finalized Inno EXE and DAT after successful closed native setup with settled owner/current I4 proof; an owner-private regular airk-setup-operation/1 file, within its ten-minute lifetime at first admission; own image SHA-256 equal to the airk the operation-pinned payload inventory lists (and, once placed, running from the program folder; for removals, the installed record's airk); single use: the receipt binds the operation bytes and a closed receipt refuses a replay (Phase 7)"
+    }
   ]
 }

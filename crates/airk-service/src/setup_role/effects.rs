@@ -7,6 +7,7 @@
 //! `airk_process::cert_trust`), and the installed `airkctl` for the start
 //! (U94: one start implementation).
 use super::plan::Host;
+pub(crate) mod program_files;
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service::{ControlMethod, ControlRequest, ControlResponse, PROTOCOL_VERSION},
@@ -43,6 +44,10 @@ pub(crate) fn reserved_roots() -> Result<Vec<PathBuf>> {
                 paths.logs,
             ]);
         }
+    }
+    for install in airk_installer::runtime_install::predecessor_install_roots()? {
+        roots.extend(airk_host::user_paths::owned_install_locations(&install)?);
+        roots.push(install);
     }
     if let Some(standalone) = standalone_folder()? {
         roots.push(standalone);
@@ -86,14 +91,7 @@ pub(crate) struct Predecessor {
 /// The pre-split installation roots that exist (both channels, both layout
 /// families), each with its read-only replacement plan.
 pub(crate) fn predecessors(candidate: &str, operation: &str) -> Result<Vec<Predecessor>> {
-    use airk_host::user_paths::{Channel, UserPaths};
-    let mut roots = Vec::new();
-    for channel in [Channel::Stable, Channel::Preview] {
-        roots.push(UserPaths::historical(channel)?.install);
-        roots.push(airk_installer::runtime_install::discover_user_paths(channel)?.install);
-    }
-    roots.sort();
-    roots.dedup();
+    let roots = airk_installer::runtime_install::predecessor_install_roots()?;
     Ok(roots
         .into_iter()
         .filter(|root| std::fs::symlink_metadata(root).is_ok())
@@ -113,17 +111,7 @@ pub(crate) fn predecessors(candidate: &str, operation: &str) -> Result<Vec<Prede
 /// Items of the §9.3 roster this build finds but does not retire: reported,
 /// never removed (U14).
 pub(crate) fn unretired_items() -> Result<Vec<airk_core::install_record::Leftover>> {
-    let mut found = Vec::new();
-    if let Some(standalone) = standalone_folder()?
-        && std::fs::symlink_metadata(&standalone).is_ok()
-    {
-        found.push(airk_core::install_record::Leftover {
-            item: standalone.display().to_string(),
-            reason: "the earlier AIRK CLI and MCP server installer folder; removing it through its receipts is not implemented in this build, so it was left. Remove \"AIRK CLI and MCP server\" in Settings > Apps if you no longer use it".into(),
-            restarts_old_service: false,
-        });
-    }
-    Ok(found)
+    super::predecessor_roster::unretired_items()
 }
 
 /// Retire one predecessor through the existing receipts-only replacement.
@@ -348,14 +336,33 @@ pub(crate) fn register_login(
     state: &Path,
     airk: &Path,
     install_id: Incarnation,
+    operation: Option<&Path>,
 ) -> (airk_core::install_record::SetupPhase, &'static str, String) {
     use airk_core::install_record::SetupPhase;
     if host == Host::Macos {
-        return (
-            SetupPhase::LoginUnsupported,
-            "login_unsupported",
-            "SMAppService registration of AIRK.app is not implemented in this build; start the service with `airkctl service start`".into(),
-        );
+        return match super::mac_login::apply(airk, install_id, "register", operation) {
+            Ok(airk_installer::service_manager::MacLoginState::Enabled) => (
+                SetupPhase::LoginRegistered,
+                "registered",
+                airk.display().to_string(),
+            ),
+            Ok(airk_installer::service_manager::MacLoginState::RequiresApproval) => (
+                SetupPhase::LoginFailed,
+                "login_consent_required",
+                "Approve AIRK in System Settings Login Items, then resume the original setup"
+                    .into(),
+            ),
+            Ok(state) => (
+                SetupPhase::LoginFailed,
+                "login_failed",
+                format!("SMAppService registration is {state:?}"),
+            ),
+            Err(error) => (
+                SetupPhase::LoginFailed,
+                "login_failed",
+                format!("{error:#}"),
+            ),
+        };
     }
     let result = (|| -> Result<&'static str> {
         let manager = airk_installer::service_manager::ServiceManager::for_installation(
@@ -389,9 +396,14 @@ pub(crate) fn unregister_login(
     state: &Path,
     airk: &Path,
     install_id: Incarnation,
+    operation: Option<&Path>,
 ) -> Result<&'static str> {
     if host == Host::Macos {
-        return Ok("none_registered");
+        return match super::mac_login::apply(airk, install_id, "unregister", operation)? {
+            airk_installer::service_manager::MacLoginState::NotRegistered
+            | airk_installer::service_manager::MacLoginState::NotFound => Ok("removed"),
+            state => bail!("login_startup_failed: SMAppService remains {state:?}"),
+        };
     }
     let manager = airk_installer::service_manager::ServiceManager::for_installation(
         state,
@@ -458,11 +470,21 @@ pub(crate) fn start(airkctl: &Path) -> Result<String> {
 /// Delete one chosen location's contents (`purge`): never a folder that
 /// contains the program folder or the pointer folder. `keep` names direct
 /// entries to leave (the state folder keeps its `setup` receipts).
+#[cfg(test)]
 pub(crate) fn purge(location: &Path, protected: &[PathBuf], keep: &[&str]) -> Result<usize> {
     if std::fs::symlink_metadata(location).is_err() {
         return Ok(0);
     }
-    super::files::no_links(location)?;
+    let held = airk_process::directory::OpenedDirectory::open(location)?;
+    purge_held(&held, location, protected, keep)
+}
+
+pub(crate) fn purge_held(
+    held: &airk_process::directory::OpenedDirectory,
+    location: &Path,
+    protected: &[PathBuf],
+    keep: &[&str],
+) -> Result<usize> {
     for other in protected {
         ensure!(
             !other.starts_with(location),
@@ -471,28 +493,43 @@ pub(crate) fn purge(location: &Path, protected: &[PathBuf], keep: &[&str]) -> Re
             other.display()
         );
     }
-    let mut removed = 0;
-    for entry in std::fs::read_dir(location)? {
-        let entry = entry?;
-        if keep
-            .iter()
-            .any(|name| entry.file_name() == std::ffi::OsStr::new(name))
-        {
-            continue;
+    #[cfg(unix)]
+    let removed = rooted_purge::purge(held.as_file(), keep)?;
+    #[cfg(windows)]
+    let removed = {
+        let current = airk_process::directory::OpenedDirectory::open(location)?;
+        ensure!(
+            current.identity()? == held.identity()?,
+            "purge_refused: root identity changed"
+        );
+        let mut removed = 0;
+        for entry in std::fs::read_dir(location)? {
+            let entry = entry?;
+            if keep
+                .iter()
+                .any(|name| entry.file_name() == std::ffi::OsStr::new(name))
+            {
+                continue;
+            }
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+            removed += 1;
         }
-        let metadata = std::fs::symlink_metadata(entry.path())?;
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
-            std::fs::remove_dir_all(entry.path())?;
-        } else {
-            std::fs::remove_file(entry.path())?;
-        }
-        removed += 1;
-    }
-    if keep.is_empty() {
-        std::fs::remove_dir(location)?;
-    }
+        removed
+    };
+    // The transaction binds these root objects before any destructive effect.
+    // Purge their contents while preserving the observed root identity for
+    // interruption recovery and settlement; state additionally keeps setup/.
+    held.sync_all()?;
     Ok(removed)
 }
+
+#[cfg(unix)]
+mod rooted_purge;
 
 #[cfg(test)]
 mod session_wait_tests {

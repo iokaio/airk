@@ -3,3 +3,7 @@
 *.pdf binary
 # The embedded admin bundle is sealed by SHA-256 digests; keep its bytes exact.
 crates/airk-cli/admin-assets/** -text
+# Authenticated legal payloads retain exact upstream/bundled bytes, including EOF.
+# Other whitespace checks remain enabled; do not broaden these two exceptions.
+third_party/models/CC-BY-4.0.txt -text whitespace=-blank-at-eof
+third_party/models/minilm-v2-LICENSE.txt -text whitespace=-blank-at-eof

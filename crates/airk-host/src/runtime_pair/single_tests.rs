@@ -20,6 +20,7 @@ fn retired_stdio_rejects_modern_missing_and_malformed_receipts_but_preserves_leg
         arch: std::env::consts::ARCH.into(),
         airk_sha256: digest_file(&main)?,
         embed_sha256: String::new(),
+        split: None,
     };
     fs::write(&receipt, serde_json::to_vec(&pair)?)?;
     assert!(require_legacy_stdio(&main).is_err());
@@ -49,6 +50,7 @@ fn single_executable_receipt_verifies_main_without_helper_or_role_copies() -> Re
         arch: std::env::consts::ARCH.into(),
         airk_sha256: digest_file(&main)?,
         embed_sha256: String::new(),
+        split: None,
     };
     let bytes = serde_json::to_vec(&pair)?;
     assert!(!String::from_utf8_lossy(&bytes).contains("embed_sha256"));

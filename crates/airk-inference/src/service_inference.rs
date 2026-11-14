@@ -339,6 +339,13 @@ mod native {
     }
 
     impl Pool {
+        pub fn arbiter(&self) -> Result<crate::inference_engine::pool::arbiter::Handle> {
+            Ok(self
+                .owner
+                .as_ref()
+                .context("inference owner unavailable")?
+                .arbiter())
+        }
         fn start(
             root: &Path,
             service: Incarnation,

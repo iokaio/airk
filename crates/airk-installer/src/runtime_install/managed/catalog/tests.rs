@@ -114,6 +114,46 @@ fn modern_managed_origin_binds_exact_main_without_a_helper() -> Result<()> {
 }
 
 #[test]
+fn split_schema3_managed_origin_keeps_schema2_single_engine_and_binds_the_cli() -> Result<()> {
+    let (_owner, root, state, mut policy) = fixture(ManagedLifecycle::UserOnDemand)?;
+    policy.approval.manifest_sha256 =
+        super::super::super::tests::split_pair_fixture(&policy.source)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let reservation = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    assert_eq!(
+        reservation.origin.schema, 2,
+        "packaging schema is not a new persisted Genesis format"
+    );
+    assert_eq!(reservation.origin.helper_sha256, None);
+    assert!(!policy.source.join(helper_name()).exists());
+    layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
+    verify_origin(&authority, &policy, &reservation.origin)?;
+    let cli = if cfg!(windows) {
+        "airkctl.exe"
+    } else if cfg!(target_os = "macos") {
+        "AIRK.app/Contents/MacOS/airkctl"
+    } else {
+        "airkctl"
+    };
+    let original = fs::read(policy.source.join(cli))?;
+    let retained = serde_json::to_value(&reservation.origin)?;
+    fs::write(policy.source.join(cli), b"changed split CLI fixture")?;
+    assert!(verify_origin(&authority, &policy, &reservation.origin).is_err());
+    assert_eq!(
+        serde_json::to_value(&reservation.origin)?,
+        retained,
+        "refusal never rewrites the reserved origin"
+    );
+    fs::write(policy.source.join(cli), original)?;
+    verify_origin(&authority, &policy, &reservation.origin)?;
+    Ok(())
+}
+
+#[test]
 fn initial_layout_reservation_survives_without_policy_and_fences_resume() -> Result<()> {
     let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
     let lock = install_lock(&root)?;

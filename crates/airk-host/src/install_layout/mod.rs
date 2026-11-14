@@ -46,59 +46,8 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 
-pub fn publish_new(from: &Path, to: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        let from = from
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
-        let to = to
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
-        // SAFETY: terminated paths; zero flags forbid replacement of an existing destination.
-        ensure!(
-            unsafe {
-                windows_sys::Win32::Storage::FileSystem::MoveFileExW(from.as_ptr(), to.as_ptr(), 0)
-            } != 0,
-            "exclusive state publication failed: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    #[cfg(unix)]
-    {
-        use std::{ffi::CString, os::unix::ffi::OsStrExt};
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        #[cfg(target_os = "linux")]
-        // SAFETY: terminated absolute paths and the documented exclusive-rename flag.
-        let result = unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                from.as_ptr(),
-                libc::AT_FDCWD,
-                to.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        #[cfg(target_os = "macos")]
-        // SAFETY: terminated absolute paths and the documented exclusive-rename flag.
-        let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        anyhow::bail!("exclusive state publication is unsupported on this platform");
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        ensure!(
-            result == 0,
-            "filesystem cannot publish state exclusively: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    Ok(())
-}
+mod exclusive;
+pub use exclusive::{publish_new, publish_new_at};
 impl Layout {
     pub fn read(root: &Path) -> Result<Option<Self>> {
         if !exists(&root.join(LAYOUT))? {

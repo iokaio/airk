@@ -1,0 +1,35 @@
+{
+  "schema": "airk.split.admin.mutation-preparation/1",
+  "preparations": [
+    {"preparation":"11111111111111111111111111111111","receipt_operation":"catalog.policy_resume_receipt"},
+    {"preparation":"22222222222222222222222222222222","receipt_operation":null}
+  ],
+  "submit": {"prepared":"11111111111111111111111111111111"},
+  "recover": {"recover":"11111111111111111111111111111111"},
+  "acknowledge": {"acknowledged":"11111111111111111111111111111111"},
+  "invalid_submit": [
+    {"prepared":"11111111111111111111111111111111","method":{"lifecycle":{"action":"restart"}}},
+    {"prepared":"11111111111111111111111111111111","operation":"jobs.retry"},
+    {"prepared":"11111111111111111111111111111111","recover":"11111111111111111111111111111111"}
+  ],
+  "invalid_acknowledge": [
+    {"acknowledged":"11111111111111111111111111111111","prepared":"11111111111111111111111111111111"},
+    {"acknowledged":"11111111111111111111111111111111","operation":"jobs.retry"}
+  ],
+  "semantics": {
+    "prepare_dispatches_mutation":false,
+    "submit_requires_retained_handle":true,
+    "submit_binds_original_operation_and_method":true,
+    "duplicate_submit_redispatches":false,
+    "recovery_replays_mutation":false,
+    "foreign_or_expired_session_refuses":true,
+    "lifecycle_has_canonical_receipt":false,
+    "shares_review_capacity":32,
+    "cached_reply_max_bytes":65536,
+    "uncached_reply_code":"admin_prepared_reply_unavailable",
+    "ack_requires_retained_full_known_outcome":true,
+    "unknown_or_submitted_ack_releases":false,
+    "acknowledged_success_is_evictable":true,
+    "review_eviction_removes_paired_preparation":true
+  }
+}

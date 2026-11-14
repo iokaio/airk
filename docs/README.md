@@ -1,5 +1,16 @@
 # AIRK documentation
 
+**Current source candidate: 1.9.0 (14 November 2026).** Native and extension versions are synchronized. The [advanced split plan](split/codex-plan.md), [1.9.0 candidate record](releases/release-1.9.0.md) and [execution ledger](simplify/one-process-ledger.md) distinguish source behavior, scoped checks, artifacts and remaining qualification. No publication or independent optional-model qualification is implied.
+
+Start with [native installation](service-installation.md), [CLI-only onboarding](agent-integration.md#standalone-onboarding-without-vs-code), the generated [CLI reference](cli-reference.md), [agent setup](agent-integration.md), [Admin pages](admin-pages.md) and [process ownership](process-model.md). AIRK Service works without VS Code; the extension is a separate client. Verified portable setup and same-request recovery use `airkctl service setup --portable --program` and `service setup --resume`. Product Help and the static Help site consume the same generated native/UI catalog.
+
+Optional Arbiter source follows the [approved P10 boundaries](split/codex-plan.md): off by default, explicit immutable-index enrollment, supported verified profiles and in-process native ownership. The [earlier concept](arbiter/concept.md) is historical design, including its superseded sidecar proposal. Use `airkctl arbiter status` and the actual generated schemas for current controls; implemented model paths do not establish independent task/device/platform qualification.
+
+<details>
+<summary>Historical development notices and earlier candidate checkpoints</summary>
+
+The retained notices below describe their original source and artifacts, including retired commands and pre-split extension behavior.
+
 **Advanced split source checkpoint (13 November 2026).** P0 restores extracted
 component test ownership and the `airkctl` one-shot command stack. The first P1
 correction fences automatic scope switching/reselection and retains both
@@ -341,6 +352,13 @@ The [local Rust iteration guide](../CONTRIBUTING.md#local-rust-iteration) covers
 
 The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
 
+</details>
+
+## Documentation catalog
+
+- [Current 1.9.0 advanced split candidate](releases/release-1.9.0.md)
+- [Advanced split execution plan](split/codex-plan.md)
+- [Current generated CLI reference](cli-reference.md)
 - [1.6.4 public release: upgrades, removal, MCP status and migration](releases/release-1.6.4.md)
 - [Historical unpublished 1.6.1–1.6.3 candidate evidence](releases/release-1.6.3.md)
 - [Architecture and code boundaries](architecture.md)
@@ -474,6 +492,10 @@ Contributor guidance and offline-first bootstrap: [CONTRIBUTING.md](../CONTRIBUT
 The [ignored-test/profile-exclusion inventory](testing/ignore-triage.md) separates
 helper entry points, gated qualification and actual runner evidence. Implemented,
 proposed and unqualified behavior must remain distinguishable.
+
+## Retained service development notes
+
+These notes describe earlier service integration checkpoints; their linked records retain the original scope and do not replace current split guidance.
 
 Development helper recovery now preserves project workers and rebinds retained direct model sessions with bounded retries and explicit stop/start controls; see [shared embedding](service-embedding.md). Default adapter cutover and installed-platform qualification remain open.
 

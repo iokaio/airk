@@ -17,6 +17,9 @@ use tokio::{
 };
 mod agent_plane;
 mod agents;
+mod arbiter;
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+pub use arbiter::evaluation::{EvaluationOwner, EvaluationResult};
 pub(crate) mod checkpoint;
 mod configuration;
 mod explorer;
@@ -26,6 +29,7 @@ mod http;
 mod journal;
 mod lifecycle;
 mod login;
+mod native_admin;
 mod open_reads;
 mod registration;
 mod resolve;
@@ -61,6 +65,8 @@ fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a 
 pub use airk_frontend::usage_client::administrative_read;
 
 struct State {
+    draining: std::sync::atomic::AtomicBool,
+    arbiter: Option<arbiter::Owner>,
     http: std::sync::OnceLock<Arc<http::Owner>>,
     checkpoint: Arc<checkpoint::Coordinator>,
     control_root: std::path::PathBuf,
@@ -407,18 +413,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let response_budget = request.method.response_frame_budget();
     let _checkpoint_admission = if request.protocol == PROTOCOL_VERSION
         && instance_matches
-        && !matches!(
-            request.method,
-            ControlMethod::Health
-                | ControlMethod::HttpEndpoint
-                | ControlMethod::Shutdown
-                | ControlMethod::PrepareUpgradeCheckpoint { .. }
-                | ControlMethod::ObserveUpgradeCheckpoint { .. }
-                | ControlMethod::UpgradeRecoveryProbe { .. }
-                | ControlMethod::ReleaseUpgradeAdmission { .. }
-        )
-        && !(matches!(request.method, ControlMethod::RequestEpoch)
-            && state.checkpoint.recovery_probe(state.instance)?)
+        && native_admin::checkpoint_required(&state, &request.method)?
     {
         match state.checkpoint.admit() {
             Ok(guard) => Some(guard),
@@ -447,6 +442,200 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         }
     } else {
         match request.method {
+            ControlMethod::ValidateCombinedDelivery {
+                selection,
+                query_selection,
+                scope_identity,
+                result_digest,
+            } => {
+                let Some(gate) = state.catalog_gate.as_ref() else {
+                    return local_ipc::write_message(
+                        &mut stream,
+                        &ControlResponse::Failure {
+                            code: "combined_delivery_scope_unavailable".into(),
+                        },
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                };
+                let Some(clock) = gate.catalog_clock() else {
+                    return local_ipc::write_message(
+                        &mut stream,
+                        &ControlResponse::Failure {
+                            code: "combined_delivery_scope_unavailable".into(),
+                        },
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                };
+                let control = state.control_root.clone();
+                let expected_revision = clock.revision;
+                let observed = tokio::task::spawn_blocking(move || {
+                    airk_frontend::combined_frontend::validate_delivery(
+                        &control,
+                        &selection,
+                        &query_selection,
+                        scope_identity,
+                        expected_revision,
+                    )
+                })
+                .await;
+                let admitted = match observed {
+                    Ok(Ok(())) => gate.begin_issue(clock.namespace, clock.revision),
+                    _ => Err(airk_core::scoped_reads::ScopeReadRefused.into()),
+                };
+                match admitted {
+                    Ok(ticket) => {
+                        let response = ControlResponse::CombinedDeliveryValidated {
+                            receipt: airk_core::service::CombinedDeliveryReceipt {
+                                schema: 1,
+                                service_instance: state.instance,
+                                namespace: clock.namespace,
+                                catalog_revision: clock.revision,
+                                scope_identity,
+                                result_digest,
+                            },
+                        };
+                        // A partial refused write closes this exchange. Never
+                        // append an unguarded fallback after protected bytes.
+                        return gate
+                            .deliver_issue(ticket, &mut stream, &response, Duration::from_secs(5))
+                            .await;
+                    }
+                    Err(_) => ControlResponse::Failure {
+                        code: "combined_delivery_scope_expired".into(),
+                    },
+                }
+            }
+            ControlMethod::ConnectScoped { request } => {
+                match state.management.request_scoped(request).await {
+                    Ok(delivery) => {
+                        return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
+                    }
+                    Err(error) => ControlResponse::Failure {
+                        code: connection_failure_code(&error, "scoped_connection_unavailable")
+                            .into(),
+                    },
+                }
+            }
+            ControlMethod::NativeRead { .. }
+                if state.catalog_gate.is_none() && state.legacy_connections =>
+            {
+                ControlResponse::Failure {
+                    code: "native_administrative_legacy".into(),
+                }
+            }
+            ControlMethod::NativeRead {
+                project,
+                request,
+                usage_client,
+            } => match state.catalog_gate.as_ref() {
+                Some(gate) => {
+                    match deliver_native_read(
+                        &mut stream,
+                        gate,
+                        state.native_administrative.read(
+                            &state.management,
+                            gate,
+                            state.native_caller,
+                            project,
+                            request,
+                            usage_client,
+                        ),
+                    )
+                    .await?
+                    {
+                        None => return Ok(()),
+                        Some(failure) => failure,
+                    }
+                }
+                None => ControlResponse::Failure {
+                    code: "native_administrative_admission_unavailable".into(),
+                },
+            },
+            ControlMethod::Connect { project } => {
+                if state.catalog_gate.is_some() {
+                    match state.management.request_legacy(project).await {
+                        Ok(delivery) => {
+                            return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
+                        }
+                        Err(error) => ControlResponse::Failure {
+                            code: connection_failure_code(&error, "project_unavailable_or_busy")
+                                .into(),
+                        },
+                    }
+                } else if state.legacy_connections {
+                    state.supervisor.connect(project).await
+                } else {
+                    ControlResponse::Failure {
+                        code: "catalog_admission_unavailable".into(),
+                    }
+                }
+            }
+            method => {
+                let (response, requested_shutdown) =
+                    canonical_control(state.clone(), method, None).await?;
+                shutdown |= requested_shutdown;
+                response
+            }
+        }
+    };
+    if let ControlResponse::Failure { code, .. }
+    | ControlResponse::CatalogOutcomeUnknown { code, .. }
+    | ControlResponse::SourceChangeBusy { code, .. }
+    | ControlResponse::SourceChangeResolutionOutcomeUnknown { code, .. } = &response
+    {
+        state.log.record_code(
+            airk_core::service_logs::LogKind::ControlFailed,
+            None,
+            None,
+            Some(code),
+        );
+    } else if matches!(response, ControlResponse::Incompatible { .. }) {
+        state.log.record_code(
+            airk_core::service_logs::LogKind::ControlFailed,
+            None,
+            None,
+            Some("runtime_incompatible"),
+        );
+    }
+    deliver_control_response(
+        &state.shutdown,
+        shutdown,
+        local_ipc::write_message_limited(
+            &mut stream,
+            &response,
+            Duration::from_secs(5),
+            response_budget,
+        ),
+    )
+    .await
+}
+
+/// Canonical control behavior shared by the authenticated pipe and native Admin.
+/// Boxed at this boundary so the private facade cannot form an async type cycle.
+type ControlFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(ControlResponse, bool)>> + Send>>;
+fn canonical_control(
+    state: Arc<State>,
+    method: ControlMethod,
+    effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
+) -> ControlFuture {
+    Box::pin(async move {
+        if let Some(check) = &effect_check
+            && let Err(code) = check()
+        {
+            return Ok((ControlResponse::Failure { code: code.into() }, false));
+        }
+        let mut shutdown = matches!(method, ControlMethod::Shutdown);
+        let response = match method {
+            method @ (ControlMethod::AdminNativeOpen { .. }
+            | ControlMethod::AdminNativeCall { .. }
+            | ControlMethod::AdminNativeRead { .. }
+            | ControlMethod::AdminNativeCancel { .. }
+            | ControlMethod::AdminNativeClose { .. }) => {
+                native_admin::response(state.clone(), method).await
+            }
             ControlMethod::HttpEndpoint => ControlResponse::HttpEndpoint {
                 endpoint: state
                     .http
@@ -527,71 +716,9 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     observation: Box::new(state.checkpoint.observe(&state, operation_id).await?),
                 }
             }
-            ControlMethod::ValidateCombinedDelivery {
-                selection,
-                query_selection,
-                scope_identity,
-                result_digest,
-            } => {
-                let Some(gate) = state.catalog_gate.as_ref() else {
-                    return local_ipc::write_message(
-                        &mut stream,
-                        &ControlResponse::Failure {
-                            code: "combined_delivery_scope_unavailable".into(),
-                        },
-                        Duration::from_secs(5),
-                    )
-                    .await;
-                };
-                let Some(clock) = gate.catalog_clock() else {
-                    return local_ipc::write_message(
-                        &mut stream,
-                        &ControlResponse::Failure {
-                            code: "combined_delivery_scope_unavailable".into(),
-                        },
-                        Duration::from_secs(5),
-                    )
-                    .await;
-                };
-                let control = state.control_root.clone();
-                let expected_revision = clock.revision;
-                let observed = tokio::task::spawn_blocking(move || {
-                    airk_frontend::combined_frontend::validate_delivery(
-                        &control,
-                        &selection,
-                        &query_selection,
-                        scope_identity,
-                        expected_revision,
-                    )
-                })
-                .await;
-                let admitted = match observed {
-                    Ok(Ok(())) => gate.begin_issue(clock.namespace, clock.revision),
-                    _ => Err(airk_core::scoped_reads::ScopeReadRefused.into()),
-                };
-                match admitted {
-                    Ok(ticket) => {
-                        let response = ControlResponse::CombinedDeliveryValidated {
-                            receipt: airk_core::service::CombinedDeliveryReceipt {
-                                schema: 1,
-                                service_instance: state.instance,
-                                namespace: clock.namespace,
-                                catalog_revision: clock.revision,
-                                scope_identity,
-                                result_digest,
-                            },
-                        };
-                        // A partial refused write closes this exchange. Never
-                        // append an unguarded fallback after protected bytes.
-                        return gate
-                            .deliver_issue(ticket, &mut stream, &response, Duration::from_secs(5))
-                            .await;
-                    }
-                    Err(_) => ControlResponse::Failure {
-                        code: "combined_delivery_scope_expired".into(),
-                    },
-                }
-            }
+            ControlMethod::ValidateCombinedDelivery { .. } => ControlResponse::Failure {
+                code: "native_pipe_delivery_required".into(),
+            },
             ControlMethod::Health => {
                 let now = Instant::now();
                 let policy = state
@@ -622,71 +749,11 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
-            ControlMethod::ConnectScoped { request } => {
-                match state.management.request_scoped(request).await {
-                    Ok(delivery) => {
-                        return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
-                    }
-                    Err(error) => ControlResponse::Failure {
-                        code: connection_failure_code(&error, "scoped_connection_unavailable")
-                            .into(),
-                    },
-                }
-            }
-            ControlMethod::NativeRead { .. }
-                if state.catalog_gate.is_none() && state.legacy_connections =>
-            {
-                ControlResponse::Failure {
-                    code: "native_administrative_legacy".into(),
-                }
-            }
-            ControlMethod::NativeRead {
-                project,
-                request,
-                usage_client,
-            } => match state.catalog_gate.as_ref() {
-                Some(gate) => {
-                    match deliver_native_read(
-                        &mut stream,
-                        gate,
-                        state.native_administrative.read(
-                            &state.management,
-                            gate,
-                            state.native_caller,
-                            project,
-                            request,
-                            usage_client,
-                        ),
-                    )
-                    .await?
-                    {
-                        None => return Ok(()),
-                        Some(failure) => failure,
-                    }
-                }
-                None => ControlResponse::Failure {
-                    code: "native_administrative_admission_unavailable".into(),
-                },
+            ControlMethod::ConnectScoped { .. }
+            | ControlMethod::NativeRead { .. }
+            | ControlMethod::Connect { .. } => ControlResponse::Failure {
+                code: "native_pipe_delivery_required".into(),
             },
-            ControlMethod::Connect { project } => {
-                if state.catalog_gate.is_some() {
-                    match state.management.request_legacy(project).await {
-                        Ok(delivery) => {
-                            return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
-                        }
-                        Err(error) => ControlResponse::Failure {
-                            code: connection_failure_code(&error, "project_unavailable_or_busy")
-                                .into(),
-                        },
-                    }
-                } else if state.legacy_connections {
-                    state.supervisor.connect(project).await
-                } else {
-                    ControlResponse::Failure {
-                        code: "catalog_admission_unavailable".into(),
-                    }
-                }
-            }
             ControlMethod::Workers { projects } => state.supervisor.workers_status(&projects),
             ControlMethod::Worker { project } => state.supervisor.worker_status(project),
             ControlMethod::RestartProject { project, expected } => {
@@ -698,6 +765,46 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 state.supervisor.stop_embedding(worker, force).await
             }
             ControlMethod::SourceStatus => state.sources.status(),
+            ControlMethod::Arbiter { request } => match &state.arbiter {
+                Some(owner) => match owner
+                    .manage(request, &state.supervisor, effect_check.clone())
+                    .await
+                {
+                    Ok(observation) => ControlResponse::Arbiter {
+                        observation: Box::new(observation),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterApplication {
+                worker,
+                authority,
+                publication,
+            } => match &state.arbiter {
+                Some(owner) => match owner.application(worker, authority, publication) {
+                    Ok(application) => ControlResponse::ArbiterApplication {
+                        application: Box::new(application),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterNextRead { request } => match &state.arbiter {
+                Some(owner) => match owner.next_read(*request, &state.supervisor).await {
+                    Ok(advice) => ControlResponse::ArbiterAdvice {
+                        advice: advice.map(Box::new),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
             ControlMethod::Resources => state.supervisor.resource_status(),
             ControlMethod::ConfigureResources { configuration } => {
                 state.supervisor.configure_resources(configuration).await
@@ -870,7 +977,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 .await
             }
             ControlMethod::HttpIssuerRotation { action } => {
-                rotation::response(&state.control_root, action).await
+                rotation::response(&state.control_root, action, effect_check).await
             }
             // A1 (contracts §2.7): owner pipe only; the code is in this reply only.
             ControlMethod::AdminLaunchCode {} => {
@@ -886,6 +993,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::StorageInventory {} => {
                 let control = state.control_root.clone();
                 let answer = tokio::task::spawn_blocking(move || {
+                    native_admin::check_effect(effect_check.as_ref())?;
                     storage::inventory(&storage::served_locations(&control)?)
                 })
                 .await;
@@ -902,6 +1010,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::StoragePurgePlan { kind } => {
                 let (control, log) = (state.control_root.clone(), state.log.clone());
                 let answer = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                    native_admin::check_effect(effect_check.as_ref())?;
                     let plan =
                         storage::purge_plan(kind, &storage::served_locations(&control)?, &log)?;
                     let digest = plan.digest()?;
@@ -923,6 +1032,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::StoragePurge { kind, plan_digest } => {
                 let (control, log) = (state.control_root.clone(), state.log.clone());
                 let answer = tokio::task::spawn_blocking(move || {
+                    native_admin::check_effect(effect_check.as_ref())?;
                     storage::purge(
                         kind,
                         plan_digest,
@@ -943,9 +1053,11 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             }
             ControlMethod::LoginStartup { action } => {
                 let control = state.control_root.clone();
-                let answer =
-                    tokio::task::spawn_blocking(move || login::login_startup(action, &control))
-                        .await;
+                let answer = tokio::task::spawn_blocking(move || {
+                    native_admin::check_effect(effect_check.as_ref())?;
+                    login::login_startup(action, &control)
+                })
+                .await;
                 match answer {
                     Ok(Ok(login)) => ControlResponse::LoginStartup { login },
                     Ok(Err(error)) => ControlResponse::Failure {
@@ -965,6 +1077,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             } => {
                 let control = state.control_root.clone();
                 let answer = tokio::task::spawn_blocking(move || {
+                    native_admin::check_effect(effect_check.as_ref())?;
                     folders::browse(&control, path.as_deref(), show_hidden, after.as_deref())
                 })
                 .await;
@@ -1093,39 +1206,15 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 )
                 .await
             }
-            method => state.management.request(method).await,
+            method => state.management.request_guarded(method, effect_check).await,
+        };
+        if shutdown {
+            state
+                .draining
+                .store(true, std::sync::atomic::Ordering::Release);
         }
-    };
-    if let ControlResponse::Failure { code, .. }
-    | ControlResponse::CatalogOutcomeUnknown { code, .. }
-    | ControlResponse::SourceChangeBusy { code, .. }
-    | ControlResponse::SourceChangeResolutionOutcomeUnknown { code, .. } = &response
-    {
-        state.log.record_code(
-            airk_core::service_logs::LogKind::ControlFailed,
-            None,
-            None,
-            Some(code),
-        );
-    } else if matches!(response, ControlResponse::Incompatible { .. }) {
-        state.log.record_code(
-            airk_core::service_logs::LogKind::ControlFailed,
-            None,
-            None,
-            Some("runtime_incompatible"),
-        );
-    }
-    deliver_control_response(
-        &state.shutdown,
-        shutdown,
-        local_ipc::write_message_limited(
-            &mut stream,
-            &response,
-            Duration::from_secs(5),
-            response_budget,
-        ),
-    )
-    .await
+        Ok((response, shutdown))
+    })
 }
 
 /// Accepted shutdown belongs to the service, independently of reply delivery.
@@ -1189,11 +1278,39 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     serve_with_admission(root, idle_grace, None).await
 }
 
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+pub type EvaluationFactory = Box<
+    dyn FnOnce(
+            Arc<airk_store::service::ServiceLease>,
+            airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+        ) -> Result<EvaluationOwner>
+        + Send,
+>;
+enum OwnerFactory {
+    Product,
+    #[cfg(all(feature = "local-inference", feature = "test-support"))]
+    Evaluation(EvaluationFactory),
+}
+/// Private native fixture only. Startup still acquires the actual single-instance
+/// lease, baseline admission, catalog gate, workers and canonical transports.
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+pub async fn serve_evaluation_fixture(root: &Path, factory: EvaluationFactory) -> Result<()> {
+    serve_owned(root, None, None, OwnerFactory::Evaluation(factory)).await
+}
 async fn serve_with_admission(
     root: &Path,
     idle_grace: Option<Duration>,
     admission: Option<airk_core::install_record::StartMode>,
 ) -> Result<()> {
+    serve_owned(root, idle_grace, admission, OwnerFactory::Product).await
+}
+async fn serve_owned(
+    root: &Path,
+    idle_grace: Option<Duration>,
+    admission: Option<airk_core::install_record::StartMode>,
+    owner_factory: OwnerFactory,
+) -> Result<()> {
+    let setup_start_guard = crate::setup_role::start_gate(root)?;
     airk_host::install_layout::validate_control_root(root)?;
     airk_installer::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
@@ -1349,7 +1466,23 @@ async fn serve_with_admission(
             .with_selection_reader(admin_selection_reader(reader_state.clone())),
         None => admin,
     };
+    let arbiter = match owner_factory {
+        OwnerFactory::Product => catalog_gate
+            .clone()
+            .map(|gate| arbiter::Owner::new(_ownership.clone(), gate))
+            .transpose()?,
+        #[cfg(all(feature = "local-inference", feature = "test-support"))]
+        OwnerFactory::Evaluation(factory) => {
+            let gate = catalog_gate.clone().ok_or_else(|| {
+                anyhow::anyhow!("private evaluation requires the actual activated native catalog")
+            })?;
+            let owner = factory(_ownership.clone(), gate.clone())?;
+            Some(owner.into_owner_for(&_ownership, &gate)?)
+        }
+    };
     let state = Arc::new(State {
+        draining: std::sync::atomic::AtomicBool::new(false),
+        arbiter,
         http: std::sync::OnceLock::new(),
         checkpoint: Arc::new(checkpoint::Coordinator::new(root)?),
         control_root: root.canonicalize()?,
@@ -1378,6 +1511,10 @@ async fn serve_with_admission(
         agents: Mutex::new(agents(instance, catalog_gate_for_agents)),
     });
     let _ = reader_state.set(Arc::downgrade(&state));
+    #[cfg(feature = "local-inference")]
+    if let Some(owner) = &state.arbiter {
+        owner.restore_verified(&state.supervisor).await?;
+    }
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
     {
         state
@@ -1401,6 +1538,9 @@ async fn serve_with_admission(
     // Idle agent leases are dropped by every lease call and by this sweep,
     // so an unused nonce never outlives its idle bound by more than a tick.
     let mut agent_sweep = tokio::time::interval(Duration::from_secs(30));
+    // Setup cannot drain/replace this image between admission and the ready
+    // control listener. Its own published candidate was checked separately.
+    drop(setup_start_guard);
     agent_sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
     idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1456,6 +1596,9 @@ async fn serve_with_admission(
             _ = connections.join_next(), if !connections.is_empty() => {},
         }
     }
+    state
+        .draining
+        .store(true, std::sync::atomic::Ordering::Release);
     if let Some(owner) = state.http.get() {
         owner.stop()?;
     }
@@ -1521,6 +1664,8 @@ pub use airk_installer::control_client::{
 #[cfg(test)]
 mod registry_retry_tests;
 
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+mod evaluation_fixture_tests;
 #[cfg(test)]
 mod response_delivery_tests;
 #[cfg(test)]

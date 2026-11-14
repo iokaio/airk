@@ -24,6 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub mod accounting;
+pub mod arbiter;
 mod owner;
 mod retirement;
 pub use owner::{InferenceOwner, NativeCompletionWitness};

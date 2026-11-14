@@ -23,7 +23,7 @@ const MAX_OBJECT_SQL: usize = 16384;
 // P6 and P9 must explicitly advance their own required contracts. Older schema-12
 // readers must refuse them rather than silently ignore grants or source policy.
 pub const SUPPORTED_AUTHORITY_CONTRACT: u32 = 1;
-pub const SUPPORTED_POLICY_CONTRACT: u32 = 3;
+pub const SUPPORTED_POLICY_CONTRACT: u32 = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AdmissionPending;
@@ -345,6 +345,7 @@ pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<Catalog
                 | (CatalogLayout::Schema12Authority1Policy1, 1, 1)
                 | (CatalogLayout::Schema12Authority1Policy2, 1, 2)
                 | (CatalogLayout::Schema12Authority1Policy3, 1, 3)
+                | (CatalogLayout::Schema12Authority1Policy3, 1, 4)
         ),
         "index authority marker does not match the compiled registry layout"
     );

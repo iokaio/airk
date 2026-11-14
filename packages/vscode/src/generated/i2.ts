@@ -83,6 +83,14 @@ export type Installation = {
 
 export type InstallationState = "complete" | "incomplete" | "not_found" | "unverified";
 
+export type NativeAdminChunk = {
+    data: Array<number>;
+    done: boolean;
+    http_status: number;
+    offset: number;
+    total_bytes: number;
+};
+
 export type PairState = "exact" | "mismatch";
 
 export type ResyncReason = "overflow" | "native_gap" | "service_restarted";
@@ -165,7 +173,7 @@ export type SessionEventFrame = {
     event: SessionEvent;
 };
 
-export type SessionFailure = "session_invalid_request" | "session_protocol_mismatch" | "session_busy" | "session_deadline_exceeded" | "session_response_oversize" | "session_closing" | "session_command_refused" | "event_cursor_scope_mismatch" | "service_restarted";
+export type SessionFailure = "session_invalid_request" | "session_protocol_mismatch" | "session_busy" | "session_deadline_exceeded" | "session_response_oversize" | "session_closing" | "admin_outcome_unknown" | "admin_session_ended_outcome_unknown" | "session_command_refused" | "event_cursor_scope_mismatch" | "service_restarted";
 
 export type SessionMethod = {
     hello: {
@@ -185,6 +193,27 @@ export type SessionMethod = {
          * An I1 control-protocol value, carried unchanged; see fixtures/wire.
          */
         method: unknown;
+    };
+} | {
+    admin_call: {
+        /**
+         * An I1 control-protocol value, carried unchanged; see fixtures/wire.
+         */
+        body: unknown;
+        deadline_ms: number;
+        operation: string;
+    };
+} | {
+    admin_read: {
+        offset: number;
+        target: string;
+    };
+} | {
+    admin_cancel: {
+        target: string;
+    };
+} | {
+    admin_close: {
     };
 } | {
     cancel: {
@@ -217,6 +246,11 @@ export type SessionMethod = {
 };
 
 export type SessionOutcome = {
+    chunk: NativeAdminChunk;
+    status: "admin_chunk";
+} | {
+    status: "admin_closed";
+} | {
     capabilities: Array<string>;
     executable_sha256: string;
     i2_contract: number;
@@ -282,6 +316,18 @@ export type SessionRequest = {
 export type SessionResponse = {
     id: string;
     outcome: SessionOutcome;
+};
+
+export type SetupReceiptObservation = {
+    closed: boolean;
+    install_id: string;
+    operation_id: string;
+    /**
+     * Full Core-decoded receipt, without a second handwritten native schema.
+     */
+    receipt: unknown;
+    schema: string;
+    successful: boolean;
 };
 
 export type Transport = "stdio" | "https";

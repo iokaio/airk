@@ -268,3 +268,14 @@ Get-CimInstance Win32_Process |
 ```
 
 Correlate parent creation times as well as PIDs because Windows reuses PIDs. Native diagnostics provide service/worker identity separately from quick index status. The [installed lifecycle fixture](../scripts/check-service-install.py) and [client lifetime checks](../scripts/check-client-lifetime.py) test EOF, abrupt owner loss, another live session's preservation and shared-service survival in isolated installations. They do not certify that an external agent closes every obsolete conversation connection.
+
+
+The service resource setting `inference_threads` controls ordinary MiniLM
+embedding jobs. The optional Arbiter uses the fixed execution tier declared by
+its explicitly selected profile; an eight-thread profile requires its separately
+qualified physical-core fit. Global enablement and immutable-index/task
+enrollment remain explicit. These are separate policies, and the embedding
+setting is not a cap on all threads in the service process. Resident Arbiter
+scoring reuses one protected maximum-peak memory charge; a different model being
+warmed concurrently requires its own charge. Native fit and resource observations
+must establish availability before either task executes.

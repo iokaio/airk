@@ -739,6 +739,27 @@
    ]
   },
   {
+   "operation": "arbiter.status",
+   "method": "Arbiter.Status",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
    "operation": "jobs.get",
    "method": "Job",
    "plane": "management",
@@ -1241,6 +1262,111 @@
     "admin"
    ],
    "authorization": [
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.configure",
+   "method": "Arbiter.Configure",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.provision",
+   "method": "Arbiter.Provision",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.cancel",
+   "method": "Arbiter.Cancel",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.remove",
+   "method": "Arbiter.Remove",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.recover",
+   "method": "Arbiter.Recover",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
     "admin_session_csrf"
    ],
    "effect": "mutation",
@@ -1999,6 +2125,14 @@
   }
  ],
  "never_over_http": [
+  {
+   "item": "native_arbiter_scope",
+   "methods": [
+    "ArbiterApplication",
+    "ArbiterNextRead"
+   ],
+   "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."
+  },
   {
    "item": "bearer_credentials",
    "methods": [],

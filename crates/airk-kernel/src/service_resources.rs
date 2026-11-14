@@ -10,6 +10,7 @@ use airk_core::{
 use anyhow::{Result, ensure};
 use std::{
     collections::BTreeMap,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -50,6 +51,148 @@ pub struct Resources {
     blocked: bool,
     pending_provider_drains: usize,
     provider_drain_error: bool,
+    optional: Arc<Mutex<BTreeMap<Incarnation, u64>>>,
+    optional_policy: Arc<std::sync::atomic::AtomicU64>,
+}
+/// A native owner retains this charge through synchronous execution and model
+/// teardown. Delivery cancellation cannot release another owner's reservation.
+pub struct OptionalReservation {
+    id: Incarnation,
+    bytes: u64,
+    charges: Arc<Mutex<BTreeMap<Incarnation, u64>>>,
+    policy: Arc<std::sync::atomic::AtomicU64>,
+    released: Arc<Mutex<OptionalReleaseState>>,
+}
+#[derive(Default)]
+struct OptionalReleaseState {
+    done: bool,
+    next: u64,
+    waiters: BTreeMap<u64, std::task::Waker>,
+}
+#[derive(Clone)]
+pub struct OptionalRelease(Arc<Mutex<OptionalReleaseState>>);
+pub struct OptionalReleaseWait {
+    state: Arc<Mutex<OptionalReleaseState>>,
+    registration: Option<u64>,
+}
+impl OptionalRelease {
+    pub fn wait(&self) -> OptionalReleaseWait {
+        OptionalReleaseWait {
+            state: self.0.clone(),
+            registration: None,
+        }
+    }
+}
+impl std::future::Future for OptionalReleaseWait {
+    type Output = Result<()>;
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        let mut state = match this.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                return std::task::Poll::Ready(Err(anyhow::anyhow!(
+                    "optional release observation unavailable"
+                )));
+            }
+        };
+        if state.done {
+            if let Some(id) = this.registration.take() {
+                state.waiters.remove(&id);
+            }
+            return std::task::Poll::Ready(Ok(()));
+        }
+        let id = if let Some(id) = this.registration {
+            id
+        } else {
+            if state.waiters.len() >= 16 {
+                return std::task::Poll::Ready(Err(anyhow::anyhow!(
+                    "optional release observer capacity exhausted"
+                )));
+            }
+            let Some(next) = state.next.checked_add(1) else {
+                return std::task::Poll::Ready(Err(anyhow::anyhow!(
+                    "optional release observer identity exhausted"
+                )));
+            };
+            state.next = next;
+            this.registration = Some(next);
+            next
+        };
+        state.waiters.insert(id, cx.waker().clone());
+        std::task::Poll::Pending
+    }
+}
+impl Drop for OptionalReleaseWait {
+    fn drop(&mut self) {
+        if let Some(id) = self.registration {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .waiters
+                .remove(&id);
+        }
+    }
+}
+pub struct OptionalReuse {
+    id: Incarnation,
+    bytes: u64,
+    charges: Arc<Mutex<BTreeMap<Incarnation, u64>>>,
+    policy: Arc<std::sync::atomic::AtomicU64>,
+    epoch: u64,
+}
+impl OptionalReuse {
+    pub fn validate(&self, reservation: &OptionalReservation) -> Result<()> {
+        ensure!(
+            self.id == reservation.id
+                && self.bytes == reservation.bytes
+                && Arc::ptr_eq(&self.charges, &reservation.charges)
+                && Arc::ptr_eq(&self.policy, &reservation.policy),
+            "optional resident admission changed before native dispatch"
+        );
+        ensure!(
+            self.charges
+                .lock()
+                .map_err(|_| anyhow::anyhow!("optional accounting unavailable"))?
+                .get(&self.id)
+                == Some(&self.bytes),
+            "optional resident charge disappeared"
+        );
+        ensure!(
+            self.policy.load(std::sync::atomic::Ordering::Acquire) == self.epoch,
+            "optional resident policy changed during admission validation"
+        );
+        Ok(())
+    }
+}
+impl OptionalReservation {
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+    pub fn release_observer(&self) -> OptionalRelease {
+        OptionalRelease(self.released.clone())
+    }
+}
+impl Drop for OptionalReservation {
+    fn drop(&mut self) {
+        self.charges
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
+        let waiters = {
+            let mut state = self
+                .released
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.done = true;
+            std::mem::take(&mut state.waiters)
+        };
+        for waker in waiters.into_values() {
+            waker.wake();
+        }
+    }
 }
 impl Resources {
     pub fn detect(configuration: ResourceConfiguration) -> Result<Self> {
@@ -113,11 +256,15 @@ impl Resources {
             blocked: false,
             pending_provider_drains: 0,
             provider_drain_error: false,
+            optional: Arc::new(Mutex::new(BTreeMap::new())),
+            optional_policy: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         })
     }
     pub fn reconfigure(&mut self, configuration: ResourceConfiguration) -> Result<()> {
         let proposed = Self::new(configuration, self.cpus, self.memory)?;
         // Existing charges remain in place; a lower limit stops new grants until drain.
+        self.optional_policy
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.configuration = proposed.configuration;
         self.limit = proposed.limit;
         self.source_threads = proposed.source_threads;
@@ -127,6 +274,12 @@ impl Resources {
     }
     fn reserved(&self) -> u64 {
         MODEL_BYTES
+            + self
+                .optional
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .values()
+                .sum::<u64>()
             + self.service_bytes
             + self.residents.len() as u64 * RESIDENT_BYTES
             + self
@@ -139,6 +292,81 @@ impl Resources {
         self.reserved() > self.limit
             || self.rss.is_some_and(|rss| rss >= self.limit)
             || self.low_available_memory
+    }
+    /// Called only by the resource admission actor alongside ordinary grants.
+    /// Unknown OS headroom is an honest refusal for optional native compute.
+    pub fn reserve_optional(
+        &self,
+        id: Incarnation,
+        bytes: u64,
+        fresh_available: Option<u64>,
+    ) -> Result<OptionalReservation> {
+        ensure!(
+            bytes > 0 && bytes <= 64u64 << 30,
+            "invalid optional memory reservation"
+        );
+        ensure!(
+            fresh_available.is_some_and(|available| available >= bytes.saturating_add(256 << 20)),
+            "optional compute has no observed OS headroom"
+        );
+        ensure!(
+            self.work_headroom(bytes),
+            "optional compute exceeds service resource policy"
+        );
+        let mut charges = self
+            .optional
+            .lock()
+            .map_err(|_| anyhow::anyhow!("optional resource accounting unavailable"))?;
+        ensure!(
+            charges.len() < 16 && !charges.contains_key(&id),
+            "optional resource reservation unavailable"
+        );
+        charges.insert(id, bytes);
+        Ok(OptionalReservation {
+            id,
+            bytes,
+            charges: self.optional.clone(),
+            policy: self.optional_policy.clone(),
+            released: Arc::new(Mutex::new(OptionalReleaseState::default())),
+        })
+    }
+    /// Reuse the actual resident peak charge; no second model allocation is
+    /// admitted for a serialized score on that same native session.
+    pub fn reuse_optional(
+        &self,
+        reservation: &OptionalReservation,
+        fresh_available: Option<u64>,
+    ) -> Result<OptionalReuse> {
+        ensure!(
+            Arc::ptr_eq(&self.optional, &reservation.charges),
+            "optional reservation belongs to another resource owner"
+        );
+        ensure!(
+            self.optional
+                .lock()
+                .map_err(|_| anyhow::anyhow!("optional accounting unavailable"))?
+                .get(&reservation.id)
+                == Some(&reservation.bytes),
+            "optional resident charge no longer exists"
+        );
+        ensure!(
+            fresh_available
+                .is_some_and(|available| available >= reservation.bytes.saturating_add(256 << 20)),
+            "resident optional compute has no fresh observed OS headroom"
+        );
+        ensure!(
+            self.work_headroom(0),
+            "resident optional compute exceeds current service policy"
+        );
+        Ok(OptionalReuse {
+            id: reservation.id,
+            bytes: reservation.bytes,
+            charges: self.optional.clone(),
+            policy: self.optional_policy.clone(),
+            epoch: self
+                .optional_policy
+                .load(std::sync::atomic::Ordering::Acquire),
+        })
     }
     fn headroom(&self, additional: u64) -> bool {
         !self.blocked
@@ -165,9 +393,14 @@ impl Resources {
             .sum()
     }
     pub fn block_admission(&mut self, blocked: bool) {
+        if self.blocked != blocked {
+            self.optional_policy
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
         self.blocked = blocked;
     }
     pub fn observe(&mut self, rss: Option<u64>, available: Option<u64>, complete: bool) {
+        let reusable_before = self.work_headroom(0);
         self.rss = rss;
         self.available = available;
         self.complete = complete;
@@ -180,6 +413,10 @@ impl Resources {
                     low
                 }
         });
+        if reusable_before && !self.work_headroom(0) {
+            self.optional_policy
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
     }
     pub fn may_start_resident(&self) -> bool {
         self.residents.len() < self.resident_limit && self.headroom(RESIDENT_BYTES)
@@ -412,6 +649,158 @@ impl Resources {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn optional_reservations_share_ordinary_admission_and_require_observed_headroom()
+    -> anyhow::Result<()> {
+        use super::*;
+        let mut resources = Resources::new(ResourceConfiguration::default(), 8, Some(64 << 30))?;
+        let id = Incarnation::from_bytes([9; 16]);
+        let before = resources.reserved();
+        assert!(resources.reserve_optional(id, 128 << 20, None).is_err());
+        assert!(
+            resources
+                .reserve_optional(id, 128 << 20, Some(256 << 20))
+                .is_err()
+        );
+        let charge = resources.reserve_optional(id, 128 << 20, Some(8 << 30))?;
+        assert_eq!(resources.reserved(), before + (128 << 20));
+        assert!(resources.reserve_optional(id, 1, Some(8 << 30)).is_err());
+        resources.block_admission(true);
+        assert!(
+            resources
+                .reserve_optional(Incarnation::from_bytes([8; 16]), 1, Some(8 << 30))
+                .is_err()
+        );
+        drop(charge);
+        assert_eq!(resources.reserved(), before);
+        Ok(())
+    }
+    #[test]
+    fn reuse_observation_closure_invalidates_admission_but_healthy_samples_preserve_it()
+    -> Result<()> {
+        let mut resources = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        resources.observe(Some(2 << 30), Some(80 << 30), true);
+        let resident = resources.reserve_optional(
+            Incarnation::from_bytes([94; 16]),
+            27 << 30,
+            Some(80 << 30),
+        )?;
+        let admission = resources.reuse_optional(&resident, Some(80 << 30))?;
+        resources.observe(Some(3 << 30), Some(80 << 30), true);
+        admission.validate(&resident)?;
+        resources.observe(Some(33 << 30), Some(80 << 30), true);
+        assert!(
+            admission.validate(&resident).is_err(),
+            "large OS availability does not override current process-policy pressure"
+        );
+        assert!(resources.reuse_optional(&resident, Some(80 << 30)).is_err());
+        resources.observe(Some(3 << 30), Some(80 << 30), true);
+        assert!(
+            admission.validate(&resident).is_err(),
+            "pressure recovery never revives an old queued admission"
+        );
+        let renewed = resources.reuse_optional(&resident, Some(80 << 30))?;
+        renewed.validate(&resident)?;
+        resources.observe(Some(3 << 30), Some(64 << 20), true);
+        assert!(
+            renewed.validate(&resident).is_err(),
+            "low-available-memory pressure also closes admission"
+        );
+        Ok(())
+    }
+    #[test]
+    fn optional_release_observer_wakes_only_after_last_actual_charge_owner_drops() -> Result<()> {
+        use std::{
+            future::Future,
+            sync::atomic::{AtomicUsize, Ordering},
+            task::{Context, Poll, Wake, Waker},
+        };
+        struct Signal(AtomicUsize);
+        impl Wake for Signal {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let resources = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        let before = resources.reserved();
+        let resident = Arc::new(resources.reserve_optional(
+            Incarnation::from_bytes([93; 16]),
+            27 << 30,
+            Some(64 << 30),
+        )?);
+        let observer = resident.release_observer();
+        let actual_completion = resident.clone();
+        let signal = Arc::new(Signal(AtomicUsize::new(0)));
+        let waker = Waker::from(signal.clone());
+        let mut context = Context::from_waker(&waker);
+        let mut wait = Box::pin(observer.wait());
+        assert!(matches!(wait.as_mut().poll(&mut context), Poll::Pending));
+        drop(resident);
+        assert_eq!(signal.0.load(Ordering::SeqCst), 0);
+        assert_eq!(resources.reserved(), before + (27 << 30));
+        drop(actual_completion);
+        assert_eq!(resources.reserved(), before);
+        assert_eq!(signal.0.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            wait.as_mut().poll(&mut context),
+            Poll::Ready(Ok(()))
+        ));
+        // The observer itself never kept the charge alive.
+        assert_eq!(resources.reserved(), before);
+        Ok(())
+    }
+    #[test]
+    fn default_32_gib_reuses_one_27_gib_peak_through_completion_and_refuses_foreign_or_stale_admission()
+    -> Result<()> {
+        let mut resources = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        assert_eq!(resources.snapshot().memory_limit_bytes, 32 << 30);
+        let before = resources.reserved();
+        let resident = Arc::new(resources.reserve_optional(
+            Incarnation::from_bytes([91; 16]),
+            27 << 30,
+            Some(64 << 30),
+        )?);
+        assert_eq!(resources.reserved(), before + (27 << 30));
+        let admission = resources.reuse_optional(&resident, Some(64 << 30))?;
+        admission.validate(&resident)?;
+        assert_eq!(
+            resources.reserved(),
+            before + (27 << 30),
+            "score reuses the already charged maximum peak"
+        );
+        assert!(
+            resources
+                .reserve_optional(Incarnation::from_bytes([92; 16]), 27 << 30, Some(64 << 30))
+                .is_err(),
+            "a different concurrently warming model needs its own full peak"
+        );
+        assert!(
+            !resources.work_headroom(6 << 30),
+            "ordinary work cannot consume the protected peak"
+        );
+        assert!(resources.reuse_optional(&resident, None).is_err());
+        let foreign = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        assert!(foreign.reuse_optional(&resident, Some(64 << 30)).is_err());
+        resources.reconfigure(ResourceConfiguration {
+            memory_bytes: Some(16 << 30),
+            ..Default::default()
+        })?;
+        assert!(
+            admission.validate(&resident).is_err(),
+            "queued work cannot carry an obsolete resource-policy proof"
+        );
+        assert!(resources.reuse_optional(&resident, Some(64 << 30)).is_err());
+        let actual_completion = resident.clone();
+        drop(resident);
+        assert_eq!(
+            resources.reserved(),
+            before + (27 << 30),
+            "delivery cancellation cannot release actual native ownership"
+        );
+        drop(actual_completion);
+        assert_eq!(resources.reserved(), before);
+        Ok(())
+    }
     use super::*;
     fn identity(n: u8) -> WorkerIdentity {
         WorkerIdentity {

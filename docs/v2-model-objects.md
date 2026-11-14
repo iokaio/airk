@@ -1,9 +1,11 @@
 # Collection-owned model objects
 
-AIRK uses local models. The trusted extension provisions pinned weights,
-tokenizer and license files on first setup; native-only installations provision
-them explicitly. No weights are bundled in releases. The model directory is an input;
-published generations use verified immutable copies owned by their collection.
+AIRK uses local models. Current installers bundle the two pinned trained MiniLM
+exports; the service owns their shared inference sessions. Explicit custom model
+directories remain inputs to the collection-owned storage path described here.
+Published generations preserve verified immutable model objects and their exact
+pipeline identity. See [bundled model policy](onnx-models.md) for current build
+inputs and the explicit rebuild required by historical embedding pipelines.
 
 ## Storage and identity
 

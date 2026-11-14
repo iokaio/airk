@@ -68,18 +68,28 @@ fn engine_identity(main: &Path) -> Result<Sha256Digest> {
     let directory = runtime_pair::payload_root(main)?;
     let pair: runtime_pair::RuntimePair =
         serde_json::from_slice(&read_bounded(&directory.join("airk-runtime.json"), 4096)?)?;
+    pair.validate_target(&pair.version)?;
     ensure!(
-        matches!(pair.schema, 1 | 2)
-            && pair.airk_sha256 == runtime_pair::digest_file(main)?
+        pair.airk_sha256 == runtime_pair::digest_file(main)?
             && (pair.is_single_executable()
                 || pair.embed_sha256 == runtime_pair::digest_file(&directory.join(helper_name()))?),
         "predecessor pair identity changed"
     );
+    if let Some(split) = &pair.split {
+        ensure!(
+            runtime_pair::digest_file(&directory.join(split.cli_relative_path()?))?
+                == split.airkctl_sha256.to_string(),
+            "predecessor CLI identity changed"
+        );
+    }
     Ok(framed_digest(
         b"airk-maintenance-engine/1.4",
         &[&serde_json::to_vec(&pair)?],
     ))
 }
+
+#[cfg(test)]
+mod split_pair_tests;
 
 struct Captured {
     success: bool,

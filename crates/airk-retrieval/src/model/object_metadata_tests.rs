@@ -278,3 +278,122 @@ fn shared_model_metadata_is_lazy_even_with_native_inference_enabled() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn retained_v1_onnx_metadata_preserves_original_runtime_pipeline_without_relabeling() -> Result<()>
+{
+    let mut fixture = Fixture::new(true)?;
+    let bytes = fs::read(fixture.path(ModelAssetName::ModelJson))?;
+    let original_runtime = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
+    let mut expected = fixture.descriptor.clone();
+    expected.inference = framed_digest(
+        b"airk-inference/1",
+        &[
+            original_runtime.as_bytes(),
+            std::env::consts::ARCH.as_bytes(),
+            std::env::consts::OS.as_bytes(),
+        ],
+    );
+    let mut identity = Sha256::new();
+    identity.update(original_runtime.as_bytes());
+    identity.update(&bytes);
+    fixture.set.pipeline_digest = expected.identity()?;
+    fixture.set.legacy_identity = format!("{:x}", identity.finalize());
+    let observed = descriptor_from_objects_metadata(fixture.collection.path(), &fixture.set)?;
+    assert_eq!(observed, expected);
+    assert!(!onnx_descriptor_uses_current_runtime(&observed));
+    assert!(onnx_descriptor_uses_current_runtime(&fixture.descriptor));
+    assert_ne!(
+        observed, fixture.descriptor,
+        "historical vector bytes must never acquire the current runtime identity"
+    );
+    assert_eq!(
+        inspect_objects_cache_descriptor(fixture.collection.path(), &fixture.set)?,
+        expected
+    );
+    let mut forged = fixture.set.clone();
+    forged.legacy_identity = fixture.set.pipeline_digest.to_string();
+    assert!(descriptor_from_objects_metadata(fixture.collection.path(), &forged).is_err());
+    Ok(())
+}
+
+#[test]
+fn both_current_trained_precisions_preserve_runtime_compatibility_independent_of_cpu_default()
+-> Result<()> {
+    let catalog: crate::model_catalog::ModelCatalog =
+        serde_json::from_str(include_str!("../model_catalog.json"))?;
+    assert_eq!(catalog.profiles.len(), 2);
+    assert_eq!(
+        catalog
+            .profiles
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"])
+    );
+    for profile in &catalog.profiles {
+        let descriptor = descriptor_from_manifest(DescriptorManifest::Onnx(&profile.manifest))?;
+        assert!(onnx_descriptor_uses_current_runtime(&descriptor));
+        let foreign = descriptor_for_platform(
+            DescriptorManifest::Onnx(&profile.manifest),
+            RETAINED_ONNX_RUNTIME_V1,
+            std::env::consts::ARCH,
+            std::env::consts::OS,
+        )?;
+        assert!(!onnx_descriptor_uses_current_runtime(&foreign));
+    }
+    let word = Fixture::new(false)?;
+    assert_eq!(
+        descriptor_from_objects_metadata(word.collection.path(), &word.set)?,
+        word.descriptor
+    );
+    assert!(
+        EmbeddingModel::open_objects(word.collection.path(), &word.set)?
+            .embed_text("original")?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn lazy_shared_retained_onnx_info_keeps_original_identity_and_runtime_without_opening_weights()
+-> Result<()> {
+    struct MetadataOnly(Vec<u8>);
+    impl ModelAssetSource for MetadataOnly {
+        fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+            ensure!(
+                name == ModelAssetName::ModelJson && self.0.len() as u64 <= maximum,
+                "metadata-only read must never open weights"
+            );
+            Ok(self.0.clone())
+        }
+    }
+    let mut fixture = Fixture::new(true)?;
+    let bytes = fs::read(fixture.path(ModelAssetName::ModelJson))?;
+    let old_runtime = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
+    let mut expected = fixture.descriptor.clone();
+    expected.inference = framed_digest(
+        b"airk-inference/1",
+        &[
+            old_runtime.as_bytes(),
+            std::env::consts::ARCH.as_bytes(),
+            std::env::consts::OS.as_bytes(),
+        ],
+    );
+    let mut identity = Sha256::new();
+    identity.update(old_runtime.as_bytes());
+    identity.update(&bytes);
+    fixture.set.pipeline_digest = expected.identity()?;
+    fixture.set.legacy_identity = format!("{:x}", identity.finalize());
+    let shared = fixture.set.shared_with(Sha256Digest::from_bytes([7; 32]))?;
+    let model = EmbeddingModel::open_shared(&MetadataOnly(bytes), &shared)?;
+    assert_eq!(model.cache_descriptor()?, expected);
+    assert_eq!(model.identity(), fixture.set.legacy_identity);
+    assert_eq!(model.specification(), old_runtime);
+    assert!(
+        model
+            .embed_text("metadata never admits old native execution")
+            .is_err()
+    );
+    Ok(())
+}

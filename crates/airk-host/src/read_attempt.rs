@@ -23,6 +23,15 @@ pub fn encode(context: &ReadAttemptContext, request_id: Incarnation) -> Result<R
     // Tick first, Instant second: sampling overhead consumes rather than adds time.
     let ticks = airk_process::monotonic::now_ns()?;
     let now = Instant::now();
+    encode_sampled(context, request_id, ticks, now)
+}
+
+fn encode_sampled(
+    context: &ReadAttemptContext,
+    request_id: Incarnation,
+    ticks: u64,
+    now: Instant,
+) -> Result<ReadAttemptBudget> {
     let remaining = context
         .deadline()
         .saturating_duration_since(now)
@@ -58,6 +67,14 @@ pub fn decode(budget: ReadAttemptBudget) -> Result<ReadAttemptContext> {
     // Instant first, tick second: IPC/decoding and sampling overhead are charged.
     let now = Instant::now();
     let ticks = airk_process::monotonic::now_ns()?;
+    decode_sampled(budget, now, ticks)
+}
+
+fn decode_sampled(
+    budget: ReadAttemptBudget,
+    now: Instant,
+    ticks: u64,
+) -> Result<ReadAttemptContext> {
     let remaining = budget.remaining_at(clock(), ticks)?;
     let mut context =
         ReadAttemptContext::new(now + remaining, Default::default()).remote_admission();

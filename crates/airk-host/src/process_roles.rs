@@ -182,6 +182,7 @@ mod tests {
             arch: std::env::consts::ARCH.into(),
             airk_sha256: crate::runtime_pair::digest_file(main)?,
             embed_sha256: "b".repeat(64),
+            split: None,
         };
         fs::write(
             crate::runtime_pair::payload_root(main)?.join("airk-runtime.json"),

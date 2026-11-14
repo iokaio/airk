@@ -10,45 +10,37 @@
 //! cleanup), and only the U92 helper form proves an HTTPS entry is AIRK's.
 //!
 //! Classification and edits are pure functions over file text and injected
-//! observations; `io` is the only module that touches the file system.
+//! observations; `io`, retention and its eligibility/native adapters own the
+//! invoking-user file-system boundary.
 //! Unknown observations are never reported as `ok` or as foreignness.
 use airk_core::identity::Incarnation;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 
 mod classify;
 mod edit;
-// Contract-first: no production archive reader or writer is enabled yet.
-#[cfg(test)]
 mod edit_record;
+mod eligibility;
 mod io;
 mod jsonc;
 mod locations;
 mod recognize;
+mod retention;
 #[cfg(test)]
 mod tests;
 mod toml;
+#[cfg(test)]
+mod writer_test_support;
 
-pub(crate) use classify::{Classifier, Entry, FileReport, revalidate_entry};
+pub(crate) use crate::contract::{Agent, Class, Entry, Scope, Transport};
+pub(crate) use classify::{Classifier, FileReport, revalidate_entry};
 pub(crate) use edit::{Connection, Target, connect, remove, repair};
-pub(crate) use io::{edit_file, expand_user_files, path_exists};
+pub(crate) use edit_record::Operation as EditOperation;
+#[cfg(test)]
+pub(crate) use io::edit_file;
+pub(crate) use io::{edit_file_for, expand_user_files, path_exists, preflight_edit};
 pub(crate) use locations::{PROJECT_FILES, Platform, UserEnv, user_locations};
-
-/// The agents whose files AIRK reads (`agentMigration.ts` `locations`).
-/// Only Claude Code, Codex and VS Code (`copilot`) can be connected (U91).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Agent {
-    Codex,
-    Claude,
-    Copilot,
-    Gemini,
-    Antigravity,
-    Cursor,
-    Roo,
-    Junie,
-}
+pub(crate) use retention::{EditFailure, EditFailureKind};
 
 impl Agent {
     pub(crate) fn name(self) -> &'static str {
@@ -91,28 +83,6 @@ impl Agent {
     pub(crate) fn connectable(self) -> bool {
         matches!(self, Agent::Claude | Agent::Codex | Agent::Copilot)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Scope {
-    Project,
-    User,
-}
-
-/// The §6.4 classes, plus `unreadable` for a present file that could not be
-/// read or parsed (it could hide a broken entry).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Class {
-    StdioRetired,
-    StdioMissingCommand,
-    HttpsUnknownConnection,
-    HttpsEndpointMismatch,
-    HttpsHelperMissing,
-    HttpsTrustMissing,
-    Ok,
-    Unreadable,
 }
 
 /// `AgentConfigFinding` (explorerContracts.ts), field for field, so the

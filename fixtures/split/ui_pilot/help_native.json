@@ -1,0 +1,299 @@
+{
+  "cases": [
+    {
+      "name": "help_landing",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[{\"id\":\"workbench\",\"title\":\"Workbench and bounded evidence plans\"},{\"id\":\"about\",\"title\":\"About AIRK, Ioka and the community\"},{\"id\":\"explorer\",\"title\":\"Explorer UI and agent assistance\"},{\"id\":\"roles\",\"title\":\"Developer, Tester, Architect and Writer\"},{\"id\":\"indexing-choices\",\"title\":\"Indexing choices by purpose and source\"},{\"id\":\"job-management\",\"title\":\"CLI options for managing project work\"},{\"id\":\"index-health\",\"title\":\"Explaining workspace index health\"},{\"id\":\"overview\",\"title\":\"What AIRK does\"},{\"id\":\"topics\",\"title\":\"Help topic catalog\"},{\"id\":\"quickstart\",\"title\":\"Getting started\"},{\"id\":\"cli\",\"title\":\"CLI scope and invocation\"},{\"id\":\"commands\",\"title\":\"Public CLI command catalog\"},{\"id\":\"mcp\",\"title\":\"MCP connections and response modes\"},{\"id\":\"tools\",\"title\":\"MCP tool discovery and arguments\"},{\"id\":\"tool-selection\",\"title\":\"Choosing an evidence tool\"},{\"id\":\"search\",\"title\":\"Lexical, vector and hybrid search\"},{\"id\":\"indexing\",\"title\":\"Indexing jobs and phases\"},{\"id\":\"jobs\",\"title\":\"Ongoing jobs, queues and waits\"},{\"id\":\"freshness\",\"title\":\"Published state and source freshness\"},{\"id\":\"code\",\"title\":\"Code facts, references and relationships\"},{\"id\":\"documents\",\"title\":\"Document facts and original locations\"},{\"id\":\"formats\",\"title\":\"Supported formats and adapters\"},{\"id\":\"models\",\"title\":\"Offline models and inference\"},{\"id\":\"service\",\"title\":\"Native service and process ownership\"},{\"id\":\"resources\",\"title\":\"Memory, workers and resource policy\"},{\"id\":\"installation\",\"title\":\"Installation and terminal command\"},{\"id\":\"upgrades\",\"title\":\"Replacement, rollback and legacy transition\"},{\"id\":\"configuration\",\"title\":\"Project configuration and guard checks\"},{\"id\":\"storage\",\"title\":\"Index storage, isolation and quotas\"},{\"id\":\"maintenance\",\"title\":\"Repair, rebuild and deletion\"},{\"id\":\"agent-setup\",\"title\":\"Connecting a coding agent\"},{\"id\":\"request-recovery\",\"title\":\"Unknown outcomes and exact retries\"},{\"id\":\"troubleshooting\",\"title\":\"Diagnosing common symptoms\"},{\"id\":\"privacy\",\"title\":\"Privacy and read-only boundaries\"},{\"id\":\"limits\",\"title\":\"Budgets and interpretation limits\"},{\"id\":\"usage\",\"title\":\"Usage reports and savings estimates\"},{\"id\":\"versions\",\"title\":\"Versions, builds and runtime diagnostics\"},{\"id\":\"architecture\",\"title\":\"Components and data flow\"},{\"id\":\"workflows\",\"title\":\"Common user workflows\"},{\"id\":\"glossary\",\"title\":\"Terminology\"},{\"id\":\"portable\",\"title\":\"Portable setup, locations and removal\"},{\"id\":\"trust\",\"title\":\"Local TLS, browser sign-in and agent trust\"},{\"id\":\"arbiter\",\"title\":\"Optional Arbiter answers and model boundaries\"}],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "name": "help_topic",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "name": "help_section",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":2,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 2,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":2,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "name": "help_unknown_topic",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"error\":{\"code\":\"unknown_help_topic\"},\"guidance\":\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\",\"schema\":1,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1,
+              "topic": "no-such-pilot-topic"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1,\"topic\":\"no-such-pilot-topic\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "name": "help_bad_line",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"error\":{\"code\":\"help_start_line_out_of_range\"},\"guidance\":\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\",\"schema\":1,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 100000,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":100000,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "name": "help_no_project",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[{\"id\":\"workbench\",\"title\":\"Workbench and bounded evidence plans\"},{\"id\":\"about\",\"title\":\"About AIRK, Ioka and the community\"},{\"id\":\"explorer\",\"title\":\"Explorer UI and agent assistance\"},{\"id\":\"roles\",\"title\":\"Developer, Tester, Architect and Writer\"},{\"id\":\"indexing-choices\",\"title\":\"Indexing choices by purpose and source\"},{\"id\":\"job-management\",\"title\":\"CLI options for managing project work\"},{\"id\":\"index-health\",\"title\":\"Explaining workspace index health\"},{\"id\":\"overview\",\"title\":\"What AIRK does\"},{\"id\":\"topics\",\"title\":\"Help topic catalog\"},{\"id\":\"quickstart\",\"title\":\"Getting started\"},{\"id\":\"cli\",\"title\":\"CLI scope and invocation\"},{\"id\":\"commands\",\"title\":\"Public CLI command catalog\"},{\"id\":\"mcp\",\"title\":\"MCP connections and response modes\"},{\"id\":\"tools\",\"title\":\"MCP tool discovery and arguments\"},{\"id\":\"tool-selection\",\"title\":\"Choosing an evidence tool\"},{\"id\":\"search\",\"title\":\"Lexical, vector and hybrid search\"},{\"id\":\"indexing\",\"title\":\"Indexing jobs and phases\"},{\"id\":\"jobs\",\"title\":\"Ongoing jobs, queues and waits\"},{\"id\":\"freshness\",\"title\":\"Published state and source freshness\"},{\"id\":\"code\",\"title\":\"Code facts, references and relationships\"},{\"id\":\"documents\",\"title\":\"Document facts and original locations\"},{\"id\":\"formats\",\"title\":\"Supported formats and adapters\"},{\"id\":\"models\",\"title\":\"Offline models and inference\"},{\"id\":\"service\",\"title\":\"Native service and process ownership\"},{\"id\":\"resources\",\"title\":\"Memory, workers and resource policy\"},{\"id\":\"installation\",\"title\":\"Installation and terminal command\"},{\"id\":\"upgrades\",\"title\":\"Replacement, rollback and legacy transition\"},{\"id\":\"configuration\",\"title\":\"Project configuration and guard checks\"},{\"id\":\"storage\",\"title\":\"Index storage, isolation and quotas\"},{\"id\":\"maintenance\",\"title\":\"Repair, rebuild and deletion\"},{\"id\":\"agent-setup\",\"title\":\"Connecting a coding agent\"},{\"id\":\"request-recovery\",\"title\":\"Unknown outcomes and exact retries\"},{\"id\":\"troubleshooting\",\"title\":\"Diagnosing common symptoms\"},{\"id\":\"privacy\",\"title\":\"Privacy and read-only boundaries\"},{\"id\":\"limits\",\"title\":\"Budgets and interpretation limits\"},{\"id\":\"usage\",\"title\":\"Usage reports and savings estimates\"},{\"id\":\"versions\",\"title\":\"Versions, builds and runtime diagnostics\"},{\"id\":\"architecture\",\"title\":\"Components and data flow\"},{\"id\":\"workflows\",\"title\":\"Common user workflows\"},{\"id\":\"glossary\",\"title\":\"Terminology\"},{\"id\":\"portable\",\"title\":\"Portable setup, locations and removal\"},{\"id\":\"trust\",\"title\":\"Local TLS, browser sign-in and agent trust\"},{\"id\":\"arbiter\",\"title\":\"Optional Arbiter answers and model boundaries\"}],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "name": "help_unknown_fields",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"future_native\":{\"opaque\":[\"retained\",{\"supported\":true}],\"qualifier\":\"unknown fields survive\"},\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    }
+  ],
+  "owner": "airk-mcp::help::call",
+  "qualification": "Canonical native Help. Unknown-field control is an explicit post-emission extension; no live client or installed transport claim.",
+  "schema": "airk.split.ui-pilot.native-payloads/1"
+}

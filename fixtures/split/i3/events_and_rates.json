@@ -1,0 +1,14 @@
+{
+  "schema":"airk.split.admin.events-and-rates/1",
+  "limits":{"streams_per_session":2,"streams_total":16,"buffer_events":256,"buffer_bytes":1048576,"stream_seconds":120,"poll_ms":1000,"native_page":32,"admin_requests":16,"exchange_attempts":8,"exchange_window_ms":60000},
+  "requests":[{}, {"cursor":"11111111111111111111111111111111"}],
+  "invalid_requests":[{"cursor":"11111111111111111111111111111111","project":"ab"},{"after":0}],
+  "endings":[
+    {"kind":"resync","reason":"overflow"},
+    {"kind":"resync","reason":"native_gap"},
+    {"kind":"resync","reason":"service_restarted"},
+    {"kind":"resync","reason":"session_expired"},
+    {"kind":"resync","reason":"session_ended"},
+    {"kind":"closing"}
+  ]
+}

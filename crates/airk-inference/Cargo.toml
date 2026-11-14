@@ -15,7 +15,7 @@ local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inferenc
 bundled-model = []
 parser-training = []
 # Test helpers for the tests of crates built on this one (never production).
-test-support = ["airk-host/test-support", "airk-endpoint/test-support"]
+test-support = ["airk-kernel/test-support", "airk-host/test-support", "airk-endpoint/test-support", "airk-retrieval/test-support"]
 
 [dependencies]
 airk-host.workspace = true

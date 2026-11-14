@@ -18,6 +18,14 @@ pub mod read_attempt;
 pub mod response;
 mod workbench;
 use response::ResponseArgs;
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerArgs {
+    #[serde(flatten)]
+    pub request: airk_core::arbiter::ContextRequest,
+    #[serde(flatten, skip_serializing)]
+    pub response: ResponseArgs,
+}
 pub mod combined;
 pub mod explorer_offline;
 pub mod help;
@@ -32,7 +40,15 @@ pub mod unified;
 mod optimization_tests;
 
 #[cfg(test)]
+mod arbiter_calibration_capture;
+#[cfg(test)]
+mod arbiter_handler_tests;
+#[cfg(test)]
+mod arbiter_public_tests;
+#[cfg(test)]
 mod scoped_observation_tests;
+#[cfg(test)]
+mod ui_pilot_cases;
 #[cfg(test)]
 mod verification_tests;
 
@@ -704,6 +720,52 @@ impl AirkServer {
                 .expect("canonical installed discovery envelope"),
             Err(error) => response::scoped_error_result(&self.kernel, &error),
         }
+    }
+
+    #[tool(
+        name = "airk_answer",
+        description = "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing airk_context expands neighboring lines around one coordinate.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn answer(&self, Parameters(args): Parameters<AnswerArgs>) -> CallToolResult {
+        let mut reader = self.clone();
+        reader.plan_read = true;
+        let handle = tokio::runtime::Handle::current();
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_millis(
+                args.request.budget.deadline_ms.min(30_000),
+            ))
+            .unwrap_or_else(std::time::Instant::now);
+        let deadline = self
+            .read_attempt
+            .as_ref()
+            .map_or(deadline, |context| deadline.min(context.deadline()));
+        self.execute_verification_aware(
+            UsageOperation::Answer,
+            args.response,
+            false,
+            move |kernel| {
+                reader.kernel = kernel.clone();
+                kernel.answer_with_reader(
+                    args.request,
+                    deadline,
+                    &|| {
+                        if let Some(context) = &reader.read_attempt {
+                            context.require_live()?;
+                        }
+                        Ok(())
+                    },
+                    &|tool, args, revision| {
+                        handle.block_on(reader.workbench_read(tool, args, revision))
+                    },
+                )
+            },
+        )
+        .await
     }
 
     #[tool(

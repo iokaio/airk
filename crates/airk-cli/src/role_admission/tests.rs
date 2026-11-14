@@ -390,6 +390,8 @@ fn setup_takes_an_absolute_operation_and_one_mode() {
             RoleRequest::Setup(crate::setup_role::SetupRequest {
                 operation: operation.clone(),
                 mode,
+                wrapper_script: None,
+                wrapper_silent: false,
             })
         );
     }
@@ -432,6 +434,50 @@ fn setup_takes_an_absolute_operation_and_one_mode() {
 }
 
 #[test]
+fn removal_admission_and_inno_sealing_are_exclusive_private_setup_modes() {
+    let operation = std::env::temp_dir()
+        .join("fixture-é-日本語-🙂")
+        .join("original-operation-request.json");
+    let path = operation.to_str().unwrap();
+    for (flag, expected) in [
+        ("--seal-inno", crate::setup_role::SetupMode::SealInno),
+        (
+            "--admit-removal",
+            crate::setup_role::SetupMode::AdmitRemoval,
+        ),
+    ] {
+        let line = ["airk", SELECTOR, "setup", "--operation", path, flag];
+        assert_eq!(
+            parse(&args(&line)).unwrap().unwrap(),
+            RoleRequest::Setup(crate::setup_role::SetupRequest {
+                operation: operation.clone(),
+                mode: expected,
+                wrapper_script: None,
+                wrapper_silent: false,
+            })
+        );
+        for second in ["--plan", "--prepare", "--seal-inno", "--admit-removal"] {
+            let line = ["airk", SELECTOR, "setup", "--operation", path, flag, second];
+            assert!(refusal(parse(&args(&line)).unwrap()).starts_with("role_admission_refused"));
+        }
+        assert!(
+            refusal(
+                parse(&args(&[
+                    "airk",
+                    SELECTOR,
+                    "setup",
+                    "--operation",
+                    "relative.json",
+                    flag
+                ]))
+                .unwrap()
+            )
+            .starts_with("role_admission_refused")
+        );
+    }
+}
+
+#[test]
 fn service_login_takes_one_install_id() {
     let id = "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d";
     assert_eq!(
@@ -467,5 +513,91 @@ fn service_login_takes_one_install_id() {
             refusal(parse(&args(&line)).unwrap()).starts_with("role_admission_refused"),
             "{line:?}"
         );
+    }
+}
+
+#[test]
+fn static_mac_login_has_no_embedded_per_install_identity() {
+    assert_eq!(
+        parse(&args(&["airk", SELECTOR, "service-login-current"]))
+            .unwrap()
+            .unwrap(),
+        RoleRequest::ServiceLoginCurrent
+    );
+    assert!(
+        parse(&args(&[
+            "airk",
+            SELECTOR,
+            "service-login-current",
+            "--install-id",
+            "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"
+        ]))
+        .unwrap()
+        .is_err()
+    );
+    assert!(
+        parse(&args(&[
+            "airk",
+            SELECTOR,
+            "service-login-control",
+            "--action",
+            "register"
+        ]))
+        .unwrap()
+        .is_err()
+    );
+}
+
+#[test]
+fn recovery_fields_and_wrapper_lease_are_closed_exclusive_private_modes() {
+    let operation = std::env::temp_dir().join("original-operation-request.json");
+    let path = operation.to_str().unwrap();
+    for (name, field) in [
+        (
+            "requested-by",
+            crate::setup_role::RecoveryField::RequestedBy,
+        ),
+        (
+            "placement-required",
+            crate::setup_role::RecoveryField::PlacementRequired,
+        ),
+        (
+            "completion-required",
+            crate::setup_role::RecoveryField::CompletionRequired,
+        ),
+        (
+            "wrapper-lock-handle",
+            crate::setup_role::RecoveryField::WrapperLockHandle,
+        ),
+    ] {
+        assert_eq!(
+            parse(&args(&[
+                "airk",
+                SELECTOR,
+                "setup",
+                "--operation",
+                path,
+                "--recovery-field",
+                name
+            ]))
+            .unwrap()
+            .unwrap(),
+            RoleRequest::Setup(crate::setup_role::SetupRequest {
+                operation: operation.clone(),
+                mode: crate::setup_role::SetupMode::RecoveryField(field),
+                wrapper_script: None,
+                wrapper_silent: false,
+            })
+        );
+    }
+    for extra in [
+        vec!["--recovery-field", "../../arbitrary"],
+        vec!["--recovery-field", "program", "--prepare"],
+        vec!["--wrapper-silent"],
+        vec!["--wrapper-lease-script", "relative/script"],
+    ] {
+        let mut line = vec!["airk", SELECTOR, "setup", "--operation", path];
+        line.extend(extra);
+        assert!(parse(&args(&line)).unwrap().is_err());
     }
 }

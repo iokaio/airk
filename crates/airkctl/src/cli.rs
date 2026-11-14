@@ -43,6 +43,7 @@ const CAPABILITIES: &[&str] = &[
     "agents-entry-remove/1",
     "admin-launch/1",
     "window-scope/1",
+    "admin-management/1",
 ];
 
 /// The streams and environment one run uses.
@@ -136,6 +137,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Explicit optional model configuration, provisioning and recovery.
+    Arbiter {
+        #[command(subcommand)]
+        action: arbiter::Command,
+    },
     /// Print the version document: airkctl, its contracts and the installation.
     Version,
     /// The unified tools: list, help and call.
@@ -673,6 +679,26 @@ enum RequestsCommand {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 enum ServiceCommand {
+    /// Register this extracted portable runtime without login startup, trust, or automatic start.
+    Setup {
+        #[arg(long, required_unless_present = "resume")]
+        portable: bool,
+        #[arg(long, required_unless_present = "resume")]
+        program: Option<PathBuf>,
+        /// Reconcile the exact retained original portable operation; never creates a new request.
+        #[arg(long,conflicts_with_all=["program","data","state","cache","logs"])]
+        resume: Option<PathBuf>,
+        #[arg(long)]
+        data: Option<PathBuf>,
+        #[arg(long)]
+        state: Option<PathBuf>,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long)]
+        logs: Option<PathBuf>,
+    },
+    /// Validate the native setup receipt for the current verified installation, without starting it.
+    SetupReceipt,
     /// Start the installed service (the install record's verified airk) and wait until it is healthy.
     Start {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
@@ -1095,10 +1121,16 @@ fn operation_failed(cx: &mut Context, message: String) -> u8 {
     fail(cx, &line)
 }
 
-/// The service's control directory: the flag's, else the verified
-/// installation's (the install pointer, as for window reads and `library`).
+/// Resolve an online command's target, then apply the shared automatic policy.
 fn control(cx: &mut Context, selection: &Selection) -> Result<PathBuf, u8> {
-    window_control(cx, selection)
+    let control = window_control(cx, selection)?;
+    online_control(cx, control)
+}
+
+/// Admit an already-resolved target without changing its selector/ownership rules.
+fn online_control(cx: &mut Context, control: PathBuf) -> Result<PathBuf, u8> {
+    running(cx, &control, &mut None)?;
+    Ok(control)
 }
 
 fn version(cx: &mut Context) -> u8 {
@@ -1222,7 +1254,7 @@ fn resolve_call(
             window_id: route.window_id,
             lease: route.lease.clone(),
         };
-        return Ok((window_control(cx, selection)?, routed));
+        return Ok((control(cx, selection)?, routed));
     }
     let (control, registration) = project_for(cx, selection)?;
     Ok((
@@ -1356,40 +1388,37 @@ fn running(
     control: &Path,
     verified: &mut Option<Box<crate::install::Verified>>,
 ) -> Result<(), u8> {
-    match crate::service::request(control, ControlMethod::Health, VERSION) {
-        Ok(ControlResponse::Health { .. }) => Ok(()),
-        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
-        Err(line) if line.class == ExitClass::ServiceMissing => {
+    #[cfg(test)]
+    if let Some(result) = online_admission::intercept(control) {
+        return result.map_err(|line| fail(cx, &line));
+    }
+    online_admission::admit(
+        || match crate::service::request(control, ControlMethod::Health, VERSION) {
+            Ok(ControlResponse::Health { .. }) => Ok(()),
+            Ok(other) => Err(crate::service::refusal(&other)),
+            Err(line) => Err(line),
+        },
+        |mode, line| {
             if verified.is_none()
                 && let crate::install::Discovery::Verified(found) = crate::install::discover()
             {
                 *verified = Some(found);
             }
             let Some(found) = verified.as_ref() else {
-                return Err(fail(cx, &line));
+                return Err(line);
             };
             if !pair_exact(&found.record) {
-                return Err(fail(
-                    cx,
-                    &ErrorLine::new(
-                        ExitClass::IncompatiblePair,
-                        "pair_mismatch",
-                        false,
-                        "This airkctl is not the installation's airkctl; use the installed one.",
-                    ),
+                return Err(ErrorLine::new(
+                    ExitClass::IncompatiblePair,
+                    "pair_mismatch",
+                    false,
+                    "This airkctl is not the installation's airkctl; use the installed one.",
                 ));
             }
-            crate::start::start_with(
-                &found.airk,
-                control,
-                VERSION,
-                airk_core::install_record::StartMode::Automatic,
-            )
-            .map(|_| ())
-            .map_err(|line| fail(cx, &line))
-        }
-        Err(line) => Err(fail(cx, &line)),
-    }
+            crate::start::start_with(&found.airk, control, VERSION, mode).map(|_| ())
+        },
+    )
+    .map_err(|line| fail(cx, &line))
 }
 
 /// `init` (step 3c.4b), as `airk init` ran it: only for the installed
@@ -2369,23 +2398,31 @@ fn usage_document(
         catalog: selection.catalog.clone(),
         read,
     };
-    match crate::service::request(&control, method, VERSION) {
-        Ok(ControlResponse::UsageDocument { document }) => match document.as_str() {
+    let response = match crate::service::request(&control, method, VERSION) {
+        Ok(response) => response,
+        Err(line) => return fail(cx, &line),
+    };
+    usage_document_response(cx, response)
+}
+
+/// The exact I2 projection of N1; shared by the live command and semantic cases.
+fn usage_document_response(cx: &mut Context, response: ControlResponse) -> u8 {
+    match response {
+        ControlResponse::UsageDocument { document } => match document.as_str() {
             Some(text) => {
                 let result = write!(cx.io.stdout, "{text}");
                 written(cx, result)
             }
             None => json_line(cx, &document),
         },
-        Ok(ControlResponse::UsageReadFailed { message, native }) => {
+        ControlResponse::UsageReadFailed { message, native } => {
             // `airk` printed a failed native read's complete result first.
             if let Some(native) = native {
                 let _ = json_line(cx, &native);
             }
             fail(cx, &crate::registration::failed(&message))
         }
-        Ok(other) => fail(cx, &crate::service::refusal(&other)),
-        Err(line) => fail(cx, &line),
+        other => fail(cx, &crate::service::refusal(&other)),
     }
 }
 
@@ -2523,6 +2560,10 @@ fn projects(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>
             Err(code) => return code,
         },
     };
+    let control = match online_control(cx, control) {
+        Ok(control) => control,
+        Err(code) => return code,
+    };
     let (mut after, mut revision, mut listed) = (None, None, Vec::new());
     loop {
         let method = ControlMethod::Projects {
@@ -2640,6 +2681,11 @@ fn call_resolved(
     {
         route.refused = Some(code.clone());
     }
+    tool_call_response(cx, response, local_help)
+}
+
+/// The exact I2 result projection, including the original failure streams.
+fn tool_call_response(cx: &mut Context, response: ControlResponse, local_help: bool) -> u8 {
     match response {
         ControlResponse::ToolResult { result } => {
             let printed = print_json(cx, &result);
@@ -3195,6 +3241,27 @@ fn record_error_service(
 
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        ServiceCommand::Setup {
+            portable: _,
+            program,
+            resume,
+            data,
+            state,
+            cache,
+            logs,
+        } => {
+            return match crate::portable::setup(crate::portable::Options {
+                program,
+                resume,
+                data,
+                state,
+                cache,
+                logs,
+            }) {
+                Ok(value) => json_line(cx, &value),
+                Err(line) => fail(cx, &line),
+            };
+        }
         action @ (ServiceCommand::Register { .. }
         | ServiceCommand::PrepareRegistration
         | ServiceCommand::PrepareConfiguration { .. }
@@ -3314,6 +3381,16 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
         ServiceCommand::Status { runtime_dir } => {
             return status_service(cx, selection, runtime_dir);
         }
+        ServiceCommand::SetupReceipt => {
+            let installation = match installed(cx) {
+                Ok(installation) => installation,
+                Err(code) => return code,
+            };
+            return match crate::setup_receipt::observe(&installation) {
+                Ok(observation) => json_line(cx, &observation),
+                Err(error) => fail(cx, &error),
+            };
+        }
         ServiceCommand::Logs {
             runtime_dir,
             limit,
@@ -3376,7 +3453,7 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
     if runtime_dir.is_some() {
         selection.control = runtime_dir;
     }
-    let control = match control(cx, &selection) {
+    let control = match window_control(cx, &selection) {
         Ok(control) => control,
         Err(code) => return code,
     };
@@ -3502,6 +3579,7 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             runtime_dir,
         } => storage::folders(cx, &selection, runtime_dir, path, hidden, after),
         Command::Library { action } => library::run(cx, selection, action),
+        Command::Arbiter { action } => arbiter::run(cx, selection, action),
         Command::Tools {
             action:
                 ToolsCommand::Call {
@@ -3670,9 +3748,13 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     dispatch(&mut cx, cli.command, selection)
 }
 
+mod arbiter;
 mod library;
+mod online_admission;
 pub mod session;
 mod shell;
 mod storage;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ui_pilot_cases;

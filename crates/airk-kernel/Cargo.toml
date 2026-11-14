@@ -13,6 +13,8 @@ publish.workspace = true
 default = ["local-inference"]
 local-inference = ["airk-retrieval/local-inference", "dep:tokenizers"]
 
+test-support = ["airk-retrieval/test-support"]
+
 [dependencies]
 airk-core.workspace = true
 airk-ingest.workspace = true

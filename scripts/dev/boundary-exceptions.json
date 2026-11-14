@@ -114,7 +114,8 @@
         "airk-store"
       ],
       "airk-ipc": [
-        "airk-core"
+        "airk-core",
+        "airk-process"
       ],
       "airk-kernel": [
         "airk-core",
@@ -128,7 +129,8 @@
       ],
       "airk-process": [],
       "airk-retrieval": [
-        "airk-core"
+        "airk-core",
+        "airk-process"
       ],
       "airk-service": [
         "airk-catalog-control",
@@ -148,7 +150,8 @@
         "airk-supervisor"
       ],
       "airk-store": [
-        "airk-core"
+        "airk-core",
+        "airk-process"
       ],
       "airk-supervisor": [
         "airk-catalog-control",

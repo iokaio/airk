@@ -334,18 +334,17 @@ impl Kernel {
             .digest()?;
         let status = self.published_vector_status()?;
         let published = status.as_ref().is_some_and(|s| s.local_model_ready);
-        let model_pending_reindex = if self.store.shared_model_runtime().is_some() {
-            let applied = if self.current_scope()?.is_some() {
-                self.current_reader()?
-                    .collection_state()?
-                    .and_then(|s| s.configuration.model)
-            } else {
-                None
-            };
-            applied != self.configured_model_objects(false)?
+        let applied = if self.current_scope()?.is_some() {
+            self.current_reader()?
+                .collection_state()?
+                .and_then(|s| s.configuration.model)
         } else {
-            false
+            None
         };
+        let model_pending_reindex =
+            crate::shared_models::semantic_upgrade_pending(&self.store, applied.as_ref())?
+                || (self.store.shared_model_runtime().is_some()
+                    && applied != self.configured_model_objects(false)?);
         let applied_selection_digest = status.as_ref().and_then(|s| s.vector_selection_digest);
         let selection_pending_reindex = applied_selection_digest != Some(selection_digest);
         Ok(VectorStatus {

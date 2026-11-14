@@ -357,6 +357,12 @@ fn validate_mode(
     let sources =
         std::iter::once(proposed.root.as_str()).chain(additional.iter().map(String::as_str));
     let sources = sources.map(Path::new).collect::<Vec<_>>();
+    ensure!(
+        sources.iter().all(|source| source
+            .to_str()
+            .is_some_and(|path| !airk_core::source_policy::source_root_is_reserved(path))),
+        SourceBoundary
+    );
     let data = Path::new(&proposed.data_root);
     for protected in private_paths_mode(connection, runtime, remember)? {
         disjoint(data, &protected)?;

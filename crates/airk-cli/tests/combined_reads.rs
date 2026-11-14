@@ -68,6 +68,7 @@ fn fixture_candidate(base: &Path, inference: bool) -> Result<PathBuf> {
             arch: std::env::consts::ARCH.into(),
             airk_sha256: airk_cli::runtime_pair::digest_file(&main)?,
             embed_sha256: String::new(),
+            split: None,
         };
         fs::write(
             payload.join("airk-runtime.json"),

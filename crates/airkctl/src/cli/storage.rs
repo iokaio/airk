@@ -20,6 +20,15 @@ fn control(
     selection: &Selection,
     runtime_dir: Option<PathBuf>,
 ) -> Result<PathBuf, u8> {
+    let control = resolve_control(cx, selection, runtime_dir)?;
+    super::online_control(cx, control)
+}
+
+fn resolve_control(
+    cx: &mut Context,
+    selection: &Selection,
+    runtime_dir: Option<PathBuf>,
+) -> Result<PathBuf, u8> {
     if let Some(control) = runtime_dir.or_else(|| selection.control.clone()) {
         return Ok(control);
     }
@@ -155,7 +164,7 @@ pub(super) fn login(
     action: &str,
 ) -> u8 {
     let run = || -> Result<u8, u8> {
-        let control = control(cx, selection, runtime_dir)?;
+        let control = resolve_control(cx, selection, runtime_dir)?;
         let action: LoginStartupAction =
             serde_json::from_value(serde_json::Value::String(action.to_owned()))
                 .map_err(|_| usage(cx, "invalid login action"))?;

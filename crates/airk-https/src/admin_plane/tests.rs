@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Admin plane state and handler rules with a manual clock and fixed random
 //! bytes; no listener, no sleeps.
+mod event_stream;
+mod preparation;
+mod session_permit;
+mod ui_pilot_cases;
 use super::*;
 use airk_endpoint::admin_contract::{COOKIE_NAME, MAX_SESSIONS, session_cookie};
 use http_body_util::Full;
@@ -779,8 +783,118 @@ fn api_call(cookie: &str, csrf: &str, operation: &str, body: &str) -> Request<Fu
 }
 
 async fn envelope(plane: &AdminPlane, request: Request<Full<Bytes>>) -> (u16, Value) {
+    // Existing workflow cases retain their semantic assertions while speaking
+    // the explicit R17 protocol. Raw initial-ack/once-only observations live in
+    // preparation.rs and call handle directly without this helper.
+    let operation = request
+        .uri()
+        .path()
+        .strip_prefix("/admin/api/v1/call/")
+        .map(str::to_owned);
+    let cookie = request
+        .headers()
+        .get("cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix(&format!("{COOKIE_NAME}=")))
+        .map(str::to_owned);
+    let csrf = request
+        .headers()
+        .get(CSRF_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let (status, _, body) = answer(plane, request, PeerProof::SameUser).await;
-    (status, serde_json::from_slice(&body).unwrap())
+    let reply: Value = serde_json::from_slice(&body).unwrap();
+    if status == 200
+        && operation.as_deref().is_some_and(|operation| {
+            matches!(
+                operation,
+                "jobs.retry"
+                    | "catalog.policy_resume"
+                    | "catalog.split_recover"
+                    | "recovery.plan_create"
+                    | "service.stop"
+                    | "service.restart"
+            )
+        })
+        && let Ok(ack) =
+            serde_json::from_value::<contract::MutationPreparation>(reply["result"].clone())
+    {
+        let cookie = cookie.expect("workflow has admitted cookie");
+        let csrf = csrf.expect("workflow has admitted CSRF");
+        let operation = operation.unwrap();
+        let retained = ack.preparation;
+        let (status, _, bytes) = answer(
+            plane,
+            api_call(
+                &cookie,
+                &csrf,
+                &operation,
+                &json!({"prepared":retained}).to_string(),
+            ),
+            PeerProof::SameUser,
+        )
+        .await;
+        let retained_reply: Value = serde_json::from_slice(&bytes).unwrap();
+        if retained_reply["ok"] == true || retained_reply["error"]["class"] == "refused" {
+            let (ack_status, _, ack_bytes) = answer(
+                plane,
+                api_call(
+                    &cookie,
+                    &csrf,
+                    &operation,
+                    &json!({"acknowledged":retained}).to_string(),
+                ),
+                PeerProof::SameUser,
+            )
+            .await;
+            assert_eq!(
+                ack_status,
+                200,
+                "explicit client retention acknowledgment: {}",
+                String::from_utf8_lossy(&ack_bytes)
+            );
+        }
+        return (status, retained_reply);
+    }
+    (status, reply)
+}
+
+/// The 32-slot custody test deliberately uses the post-admission call seam:
+/// the separate HTTP budget is 16 and has its own actual-handler regression.
+async fn custody_envelope(
+    plane: &AdminPlane,
+    cookie: &str,
+    operation: &str,
+    body: Value,
+) -> (u16, Value) {
+    let response = plane
+        .call(
+            operation,
+            Some(cookie),
+            Full::new(Bytes::from(body.to_string())),
+        )
+        .await
+        .unwrap_or_else(refusal);
+    let status = response.status().as_u16();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let reply: Value = serde_json::from_slice(&bytes).unwrap();
+    if let Ok(ack) =
+        serde_json::from_value::<contract::MutationPreparation>(reply["result"].clone())
+    {
+        let retained = ack.preparation;
+        let response = plane
+            .call(
+                operation,
+                Some(cookie),
+                Full::new(Bytes::from(json!({"prepared":retained}).to_string())),
+            )
+            .await
+            .unwrap_or_else(refusal);
+        let status = response.status().as_u16();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        return (status, serde_json::from_slice(&bytes).unwrap());
+    }
+    (status, reply)
 }
 
 fn error_code(reply: &Value) -> String {
@@ -1737,6 +1851,23 @@ fn r04_recovery_reply(split: bool) -> ControlResponse {
     r04_response(&body)
 }
 
+fn r04_known_recovery_reply(split: bool) -> ControlResponse {
+    let fixture = r04_fixture();
+    let name = if split {
+        "split_already_complete"
+    } else {
+        "policy_known_accepted"
+    };
+    r04_response(
+        &fixture["recovery_receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == name)
+            .unwrap()["response"],
+    )
+}
+
 fn r04_policy_success() -> ControlResponse {
     let value = json!({"status": "catalog_policy_resumed", "index_id": GRANTED_INDEX,
         "accepted_job_id": "3b".repeat(32), "status_basis": "current_policy",
@@ -1805,7 +1936,7 @@ async fn r04_unknown_generated_pair(split: bool, lost: bool) {
     } else {
         script.push(Some(r04_unknown_metadata()));
     }
-    script.push(Some(r04_recovery_reply(split)));
+    script.push(Some(r04_known_recovery_reply(split)));
     let (plane, sent, _) = r04_recovery_plane(script);
     let (cookie, csrf) = sign_in(&plane).await;
     let (status, reply) = envelope(
@@ -1829,12 +1960,8 @@ async fn r04_unknown_generated_pair(split: bool, lost: bool) {
             "native resend retains the exact original identity"
         );
     }
-    let other_receipt = r04_recovery_read(!split, &token);
-    let other_operation = if split {
-        "catalog.policy_resume_receipt"
-    } else {
-        "catalog.split_recovery_receipt"
-    };
+    let other_receipt = json!({"recover":token});
+    let other_operation = r04_recovery_operation(!split);
     let (status, reply) = envelope(
         &plane,
         api_call(&cookie, &csrf, other_operation, &other_receipt.to_string()),
@@ -1856,12 +1983,8 @@ async fn r04_unknown_generated_pair(split: bool, lost: bool) {
         (400, "admin_review_unknown")
     );
     let (foreign_cookie, foreign_csrf) = sign_in(&plane).await;
-    let receipt = r04_recovery_read(split, &token);
-    let receipt_operation = if split {
-        "catalog.split_recovery_receipt"
-    } else {
-        "catalog.policy_resume_receipt"
-    };
+    let receipt = json!({"recover":token});
+    let receipt_operation = r04_recovery_operation(split);
     let (status, reply) = envelope(
         &plane,
         api_call(
@@ -2012,21 +2135,17 @@ async fn r04_competing_pending_reservations_refuse_before_the_extra_effect() {
         Arc::new(|| 0),
         Arc::new(move || Some([sequence.fetch_add(1, Ordering::SeqCst) + 1; 32])),
     ));
-    let (cookie, csrf) = sign_in(&plane).await;
+    let (cookie, _) = sign_in(&plane).await;
     let mut tasks = Vec::new();
     for _ in 0..contract::MAX_REVIEWS_PER_SESSION {
         let plane = plane.clone();
         let cookie = cookie.clone();
-        let csrf = csrf.clone();
         tasks.push(tokio::spawn(async move {
-            envelope(
+            custody_envelope(
                 &plane,
-                api_call(
-                    &cookie,
-                    &csrf,
-                    "catalog.policy_resume",
-                    &r04_recovery_body(false).to_string(),
-                ),
+                &cookie,
+                "catalog.policy_resume",
+                r04_recovery_body(false),
             )
             .await
         }));
@@ -2038,14 +2157,11 @@ async fn r04_competing_pending_reservations_refuse_before_the_extra_effect() {
             .unwrap();
     }
     let held = plane.secrets().sessions.review_count(&cookie);
-    let extra = envelope(
+    let extra = custody_envelope(
         &plane,
-        api_call(
-            &cookie,
-            &csrf,
-            "catalog.policy_resume",
-            &r04_recovery_body(false).to_string(),
-        ),
+        &cookie,
+        "catalog.policy_resume",
+        r04_recovery_body(false),
     )
     .await;
     release.send(true).unwrap();
@@ -2081,7 +2197,7 @@ async fn r04_ordinary_preview_pressure_never_evicts_pinned_recovery() {
             Some(r04_response(&fixture["review"]["response"])),
         ]);
     }
-    script.push(Some(r04_recovery_reply(false)));
+    script.push(Some(r04_known_recovery_reply(false)));
     let (plane, sent, _) = r04_recovery_plane(script);
     let (cookie, csrf) = sign_in(&plane).await;
     let (status, reply) = envelope(
@@ -2111,13 +2227,13 @@ async fn r04_ordinary_preview_pressure_never_evicts_pinned_recovery() {
             "ordinary previews still evict ordinary previews: {preview}"
         );
     }
-    let receipt = r04_recovery_read(false, &token);
+    let receipt = json!({"recover":token});
     let (status, reply) = envelope(
         &plane,
         api_call(
             &cookie,
             &csrf,
-            "catalog.policy_resume_receipt",
+            "catalog.policy_resume",
             &receipt.to_string(),
         ),
     )

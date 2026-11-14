@@ -1,0 +1,145 @@
+{
+  "catalog": {
+    "default_profile": "minilm-l6-v2-u8-v2",
+    "profiles": [
+      {
+        "assets": [
+          {
+            "bytes": 69325926,
+            "name": "model.onnx",
+            "sha256": "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+            "url": null
+          },
+          {
+            "bytes": 466247,
+            "name": "tokenizer.json",
+            "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+            "url": null
+          },
+          {
+            "bytes": 34889,
+            "name": "LICENSE",
+            "sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
+            "url": null
+          }
+        ],
+        "id": "minilm-l6-v2-u8-v2",
+        "manifest": {
+          "attention_mask": "attention_mask",
+          "dimensions": 384,
+          "input_ids": "input_ids",
+          "license": "Apache-2.0",
+          "license_sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
+          "max_tokens": 256,
+          "model_sha256": "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+          "name": "sentence-transformers/all-MiniLM-L6-v2",
+          "output": "last_hidden_state",
+          "pooling": "attention-mask-mean-l2",
+          "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+          "schema": 2,
+          "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+          "token_type_ids": "token_type_ids",
+          "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+        },
+        "precision": "mixed-u8",
+        "qualification": {
+          "evidence": "docs/split/codex-plan.md#9-arbiter-and-local-models",
+          "scope": "Trained v2 candidate; native full205 retrieval, semantic readiness/migration, resource and installed-platform qualification pending. Numerical smoke is not final qualification.",
+          "verified_platforms": []
+        },
+        "quantization": {
+          "activation_precision": "unsigned asymmetric INT8",
+          "constant_linear_parameters": 10616832,
+          "fp32_embeddings_retained": true,
+          "protected_fp32_nodes": [
+            "/inner/encoder/layer.0/output/dense/MatMul",
+            "/inner/encoder/layer.1/output/dense/MatMul",
+            "/inner/encoder/layer.2/output/dense/MatMul",
+            "/inner/encoder/layer.3/output/dense/MatMul",
+            "/inner/encoder/layer.4/output/dense/MatMul",
+            "/inner/encoder/layer.5/output/dense/MatMul"
+          ],
+          "quantized_linear_parameters": 7077888,
+          "schema": "airk.minilm.quantization/2",
+          "signed_lowering": null,
+          "trained_checkpoint_sha256": "51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906"
+        },
+        "runtime": "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2"
+      },
+      {
+        "assets": [
+          {
+            "bytes": 69355444,
+            "name": "model.onnx",
+            "sha256": "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
+            "url": null
+          },
+          {
+            "bytes": 466247,
+            "name": "tokenizer.json",
+            "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+            "url": null
+          },
+          {
+            "bytes": 34889,
+            "name": "LICENSE",
+            "sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
+            "url": null
+          }
+        ],
+        "id": "minilm-l6-v2-s8-v2",
+        "manifest": {
+          "attention_mask": "attention_mask",
+          "dimensions": 384,
+          "input_ids": "input_ids",
+          "license": "Apache-2.0",
+          "license_sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd",
+          "max_tokens": 256,
+          "model_sha256": "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
+          "name": "sentence-transformers/all-MiniLM-L6-v2",
+          "output": "last_hidden_state",
+          "pooling": "attention-mask-mean-l2",
+          "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+          "schema": 2,
+          "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+          "token_type_ids": "token_type_ids",
+          "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+        },
+        "precision": "mixed-s8",
+        "qualification": {
+          "evidence": "docs/split/codex-plan.md#9-arbiter-and-local-models",
+          "scope": "Trained v2 candidate; native full205 retrieval, semantic readiness/migration, resource and installed-platform qualification pending. Numerical smoke is not final qualification.",
+          "verified_platforms": []
+        },
+        "quantization": {
+          "activation_precision": "unsigned asymmetric8bit split into exact low7/high1 MatMulInteger passes",
+          "constant_linear_parameters": 10616832,
+          "fp32_embeddings_retained": true,
+          "protected_fp32_nodes": [
+            "/inner/encoder/layer.0/output/dense/MatMul",
+            "/inner/encoder/layer.1/output/dense/MatMul",
+            "/inner/encoder/layer.2/output/dense/MatMul",
+            "/inner/encoder/layer.3/output/dense/MatMul",
+            "/inner/encoder/layer.4/output/dense/MatMul",
+            "/inner/encoder/layer.5/output/dense/MatMul"
+          ],
+          "quantized_linear_parameters": 7077888,
+          "schema": "airk.minilm.quantization/2",
+          "signed_lowering": {
+            "converted_weight_parameters": 60,
+            "identity": "(Alo-Zlo)(B-Zb)+128(Ahi-Zhi)(B-Zb)=(A-Za)(B-Zb); Alo,Zlo<=127, Ahi,Zhi<=1, signed weights/zero-points[-128,127]",
+            "maximum_inner_dimension": 32768,
+            "shared_activation_splits": 18,
+            "split_matmul_nodes": 30,
+            "weight_identity": "Qs=Qu-128; Zs=Zu-128; identical scale bytes, so S(Qs-Zs)=S(Qu-Zu) exactly"
+          },
+          "trained_checkpoint_sha256": "51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906"
+        },
+        "runtime": "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2"
+      }
+    ],
+    "schema": 2
+  },
+  "schema": "airk.minilm.native-policy/2",
+  "scope": "candidate build policy; human quality and installed platform qualification are not inferred"
+}

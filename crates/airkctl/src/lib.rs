@@ -14,6 +14,7 @@ pub mod journal;
 pub mod launch;
 pub mod lifecycle;
 pub mod logs;
+pub(crate) mod portable;
 pub mod record;
 pub mod registration;
 pub mod rotation;
@@ -22,6 +23,7 @@ pub mod rotation;
 #[rustfmt::skip]
 pub mod evidence;
 pub mod service;
+pub(crate) mod setup_receipt;
 pub mod start;
 pub mod tools;
 pub mod trust;

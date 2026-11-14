@@ -199,8 +199,13 @@ pub(super) fn redact(value: &mut Value, key: &Value) -> Option<Value> {
     fn walk(value: &mut Value, key: &Value, caller: &mut Option<Value>) {
         match value {
             Value::Object(map) => {
-                if map.get("key") == Some(key) {
-                    map.remove("key");
+                if map.get("key") == Some(key) || map.get("request_key") == Some(key) {
+                    if map.get("key") == Some(key) {
+                        map.remove("key");
+                    }
+                    if map.get("request_key") == Some(key) {
+                        map.remove("request_key");
+                    }
                     if let Some(found) = map.remove("caller") {
                         caller.get_or_insert(found);
                     }
@@ -222,6 +227,207 @@ pub(super) fn redact(value: &mut Value, key: &Value) -> Option<Value> {
     caller
 }
 
+/// Public native document and the matching review caller retained by the server.
+pub(super) fn public_projection(
+    response: &ControlResponse,
+    expected_key: Option<&Value>,
+) -> Result<(Value, Option<Value>), AdminCode> {
+    if response.carries_private_transport_secret()
+        || matches!(
+            response,
+            ControlResponse::AdminNativeChunk { .. }
+                | ControlResponse::AdminNativeCancelled {}
+                | ControlResponse::AdminNativeClosed {}
+        )
+    {
+        return Err(AdminCode::AdminInternal);
+    }
+    let mut value = serde_json::to_value(response).map_err(|_| AdminCode::AdminInternal)?;
+    // Only the current review may supply its caller. Historical identities
+    // below are projected away without ever becoming review authority.
+    let caller = expected_key.and_then(|key| redact(&mut value, key));
+    for key in public_keys(response) {
+        redact(&mut value, &key);
+    }
+    Ok((value, caller))
+}
+
+/// Enumerate identities through their native typed owners. Opaque result data
+/// is not inspected for field names or structurally key-shaped public values.
+/// Only exact identities learned here (or supplied by current custody) are
+/// removed from those opaque results, including the native `request_key` alias.
+fn public_keys(response: &ControlResponse) -> Vec<Value> {
+    use airk_core::{
+        catalog_fences::FenceObservation, catalog_split::SplitRecoveryOutcome,
+        service::CatalogOutcomeObservation,
+    };
+    #[derive(Default)]
+    struct Keys(Vec<Value>);
+    impl Keys {
+        fn add(&mut self, key: &RequestKey) {
+            self.0.push(json!(key));
+        }
+        fn catalog(&mut self, request: &airk_core::catalog_management::CatalogRequest) {
+            self.add(&request.key);
+        }
+        fn receipt(&mut self, receipt: &airk_core::catalog_management::CatalogReceipt) {
+            self.add(&receipt.key);
+        }
+        fn fenced(&mut self, receipt: &airk_core::catalog_fences::FencedReceipt) {
+            self.catalog(&receipt.request);
+            self.receipt(&receipt.metadata);
+        }
+        fn fence(&mut self, observation: &FenceObservation) {
+            match observation {
+                FenceObservation::Pending(intent) => self.catalog(&intent.request),
+                FenceObservation::Applied(receipt) => self.fenced(receipt),
+            }
+        }
+        fn source(
+            &mut self,
+            observation: &airk_core::catalog_source_change::SourceChangeObservation,
+        ) {
+            self.fenced(&observation.begin);
+            if let Some(receipt) = &observation.completion {
+                self.receipt(receipt);
+            }
+        }
+        fn split_receipt(&mut self, receipt: &airk_core::catalog_split::SplitReceipt) {
+            for job in &receipt.jobs {
+                self.add(&job.key);
+            }
+        }
+        fn split(&mut self, snapshot: &airk_core::catalog_split::SplitSnapshot) {
+            self.add(&snapshot.request.key);
+            self.split_receipt(&snapshot.receipt);
+        }
+        fn recovery(&mut self, receipt: &airk_core::catalog_split::SplitRecoveryReceipt) {
+            self.add(&receipt.request.key);
+            match &receipt.outcome {
+                SplitRecoveryOutcome::Unknown { key, .. } => self.add(key),
+                SplitRecoveryOutcome::ResumeAccepted {
+                    resulting_receipt, ..
+                }
+                | SplitRecoveryOutcome::ContinuationAccepted {
+                    resulting_receipt, ..
+                }
+                | SplitRecoveryOutcome::CancelBeforeFenceAccepted {
+                    resulting_receipt, ..
+                } => self.split_receipt(resulting_receipt),
+                SplitRecoveryOutcome::FinalizationAccepted {
+                    terminal_receipt, ..
+                } => self.split_receipt(terminal_receipt),
+                SplitRecoveryOutcome::RestrictiveCompletionRequired { .. }
+                | SplitRecoveryOutcome::AlreadyComplete { .. } => {}
+            }
+        }
+        fn observation(&mut self, observation: &CatalogOutcomeObservation) {
+            match observation {
+                CatalogOutcomeObservation::AuthorityFence { fence } => self.fence(fence),
+                CatalogOutcomeObservation::IndexSetup { receipt } => self.add(&receipt.request.key),
+                CatalogOutcomeObservation::IndexSplit { snapshot } => self.split(snapshot),
+            }
+        }
+    }
+    let mut keys = Keys::default();
+    match response {
+        ControlResponse::ReferenceRefreshReviewRequired { key, .. } => keys.add(key),
+        ControlResponse::CatalogOutcomeUnknown {
+            key, observation, ..
+        } => {
+            keys.add(key);
+            if let Some(observation) = observation {
+                keys.observation(observation);
+            }
+        }
+        ControlResponse::CatalogGrantDraft { draft } => keys.catalog(&draft.request),
+        ControlResponse::CatalogSourceMutationDraft { draft } => keys.catalog(&draft.request),
+        ControlResponse::CatalogReceiptUnprepared { request, .. } => keys.catalog(request),
+        ControlResponse::CatalogSourceChangeObservation { observation }
+        | ControlResponse::CatalogSourceChangeResolved { observation } => keys.source(observation),
+        ControlResponse::CatalogPendingSourceChange {
+            observation: Some(observation),
+            ..
+        }
+        | ControlResponse::SourceChangeResolutionOutcomeUnknown {
+            observation: Some(observation),
+            ..
+        } => keys.source(observation),
+        ControlResponse::CatalogPendingSourceChange {
+            observation: None, ..
+        }
+        | ControlResponse::SourceChangeResolutionOutcomeUnknown {
+            observation: None, ..
+        } => {}
+        ControlResponse::CatalogIndexSetupDraft { draft, .. } => keys.add(&draft.request.key),
+        ControlResponse::CatalogIndexSetupApplied { receipt } => keys.add(&receipt.request.key),
+        ControlResponse::CatalogIndexSetupReceipt {
+            receipt: Some(receipt),
+        } => keys.add(&receipt.request.key),
+        ControlResponse::CatalogIndexSetupReceipt { receipt: None } => {}
+        ControlResponse::CatalogApplied {
+            receipt,
+            fenced_receipt,
+        } => {
+            keys.receipt(receipt);
+            if let Some(receipt) = fenced_receipt {
+                keys.fenced(receipt);
+            }
+        }
+        ControlResponse::CatalogReceipt { receipt, fence } => {
+            if let Some(receipt) = receipt {
+                keys.receipt(receipt);
+            }
+            if let Some(fence) = fence {
+                keys.fence(fence);
+            }
+        }
+        ControlResponse::CatalogSplitDraft { draft } => keys.add(&draft.request.key),
+        ControlResponse::CatalogSplitAccepted { snapshot } => keys.split(snapshot),
+        ControlResponse::CatalogSplitStatus {
+            snapshot: Some(snapshot),
+            ..
+        } => keys.split(snapshot),
+        ControlResponse::CatalogSplitStatus { snapshot: None, .. } => {}
+        ControlResponse::CatalogSplitReceipt { key, snapshot, .. } => {
+            keys.add(key);
+            if let Some(snapshot) = snapshot {
+                keys.split(snapshot);
+            }
+        }
+        ControlResponse::CatalogSplitRecovered { receipt, snapshot } => {
+            keys.recovery(receipt);
+            keys.split(snapshot);
+        }
+        ControlResponse::CatalogSplitRecoveryReceipt {
+            key,
+            receipt,
+            snapshot,
+            ..
+        } => {
+            keys.add(key);
+            if let Some(receipt) = receipt {
+                keys.recovery(receipt);
+            }
+            if let Some(snapshot) = snapshot {
+                keys.split(snapshot);
+            }
+        }
+        ControlResponse::CatalogPolicyResumeReceipt { key, .. } => keys.add(key),
+        ControlResponse::LifecycleAccepted { record, .. } => keys.add(&record.request.key),
+        ControlResponse::LifecycleStatus {
+            pending: Some(record),
+            ..
+        } => keys.add(&record.request.key),
+        ControlResponse::LifecycleStatus { pending: None, .. } => {}
+        _ => {}
+    }
+    keys.0
+}
+
+#[cfg(test)]
+mod projection_tests;
+
 /// Native disposition, classified before encoding. Keep the match exhaustive
 /// so a new control response needs an explicit admin outcome decision.
 pub(super) enum NativeOutcome {
@@ -232,6 +438,10 @@ pub(super) enum NativeOutcome {
 
 pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
     match response {
+        ControlResponse::AdminNativeOpened { .. }
+        | ControlResponse::AdminNativeChunk { .. }
+        | ControlResponse::AdminNativeCancelled {}
+        | ControlResponse::AdminNativeClosed {} => NativeOutcome::Refused("admin_internal".into()),
         ControlResponse::Job { job } if job.outcome.is_none() => {
             NativeOutcome::Success(RequestState::Accepted)
         }
@@ -362,6 +572,9 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::HandoffPublished { .. }
         | ControlResponse::ExplorerHandoff { .. }
         | ControlResponse::ExplorerOffline { .. }
+        | ControlResponse::Arbiter { .. }
+        | ControlResponse::ArbiterApplication { .. }
+        | ControlResponse::ArbiterAdvice { .. }
         | ControlResponse::ModelCatalog { .. }
         | ControlResponse::UsageDocument { .. }
         | ControlResponse::ConfigurationPrepared { .. }

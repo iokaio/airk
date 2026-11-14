@@ -1,0 +1,14 @@
+{
+  "schema": "airk-bootstrap-crypto-fixture/1",
+  "scope": "public GitHub CLI build-attestation crypto control; not AIRK publisher or installed qualification",
+  "source_repository": "https://github.com/cli/cli",
+  "release": "v2.104.0",
+  "asset": "gh_2.104.0_linux_amd64.tar.gz",
+  "bundle_sha256": "4a5104c63bac5e6b4ad9fb787ec78cfcd0e244cc4ac543259a64ca58d7103933",
+  "trusted_root_sha256": "844a1c6de3986c9f02070266b25e0d1a2fa99ceccc89f6b9ad90aae47b62a16e",
+  "trust_export_command": "gh attestation trusted-root",
+  "trust_export_tool": "gh version 2.101.0 (2026-09-15)",
+  "verifier": "@sigstore/verify@3.1.1",
+  "policy": "ctlogThreshold=1,tlogThreshold=1,timestampThreshold=1; AIRK publisher policy must reject this different repository",
+  "license": "MIT (GitHub CLI public generated attestation metadata); trusted root public key/certificate metadata"
+}

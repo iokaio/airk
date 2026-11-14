@@ -60,3 +60,58 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(feature = "test-support")]
+mod evaluation {
+    use super::*;
+    use airk_core::identity::Sha256Digest;
+    use sha2::{Digest, Sha256};
+    use std::{cell::RefCell, sync::Arc};
+    #[derive(Clone)]
+    struct Admission {
+        lease: Arc<dyn Send + Sync>,
+        manifest: Sha256Digest,
+    }
+    thread_local! {static EVALUATION:RefCell<Option<Admission>>=const {RefCell::new(None)};}
+    pub struct EvaluationScope {
+        _thread: PhantomData<Rc<()>>,
+    }
+    impl EvaluationScope {
+        /// # Safety
+        /// The adapter must pass its actual exclusive ServiceLease, retain its
+        /// ordinary ServiceComputeScope, and use an isolated private fixture.
+        /// The digest seals the actual model.json bytes, never a serialized role.
+        pub unsafe fn enter(lease: Arc<dyn Send + Sync>, manifest: Sha256Digest) -> Result<Self> {
+            require_service_compute()?;
+            EVALUATION.with(|slot| -> Result<Self> {
+                let mut slot = slot.borrow_mut();
+                ensure!(slot.is_none(), "encoder evaluation scope already entered");
+                *slot = Some(Admission { lease, manifest });
+                Ok(Self {
+                    _thread: PhantomData,
+                })
+            })
+        }
+    }
+    impl Drop for EvaluationScope {
+        fn drop(&mut self) {
+            EVALUATION.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    pub(crate) fn lease(bytes: &[u8]) -> Option<Arc<dyn Send + Sync>> {
+        if require_service_compute().is_err() {
+            return None;
+        }
+        let digest = Sha256Digest::from_bytes(Sha256::digest(bytes).into());
+        EVALUATION.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .filter(|admission| admission.manifest == digest)
+                .map(|admission| admission.lease.clone())
+        })
+    }
+}
+#[cfg(feature = "test-support")]
+pub use evaluation::EvaluationScope;
+#[cfg(feature = "test-support")]
+pub(crate) use evaluation::lease as evaluation_model_lease;

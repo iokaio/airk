@@ -287,6 +287,51 @@
         }
       ]
     },
+    "NativeAdminChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 65536,
+          "minItems": 1,
+          "type": "array"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "http_status": {
+          "format": "uint16",
+          "maximum": 599,
+          "minimum": 100,
+          "type": "integer"
+        },
+        "offset": {
+          "format": "uint64",
+          "maximum": 33554432,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_bytes": {
+          "format": "uint64",
+          "maximum": 33554432,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "http_status",
+        "total_bytes",
+        "offset",
+        "data",
+        "done"
+      ],
+      "type": "object"
+    },
     "PairState": {
       "enum": [
         "exact",
@@ -545,6 +590,16 @@
           "type": "string"
         },
         {
+          "const": "admin_outcome_unknown",
+          "description": "Native Admin work may have effects; preserve its original recovery identity.\nNever automatically replay it or treat a later read failure as no effects.",
+          "type": "string"
+        },
+        {
+          "const": "admin_session_ended_outcome_unknown",
+          "description": "Native authentication ended; effects remain unknown and this cached\ncontext cannot reopen or replay the original operation.",
+          "type": "string"
+        },
+        {
           "const": "session_command_refused",
           "description": "Not allowlisted in a session, including token-returning one-shots.",
           "type": "string"
@@ -656,6 +711,101 @@
           },
           "required": [
             "control"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Native-owned Admin client. Raw JSON retains the exact I3 body budget.",
+          "properties": {
+            "admin_call": {
+              "additionalProperties": false,
+              "properties": {
+                "body": {
+                  "description": "An I1 control-protocol value, carried unchanged; see fixtures/wire."
+                },
+                "deadline_ms": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "operation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "operation",
+                "body",
+                "deadline_ms"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "admin_call"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "admin_read": {
+              "additionalProperties": false,
+              "properties": {
+                "offset": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "target": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target",
+                "offset"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "admin_read"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "admin_cancel": {
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "admin_cancel"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "admin_close": {
+              "additionalProperties": false,
+              "type": "object"
+            }
+          },
+          "required": [
+            "admin_close"
           ],
           "type": "object"
         },
@@ -819,6 +969,36 @@
     },
     "SessionOutcome": {
       "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "chunk": {
+              "$ref": "#/$defs/NativeAdminChunk"
+            },
+            "status": {
+              "const": "admin_chunk",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "chunk"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "admin_closed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
         {
           "additionalProperties": false,
           "properties": {
@@ -1144,6 +1324,40 @@
       ],
       "type": "object"
     },
+    "SetupReceiptObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "type": "boolean"
+        },
+        "install_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "operation_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "receipt": {
+          "description": "Full Core-decoded receipt, without a second handwritten native schema."
+        },
+        "schema": {
+          "type": "string"
+        },
+        "successful": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "operation_id",
+        "install_id",
+        "closed",
+        "successful",
+        "receipt"
+      ],
+      "type": "object"
+    },
     "Transport": {
       "enum": [
         "stdio",
@@ -1263,6 +1477,7 @@
     "SessionResponse",
     "SessionEventFrame",
     "ServiceStatus",
+    "SetupReceiptObservation",
     "Entry"
   ],
   "title": "airkctl I2 contract"

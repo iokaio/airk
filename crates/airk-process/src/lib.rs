@@ -4,9 +4,12 @@ pub mod bounded_command;
 pub mod cert_trust;
 pub mod child_job;
 pub mod client_owner;
+pub mod cpu_fit;
 pub mod detached;
 pub mod directory;
 pub mod monotonic;
+#[cfg(windows)]
+pub mod named_mutex;
 pub mod private_stdio;
 pub mod signature;
 pub mod user_folders;

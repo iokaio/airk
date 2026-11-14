@@ -669,6 +669,22 @@ impl Kernel {
             .context(Stage("source_access"))?;
         let execution_lease =
             crate::execution::acquire(&self.data_root).context(Stage("execution_admission"))?;
+        if !full
+            && self.vectors_enabled()?
+            && let Some(scope) = self.current_scope()?
+        {
+            let read = self.store.current_read(&scope)?;
+            let state = read.collection_state()?;
+            ensure!(
+                !crate::shared_models::semantic_upgrade_pending(
+                    &self.store,
+                    state
+                        .as_ref()
+                        .and_then(|state| state.configuration.model.as_ref())
+                )?,
+                "semantic_upgrade_required: retained vectors belong to an older native runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
+            );
+        }
         let (reviewed_writer, reviewed_controls) = if let Some((project, request)) = reviewed {
             ensure!(!full, "reviewed refresh cannot silently rebuild");
             let writer = self.store.lock().context(Stage("writer_admission"))?;

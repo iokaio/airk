@@ -15,6 +15,42 @@ const MAX_USER_FILES: usize = 64;
 const MAX_DIRECTORY_ENTRIES: usize = 256;
 const MAX_PROFILES: usize = 32;
 
+#[cfg(test)]
+type BeforePublishObserver = Box<dyn FnOnce(&Path)>;
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_PUBLISH_OBSERVER: std::cell::RefCell<Option<BeforePublishObserver>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Test-local interleaving after staging, without changing release execution.
+/// Visible only within the owning config module and its external test module.
+#[cfg(test)]
+pub(super) fn with_before_publish<T>(
+    observer: impl FnOnce(&Path) + 'static,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Reset(Option<BeforePublishObserver>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            BEFORE_PUBLISH_OBSERVER.with(|slot| {
+                let _ = slot.replace(self.0.take());
+            });
+        }
+    }
+    let previous = BEFORE_PUBLISH_OBSERVER.with(|slot| slot.replace(Some(Box::new(observer))));
+    let _reset = Reset(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(super) fn observe_before_publish(path: &Path) {
+    let observer = BEFORE_PUBLISH_OBSERVER.with(|slot| slot.borrow_mut().take());
+    if let Some(observer) = observer {
+        observer(path);
+    }
+}
+
 fn absent(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
 }
@@ -170,17 +206,28 @@ fn project_folders(root: &Path, parent: &Path, create: bool) -> Result<(), Strin
     Ok(())
 }
 
-/// Read `path`, apply `edit` to its text (`None` when absent) and replace it
-/// atomically when the text changed. Project files (`project_root`) may have
-/// their folders created when `create`; user files need an existing folder.
-/// The write fails, leaving the file as it was, when it changed since read.
-/// Returns whether the file was written.
-pub(crate) fn edit_file(
+/// A caller may establish eligibility before enrolling a new connection. The
+/// actual edit revalidates every boundary and never treats this as authority.
+pub(crate) fn preflight_edit(path: &Path) -> Result<(), super::retention::EditFailure> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            super::retention::review(path)?;
+            Ok(())
+        }
+        Err(error) if absent(&error) => Ok(()),
+        Err(error) => Err(error.to_string().into()),
+    }
+}
+
+/// Edit as the invoking user. Existing-file publication retains the actual
+/// displaced object; known conflicts and uncertainty preserve every artifact.
+pub(crate) fn edit_file_for(
+    operation: super::edit_record::Operation,
     path: &Path,
     project_root: Option<&Path>,
     create: bool,
     edit: impl FnOnce(Option<&str>) -> Result<String, String>,
-) -> Result<bool, String> {
+) -> Result<bool, super::retention::EditFailure> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent folder.", path.display()))?;
@@ -191,53 +238,69 @@ pub(crate) fn edit_file(
                 return Err(format!(
                     "{} does not exist; AIRK creates folders only for project files.",
                     parent.display()
-                ));
+                )
+                .into());
             }
         }
     }
-    let before = read_config(path)?;
-    let after = edit(before.as_deref())?;
-    if before.as_deref() == Some(after.as_str()) {
+    let context = match fs::symlink_metadata(path) {
+        Ok(_) => Some(super::retention::review(path)?),
+        Err(error) if absent(&error) => None,
+        Err(error) => return Err(error.to_string().into()),
+    };
+    let before = context.as_ref().map(|context| context.before());
+    let after = edit(before)?;
+    if before == Some(after.as_str()) {
         return Ok(false);
     }
     if after.len() > MAX_BYTES {
         return Err("Updated configuration would exceed 1 MiB.".into());
     }
-    replace(path, parent, before.as_deref(), &after)?;
+    if let Some(context) = context {
+        super::retention::replace(context, &after, operation)?;
+    } else {
+        create_file(path, parent, &after)?;
+    }
     Ok(true)
 }
 
-fn replace(path: &Path, parent: &Path, before: Option<&str>, after: &str) -> Result<(), String> {
+// Preserve the observation API for the original test identities. Production
+// callers provide their actual operation to edit_file_for.
+#[cfg(test)]
+pub(crate) fn edit_file(
+    path: &Path,
+    project_root: Option<&Path>,
+    create: bool,
+    edit: impl FnOnce(Option<&str>) -> Result<String, String>,
+) -> Result<bool, String> {
+    edit_file_for(
+        super::edit_record::Operation::Repair,
+        path,
+        project_root,
+        create,
+        edit,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn create_file(path: &Path, parent: &Path, after: &str) -> Result<(), String> {
+    // Keep the original absent-target no-clobber path; a concurrent creation
+    // never turns into an existing-file replacement or a retry.
+    let _parent = airk_process::directory::OpenedDirectory::open(parent)
+        .map_err(|error| error.to_string())?;
     let shown = path.display();
-    if read_config(path)?.as_deref() != before {
-        return Err(format!(
-            "{shown} changed while AIRK prepared the edit; nothing was written."
-        ));
-    }
     let failed = |error: std::io::Error| format!("{shown}: {error}");
     let mut temp = tempfile::Builder::new()
         .prefix(".airk-config-")
         .suffix(".tmp")
         .tempfile_in(parent)
         .map_err(failed)?;
-    // A replaced file keeps its mode; a new one keeps tempfile's 0600.
-    #[cfg(unix)]
-    {
-        if before.is_some() {
-            let permissions = fs::metadata(path).map_err(failed)?.permissions();
-            temp.as_file()
-                .set_permissions(permissions)
-                .map_err(failed)?;
-        }
-    }
     temp.write_all(after.as_bytes()).map_err(failed)?;
     temp.as_file().sync_all().map_err(failed)?;
-    if before.is_some() {
-        temp.persist(path).map_err(|error| failed(error.error))?;
-    } else {
-        temp.persist_noclobber(path)
-            .map_err(|error| failed(error.error))?;
-    }
+    #[cfg(test)]
+    observe_before_publish(path);
+    temp.persist_noclobber(path)
+        .map_err(|error| failed(error.error))?;
     Ok(())
 }
 

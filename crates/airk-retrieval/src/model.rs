@@ -101,7 +101,9 @@ pub(crate) fn verified_source_bytes<'a>(
 #[cfg(all(test, feature = "local-inference"))]
 mod borrowed_asset_tests;
 
-pub const ONNX_RUNTIME: &str = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
+pub const ONNX_RUNTIME_VERSION: &str = "1.30.0";
+pub const ONNX_RUNTIME_ENGINE: &str = "onnxruntime-cpu/1.30.0";
+pub const ONNX_RUNTIME: &str = "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2";
 pub const MAX_MODEL_BYTES: u64 = 268_435_456;
 pub const MAX_TOKENIZER_BYTES: u64 = 4_194_304;
 pub const MAX_INPUT_BYTES: usize = 16_384;
@@ -356,10 +358,81 @@ pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
         !manifest.output.is_empty() && manifest.output.len() <= 128,
         "invalid ONNX output name"
     );
+    let identity = onnx_identity(&manifest, ONNX_RUNTIME)?;
+    Ok((manifest, identity))
+}
+
+const RETAINED_ONNX_RUNTIME_V1: &str = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
+const ONNX_METADATA_PLATFORMS: [(&str, &str); 4] = [
+    ("x86_64", "windows"),
+    ("aarch64", "macos"),
+    ("x86_64", "macos"),
+    ("x86_64", "linux"),
+];
+/// Metadata-only runtime recognition AFTER complete descriptor/set admission.
+pub(crate) fn runtime_from_authenticated_onnx_descriptor(
+    descriptor: &EmbeddingDescriptor,
+) -> Result<&'static str> {
+    for runtime in [RETAINED_ONNX_RUNTIME_V1, ONNX_RUNTIME] {
+        for (arch, os) in ONNX_METADATA_PLATFORMS {
+            if descriptor.inference
+                == framed_digest(
+                    b"airk-inference/1",
+                    &[runtime.as_bytes(), arch.as_bytes(), os.as_bytes()],
+                )
+            {
+                return Ok(runtime);
+            }
+        }
+    }
+    anyhow::bail!("authenticated ONNX metadata runtime is unrecognized")
+}
+
+fn onnx_identity(manifest: &OnnxManifest, runtime: &str) -> Result<String> {
     let mut digest = Sha256::new();
-    digest.update(ONNX_RUNTIME.as_bytes());
-    digest.update(serde_json::to_vec(&manifest)?);
-    Ok((manifest, format!("{:x}", digest.finalize())))
+    digest.update(runtime.as_bytes());
+    digest.update(serde_json::to_vec(manifest)?);
+    Ok(format!("{:x}", digest.finalize()))
+}
+fn authenticated_onnx_descriptor(
+    manifest: &OnnxManifest,
+    set: &ModelObjectSet,
+) -> Result<(EmbeddingDescriptor, String)> {
+    let current = descriptor_from_manifest(DescriptorManifest::Onnx(manifest))?;
+    let identity = onnx_identity(manifest, ONNX_RUNTIME)?;
+    if current.identity()? == set.pipeline_digest && identity == set.legacy_identity {
+        return Ok((current, identity));
+    }
+    // Read-only compatibility metadata only. These exact historical/current
+    // platform identities never authorize opening a model or relabel old vectors.
+    for runtime in [RETAINED_ONNX_RUNTIME_V1, ONNX_RUNTIME] {
+        let identity = onnx_identity(manifest, runtime)?;
+        if identity != set.legacy_identity {
+            continue;
+        }
+        for (arch, os) in ONNX_METADATA_PLATFORMS {
+            let descriptor =
+                descriptor_for_platform(DescriptorManifest::Onnx(manifest), runtime, arch, os)?;
+            if descriptor.identity()? == set.pipeline_digest {
+                return Ok((descriptor, identity));
+            }
+        }
+    }
+    anyhow::bail!(
+        "model metadata disagrees with authenticated pipeline; rebuild the index with airk index --full"
+    )
+}
+/// Metadata comparison only; opening still requires the strict active catalog.
+pub fn onnx_descriptor_uses_current_runtime(descriptor: &EmbeddingDescriptor) -> bool {
+    descriptor.inference
+        == framed_digest(
+            b"airk-inference/1",
+            &[
+                ONNX_RUNTIME.as_bytes(),
+                std::env::consts::ARCH.as_bytes(),
+                std::env::consts::OS.as_bytes(),
+            ],
+        )
 }
 
 enum VerifiedManifest {
@@ -537,6 +610,24 @@ pub fn inspect_asset_plan(source: &dyn ModelAssetSource) -> Result<ModelObjectSe
     Ok(set)
 }
 
+/// Product setup selects the exact CPU default. Only the private native
+/// evaluation owner may admit another exact sealed manifest for comparison.
+pub fn require_selected_model_manifest(manifest: &[u8]) -> Result<()> {
+    let schema = serde_json::from_slice::<serde_json::Value>(manifest)?["schema"].as_u64();
+    if schema == Some(2) {
+        let (definition, _) = onnx_manifest(manifest)?;
+        #[cfg(feature = "test-support")]
+        if crate::native_inference::evaluation_model_lease(manifest).is_some() {
+            return Ok(());
+        }
+        crate::model_catalog::approved_manifest(&definition)?;
+        ensure!(
+            definition == crate::model_catalog::selected_profile()?.manifest,
+            "model selection differs from the bundled INT8 profile for this CPU; use bundled model setup"
+        );
+    }
+    Ok(())
+}
 pub fn inspect_object_plan(directory: &Path) -> Result<ModelObjectSet> {
     for ancestor in directory
         .ancestors()
@@ -554,14 +645,7 @@ pub fn inspect_object_plan(directory: &Path) -> Result<ModelObjectSet> {
     // and then silently replaced by the bundled default at the next index.
     let manifest = read_asset(directory, "model.json", 16_384)?;
     let schema = serde_json::from_slice::<serde_json::Value>(&manifest)?["schema"].as_u64();
-    if schema == Some(2) {
-        let (definition, _) = onnx_manifest(&manifest)?;
-        crate::model_catalog::approved_manifest(&definition)?;
-        ensure!(
-            definition == crate::model_catalog::selected_profile()?.manifest,
-            "model selection differs from the bundled INT8 profile for this CPU; use bundled model setup"
-        );
-    }
+    require_selected_model_manifest(&manifest)?;
     let descriptor = inspect_cache_descriptor(directory)?;
     let info = inspect(directory)?;
     let names: &[ModelAssetName] = match schema {
@@ -612,10 +696,7 @@ pub fn inspect_objects_cache_descriptor(
             descriptor_from_manifest(DescriptorManifest::Word(&manifest))?,
             manifest.sha256,
         ),
-        VerifiedManifest::Onnx(manifest, identity) => (
-            descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
-            identity,
-        ),
+        VerifiedManifest::Onnx(manifest, _) => authenticated_onnx_descriptor(&manifest, set)?,
     };
     ensure!(
         descriptor.identity()? == set.pipeline_digest && identity == set.legacy_identity,
@@ -681,14 +762,11 @@ pub fn descriptor_from_asset_metadata(
         }
         Some(2) => {
             ensure!(set.assets.len() == 4, "model metadata asset set mismatch");
-            let (manifest, identity) = onnx_manifest(&bytes)?;
+            let (manifest, _) = onnx_manifest(&bytes)?;
             check_asset(ModelAssetName::ModelOnnx, &manifest.model_sha256)?;
             check_asset(ModelAssetName::TokenizerJson, &manifest.tokenizer_sha256)?;
             check_asset(ModelAssetName::License, &manifest.license_sha256)?;
-            (
-                descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
-                identity,
-            )
+            authenticated_onnx_descriptor(&manifest, set)?
         }
         _ => anyhow::bail!("unsupported model metadata schema"),
     };
@@ -820,6 +898,13 @@ impl EmbeddingModel {
             Self::Onnx(_) => &["model.json", "model.onnx", "tokenizer.json", "LICENSE"],
         }
     }
+    #[cfg(all(feature = "local-inference", feature = "test-support"))]
+    pub fn evaluation_inputs(&self, text: &str) -> Result<serde_json::Value> {
+        match self {
+            Self::Onnx(model) => model.evaluation_inputs(text),
+            _ => anyhow::bail!("native encoder input capture requires the actual ONNX adapter"),
+        }
+    }
     pub fn embed_text(&self, text: &str) -> Result<Option<Vec<f32>>> {
         match self {
             Self::Remote(model) => model.embed_text(text),
@@ -939,6 +1024,19 @@ enum DescriptorManifest<'a> {
 }
 
 fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingDescriptor> {
+    descriptor_for_platform(
+        source,
+        ONNX_RUNTIME,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    )
+}
+fn descriptor_for_platform(
+    source: DescriptorManifest<'_>,
+    onnx_runtime: &str,
+    arch: &str,
+    os: &str,
+) -> Result<EmbeddingDescriptor> {
     let (manifest, tokenizer, preprocessing, pooling, runtime, dimensions) = match source {
         DescriptorManifest::Word(manifest) => (
             serde_json::to_vec(manifest)?,
@@ -960,7 +1058,7 @@ fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingD
                 "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/int8-per-text-batch1/3",
             ))?,
             manifest.pooling.as_bytes().to_vec(),
-            ONNX_RUNTIME.as_bytes().to_vec(),
+            onnx_runtime.as_bytes().to_vec(),
             manifest.dimensions,
         ),
     };
@@ -980,11 +1078,7 @@ fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingD
         ),
         inference: framed_digest(
             b"airk-inference/1",
-            &[
-                &runtime,
-                std::env::consts::ARCH.as_bytes(),
-                std::env::consts::OS.as_bytes(),
-            ],
+            &[&runtime, arch.as_bytes(), os.as_bytes()],
         ),
         dimensions: dimensions as u32,
     };

@@ -221,6 +221,27 @@ fn canonical_split_reads_and_draft_have_no_job_quota_or_source_effects() -> Resu
         anyhow::bail!("draft response differs")
     };
     draft.validate()?;
+    let grouping = draft
+        .request
+        .grouping
+        .as_ref()
+        .context("split review omitted original-name grouping")?;
+    assert_eq!(draft.request.required_policy_contract, 4);
+    assert_eq!(grouping.original_scope.len(), 1);
+    assert_eq!(grouping.destination_scope.len(), 1);
+    assert_eq!(grouping.original_scope[0].kind, PathScope::Subtree);
+    assert_eq!(grouping.original_scope[0].path, "");
+    assert_eq!(grouping.destination_scope[0].kind, PathScope::Subtree);
+    assert_eq!(grouping.destination_scope[0].path, "");
+    if let Some(path) = std::env::var_os("AIRK_SPLIT_GROUPING_CASE_OUTPUT") {
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "draft": draft, "request_accepted": true,
+                "required_policy_contract": 4,
+            }))?,
+        )?;
+    }
     response(
         &mut fixture.registry,
         &fixture.control,
@@ -442,7 +463,7 @@ fn native_split_inheritance_is_compact_exact_and_saved_before_any_build() -> Res
         .extraction_policy
         .as_ref()
         .context("native draft dropped inherited profile")?;
-    assert_eq!(draft.request.required_policy_contract, 3);
+    assert_eq!(draft.request.required_policy_contract, 4);
     assert_eq!(
         reference.retained_profile,
         airk_core::retention::RetainedProfile::Lean

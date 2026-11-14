@@ -32,6 +32,12 @@ sha2.workspace = true
 # The I1 client is async (airk-ipc); one current-thread runtime per command.
 tokio.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [[bin]]
 name = "airkctl"
 path = "src/main.rs"

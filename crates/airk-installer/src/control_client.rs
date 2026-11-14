@@ -32,6 +32,16 @@ pub async fn request_for_version_and_instance(
 ) -> Result<ControlResponse> {
     request_scoped(root, method, version, Some(expected)).await
 }
+/// Native optional work is never replayed after an uncertain dispatch.
+pub async fn request_for_version_and_instance_once(
+    root: &Path,
+    method: ControlMethod,
+    version: &str,
+    expected: airk_core::identity::Incarnation,
+) -> Result<ControlResponse> {
+    crate::runtime_install::require_baseline_control(root)?;
+    request_once(root, method, version, Some(expected)).await
+}
 pub fn prebaseline_metadata_method(method: &ControlMethod) -> Result<bool> {
     let encoded = serde_json::to_value(method)?;
     let name = encoded

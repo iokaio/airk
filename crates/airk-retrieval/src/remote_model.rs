@@ -44,12 +44,12 @@ impl RemoteModel {
                 }
             }
             Some(2) => {
-                let (manifest, identity) = model::onnx_manifest(&bytes)?;
+                let (manifest, _) = model::onnx_manifest(&bytes)?;
                 ModelInfo {
-                    identity,
+                    identity: objects.legacy_identity.clone(),
                     name: manifest.name,
                     license: manifest.license,
-                    backend: model::ONNX_RUNTIME,
+                    backend: model::runtime_from_authenticated_onnx_descriptor(&descriptor)?,
                     dimensions: manifest.dimensions,
                     max_tokens: Some(manifest.max_tokens),
                     max_input_bytes: Some(model::MAX_INPUT_BYTES),

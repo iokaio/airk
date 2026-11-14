@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for agents and AIRK Workbench, with complete cited results. Requires AIRK Service, installed separately from https://airk.ioka.io/#downloads.",
-  "version": "1.8.35",
+  "version": "1.9.0",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -127,7 +127,7 @@
           {
             "id": "airk.installServiceStep",
             "title": "Install AIRK Service",
-            "description": "This extension needs the separately installed AIRK Service; installing the extension never installs it.\n[Download AIRK Service](command:airk.downloadService)\nThen confirm it with `airkctl service status` and [Check again](command:airk.checkAgain).",
+            "description": "This extension needs the separately installed AIRK Service; installing the extension never installs it.\n[Install AIRK Service](command:airk.downloadService)\nThen confirm it with `airkctl service status` and [Check again](command:airk.checkAgain).",
             "media": {
               "image": "images/index-to-context.png",
               "altText": "AIRK Service indexes saved files on this computer."
@@ -251,7 +251,7 @@
       },
       {
         "command": "airk.downloadService",
-        "title": "Download AIRK Service",
+        "title": "Install AIRK Service",
         "category": "AIRK"
       },
       {
@@ -422,7 +422,7 @@
   },
   "scripts": {
     "vscode:uninstall": "node ./out/uninstallHook.js",
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && tsc -p tsconfig.assistance.json && node scripts/build-explorer.cjs",
+    "compile": "tsc -p . && node scripts/build-bootstrap.cjs && tsc -p tsconfig.webview.json && tsc -p tsconfig.assistance.json && node scripts/build-explorer.cjs",
     "test": "npm run compile && node --test out/test/*.test.js",
     "test:status": "npm run compile && node --test out/test/airkctlDiscovery.test.js out/test/airkctlSession.test.js out/test/airkctlAgents.test.js"
   },
@@ -435,6 +435,10 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
-    "jsonc-parser": "3.3.1"
+    "@sigstore/bundle": "4.0.0",
+    "@sigstore/protobuf-specs": "0.5.0",
+    "@sigstore/verify": "3.1.1",
+    "jsonc-parser": "3.3.1",
+    "snappyjs": "0.7.0"
   }
 }

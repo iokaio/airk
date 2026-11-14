@@ -11,6 +11,21 @@ use ort::{
 #[cfg(target_os = "macos")]
 #[path = "onnx_macos.rs"]
 mod process_environment;
+#[cfg(target_os = "macos")]
+pub(crate) use process_environment::SessionLease as SessionEnvironmentLease;
+#[cfg(not(target_os = "macos"))]
+pub(crate) struct SessionEnvironmentLease;
+
+pub(crate) fn acquire_session_environment() -> Result<SessionEnvironmentLease> {
+    #[cfg(target_os = "macos")]
+    {
+        process_environment::SessionLease::acquire()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(SessionEnvironmentLease)
+    }
+}
 use std::{path::Path, sync::Mutex};
 use tokenizers::{Encoding, PostProcessor, Tokenizer, TruncationDirection};
 
@@ -21,6 +36,11 @@ struct EncodedInput {
     encoding: Encoding,
     input_tokens: usize,
     truncated: bool,
+}
+struct InputTensors {
+    ids: Vec<i64>,
+    mask: Vec<i64>,
+    types: Vec<i64>,
 }
 pub struct OnnxModel {
     pub(crate) manifest: OnnxManifest,
@@ -34,6 +54,10 @@ pub struct OnnxModel {
     _environment_user: process_environment::SessionLease,
     pad_id: u32,
     special_tokens: usize,
+    // Declared after Session: retain the actual private native owner through
+    // synchronous execution and real session teardown, even after scope exit.
+    #[cfg(feature = "test-support")]
+    _evaluation_lease: Option<std::sync::Arc<dyn Send + Sync>>,
 }
 
 fn shape_length(tokens: usize, maximum: usize) -> Result<usize> {
@@ -88,6 +112,13 @@ impl OnnxModel {
         crate::native_inference::require_service_compute()?;
         use airk_core::model_objects::ModelAssetName;
         let (manifest, identity) = model::onnx_manifest(manifest_bytes)?;
+        #[cfg(feature = "test-support")]
+        let evaluation_lease = crate::native_inference::evaluation_model_lease(manifest_bytes);
+        #[cfg(feature = "test-support")]
+        if evaluation_lease.is_none() {
+            crate::model_catalog::approved_manifest(&manifest)?;
+        }
+        #[cfg(not(feature = "test-support"))]
         crate::model_catalog::approved_manifest(&manifest)?;
         model::verified_source_asset(
             source,
@@ -226,6 +257,8 @@ impl OnnxModel {
             _environment_user: environment_user,
             pad_id,
             special_tokens,
+            #[cfg(feature = "test-support")]
+            _evaluation_lease: evaluation_lease,
         })
     }
 
@@ -288,6 +321,25 @@ impl OnnxModel {
         }))
     }
 
+    fn input_tensors(&self, input: &EncodedInput) -> Result<InputTensors> {
+        let length = shape_length(input.encoding.len(), self.manifest.max_tokens)?;
+        let mut ids = vec![i64::from(self.pad_id); length];
+        let mut mask = vec![0i64; length];
+        let mut types = vec![0i64; length];
+        for index in 0..input.encoding.len() {
+            ids[index] = i64::from(input.encoding.get_ids()[index]);
+            mask[index] = i64::from(input.encoding.get_attention_mask()[index]);
+            types[index] = i64::from(input.encoding.get_type_ids()[index]);
+        }
+        Ok(InputTensors { ids, mask, types })
+    }
+    #[cfg(feature = "test-support")]
+    pub(crate) fn evaluation_inputs(&self, text: &str) -> Result<serde_json::Value> {
+        crate::native_inference::require_service_compute()?;
+        let encoded = self.encode_input(text)?.context("blank evaluation input")?;
+        let InputTensors { ids, mask, types } = self.input_tensors(&encoded)?;
+        Ok(serde_json::json!({"input_ids":[ids],"attention_mask":[mask],"token_type_ids":[types]}))
+    }
     fn run_encoded(
         &self,
         input: &EncodedInput,
@@ -298,15 +350,8 @@ impl OnnxModel {
             memory_budget >= EXECUTION_RESERVE_BYTES,
             "INT8 execution exceeds working-memory budget"
         );
-        let length = shape_length(input.encoding.len(), self.manifest.max_tokens)?;
-        let mut ids = vec![i64::from(self.pad_id); length];
-        let mut mask = vec![0i64; length];
-        let mut types = vec![0i64; length];
-        for index in 0..input.encoding.len() {
-            ids[index] = i64::from(input.encoding.get_ids()[index]);
-            mask[index] = i64::from(input.encoding.get_attention_mask()[index]);
-            types[index] = i64::from(input.encoding.get_type_ids()[index]);
-        }
+        let InputTensors { ids, mask, types } = self.input_tensors(input)?;
+        let length = ids.len();
         let mut session = self
             .session
             .lock()
@@ -399,7 +444,7 @@ impl OnnxModel {
 
 /// Initialize the engine linked into the authenticated service image. No
 /// environment variable, ambient search path, or external ORT image is read.
-fn initialize_runtime() -> Result<()> {
+pub(crate) fn initialize_runtime() -> Result<()> {
     crate::native_inference::require_service_compute()?;
     static READY: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
     READY
@@ -415,8 +460,8 @@ fn initialize_runtime() -> Result<()> {
                     std::ffi::CStr::from_ptr(text).to_str()?
                 };
                 ensure!(
-                    version == "1.22.1",
-                    "linked INT8 runtime version differs from approved 1.22.1"
+                    version == model::ONNX_RUNTIME_VERSION,
+                    "linked INT8 runtime version differs from approved static runtime"
                 );
                 ensure!(
                     ort::init().with_name("AIRK INT8").commit()?,

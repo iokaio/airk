@@ -1,0 +1,2364 @@
+{
+  "cases": [
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"health\":{\"complete_history\":false,\"database_bytes\":0,\"deduplication_capacity\":0,\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"latest_retained_unix_ms\":null,\"not_useful_feedback\":0,\"partly_useful_feedback\":0,\"retained_days\":0,\"supplemental_duplicate_observations\":0,\"useful_feedback\":0},\"history\":[{\"baseline_unavailable\":{},\"calls\":0,\"clients\":{},\"comparisons\":{},\"content_kinds\":{},\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"eligible_evidence_calls\":0,\"end_unix_ms_exclusive\":86400000,\"estimated_bill_savings\":null,\"estimator_version\":\"utf8-byte-assumptions/1\",\"excluded_from_estimation_calls\":0,\"heuristic\":{\"maximum_bytes_per_token\":6,\"minimum_bytes_per_token\":2,\"nominal_bytes_per_token\":4},\"mismatched_baseline_calls\":0,\"missing_baseline_calls\":0,\"operations\":{},\"outside_scope_or_window\":0,\"provider_token_usage_observed\":false,\"schema_version\":1,\"scope\":{\"collection\":\"ui-pilot-fixture\",\"root_binding\":[17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17]},\"start_unix_ms\":0}],\"lifetime\":null,\"notice\":\"Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.\",\"physical_io_bytes\":null,\"policy\":{\"aggregate_retention_days\":30,\"diagnostic_retention_hours\":24,\"max_collection_bytes\":1048576,\"max_data_root_bytes\":33554432,\"mode\":\"aggregates_only\"},\"price_scenario\":null,\"process_cpu_us\":null,\"process_dropped_observations\":0,\"report\":{\"baseline_unavailable\":{},\"calls\":0,\"clients\":{},\"comparisons\":{},\"content_kinds\":{},\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"eligible_evidence_calls\":0,\"end_unix_ms_exclusive\":604800000,\"estimated_bill_savings\":null,\"estimator_version\":\"utf8-byte-assumptions/1\",\"excluded_from_estimation_calls\":0,\"heuristic\":{\"maximum_bytes_per_token\":6,\"minimum_bytes_per_token\":2,\"nominal_bytes_per_token\":4},\"mismatched_baseline_calls\":0,\"missing_baseline_calls\":0,\"operations\":{},\"outside_scope_or_window\":0,\"provider_token_usage_observed\":false,\"schema_version\":1,\"scope\":{\"collection\":\"ui-pilot-fixture\",\"root_binding\":[17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17]},\"start_unix_ms\":0},\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"status\":\"empty\",\"supplemental\":[]}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "usage.document",
+          "result": {
+            "document": {
+              "health": {
+                "complete_history": false,
+                "database_bytes": 0,
+                "deduplication_capacity": 0,
+                "dropped_observations": null,
+                "duplicate_observations": 0,
+                "earliest_retained_unix_ms": null,
+                "latest_retained_unix_ms": null,
+                "not_useful_feedback": 0,
+                "partly_useful_feedback": 0,
+                "retained_days": 0,
+                "supplemental_duplicate_observations": 0,
+                "useful_feedback": 0
+              },
+              "history": [
+                {
+                  "baseline_unavailable": {},
+                  "calls": 0,
+                  "clients": {},
+                  "comparisons": {},
+                  "content_kinds": {},
+                  "dropped_observations": null,
+                  "duplicate_observations": 0,
+                  "earliest_retained_unix_ms": null,
+                  "eligible_evidence_calls": 0,
+                  "end_unix_ms_exclusive": 86400000,
+                  "estimated_bill_savings": null,
+                  "estimator_version": "utf8-byte-assumptions/1",
+                  "excluded_from_estimation_calls": 0,
+                  "heuristic": {
+                    "maximum_bytes_per_token": 6,
+                    "minimum_bytes_per_token": 2,
+                    "nominal_bytes_per_token": 4
+                  },
+                  "mismatched_baseline_calls": 0,
+                  "missing_baseline_calls": 0,
+                  "operations": {},
+                  "outside_scope_or_window": 0,
+                  "provider_token_usage_observed": false,
+                  "schema_version": 1,
+                  "scope": {
+                    "collection": "ui-pilot-fixture",
+                    "root_binding": [
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17
+                    ]
+                  },
+                  "start_unix_ms": 0
+                }
+              ],
+              "lifetime": null,
+              "notice": "Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.",
+              "physical_io_bytes": null,
+              "policy": {
+                "aggregate_retention_days": 30,
+                "diagnostic_retention_hours": 24,
+                "max_collection_bytes": 1048576,
+                "max_data_root_bytes": 33554432,
+                "mode": "aggregates_only"
+              },
+              "price_scenario": null,
+              "process_cpu_us": null,
+              "process_dropped_observations": 0,
+              "report": {
+                "baseline_unavailable": {},
+                "calls": 0,
+                "clients": {},
+                "comparisons": {},
+                "content_kinds": {},
+                "dropped_observations": null,
+                "duplicate_observations": 0,
+                "earliest_retained_unix_ms": null,
+                "eligible_evidence_calls": 0,
+                "end_unix_ms_exclusive": 604800000,
+                "estimated_bill_savings": null,
+                "estimator_version": "utf8-byte-assumptions/1",
+                "excluded_from_estimation_calls": 0,
+                "heuristic": {
+                  "maximum_bytes_per_token": 6,
+                  "minimum_bytes_per_token": 2,
+                  "nominal_bytes_per_token": 4
+                },
+                "mismatched_baseline_calls": 0,
+                "missing_baseline_calls": 0,
+                "operations": {},
+                "outside_scope_or_window": 0,
+                "provider_token_usage_observed": false,
+                "schema_version": 1,
+                "scope": {
+                  "collection": "ui-pilot-fixture",
+                  "root_binding": [
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17
+                  ]
+                },
+                "start_unix_ms": 0
+              },
+              "resources": {
+                "counters": {},
+                "intervals": 0,
+                "overlapped_intervals": 0,
+                "peak_rss_bytes": null
+              },
+              "status": "empty",
+              "supplemental": []
+            },
+            "status": "usage_document"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "usage_empty",
+      "native_response": {
+        "document": {
+          "health": {
+            "complete_history": false,
+            "database_bytes": 0,
+            "deduplication_capacity": 0,
+            "dropped_observations": null,
+            "duplicate_observations": 0,
+            "earliest_retained_unix_ms": null,
+            "latest_retained_unix_ms": null,
+            "not_useful_feedback": 0,
+            "partly_useful_feedback": 0,
+            "retained_days": 0,
+            "supplemental_duplicate_observations": 0,
+            "useful_feedback": 0
+          },
+          "history": [
+            {
+              "baseline_unavailable": {},
+              "calls": 0,
+              "clients": {},
+              "comparisons": {},
+              "content_kinds": {},
+              "dropped_observations": null,
+              "duplicate_observations": 0,
+              "earliest_retained_unix_ms": null,
+              "eligible_evidence_calls": 0,
+              "end_unix_ms_exclusive": 86400000,
+              "estimated_bill_savings": null,
+              "estimator_version": "utf8-byte-assumptions/1",
+              "excluded_from_estimation_calls": 0,
+              "heuristic": {
+                "maximum_bytes_per_token": 6,
+                "minimum_bytes_per_token": 2,
+                "nominal_bytes_per_token": 4
+              },
+              "mismatched_baseline_calls": 0,
+              "missing_baseline_calls": 0,
+              "operations": {},
+              "outside_scope_or_window": 0,
+              "provider_token_usage_observed": false,
+              "schema_version": 1,
+              "scope": {
+                "collection": "ui-pilot-fixture",
+                "root_binding": [
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17
+                ]
+              },
+              "start_unix_ms": 0
+            }
+          ],
+          "lifetime": null,
+          "notice": "Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.",
+          "physical_io_bytes": null,
+          "policy": {
+            "aggregate_retention_days": 30,
+            "diagnostic_retention_hours": 24,
+            "max_collection_bytes": 1048576,
+            "max_data_root_bytes": 33554432,
+            "mode": "aggregates_only"
+          },
+          "price_scenario": null,
+          "process_cpu_us": null,
+          "process_dropped_observations": 0,
+          "report": {
+            "baseline_unavailable": {},
+            "calls": 0,
+            "clients": {},
+            "comparisons": {},
+            "content_kinds": {},
+            "dropped_observations": null,
+            "duplicate_observations": 0,
+            "earliest_retained_unix_ms": null,
+            "eligible_evidence_calls": 0,
+            "end_unix_ms_exclusive": 604800000,
+            "estimated_bill_savings": null,
+            "estimator_version": "utf8-byte-assumptions/1",
+            "excluded_from_estimation_calls": 0,
+            "heuristic": {
+              "maximum_bytes_per_token": 6,
+              "minimum_bytes_per_token": 2,
+              "nominal_bytes_per_token": 4
+            },
+            "mismatched_baseline_calls": 0,
+            "missing_baseline_calls": 0,
+            "operations": {},
+            "outside_scope_or_window": 0,
+            "provider_token_usage_observed": false,
+            "schema_version": 1,
+            "scope": {
+              "collection": "ui-pilot-fixture",
+              "root_binding": [
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17
+              ]
+            },
+            "start_unix_ms": 0
+          },
+          "resources": {
+            "counters": {},
+            "intervals": 0,
+            "overlapped_intervals": 0,
+            "peak_rss_bytes": null
+          },
+          "status": "empty",
+          "supplemental": []
+        },
+        "status": "usage_document"
+      },
+      "request": {
+        "admin_body": {
+          "usage_document": {
+            "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+            "read": {
+              "report": {
+                "days": 7,
+                "format": "json"
+              }
+            }
+          }
+        },
+        "admin_operation": "usage.document",
+        "cli_args": [
+          "usage",
+          "report",
+          "--days",
+          "7",
+          "--format",
+          "json",
+          "--service-project",
+          "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "usage"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"health\":{\"complete_history\":false,\"database_bytes\":0,\"deduplication_capacity\":0,\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"latest_retained_unix_ms\":null,\"not_useful_feedback\":0,\"partly_useful_feedback\":0,\"retained_days\":0,\"supplemental_duplicate_observations\":0,\"useful_feedback\":0},\"history\":[{\"baseline_unavailable\":{\"not_recorded\":1},\"calls\":1,\"clients\":{\"explorer\":1},\"comparisons\":{},\"content_kinds\":{\"code\":1},\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"eligible_evidence_calls\":1,\"end_unix_ms_exclusive\":86400000,\"estimated_bill_savings\":null,\"estimator_version\":\"utf8-byte-assumptions/1\",\"excluded_from_estimation_calls\":0,\"heuristic\":{\"maximum_bytes_per_token\":6,\"minimum_bytes_per_token\":2,\"nominal_bytes_per_token\":4},\"mismatched_baseline_calls\":0,\"missing_baseline_calls\":1,\"operations\":{\"search\":{\"cache_not_applicable\":0,\"calls\":1,\"cancelled\":0,\"capacity_limited\":0,\"cold_cache\":0,\"empty\":0,\"failed\":0,\"index_work\":{\"disk_growth_bytes\":\"0\",\"disk_growth_samples\":0,\"disk_samples\":0,\"indexed\":\"0\",\"measured_disk_bytes\":\"0\",\"metrics\":{},\"processed_source_bytes\":\"0\",\"publish_samples\":0,\"publish_us\":\"0\",\"removed\":\"0\",\"reused\":\"0\",\"scan_extract_samples\":0,\"scan_extract_us\":\"0\",\"skipped\":\"0\"},\"latency_buckets\":[1,0,0,0,0,0,0,0],\"measured_responses\":1,\"not_ready\":0,\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"returned_utf8_bytes\":\"1024\",\"successful\":1,\"total_elapsed_us\":\"300\",\"truncated\":0,\"unknown_cache\":0,\"warm_cache\":1}},\"outside_scope_or_window\":0,\"provider_token_usage_observed\":false,\"schema_version\":1,\"scope\":{\"collection\":\"ui-pilot-fixture\",\"root_binding\":[17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17]},\"start_unix_ms\":0}],\"lifetime\":null,\"notice\":\"Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.\",\"physical_io_bytes\":null,\"policy\":{\"aggregate_retention_days\":30,\"diagnostic_retention_hours\":24,\"max_collection_bytes\":1048576,\"max_data_root_bytes\":33554432,\"mode\":\"aggregates_only\"},\"price_scenario\":null,\"process_cpu_us\":null,\"process_dropped_observations\":0,\"report\":{\"baseline_unavailable\":{\"not_recorded\":1},\"calls\":1,\"clients\":{\"explorer\":1},\"comparisons\":{},\"content_kinds\":{\"code\":1},\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"eligible_evidence_calls\":1,\"end_unix_ms_exclusive\":604800000,\"estimated_bill_savings\":null,\"estimator_version\":\"utf8-byte-assumptions/1\",\"excluded_from_estimation_calls\":0,\"heuristic\":{\"maximum_bytes_per_token\":6,\"minimum_bytes_per_token\":2,\"nominal_bytes_per_token\":4},\"mismatched_baseline_calls\":0,\"missing_baseline_calls\":1,\"operations\":{\"search\":{\"cache_not_applicable\":0,\"calls\":1,\"cancelled\":0,\"capacity_limited\":0,\"cold_cache\":0,\"empty\":0,\"failed\":0,\"index_work\":{\"disk_growth_bytes\":\"0\",\"disk_growth_samples\":0,\"disk_samples\":0,\"indexed\":\"0\",\"measured_disk_bytes\":\"0\",\"metrics\":{},\"processed_source_bytes\":\"0\",\"publish_samples\":0,\"publish_us\":\"0\",\"removed\":\"0\",\"reused\":\"0\",\"scan_extract_samples\":0,\"scan_extract_us\":\"0\",\"skipped\":\"0\"},\"latency_buckets\":[1,0,0,0,0,0,0,0],\"measured_responses\":1,\"not_ready\":0,\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"returned_utf8_bytes\":\"1024\",\"successful\":1,\"total_elapsed_us\":\"300\",\"truncated\":0,\"unknown_cache\":0,\"warm_cache\":1}},\"outside_scope_or_window\":0,\"provider_token_usage_observed\":false,\"schema_version\":1,\"scope\":{\"collection\":\"ui-pilot-fixture\",\"root_binding\":[17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17]},\"start_unix_ms\":0},\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"status\":\"partial\",\"supplemental\":[]}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "usage.document",
+          "result": {
+            "document": {
+              "health": {
+                "complete_history": false,
+                "database_bytes": 0,
+                "deduplication_capacity": 0,
+                "dropped_observations": null,
+                "duplicate_observations": 0,
+                "earliest_retained_unix_ms": null,
+                "latest_retained_unix_ms": null,
+                "not_useful_feedback": 0,
+                "partly_useful_feedback": 0,
+                "retained_days": 0,
+                "supplemental_duplicate_observations": 0,
+                "useful_feedback": 0
+              },
+              "history": [
+                {
+                  "baseline_unavailable": {
+                    "not_recorded": 1
+                  },
+                  "calls": 1,
+                  "clients": {
+                    "explorer": 1
+                  },
+                  "comparisons": {},
+                  "content_kinds": {
+                    "code": 1
+                  },
+                  "dropped_observations": null,
+                  "duplicate_observations": 0,
+                  "earliest_retained_unix_ms": null,
+                  "eligible_evidence_calls": 1,
+                  "end_unix_ms_exclusive": 86400000,
+                  "estimated_bill_savings": null,
+                  "estimator_version": "utf8-byte-assumptions/1",
+                  "excluded_from_estimation_calls": 0,
+                  "heuristic": {
+                    "maximum_bytes_per_token": 6,
+                    "minimum_bytes_per_token": 2,
+                    "nominal_bytes_per_token": 4
+                  },
+                  "mismatched_baseline_calls": 0,
+                  "missing_baseline_calls": 1,
+                  "operations": {
+                    "search": {
+                      "cache_not_applicable": 0,
+                      "calls": 1,
+                      "cancelled": 0,
+                      "capacity_limited": 0,
+                      "cold_cache": 0,
+                      "empty": 0,
+                      "failed": 0,
+                      "index_work": {
+                        "disk_growth_bytes": "0",
+                        "disk_growth_samples": 0,
+                        "disk_samples": 0,
+                        "indexed": "0",
+                        "measured_disk_bytes": "0",
+                        "metrics": {},
+                        "processed_source_bytes": "0",
+                        "publish_samples": 0,
+                        "publish_us": "0",
+                        "removed": "0",
+                        "reused": "0",
+                        "scan_extract_samples": 0,
+                        "scan_extract_us": "0",
+                        "skipped": "0"
+                      },
+                      "latency_buckets": [
+                        1,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "measured_responses": 1,
+                      "not_ready": 0,
+                      "resources": {
+                        "counters": {},
+                        "intervals": 0,
+                        "overlapped_intervals": 0,
+                        "peak_rss_bytes": null
+                      },
+                      "returned_utf8_bytes": "1024",
+                      "successful": 1,
+                      "total_elapsed_us": "300",
+                      "truncated": 0,
+                      "unknown_cache": 0,
+                      "warm_cache": 1
+                    }
+                  },
+                  "outside_scope_or_window": 0,
+                  "provider_token_usage_observed": false,
+                  "schema_version": 1,
+                  "scope": {
+                    "collection": "ui-pilot-fixture",
+                    "root_binding": [
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17
+                    ]
+                  },
+                  "start_unix_ms": 0
+                }
+              ],
+              "lifetime": null,
+              "notice": "Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.",
+              "physical_io_bytes": null,
+              "policy": {
+                "aggregate_retention_days": 30,
+                "diagnostic_retention_hours": 24,
+                "max_collection_bytes": 1048576,
+                "max_data_root_bytes": 33554432,
+                "mode": "aggregates_only"
+              },
+              "price_scenario": null,
+              "process_cpu_us": null,
+              "process_dropped_observations": 0,
+              "report": {
+                "baseline_unavailable": {
+                  "not_recorded": 1
+                },
+                "calls": 1,
+                "clients": {
+                  "explorer": 1
+                },
+                "comparisons": {},
+                "content_kinds": {
+                  "code": 1
+                },
+                "dropped_observations": null,
+                "duplicate_observations": 0,
+                "earliest_retained_unix_ms": null,
+                "eligible_evidence_calls": 1,
+                "end_unix_ms_exclusive": 604800000,
+                "estimated_bill_savings": null,
+                "estimator_version": "utf8-byte-assumptions/1",
+                "excluded_from_estimation_calls": 0,
+                "heuristic": {
+                  "maximum_bytes_per_token": 6,
+                  "minimum_bytes_per_token": 2,
+                  "nominal_bytes_per_token": 4
+                },
+                "mismatched_baseline_calls": 0,
+                "missing_baseline_calls": 1,
+                "operations": {
+                  "search": {
+                    "cache_not_applicable": 0,
+                    "calls": 1,
+                    "cancelled": 0,
+                    "capacity_limited": 0,
+                    "cold_cache": 0,
+                    "empty": 0,
+                    "failed": 0,
+                    "index_work": {
+                      "disk_growth_bytes": "0",
+                      "disk_growth_samples": 0,
+                      "disk_samples": 0,
+                      "indexed": "0",
+                      "measured_disk_bytes": "0",
+                      "metrics": {},
+                      "processed_source_bytes": "0",
+                      "publish_samples": 0,
+                      "publish_us": "0",
+                      "removed": "0",
+                      "reused": "0",
+                      "scan_extract_samples": 0,
+                      "scan_extract_us": "0",
+                      "skipped": "0"
+                    },
+                    "latency_buckets": [
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "measured_responses": 1,
+                    "not_ready": 0,
+                    "resources": {
+                      "counters": {},
+                      "intervals": 0,
+                      "overlapped_intervals": 0,
+                      "peak_rss_bytes": null
+                    },
+                    "returned_utf8_bytes": "1024",
+                    "successful": 1,
+                    "total_elapsed_us": "300",
+                    "truncated": 0,
+                    "unknown_cache": 0,
+                    "warm_cache": 1
+                  }
+                },
+                "outside_scope_or_window": 0,
+                "provider_token_usage_observed": false,
+                "schema_version": 1,
+                "scope": {
+                  "collection": "ui-pilot-fixture",
+                  "root_binding": [
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17
+                  ]
+                },
+                "start_unix_ms": 0
+              },
+              "resources": {
+                "counters": {},
+                "intervals": 0,
+                "overlapped_intervals": 0,
+                "peak_rss_bytes": null
+              },
+              "status": "partial",
+              "supplemental": []
+            },
+            "status": "usage_document"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "usage_populated",
+      "native_response": {
+        "document": {
+          "health": {
+            "complete_history": false,
+            "database_bytes": 0,
+            "deduplication_capacity": 0,
+            "dropped_observations": null,
+            "duplicate_observations": 0,
+            "earliest_retained_unix_ms": null,
+            "latest_retained_unix_ms": null,
+            "not_useful_feedback": 0,
+            "partly_useful_feedback": 0,
+            "retained_days": 0,
+            "supplemental_duplicate_observations": 0,
+            "useful_feedback": 0
+          },
+          "history": [
+            {
+              "baseline_unavailable": {
+                "not_recorded": 1
+              },
+              "calls": 1,
+              "clients": {
+                "explorer": 1
+              },
+              "comparisons": {},
+              "content_kinds": {
+                "code": 1
+              },
+              "dropped_observations": null,
+              "duplicate_observations": 0,
+              "earliest_retained_unix_ms": null,
+              "eligible_evidence_calls": 1,
+              "end_unix_ms_exclusive": 86400000,
+              "estimated_bill_savings": null,
+              "estimator_version": "utf8-byte-assumptions/1",
+              "excluded_from_estimation_calls": 0,
+              "heuristic": {
+                "maximum_bytes_per_token": 6,
+                "minimum_bytes_per_token": 2,
+                "nominal_bytes_per_token": 4
+              },
+              "mismatched_baseline_calls": 0,
+              "missing_baseline_calls": 1,
+              "operations": {
+                "search": {
+                  "cache_not_applicable": 0,
+                  "calls": 1,
+                  "cancelled": 0,
+                  "capacity_limited": 0,
+                  "cold_cache": 0,
+                  "empty": 0,
+                  "failed": 0,
+                  "index_work": {
+                    "disk_growth_bytes": "0",
+                    "disk_growth_samples": 0,
+                    "disk_samples": 0,
+                    "indexed": "0",
+                    "measured_disk_bytes": "0",
+                    "metrics": {},
+                    "processed_source_bytes": "0",
+                    "publish_samples": 0,
+                    "publish_us": "0",
+                    "removed": "0",
+                    "reused": "0",
+                    "scan_extract_samples": 0,
+                    "scan_extract_us": "0",
+                    "skipped": "0"
+                  },
+                  "latency_buckets": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "measured_responses": 1,
+                  "not_ready": 0,
+                  "resources": {
+                    "counters": {},
+                    "intervals": 0,
+                    "overlapped_intervals": 0,
+                    "peak_rss_bytes": null
+                  },
+                  "returned_utf8_bytes": "1024",
+                  "successful": 1,
+                  "total_elapsed_us": "300",
+                  "truncated": 0,
+                  "unknown_cache": 0,
+                  "warm_cache": 1
+                }
+              },
+              "outside_scope_or_window": 0,
+              "provider_token_usage_observed": false,
+              "schema_version": 1,
+              "scope": {
+                "collection": "ui-pilot-fixture",
+                "root_binding": [
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17
+                ]
+              },
+              "start_unix_ms": 0
+            }
+          ],
+          "lifetime": null,
+          "notice": "Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.",
+          "physical_io_bytes": null,
+          "policy": {
+            "aggregate_retention_days": 30,
+            "diagnostic_retention_hours": 24,
+            "max_collection_bytes": 1048576,
+            "max_data_root_bytes": 33554432,
+            "mode": "aggregates_only"
+          },
+          "price_scenario": null,
+          "process_cpu_us": null,
+          "process_dropped_observations": 0,
+          "report": {
+            "baseline_unavailable": {
+              "not_recorded": 1
+            },
+            "calls": 1,
+            "clients": {
+              "explorer": 1
+            },
+            "comparisons": {},
+            "content_kinds": {
+              "code": 1
+            },
+            "dropped_observations": null,
+            "duplicate_observations": 0,
+            "earliest_retained_unix_ms": null,
+            "eligible_evidence_calls": 1,
+            "end_unix_ms_exclusive": 604800000,
+            "estimated_bill_savings": null,
+            "estimator_version": "utf8-byte-assumptions/1",
+            "excluded_from_estimation_calls": 0,
+            "heuristic": {
+              "maximum_bytes_per_token": 6,
+              "minimum_bytes_per_token": 2,
+              "nominal_bytes_per_token": 4
+            },
+            "mismatched_baseline_calls": 0,
+            "missing_baseline_calls": 1,
+            "operations": {
+              "search": {
+                "cache_not_applicable": 0,
+                "calls": 1,
+                "cancelled": 0,
+                "capacity_limited": 0,
+                "cold_cache": 0,
+                "empty": 0,
+                "failed": 0,
+                "index_work": {
+                  "disk_growth_bytes": "0",
+                  "disk_growth_samples": 0,
+                  "disk_samples": 0,
+                  "indexed": "0",
+                  "measured_disk_bytes": "0",
+                  "metrics": {},
+                  "processed_source_bytes": "0",
+                  "publish_samples": 0,
+                  "publish_us": "0",
+                  "removed": "0",
+                  "reused": "0",
+                  "scan_extract_samples": 0,
+                  "scan_extract_us": "0",
+                  "skipped": "0"
+                },
+                "latency_buckets": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "measured_responses": 1,
+                "not_ready": 0,
+                "resources": {
+                  "counters": {},
+                  "intervals": 0,
+                  "overlapped_intervals": 0,
+                  "peak_rss_bytes": null
+                },
+                "returned_utf8_bytes": "1024",
+                "successful": 1,
+                "total_elapsed_us": "300",
+                "truncated": 0,
+                "unknown_cache": 0,
+                "warm_cache": 1
+              }
+            },
+            "outside_scope_or_window": 0,
+            "provider_token_usage_observed": false,
+            "schema_version": 1,
+            "scope": {
+              "collection": "ui-pilot-fixture",
+              "root_binding": [
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17
+              ]
+            },
+            "start_unix_ms": 0
+          },
+          "resources": {
+            "counters": {},
+            "intervals": 0,
+            "overlapped_intervals": 0,
+            "peak_rss_bytes": null
+          },
+          "status": "partial",
+          "supplemental": []
+        },
+        "status": "usage_document"
+      },
+      "request": {
+        "admin_body": {
+          "usage_document": {
+            "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+            "read": {
+              "report": {
+                "days": 7,
+                "format": "json"
+              }
+            }
+          }
+        },
+        "admin_operation": "usage.document",
+        "cli_args": [
+          "usage",
+          "report",
+          "--days",
+          "7",
+          "--format",
+          "json",
+          "--service-project",
+          "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "usage"
+    },
+    {
+      "i2": {
+        "exit_code": 1,
+        "stderr": "{\"airkctl_error\":1,\"class\":\"refused\",\"code\":\"operation_failed\",\"retryable\":false,\"message\":\"usage report days must be 1..30\"}\n",
+        "stdout": ""
+      },
+      "i3": {
+        "body": {
+          "error": {
+            "class": "refused",
+            "code": "usage_read_failed",
+            "native": {
+              "message": "usage report days must be 1..30",
+              "status": "usage_read_failed"
+            },
+            "retryable": false
+          },
+          "ok": false,
+          "schema": "airk-admin/1"
+        },
+        "status": 409
+      },
+      "name": "usage_days_31_refused",
+      "native_response": {
+        "message": "usage report days must be 1..30",
+        "status": "usage_read_failed"
+      },
+      "request": {
+        "admin_body": {
+          "usage_document": {
+            "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+            "read": {
+              "report": {
+                "days": 31,
+                "format": "json"
+              }
+            }
+          }
+        },
+        "admin_operation": "usage.document",
+        "cli_args": [
+          "usage",
+          "report",
+          "--days",
+          "31",
+          "--format",
+          "json",
+          "--service-project",
+          "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "usage"
+    },
+    {
+      "i2": {
+        "exit_code": 1,
+        "stderr": "{\"airkctl_error\":1,\"class\":\"refused\",\"code\":\"operation_failed\",\"retryable\":false,\"message\":\"native usage read unavailable\"}\n",
+        "stdout": "{\"error\":{\"code\":\"capacity_limited\",\"retry_after_ms\":125},\"future_native\":{\"retained\":true}}\n"
+      },
+      "i3": {
+        "body": {
+          "error": {
+            "class": "refused",
+            "code": "usage_read_failed",
+            "native": {
+              "message": "native usage read unavailable",
+              "native": {
+                "error": {
+                  "code": "capacity_limited",
+                  "retry_after_ms": 125
+                },
+                "future_native": {
+                  "retained": true
+                }
+              },
+              "status": "usage_read_failed"
+            },
+            "retryable": false
+          },
+          "ok": false,
+          "schema": "airk-admin/1"
+        },
+        "status": 409
+      },
+      "name": "usage_native_failure",
+      "native_response": {
+        "message": "native usage read unavailable",
+        "native": {
+          "error": {
+            "code": "capacity_limited",
+            "retry_after_ms": 125
+          },
+          "future_native": {
+            "retained": true
+          }
+        },
+        "status": "usage_read_failed"
+      },
+      "request": {
+        "admin_body": {
+          "usage_document": {
+            "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+            "read": {
+              "report": {
+                "days": 7,
+                "format": "json"
+              }
+            }
+          }
+        },
+        "admin_operation": "usage.document",
+        "cli_args": [
+          "usage",
+          "report",
+          "--days",
+          "7",
+          "--format",
+          "json",
+          "--service-project",
+          "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "usage"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"future_native\":{\"opaque\":[\"retained\",{\"supported\":true}]},\"health\":{\"complete_history\":false,\"database_bytes\":0,\"deduplication_capacity\":0,\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"latest_retained_unix_ms\":null,\"not_useful_feedback\":0,\"partly_useful_feedback\":0,\"retained_days\":0,\"supplemental_duplicate_observations\":0,\"useful_feedback\":0},\"history\":[{\"baseline_unavailable\":{\"not_recorded\":1},\"calls\":1,\"clients\":{\"explorer\":1},\"comparisons\":{},\"content_kinds\":{\"code\":1},\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"eligible_evidence_calls\":1,\"end_unix_ms_exclusive\":86400000,\"estimated_bill_savings\":null,\"estimator_version\":\"utf8-byte-assumptions/1\",\"excluded_from_estimation_calls\":0,\"heuristic\":{\"maximum_bytes_per_token\":6,\"minimum_bytes_per_token\":2,\"nominal_bytes_per_token\":4},\"mismatched_baseline_calls\":0,\"missing_baseline_calls\":1,\"operations\":{\"search\":{\"cache_not_applicable\":0,\"calls\":1,\"cancelled\":0,\"capacity_limited\":0,\"cold_cache\":0,\"empty\":0,\"failed\":0,\"index_work\":{\"disk_growth_bytes\":\"0\",\"disk_growth_samples\":0,\"disk_samples\":0,\"indexed\":\"0\",\"measured_disk_bytes\":\"0\",\"metrics\":{},\"processed_source_bytes\":\"0\",\"publish_samples\":0,\"publish_us\":\"0\",\"removed\":\"0\",\"reused\":\"0\",\"scan_extract_samples\":0,\"scan_extract_us\":\"0\",\"skipped\":\"0\"},\"latency_buckets\":[1,0,0,0,0,0,0,0],\"measured_responses\":1,\"not_ready\":0,\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"returned_utf8_bytes\":\"1024\",\"successful\":1,\"total_elapsed_us\":\"300\",\"truncated\":0,\"unknown_cache\":0,\"warm_cache\":1}},\"outside_scope_or_window\":0,\"provider_token_usage_observed\":false,\"schema_version\":1,\"scope\":{\"collection\":\"ui-pilot-fixture\",\"root_binding\":[17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17]},\"start_unix_ms\":0}],\"lifetime\":null,\"notice\":\"Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.\",\"physical_io_bytes\":null,\"policy\":{\"aggregate_retention_days\":30,\"diagnostic_retention_hours\":24,\"max_collection_bytes\":1048576,\"max_data_root_bytes\":33554432,\"mode\":\"aggregates_only\"},\"price_scenario\":null,\"process_cpu_us\":null,\"process_dropped_observations\":0,\"report\":{\"baseline_unavailable\":{\"not_recorded\":1},\"calls\":1,\"clients\":{\"explorer\":1},\"comparisons\":{},\"content_kinds\":{\"code\":1},\"dropped_observations\":null,\"duplicate_observations\":0,\"earliest_retained_unix_ms\":null,\"eligible_evidence_calls\":1,\"end_unix_ms_exclusive\":604800000,\"estimated_bill_savings\":null,\"estimator_version\":\"utf8-byte-assumptions/1\",\"excluded_from_estimation_calls\":0,\"heuristic\":{\"maximum_bytes_per_token\":6,\"minimum_bytes_per_token\":2,\"nominal_bytes_per_token\":4},\"mismatched_baseline_calls\":0,\"missing_baseline_calls\":1,\"operations\":{\"search\":{\"cache_not_applicable\":0,\"calls\":1,\"cancelled\":0,\"capacity_limited\":0,\"cold_cache\":0,\"empty\":0,\"failed\":0,\"index_work\":{\"disk_growth_bytes\":\"0\",\"disk_growth_samples\":0,\"disk_samples\":0,\"indexed\":\"0\",\"measured_disk_bytes\":\"0\",\"metrics\":{},\"processed_source_bytes\":\"0\",\"publish_samples\":0,\"publish_us\":\"0\",\"removed\":\"0\",\"reused\":\"0\",\"scan_extract_samples\":0,\"scan_extract_us\":\"0\",\"skipped\":\"0\"},\"latency_buckets\":[1,0,0,0,0,0,0,0],\"measured_responses\":1,\"not_ready\":0,\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"returned_utf8_bytes\":\"1024\",\"successful\":1,\"total_elapsed_us\":\"300\",\"truncated\":0,\"unknown_cache\":0,\"warm_cache\":1}},\"outside_scope_or_window\":0,\"provider_token_usage_observed\":false,\"schema_version\":1,\"scope\":{\"collection\":\"ui-pilot-fixture\",\"root_binding\":[17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17]},\"start_unix_ms\":0},\"resources\":{\"counters\":{},\"intervals\":0,\"overlapped_intervals\":0,\"peak_rss_bytes\":null},\"status\":\"partial\",\"supplemental\":[]}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "usage.document",
+          "result": {
+            "document": {
+              "future_native": {
+                "opaque": [
+                  "retained",
+                  {
+                    "supported": true
+                  }
+                ]
+              },
+              "health": {
+                "complete_history": false,
+                "database_bytes": 0,
+                "deduplication_capacity": 0,
+                "dropped_observations": null,
+                "duplicate_observations": 0,
+                "earliest_retained_unix_ms": null,
+                "latest_retained_unix_ms": null,
+                "not_useful_feedback": 0,
+                "partly_useful_feedback": 0,
+                "retained_days": 0,
+                "supplemental_duplicate_observations": 0,
+                "useful_feedback": 0
+              },
+              "history": [
+                {
+                  "baseline_unavailable": {
+                    "not_recorded": 1
+                  },
+                  "calls": 1,
+                  "clients": {
+                    "explorer": 1
+                  },
+                  "comparisons": {},
+                  "content_kinds": {
+                    "code": 1
+                  },
+                  "dropped_observations": null,
+                  "duplicate_observations": 0,
+                  "earliest_retained_unix_ms": null,
+                  "eligible_evidence_calls": 1,
+                  "end_unix_ms_exclusive": 86400000,
+                  "estimated_bill_savings": null,
+                  "estimator_version": "utf8-byte-assumptions/1",
+                  "excluded_from_estimation_calls": 0,
+                  "heuristic": {
+                    "maximum_bytes_per_token": 6,
+                    "minimum_bytes_per_token": 2,
+                    "nominal_bytes_per_token": 4
+                  },
+                  "mismatched_baseline_calls": 0,
+                  "missing_baseline_calls": 1,
+                  "operations": {
+                    "search": {
+                      "cache_not_applicable": 0,
+                      "calls": 1,
+                      "cancelled": 0,
+                      "capacity_limited": 0,
+                      "cold_cache": 0,
+                      "empty": 0,
+                      "failed": 0,
+                      "index_work": {
+                        "disk_growth_bytes": "0",
+                        "disk_growth_samples": 0,
+                        "disk_samples": 0,
+                        "indexed": "0",
+                        "measured_disk_bytes": "0",
+                        "metrics": {},
+                        "processed_source_bytes": "0",
+                        "publish_samples": 0,
+                        "publish_us": "0",
+                        "removed": "0",
+                        "reused": "0",
+                        "scan_extract_samples": 0,
+                        "scan_extract_us": "0",
+                        "skipped": "0"
+                      },
+                      "latency_buckets": [
+                        1,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "measured_responses": 1,
+                      "not_ready": 0,
+                      "resources": {
+                        "counters": {},
+                        "intervals": 0,
+                        "overlapped_intervals": 0,
+                        "peak_rss_bytes": null
+                      },
+                      "returned_utf8_bytes": "1024",
+                      "successful": 1,
+                      "total_elapsed_us": "300",
+                      "truncated": 0,
+                      "unknown_cache": 0,
+                      "warm_cache": 1
+                    }
+                  },
+                  "outside_scope_or_window": 0,
+                  "provider_token_usage_observed": false,
+                  "schema_version": 1,
+                  "scope": {
+                    "collection": "ui-pilot-fixture",
+                    "root_binding": [
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17,
+                      17
+                    ]
+                  },
+                  "start_unix_ms": 0
+                }
+              ],
+              "lifetime": null,
+              "notice": "Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.",
+              "physical_io_bytes": null,
+              "policy": {
+                "aggregate_retention_days": 30,
+                "diagnostic_retention_hours": 24,
+                "max_collection_bytes": 1048576,
+                "max_data_root_bytes": 33554432,
+                "mode": "aggregates_only"
+              },
+              "price_scenario": null,
+              "process_cpu_us": null,
+              "process_dropped_observations": 0,
+              "report": {
+                "baseline_unavailable": {
+                  "not_recorded": 1
+                },
+                "calls": 1,
+                "clients": {
+                  "explorer": 1
+                },
+                "comparisons": {},
+                "content_kinds": {
+                  "code": 1
+                },
+                "dropped_observations": null,
+                "duplicate_observations": 0,
+                "earliest_retained_unix_ms": null,
+                "eligible_evidence_calls": 1,
+                "end_unix_ms_exclusive": 604800000,
+                "estimated_bill_savings": null,
+                "estimator_version": "utf8-byte-assumptions/1",
+                "excluded_from_estimation_calls": 0,
+                "heuristic": {
+                  "maximum_bytes_per_token": 6,
+                  "minimum_bytes_per_token": 2,
+                  "nominal_bytes_per_token": 4
+                },
+                "mismatched_baseline_calls": 0,
+                "missing_baseline_calls": 1,
+                "operations": {
+                  "search": {
+                    "cache_not_applicable": 0,
+                    "calls": 1,
+                    "cancelled": 0,
+                    "capacity_limited": 0,
+                    "cold_cache": 0,
+                    "empty": 0,
+                    "failed": 0,
+                    "index_work": {
+                      "disk_growth_bytes": "0",
+                      "disk_growth_samples": 0,
+                      "disk_samples": 0,
+                      "indexed": "0",
+                      "measured_disk_bytes": "0",
+                      "metrics": {},
+                      "processed_source_bytes": "0",
+                      "publish_samples": 0,
+                      "publish_us": "0",
+                      "removed": "0",
+                      "reused": "0",
+                      "scan_extract_samples": 0,
+                      "scan_extract_us": "0",
+                      "skipped": "0"
+                    },
+                    "latency_buckets": [
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "measured_responses": 1,
+                    "not_ready": 0,
+                    "resources": {
+                      "counters": {},
+                      "intervals": 0,
+                      "overlapped_intervals": 0,
+                      "peak_rss_bytes": null
+                    },
+                    "returned_utf8_bytes": "1024",
+                    "successful": 1,
+                    "total_elapsed_us": "300",
+                    "truncated": 0,
+                    "unknown_cache": 0,
+                    "warm_cache": 1
+                  }
+                },
+                "outside_scope_or_window": 0,
+                "provider_token_usage_observed": false,
+                "schema_version": 1,
+                "scope": {
+                  "collection": "ui-pilot-fixture",
+                  "root_binding": [
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17,
+                    17
+                  ]
+                },
+                "start_unix_ms": 0
+              },
+              "resources": {
+                "counters": {},
+                "intervals": 0,
+                "overlapped_intervals": 0,
+                "peak_rss_bytes": null
+              },
+              "status": "partial",
+              "supplemental": []
+            },
+            "status": "usage_document"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "usage_unknown_fields",
+      "native_response": {
+        "document": {
+          "future_native": {
+            "opaque": [
+              "retained",
+              {
+                "supported": true
+              }
+            ]
+          },
+          "health": {
+            "complete_history": false,
+            "database_bytes": 0,
+            "deduplication_capacity": 0,
+            "dropped_observations": null,
+            "duplicate_observations": 0,
+            "earliest_retained_unix_ms": null,
+            "latest_retained_unix_ms": null,
+            "not_useful_feedback": 0,
+            "partly_useful_feedback": 0,
+            "retained_days": 0,
+            "supplemental_duplicate_observations": 0,
+            "useful_feedback": 0
+          },
+          "history": [
+            {
+              "baseline_unavailable": {
+                "not_recorded": 1
+              },
+              "calls": 1,
+              "clients": {
+                "explorer": 1
+              },
+              "comparisons": {},
+              "content_kinds": {
+                "code": 1
+              },
+              "dropped_observations": null,
+              "duplicate_observations": 0,
+              "earliest_retained_unix_ms": null,
+              "eligible_evidence_calls": 1,
+              "end_unix_ms_exclusive": 86400000,
+              "estimated_bill_savings": null,
+              "estimator_version": "utf8-byte-assumptions/1",
+              "excluded_from_estimation_calls": 0,
+              "heuristic": {
+                "maximum_bytes_per_token": 6,
+                "minimum_bytes_per_token": 2,
+                "nominal_bytes_per_token": 4
+              },
+              "mismatched_baseline_calls": 0,
+              "missing_baseline_calls": 1,
+              "operations": {
+                "search": {
+                  "cache_not_applicable": 0,
+                  "calls": 1,
+                  "cancelled": 0,
+                  "capacity_limited": 0,
+                  "cold_cache": 0,
+                  "empty": 0,
+                  "failed": 0,
+                  "index_work": {
+                    "disk_growth_bytes": "0",
+                    "disk_growth_samples": 0,
+                    "disk_samples": 0,
+                    "indexed": "0",
+                    "measured_disk_bytes": "0",
+                    "metrics": {},
+                    "processed_source_bytes": "0",
+                    "publish_samples": 0,
+                    "publish_us": "0",
+                    "removed": "0",
+                    "reused": "0",
+                    "scan_extract_samples": 0,
+                    "scan_extract_us": "0",
+                    "skipped": "0"
+                  },
+                  "latency_buckets": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "measured_responses": 1,
+                  "not_ready": 0,
+                  "resources": {
+                    "counters": {},
+                    "intervals": 0,
+                    "overlapped_intervals": 0,
+                    "peak_rss_bytes": null
+                  },
+                  "returned_utf8_bytes": "1024",
+                  "successful": 1,
+                  "total_elapsed_us": "300",
+                  "truncated": 0,
+                  "unknown_cache": 0,
+                  "warm_cache": 1
+                }
+              },
+              "outside_scope_or_window": 0,
+              "provider_token_usage_observed": false,
+              "schema_version": 1,
+              "scope": {
+                "collection": "ui-pilot-fixture",
+                "root_binding": [
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17,
+                  17
+                ]
+              },
+              "start_unix_ms": 0
+            }
+          ],
+          "lifetime": null,
+          "notice": "Deterministic native semantic fixture; resource and alternative-context measurements are unavailable.",
+          "physical_io_bytes": null,
+          "policy": {
+            "aggregate_retention_days": 30,
+            "diagnostic_retention_hours": 24,
+            "max_collection_bytes": 1048576,
+            "max_data_root_bytes": 33554432,
+            "mode": "aggregates_only"
+          },
+          "price_scenario": null,
+          "process_cpu_us": null,
+          "process_dropped_observations": 0,
+          "report": {
+            "baseline_unavailable": {
+              "not_recorded": 1
+            },
+            "calls": 1,
+            "clients": {
+              "explorer": 1
+            },
+            "comparisons": {},
+            "content_kinds": {
+              "code": 1
+            },
+            "dropped_observations": null,
+            "duplicate_observations": 0,
+            "earliest_retained_unix_ms": null,
+            "eligible_evidence_calls": 1,
+            "end_unix_ms_exclusive": 604800000,
+            "estimated_bill_savings": null,
+            "estimator_version": "utf8-byte-assumptions/1",
+            "excluded_from_estimation_calls": 0,
+            "heuristic": {
+              "maximum_bytes_per_token": 6,
+              "minimum_bytes_per_token": 2,
+              "nominal_bytes_per_token": 4
+            },
+            "mismatched_baseline_calls": 0,
+            "missing_baseline_calls": 1,
+            "operations": {
+              "search": {
+                "cache_not_applicable": 0,
+                "calls": 1,
+                "cancelled": 0,
+                "capacity_limited": 0,
+                "cold_cache": 0,
+                "empty": 0,
+                "failed": 0,
+                "index_work": {
+                  "disk_growth_bytes": "0",
+                  "disk_growth_samples": 0,
+                  "disk_samples": 0,
+                  "indexed": "0",
+                  "measured_disk_bytes": "0",
+                  "metrics": {},
+                  "processed_source_bytes": "0",
+                  "publish_samples": 0,
+                  "publish_us": "0",
+                  "removed": "0",
+                  "reused": "0",
+                  "scan_extract_samples": 0,
+                  "scan_extract_us": "0",
+                  "skipped": "0"
+                },
+                "latency_buckets": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "measured_responses": 1,
+                "not_ready": 0,
+                "resources": {
+                  "counters": {},
+                  "intervals": 0,
+                  "overlapped_intervals": 0,
+                  "peak_rss_bytes": null
+                },
+                "returned_utf8_bytes": "1024",
+                "successful": 1,
+                "total_elapsed_us": "300",
+                "truncated": 0,
+                "unknown_cache": 0,
+                "warm_cache": 1
+              }
+            },
+            "outside_scope_or_window": 0,
+            "provider_token_usage_observed": false,
+            "schema_version": 1,
+            "scope": {
+              "collection": "ui-pilot-fixture",
+              "root_binding": [
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17,
+                17
+              ]
+            },
+            "start_unix_ms": 0
+          },
+          "resources": {
+            "counters": {},
+            "intervals": 0,
+            "overlapped_intervals": 0,
+            "peak_rss_bytes": null
+          },
+          "status": "partial",
+          "supplemental": []
+        },
+        "status": "usage_document"
+      },
+      "request": {
+        "admin_body": {
+          "usage_document": {
+            "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+            "read": {
+              "report": {
+                "days": 7,
+                "format": "json"
+              }
+            }
+          }
+        },
+        "admin_operation": "usage.document",
+        "cli_args": [
+          "usage",
+          "report",
+          "--days",
+          "7",
+          "--format",
+          "json",
+          "--service-project",
+          "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "usage"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"cli_catalog_available\\\":true,\\\"command\\\":null,\\\"content\\\":\\\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\\\\\"service\\\\\\\" or tool=\\\\\\\"search\\\\\\\" for current guidance and actual schemas.\\\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\\\",\\\"end_line\\\":5,\\\"next_line\\\":null,\\\"schema\\\":1,\\\"source\\\":\\\"bundled_usage_guidance\\\",\\\"start_line\\\":1,\\\"title\\\":\\\"What AIRK does\\\",\\\"tool\\\":null,\\\"topic\\\":\\\"overview\\\",\\\"topics\\\":[{\\\"id\\\":\\\"workbench\\\",\\\"title\\\":\\\"Workbench and bounded evidence plans\\\"},{\\\"id\\\":\\\"about\\\",\\\"title\\\":\\\"About AIRK, Ioka and the community\\\"},{\\\"id\\\":\\\"explorer\\\",\\\"title\\\":\\\"Explorer UI and agent assistance\\\"},{\\\"id\\\":\\\"roles\\\",\\\"title\\\":\\\"Developer, Tester, Architect and Writer\\\"},{\\\"id\\\":\\\"indexing-choices\\\",\\\"title\\\":\\\"Indexing choices by purpose and source\\\"},{\\\"id\\\":\\\"job-management\\\",\\\"title\\\":\\\"CLI options for managing project work\\\"},{\\\"id\\\":\\\"index-health\\\",\\\"title\\\":\\\"Explaining workspace index health\\\"},{\\\"id\\\":\\\"overview\\\",\\\"title\\\":\\\"What AIRK does\\\"},{\\\"id\\\":\\\"topics\\\",\\\"title\\\":\\\"Help topic catalog\\\"},{\\\"id\\\":\\\"quickstart\\\",\\\"title\\\":\\\"Getting started\\\"},{\\\"id\\\":\\\"cli\\\",\\\"title\\\":\\\"CLI scope and invocation\\\"},{\\\"id\\\":\\\"commands\\\",\\\"title\\\":\\\"Public CLI command catalog\\\"},{\\\"id\\\":\\\"mcp\\\",\\\"title\\\":\\\"MCP connections and response modes\\\"},{\\\"id\\\":\\\"tools\\\",\\\"title\\\":\\\"MCP tool discovery and arguments\\\"},{\\\"id\\\":\\\"tool-selection\\\",\\\"title\\\":\\\"Choosing an evidence tool\\\"},{\\\"id\\\":\\\"search\\\",\\\"title\\\":\\\"Lexical, vector and hybrid search\\\"},{\\\"id\\\":\\\"indexing\\\",\\\"title\\\":\\\"Indexing jobs and phases\\\"},{\\\"id\\\":\\\"jobs\\\",\\\"title\\\":\\\"Ongoing jobs, queues and waits\\\"},{\\\"id\\\":\\\"freshness\\\",\\\"title\\\":\\\"Published state and source freshness\\\"},{\\\"id\\\":\\\"code\\\",\\\"title\\\":\\\"Code facts, references and relationships\\\"},{\\\"id\\\":\\\"documents\\\",\\\"title\\\":\\\"Document facts and original locations\\\"},{\\\"id\\\":\\\"formats\\\",\\\"title\\\":\\\"Supported formats and adapters\\\"},{\\\"id\\\":\\\"models\\\",\\\"title\\\":\\\"Offline models and inference\\\"},{\\\"id\\\":\\\"service\\\",\\\"title\\\":\\\"Native service and process ownership\\\"},{\\\"id\\\":\\\"resources\\\",\\\"title\\\":\\\"Memory, workers and resource policy\\\"},{\\\"id\\\":\\\"installation\\\",\\\"title\\\":\\\"Installation and terminal command\\\"},{\\\"id\\\":\\\"upgrades\\\",\\\"title\\\":\\\"Replacement, rollback and legacy transition\\\"},{\\\"id\\\":\\\"configuration\\\",\\\"title\\\":\\\"Project configuration and guard checks\\\"},{\\\"id\\\":\\\"storage\\\",\\\"title\\\":\\\"Index storage, isolation and quotas\\\"},{\\\"id\\\":\\\"maintenance\\\",\\\"title\\\":\\\"Repair, rebuild and deletion\\\"},{\\\"id\\\":\\\"agent-setup\\\",\\\"title\\\":\\\"Connecting a coding agent\\\"},{\\\"id\\\":\\\"request-recovery\\\",\\\"title\\\":\\\"Unknown outcomes and exact retries\\\"},{\\\"id\\\":\\\"troubleshooting\\\",\\\"title\\\":\\\"Diagnosing common symptoms\\\"},{\\\"id\\\":\\\"privacy\\\",\\\"title\\\":\\\"Privacy and read-only boundaries\\\"},{\\\"id\\\":\\\"limits\\\",\\\"title\\\":\\\"Budgets and interpretation limits\\\"},{\\\"id\\\":\\\"usage\\\",\\\"title\\\":\\\"Usage reports and savings estimates\\\"},{\\\"id\\\":\\\"versions\\\",\\\"title\\\":\\\"Versions, builds and runtime diagnostics\\\"},{\\\"id\\\":\\\"architecture\\\",\\\"title\\\":\\\"Components and data flow\\\"},{\\\"id\\\":\\\"workflows\\\",\\\"title\\\":\\\"Common user workflows\\\"},{\\\"id\\\":\\\"glossary\\\",\\\"title\\\":\\\"Terminology\\\"},{\\\"id\\\":\\\"portable\\\",\\\"title\\\":\\\"Portable setup, locations and removal\\\"},{\\\"id\\\":\\\"trust\\\",\\\"title\\\":\\\"Local TLS, browser sign-in and agent trust\\\"},{\\\"id\\\":\\\"arbiter\\\",\\\"title\\\":\\\"Optional Arbiter answers and model boundaries\\\"}],\\\"total_lines\\\":5,\\\"truncated\\\":false,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": false,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[{\"id\":\"workbench\",\"title\":\"Workbench and bounded evidence plans\"},{\"id\":\"about\",\"title\":\"About AIRK, Ioka and the community\"},{\"id\":\"explorer\",\"title\":\"Explorer UI and agent assistance\"},{\"id\":\"roles\",\"title\":\"Developer, Tester, Architect and Writer\"},{\"id\":\"indexing-choices\",\"title\":\"Indexing choices by purpose and source\"},{\"id\":\"job-management\",\"title\":\"CLI options for managing project work\"},{\"id\":\"index-health\",\"title\":\"Explaining workspace index health\"},{\"id\":\"overview\",\"title\":\"What AIRK does\"},{\"id\":\"topics\",\"title\":\"Help topic catalog\"},{\"id\":\"quickstart\",\"title\":\"Getting started\"},{\"id\":\"cli\",\"title\":\"CLI scope and invocation\"},{\"id\":\"commands\",\"title\":\"Public CLI command catalog\"},{\"id\":\"mcp\",\"title\":\"MCP connections and response modes\"},{\"id\":\"tools\",\"title\":\"MCP tool discovery and arguments\"},{\"id\":\"tool-selection\",\"title\":\"Choosing an evidence tool\"},{\"id\":\"search\",\"title\":\"Lexical, vector and hybrid search\"},{\"id\":\"indexing\",\"title\":\"Indexing jobs and phases\"},{\"id\":\"jobs\",\"title\":\"Ongoing jobs, queues and waits\"},{\"id\":\"freshness\",\"title\":\"Published state and source freshness\"},{\"id\":\"code\",\"title\":\"Code facts, references and relationships\"},{\"id\":\"documents\",\"title\":\"Document facts and original locations\"},{\"id\":\"formats\",\"title\":\"Supported formats and adapters\"},{\"id\":\"models\",\"title\":\"Offline models and inference\"},{\"id\":\"service\",\"title\":\"Native service and process ownership\"},{\"id\":\"resources\",\"title\":\"Memory, workers and resource policy\"},{\"id\":\"installation\",\"title\":\"Installation and terminal command\"},{\"id\":\"upgrades\",\"title\":\"Replacement, rollback and legacy transition\"},{\"id\":\"configuration\",\"title\":\"Project configuration and guard checks\"},{\"id\":\"storage\",\"title\":\"Index storage, isolation and quotas\"},{\"id\":\"maintenance\",\"title\":\"Repair, rebuild and deletion\"},{\"id\":\"agent-setup\",\"title\":\"Connecting a coding agent\"},{\"id\":\"request-recovery\",\"title\":\"Unknown outcomes and exact retries\"},{\"id\":\"troubleshooting\",\"title\":\"Diagnosing common symptoms\"},{\"id\":\"privacy\",\"title\":\"Privacy and read-only boundaries\"},{\"id\":\"limits\",\"title\":\"Budgets and interpretation limits\"},{\"id\":\"usage\",\"title\":\"Usage reports and savings estimates\"},{\"id\":\"versions\",\"title\":\"Versions, builds and runtime diagnostics\"},{\"id\":\"architecture\",\"title\":\"Components and data flow\"},{\"id\":\"workflows\",\"title\":\"Common user workflows\"},{\"id\":\"glossary\",\"title\":\"Terminology\"},{\"id\":\"portable\",\"title\":\"Portable setup, locations and removal\"},{\"id\":\"trust\",\"title\":\"Local TLS, browser sign-in and agent trust\"},{\"id\":\"arbiter\",\"title\":\"Optional Arbiter answers and model boundaries\"}],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": false,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_landing",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[{\"id\":\"workbench\",\"title\":\"Workbench and bounded evidence plans\"},{\"id\":\"about\",\"title\":\"About AIRK, Ioka and the community\"},{\"id\":\"explorer\",\"title\":\"Explorer UI and agent assistance\"},{\"id\":\"roles\",\"title\":\"Developer, Tester, Architect and Writer\"},{\"id\":\"indexing-choices\",\"title\":\"Indexing choices by purpose and source\"},{\"id\":\"job-management\",\"title\":\"CLI options for managing project work\"},{\"id\":\"index-health\",\"title\":\"Explaining workspace index health\"},{\"id\":\"overview\",\"title\":\"What AIRK does\"},{\"id\":\"topics\",\"title\":\"Help topic catalog\"},{\"id\":\"quickstart\",\"title\":\"Getting started\"},{\"id\":\"cli\",\"title\":\"CLI scope and invocation\"},{\"id\":\"commands\",\"title\":\"Public CLI command catalog\"},{\"id\":\"mcp\",\"title\":\"MCP connections and response modes\"},{\"id\":\"tools\",\"title\":\"MCP tool discovery and arguments\"},{\"id\":\"tool-selection\",\"title\":\"Choosing an evidence tool\"},{\"id\":\"search\",\"title\":\"Lexical, vector and hybrid search\"},{\"id\":\"indexing\",\"title\":\"Indexing jobs and phases\"},{\"id\":\"jobs\",\"title\":\"Ongoing jobs, queues and waits\"},{\"id\":\"freshness\",\"title\":\"Published state and source freshness\"},{\"id\":\"code\",\"title\":\"Code facts, references and relationships\"},{\"id\":\"documents\",\"title\":\"Document facts and original locations\"},{\"id\":\"formats\",\"title\":\"Supported formats and adapters\"},{\"id\":\"models\",\"title\":\"Offline models and inference\"},{\"id\":\"service\",\"title\":\"Native service and process ownership\"},{\"id\":\"resources\",\"title\":\"Memory, workers and resource policy\"},{\"id\":\"installation\",\"title\":\"Installation and terminal command\"},{\"id\":\"upgrades\",\"title\":\"Replacement, rollback and legacy transition\"},{\"id\":\"configuration\",\"title\":\"Project configuration and guard checks\"},{\"id\":\"storage\",\"title\":\"Index storage, isolation and quotas\"},{\"id\":\"maintenance\",\"title\":\"Repair, rebuild and deletion\"},{\"id\":\"agent-setup\",\"title\":\"Connecting a coding agent\"},{\"id\":\"request-recovery\",\"title\":\"Unknown outcomes and exact retries\"},{\"id\":\"troubleshooting\",\"title\":\"Diagnosing common symptoms\"},{\"id\":\"privacy\",\"title\":\"Privacy and read-only boundaries\"},{\"id\":\"limits\",\"title\":\"Budgets and interpretation limits\"},{\"id\":\"usage\",\"title\":\"Usage reports and savings estimates\"},{\"id\":\"versions\",\"title\":\"Versions, builds and runtime diagnostics\"},{\"id\":\"architecture\",\"title\":\"Components and data flow\"},{\"id\":\"workflows\",\"title\":\"Common user workflows\"},{\"id\":\"glossary\",\"title\":\"Terminology\"},{\"id\":\"portable\",\"title\":\"Portable setup, locations and removal\"},{\"id\":\"trust\",\"title\":\"Local TLS, browser sign-in and agent trust\"},{\"id\":\"arbiter\",\"title\":\"Optional Arbiter answers and model boundaries\"}],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"cli_catalog_available\\\":true,\\\"command\\\":null,\\\"content\\\":\\\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\\\\\"service\\\\\\\" or tool=\\\\\\\"search\\\\\\\" for current guidance and actual schemas.\\\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\\\",\\\"end_line\\\":5,\\\"next_line\\\":null,\\\"schema\\\":1,\\\"source\\\":\\\"bundled_usage_guidance\\\",\\\"start_line\\\":1,\\\"title\\\":\\\"What AIRK does\\\",\\\"tool\\\":null,\\\"topic\\\":\\\"overview\\\",\\\"topics\\\":[],\\\"total_lines\\\":5,\\\"truncated\\\":false,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": false,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": false,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_topic",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"cli_catalog_available\\\":true,\\\"command\\\":null,\\\"content\\\":\\\"One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\\\\\"service\\\\\\\" or tool=\\\\\\\"search\\\\\\\" for current guidance and actual schemas.\\\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\\\",\\\"end_line\\\":5,\\\"next_line\\\":null,\\\"schema\\\":1,\\\"source\\\":\\\"bundled_usage_guidance\\\",\\\"start_line\\\":2,\\\"title\\\":\\\"What AIRK does\\\",\\\"tool\\\":null,\\\"topic\\\":\\\"overview\\\",\\\"topics\\\":[],\\\"total_lines\\\":5,\\\"truncated\\\":false,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": false,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":2,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": false,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_section",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":2,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 2,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":2,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "i2": {
+        "exit_code": 1,
+        "stderr": "{\"airkctl_error\":1,\"class\":\"refused\",\"code\":\"tool_failed\",\"retryable\":false,\"message\":\"AIRK help request failed\"}\n",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"error\\\":{\\\"code\\\":\\\"unknown_help_topic\\\"},\\\"guidance\\\":\\\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\\\",\\\"schema\\\":1,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": true,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"error\":{\"code\":\"unknown_help_topic\"},\"guidance\":\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\",\"schema\":1,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": true,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_unknown_topic",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"error\":{\"code\":\"unknown_help_topic\"},\"guidance\":\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\",\"schema\":1,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1,
+              "topic": "no-such-pilot-topic"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1,\"topic\":\"no-such-pilot-topic\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "i2": {
+        "exit_code": 1,
+        "stderr": "{\"airkctl_error\":1,\"class\":\"refused\",\"code\":\"tool_failed\",\"retryable\":false,\"message\":\"AIRK help request failed\"}\n",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"error\\\":{\\\"code\\\":\\\"help_start_line_out_of_range\\\"},\\\"guidance\\\":\\\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\\\",\\\"schema\\\":1,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": true,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"error\":{\"code\":\"help_start_line_out_of_range\"},\"guidance\":\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\",\"schema\":1,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": true,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_bad_line",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"error\":{\"code\":\"help_start_line_out_of_range\"},\"guidance\":\"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery.\",\"schema\":1,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 100000,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":100000,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"cli_catalog_available\\\":true,\\\"command\\\":null,\\\"content\\\":\\\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\\\\\"service\\\\\\\" or tool=\\\\\\\"search\\\\\\\" for current guidance and actual schemas.\\\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\\\",\\\"end_line\\\":5,\\\"next_line\\\":null,\\\"schema\\\":1,\\\"source\\\":\\\"bundled_usage_guidance\\\",\\\"start_line\\\":1,\\\"title\\\":\\\"What AIRK does\\\",\\\"tool\\\":null,\\\"topic\\\":\\\"overview\\\",\\\"topics\\\":[{\\\"id\\\":\\\"workbench\\\",\\\"title\\\":\\\"Workbench and bounded evidence plans\\\"},{\\\"id\\\":\\\"about\\\",\\\"title\\\":\\\"About AIRK, Ioka and the community\\\"},{\\\"id\\\":\\\"explorer\\\",\\\"title\\\":\\\"Explorer UI and agent assistance\\\"},{\\\"id\\\":\\\"roles\\\",\\\"title\\\":\\\"Developer, Tester, Architect and Writer\\\"},{\\\"id\\\":\\\"indexing-choices\\\",\\\"title\\\":\\\"Indexing choices by purpose and source\\\"},{\\\"id\\\":\\\"job-management\\\",\\\"title\\\":\\\"CLI options for managing project work\\\"},{\\\"id\\\":\\\"index-health\\\",\\\"title\\\":\\\"Explaining workspace index health\\\"},{\\\"id\\\":\\\"overview\\\",\\\"title\\\":\\\"What AIRK does\\\"},{\\\"id\\\":\\\"topics\\\",\\\"title\\\":\\\"Help topic catalog\\\"},{\\\"id\\\":\\\"quickstart\\\",\\\"title\\\":\\\"Getting started\\\"},{\\\"id\\\":\\\"cli\\\",\\\"title\\\":\\\"CLI scope and invocation\\\"},{\\\"id\\\":\\\"commands\\\",\\\"title\\\":\\\"Public CLI command catalog\\\"},{\\\"id\\\":\\\"mcp\\\",\\\"title\\\":\\\"MCP connections and response modes\\\"},{\\\"id\\\":\\\"tools\\\",\\\"title\\\":\\\"MCP tool discovery and arguments\\\"},{\\\"id\\\":\\\"tool-selection\\\",\\\"title\\\":\\\"Choosing an evidence tool\\\"},{\\\"id\\\":\\\"search\\\",\\\"title\\\":\\\"Lexical, vector and hybrid search\\\"},{\\\"id\\\":\\\"indexing\\\",\\\"title\\\":\\\"Indexing jobs and phases\\\"},{\\\"id\\\":\\\"jobs\\\",\\\"title\\\":\\\"Ongoing jobs, queues and waits\\\"},{\\\"id\\\":\\\"freshness\\\",\\\"title\\\":\\\"Published state and source freshness\\\"},{\\\"id\\\":\\\"code\\\",\\\"title\\\":\\\"Code facts, references and relationships\\\"},{\\\"id\\\":\\\"documents\\\",\\\"title\\\":\\\"Document facts and original locations\\\"},{\\\"id\\\":\\\"formats\\\",\\\"title\\\":\\\"Supported formats and adapters\\\"},{\\\"id\\\":\\\"models\\\",\\\"title\\\":\\\"Offline models and inference\\\"},{\\\"id\\\":\\\"service\\\",\\\"title\\\":\\\"Native service and process ownership\\\"},{\\\"id\\\":\\\"resources\\\",\\\"title\\\":\\\"Memory, workers and resource policy\\\"},{\\\"id\\\":\\\"installation\\\",\\\"title\\\":\\\"Installation and terminal command\\\"},{\\\"id\\\":\\\"upgrades\\\",\\\"title\\\":\\\"Replacement, rollback and legacy transition\\\"},{\\\"id\\\":\\\"configuration\\\",\\\"title\\\":\\\"Project configuration and guard checks\\\"},{\\\"id\\\":\\\"storage\\\",\\\"title\\\":\\\"Index storage, isolation and quotas\\\"},{\\\"id\\\":\\\"maintenance\\\",\\\"title\\\":\\\"Repair, rebuild and deletion\\\"},{\\\"id\\\":\\\"agent-setup\\\",\\\"title\\\":\\\"Connecting a coding agent\\\"},{\\\"id\\\":\\\"request-recovery\\\",\\\"title\\\":\\\"Unknown outcomes and exact retries\\\"},{\\\"id\\\":\\\"troubleshooting\\\",\\\"title\\\":\\\"Diagnosing common symptoms\\\"},{\\\"id\\\":\\\"privacy\\\",\\\"title\\\":\\\"Privacy and read-only boundaries\\\"},{\\\"id\\\":\\\"limits\\\",\\\"title\\\":\\\"Budgets and interpretation limits\\\"},{\\\"id\\\":\\\"usage\\\",\\\"title\\\":\\\"Usage reports and savings estimates\\\"},{\\\"id\\\":\\\"versions\\\",\\\"title\\\":\\\"Versions, builds and runtime diagnostics\\\"},{\\\"id\\\":\\\"architecture\\\",\\\"title\\\":\\\"Components and data flow\\\"},{\\\"id\\\":\\\"workflows\\\",\\\"title\\\":\\\"Common user workflows\\\"},{\\\"id\\\":\\\"glossary\\\",\\\"title\\\":\\\"Terminology\\\"},{\\\"id\\\":\\\"portable\\\",\\\"title\\\":\\\"Portable setup, locations and removal\\\"},{\\\"id\\\":\\\"trust\\\",\\\"title\\\":\\\"Local TLS, browser sign-in and agent trust\\\"},{\\\"id\\\":\\\"arbiter\\\",\\\"title\\\":\\\"Optional Arbiter answers and model boundaries\\\"}],\\\"total_lines\\\":5,\\\"truncated\\\":false,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": false,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[{\"id\":\"workbench\",\"title\":\"Workbench and bounded evidence plans\"},{\"id\":\"about\",\"title\":\"About AIRK, Ioka and the community\"},{\"id\":\"explorer\",\"title\":\"Explorer UI and agent assistance\"},{\"id\":\"roles\",\"title\":\"Developer, Tester, Architect and Writer\"},{\"id\":\"indexing-choices\",\"title\":\"Indexing choices by purpose and source\"},{\"id\":\"job-management\",\"title\":\"CLI options for managing project work\"},{\"id\":\"index-health\",\"title\":\"Explaining workspace index health\"},{\"id\":\"overview\",\"title\":\"What AIRK does\"},{\"id\":\"topics\",\"title\":\"Help topic catalog\"},{\"id\":\"quickstart\",\"title\":\"Getting started\"},{\"id\":\"cli\",\"title\":\"CLI scope and invocation\"},{\"id\":\"commands\",\"title\":\"Public CLI command catalog\"},{\"id\":\"mcp\",\"title\":\"MCP connections and response modes\"},{\"id\":\"tools\",\"title\":\"MCP tool discovery and arguments\"},{\"id\":\"tool-selection\",\"title\":\"Choosing an evidence tool\"},{\"id\":\"search\",\"title\":\"Lexical, vector and hybrid search\"},{\"id\":\"indexing\",\"title\":\"Indexing jobs and phases\"},{\"id\":\"jobs\",\"title\":\"Ongoing jobs, queues and waits\"},{\"id\":\"freshness\",\"title\":\"Published state and source freshness\"},{\"id\":\"code\",\"title\":\"Code facts, references and relationships\"},{\"id\":\"documents\",\"title\":\"Document facts and original locations\"},{\"id\":\"formats\",\"title\":\"Supported formats and adapters\"},{\"id\":\"models\",\"title\":\"Offline models and inference\"},{\"id\":\"service\",\"title\":\"Native service and process ownership\"},{\"id\":\"resources\",\"title\":\"Memory, workers and resource policy\"},{\"id\":\"installation\",\"title\":\"Installation and terminal command\"},{\"id\":\"upgrades\",\"title\":\"Replacement, rollback and legacy transition\"},{\"id\":\"configuration\",\"title\":\"Project configuration and guard checks\"},{\"id\":\"storage\",\"title\":\"Index storage, isolation and quotas\"},{\"id\":\"maintenance\",\"title\":\"Repair, rebuild and deletion\"},{\"id\":\"agent-setup\",\"title\":\"Connecting a coding agent\"},{\"id\":\"request-recovery\",\"title\":\"Unknown outcomes and exact retries\"},{\"id\":\"troubleshooting\",\"title\":\"Diagnosing common symptoms\"},{\"id\":\"privacy\",\"title\":\"Privacy and read-only boundaries\"},{\"id\":\"limits\",\"title\":\"Budgets and interpretation limits\"},{\"id\":\"usage\",\"title\":\"Usage reports and savings estimates\"},{\"id\":\"versions\",\"title\":\"Versions, builds and runtime diagnostics\"},{\"id\":\"architecture\",\"title\":\"Components and data flow\"},{\"id\":\"workflows\",\"title\":\"Common user workflows\"},{\"id\":\"glossary\",\"title\":\"Terminology\"},{\"id\":\"portable\",\"title\":\"Portable setup, locations and removal\"},{\"id\":\"trust\",\"title\":\"Local TLS, browser sign-in and agent trust\"},{\"id\":\"arbiter\",\"title\":\"Optional Arbiter answers and model boundaries\"}],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": false,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_no_project",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[{\"id\":\"workbench\",\"title\":\"Workbench and bounded evidence plans\"},{\"id\":\"about\",\"title\":\"About AIRK, Ioka and the community\"},{\"id\":\"explorer\",\"title\":\"Explorer UI and agent assistance\"},{\"id\":\"roles\",\"title\":\"Developer, Tester, Architect and Writer\"},{\"id\":\"indexing-choices\",\"title\":\"Indexing choices by purpose and source\"},{\"id\":\"job-management\",\"title\":\"CLI options for managing project work\"},{\"id\":\"index-health\",\"title\":\"Explaining workspace index health\"},{\"id\":\"overview\",\"title\":\"What AIRK does\"},{\"id\":\"topics\",\"title\":\"Help topic catalog\"},{\"id\":\"quickstart\",\"title\":\"Getting started\"},{\"id\":\"cli\",\"title\":\"CLI scope and invocation\"},{\"id\":\"commands\",\"title\":\"Public CLI command catalog\"},{\"id\":\"mcp\",\"title\":\"MCP connections and response modes\"},{\"id\":\"tools\",\"title\":\"MCP tool discovery and arguments\"},{\"id\":\"tool-selection\",\"title\":\"Choosing an evidence tool\"},{\"id\":\"search\",\"title\":\"Lexical, vector and hybrid search\"},{\"id\":\"indexing\",\"title\":\"Indexing jobs and phases\"},{\"id\":\"jobs\",\"title\":\"Ongoing jobs, queues and waits\"},{\"id\":\"freshness\",\"title\":\"Published state and source freshness\"},{\"id\":\"code\",\"title\":\"Code facts, references and relationships\"},{\"id\":\"documents\",\"title\":\"Document facts and original locations\"},{\"id\":\"formats\",\"title\":\"Supported formats and adapters\"},{\"id\":\"models\",\"title\":\"Offline models and inference\"},{\"id\":\"service\",\"title\":\"Native service and process ownership\"},{\"id\":\"resources\",\"title\":\"Memory, workers and resource policy\"},{\"id\":\"installation\",\"title\":\"Installation and terminal command\"},{\"id\":\"upgrades\",\"title\":\"Replacement, rollback and legacy transition\"},{\"id\":\"configuration\",\"title\":\"Project configuration and guard checks\"},{\"id\":\"storage\",\"title\":\"Index storage, isolation and quotas\"},{\"id\":\"maintenance\",\"title\":\"Repair, rebuild and deletion\"},{\"id\":\"agent-setup\",\"title\":\"Connecting a coding agent\"},{\"id\":\"request-recovery\",\"title\":\"Unknown outcomes and exact retries\"},{\"id\":\"troubleshooting\",\"title\":\"Diagnosing common symptoms\"},{\"id\":\"privacy\",\"title\":\"Privacy and read-only boundaries\"},{\"id\":\"limits\",\"title\":\"Budgets and interpretation limits\"},{\"id\":\"usage\",\"title\":\"Usage reports and savings estimates\"},{\"id\":\"versions\",\"title\":\"Versions, builds and runtime diagnostics\"},{\"id\":\"architecture\",\"title\":\"Components and data flow\"},{\"id\":\"workflows\",\"title\":\"Common user workflows\"},{\"id\":\"glossary\",\"title\":\"Terminology\"},{\"id\":\"portable\",\"title\":\"Portable setup, locations and removal\"},{\"id\":\"trust\",\"title\":\"Local TLS, browser sign-in and agent trust\"},{\"id\":\"arbiter\",\"title\":\"Optional Arbiter answers and model boundaries\"}],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    },
+    {
+      "i2": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"content\": [\n    {\n      \"text\": \"{\\\"cli_catalog_available\\\":true,\\\"command\\\":null,\\\"content\\\":\\\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\\\\\"service\\\\\\\" or tool=\\\\\\\"search\\\\\\\" for current guidance and actual schemas.\\\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\\\",\\\"end_line\\\":5,\\\"future_native\\\":{\\\"opaque\\\":[\\\"retained\\\",{\\\"supported\\\":true}],\\\"qualifier\\\":\\\"unknown fields survive\\\"},\\\"next_line\\\":null,\\\"schema\\\":1,\\\"source\\\":\\\"bundled_usage_guidance\\\",\\\"start_line\\\":1,\\\"title\\\":\\\"What AIRK does\\\",\\\"tool\\\":null,\\\"topic\\\":\\\"overview\\\",\\\"topics\\\":[],\\\"total_lines\\\":5,\\\"truncated\\\":false,\\\"version\\\":\\\"1.9.0\\\"}\",\n      \"type\": \"text\"\n    }\n  ],\n  \"isError\": false,\n  \"resultType\": \"complete\"\n}\n"
+      },
+      "i3": {
+        "body": {
+          "ok": true,
+          "operation": "search.call",
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"future_native\":{\"opaque\":[\"retained\",{\"supported\":true}],\"qualifier\":\"unknown fields survive\"},\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+                  "type": "text"
+                }
+              ],
+              "isError": false,
+              "resultType": "complete"
+            },
+            "status": "tool_result"
+          },
+          "schema": "airk-admin/1"
+        },
+        "status": 200
+      },
+      "name": "help_unknown_fields",
+      "native_response": {
+        "result": {
+          "content": [
+            {
+              "text": "{\"cli_catalog_available\":true,\"command\":null,\"content\":\"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\\\"service\\\" or tool=\\\"search\\\" for current guidance and actual schemas.\\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\\nBundled Help is not live configuration, source-freshness proof or platform qualification.\",\"end_line\":5,\"future_native\":{\"opaque\":[\"retained\",{\"supported\":true}],\"qualifier\":\"unknown fields survive\"},\"next_line\":null,\"schema\":1,\"source\":\"bundled_usage_guidance\",\"start_line\":1,\"title\":\"What AIRK does\",\"tool\":null,\"topic\":\"overview\",\"topics\":[],\"total_lines\":5,\"truncated\":false,\"version\":\"1.9.0\"}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "resultType": "complete"
+        },
+        "status": "tool_result"
+      },
+      "request": {
+        "admin_body": {
+          "tools_call": {
+            "arguments": {
+              "max_bytes": 32768,
+              "start_line": 1,
+              "topic": "overview"
+            },
+            "response_mode": "terse",
+            "selection": "unselected",
+            "tool": "airk_help",
+            "usage_client": "unknown"
+          }
+        },
+        "admin_operation": "search.call",
+        "cli_args": [
+          "tools",
+          "call",
+          "airk_help",
+          "--args",
+          "{\"max_bytes\":32768,\"start_line\":1,\"topic\":\"overview\"}",
+          "--output",
+          "json"
+        ]
+      },
+      "surface": "help"
+    }
+  ],
+  "qualification": "Actual I2 parser, unselected Help routing and output formatters; actual I3 handler with injected canonical packets. Not live IPC/HTTP or installed qualification.",
+  "request_refusals": [
+    {
+      "admin_body": {
+        "tools_call": {
+          "arguments": {
+            "max_bytes": 32768,
+            "start_line": 1
+          },
+          "caller": "pilot-forbidden-capability-sentinel",
+          "response_mode": "terse",
+          "selection": "unselected",
+          "tool": "airk_help",
+          "usage_client": "unknown"
+        }
+      },
+      "admin_operation": "search.call",
+      "body": {
+        "error": {
+          "class": "malformed",
+          "code": "admin_malformed_request",
+          "retryable": false
+        },
+        "ok": false,
+        "schema": "airk-admin/1"
+      },
+      "dispatched": 0,
+      "name": "help_caller_refused",
+      "status": 400
+    },
+    {
+      "admin_body": {
+        "tools_call": {
+          "arguments": {
+            "max_bytes": 32768,
+            "start_line": 1
+          },
+          "request_key": "pilot-forbidden-capability-sentinel",
+          "response_mode": "terse",
+          "selection": "unselected",
+          "tool": "airk_help",
+          "usage_client": "unknown"
+        }
+      },
+      "admin_operation": "search.call",
+      "body": {
+        "error": {
+          "class": "malformed",
+          "code": "admin_malformed_request",
+          "retryable": false
+        },
+        "ok": false,
+        "schema": "airk-admin/1"
+      },
+      "dispatched": 0,
+      "name": "help_request_key_refused",
+      "status": 400
+    },
+    {
+      "admin_body": {
+        "usage_document": {
+          "caller": "pilot-forbidden-capability-sentinel",
+          "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "read": {
+            "report": {
+              "days": 7,
+              "format": "json"
+            }
+          }
+        }
+      },
+      "admin_operation": "usage.document",
+      "body": {
+        "error": {
+          "class": "malformed",
+          "code": "admin_malformed_request",
+          "retryable": false
+        },
+        "ok": false,
+        "schema": "airk-admin/1"
+      },
+      "dispatched": 0,
+      "name": "usage_caller_refused",
+      "status": 400
+    },
+    {
+      "admin_body": {
+        "usage_document": {
+          "project": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+          "read": {
+            "report": {
+              "days": 7,
+              "format": "json"
+            }
+          },
+          "request_key": "pilot-forbidden-capability-sentinel"
+        }
+      },
+      "admin_operation": "usage.document",
+      "body": {
+        "error": {
+          "class": "malformed",
+          "code": "admin_malformed_request",
+          "retryable": false
+        },
+        "ok": false,
+        "schema": "airk-admin/1"
+      },
+      "dispatched": 0,
+      "name": "usage_request_key_refused",
+      "status": 400
+    },
+    {
+      "admin_body": {
+        "tools_call": {
+          "arguments": {
+            "max_bytes": 32768,
+            "start_line": 1
+          },
+          "response_mode": "terse",
+          "selection": {
+            "project": {
+              "binding": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b"
+            }
+          },
+          "tool": "airk_help",
+          "usage_client": "unknown"
+        }
+      },
+      "admin_operation": "search.call",
+      "body": {
+        "error": {
+          "class": "malformed",
+          "code": "admin_malformed_request",
+          "retryable": false
+        },
+        "ok": false,
+        "schema": "airk-admin/1"
+      },
+      "dispatched": 0,
+      "name": "help_project_selection_refused",
+      "status": 400
+    }
+  ],
+  "schema": "airk.split.ui-pilot.reads/1"
+}

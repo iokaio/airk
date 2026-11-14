@@ -10,7 +10,7 @@ use airk_core::{
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-fn authority(kernel: &Kernel) -> Result<airk_kernel::scoped_reads::ScopedReadAuthority> {
+pub(super) fn authority(kernel: &Kernel) -> Result<airk_kernel::scoped_reads::ScopedReadAuthority> {
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
     let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));

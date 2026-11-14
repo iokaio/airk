@@ -44,6 +44,7 @@ compatibility re-export.
 | `Layout`, its fields, `read`, `owner`, `claimed`, `claim` | The layout receipt. `claim` writes the state ownership receipt. |
 | `LAYOUT`, `OWNER`, `CLAIM`, `OWNER_PART`, `CONTROL_OWNER`, `CONTROL_PART`, `MAX_LAYOUT` | Receipt names and the 32 KiB metadata bound. |
 | `publish_new`, `preflight_layout`, `control_binding`, `require_control` | Shared with the staying initialization code. |
+| `publish_new_at(parent_file, parent_path, source_name, destination_name)` | No-replace publication of single-component children within a held directory. Unix addresses the original directory descriptor; Windows opens and retains nofollow ancestor name pins for the absolute parent and compares its native identity with the supplied handle before calling the existing MoveFileExW backend. |
 | `registry_binding::{PIN, PART}` | Registry pin receipt names. |
 | `successor_receipt::{Transition, read, receipt_name, successor_state, operation_for, require_private_union, MAX_PRESERVED_PATHS}` | The recovery receipt and its validation, shared with the staying successor writer. |
 
@@ -64,6 +65,14 @@ constants in new code.
 - **Exclusive publication.** New receipts are written to a `.part` file and
   published with a no-replace rename (`publish_new`). Only a validated
   predecessor pin is replaced.
+  The rooted publisher rejects traversal/multiple components (and Windows
+  alternate streams), never replaces an existing file or directory, and does
+  not infer ownership from a path. Windows is an explicitly pinned absolute
+  adapter, not a relative-handle rename. Unix rename/rebinding continues to
+  address the original object. Callers own payload/permission/identity checks,
+  source custody and the subsequent pinned directory `sync_all`; rename alone
+  makes no durability or deletion authorization claim. The original
+  `publish_new` keeps its path-based API and observable error strings.
 - **Error strings are observable.** They are kept byte-identical to the
   pre-S7.2 text.
 - No statics and no clock. Each call observes the filesystem and returns.

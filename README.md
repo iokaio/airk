@@ -1,5 +1,18 @@
 # AIRK: Local Search for Coding Agents
 
+**1.9.0 advanced split source candidate (14 November 2026).** Native and extension manifests and lockfiles are synchronized at 1.9.0. This is unpublished source; implementation, scoped checks, installed journeys and release qualification are distinct. The [current record](docs/releases/release-1.9.0.md), [active plan](docs/split/codex-plan.md) and [execution ledger](docs/simplify/one-process-ledger.md) retain exact results and remaining gates. Earlier packages keep their original versions and hashes.
+
+Install AIRK Service separately from the optional VS Code extension. The service works with `airkctl` and HTTPS agents without VS Code. A verified portable pair supports `airkctl service setup --portable --program <absolute runtime folder>`; interrupted setup resumes with `service setup --resume <absolute original private request>`. Standard installers support explicit silent operation; verification, native ownership and any required reset acknowledgement still apply. See [installation](docs/service-installation.md) and the generated [CLI reference](docs/cli-reference.md).
+
+Browser and editor share Overview, Search, Indexes, Activity, Agents, Service and Help. Editor evidence/review/strategy tools and Workbench remain available. Native Admin keeps credentials and request custody in the native owner; uncertain outcomes retain their original identity and never authorize automatic replay. Complete native evidence, provenance, continuations and errors remain available for inspection and export.
+
+Bundled MiniLM retrieval and optional Arbiter answers have separate roles. Arbiter is off by default and requires explicit immutable-index enrollment and a verified supported profile. Its implementation is not a claim of independent model, device, quality or platform qualification. `airkctl arbiter status` and actual tool schemas describe served capabilities. Product Help has one generated source catalog for the editor, browser and static site and remains available offline where bundled.
+
+<details>
+<summary>Historical source checkpoints and predecessor candidate notices</summary>
+
+These dated notices describe their original inputs and may name retired commands, layouts or setup behavior. They do not override the current split contract above.
+
 **Advanced split source checkpoint (13 November 2026).** P0 restores extracted
 component test ownership and the `airkctl` one-shot command stack. The first P1
 correction fences automatic scope switching/reselection and retains both
@@ -174,7 +187,7 @@ Validation and remaining client/platform gates are recorded in the working recor
 
 **MCP QA follow-up:** the working source preserves structured read failures, discloses unobserved filters and relationship limits, and aligns context inputs across interfaces. Terse capability replies summarize operation schemas; Full retains them. Validation results and remaining limits are recorded in the [QA evaluation](docs/reviews/mcp-qa-1.8.9.md).
 
-Opening a trusted folder does not register or index it. Use **Indexing > Index library** to create an index with reviewed sources, storage and watching. In **Search scope**, check the indexes or index sets to search and apply the selection. Evidence reads and source verification do not start indexing.
+Opening a trusted folder does not register or index it. Use **Indexes > Index library** to create an index with reviewed sources, storage and watching. In **Search scope**, check the indexes or index sets to search and apply the selection. Evidence reads and source verification do not start indexing.
 
 **Setup and uninstall:** Successful setup or reconnection clears obsolete failure warnings. Current setup failures remain visible, and uninstall removes empty shell startup files that AIRK created. See [setup and uninstall guidance](docs/vscode-extension.md) and the [branch review](docs/reviews/branch-v190-review-2026-11-06.md).
 
@@ -189,11 +202,13 @@ recovery has selected Windows native/process and Mac portable validation. Full
 workspace and final installer qualification remain separate; see the working-build
 record for current results and earlier failures.
 
+</details>
+
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
 AIRK builds a searchable local index of your project so you and your coding tools can retrieve relevant passages, definitions and document facts without loading entire files into every request. Use it with MCP clients such as Claude Code, Codex and GitHub Copilot, or work directly in VS Code with no coding agent required.
 
-**Configurable concurrent evidence requests.** Management → Service → **Concurrent requests…** selects **4, 8, 16, 32 or 64**, default **16**, with one additional status/control slot. MCP admission, independent native channels and project workers use the same setting. Changes apply to subsequent requests without restarting agents; accepted work drains when capacity decreases. Finite queues, source scope, revision identity and typed retry receipts remain authoritative.
+**Configurable concurrent evidence requests.** Service → **Concurrent requests…** selects **4, 8, 16, 32 or 64**, default **16**, with one additional status/control slot. MCP admission, independent native channels and project workers use the same setting. Changes apply to subsequent requests without restarting agents; accepted work drains when capacity decreases. Finite queues, source scope, revision identity and typed retry receipts remain authoritative.
 
 **Complete evidence across interfaces.** CLI and Workbench retain the MCP handlers' full results: provenance, readiness, coverage, continuations and retry details. Workbench exposes filters, exact/suffix/contains matching, count/file summaries and conditional/continuity inputs. **Complete response** and full JSON/Markdown exports retain the result even when cited cards are shown; selected-evidence exports identify their subset. Status and diagnostics report configured capacity, including inside completed plan steps. See the [1.8.7 behavior and validation](docs/releases/release-1.8.7.md).
 
@@ -201,7 +216,7 @@ AIRK builds a searchable local index of your project so you and your coding tool
 - **Inspect the evidence:** open cited sources, read surrounding context and keep source locations and indexed revisions with your results.
 - **Keep retrieval local:** indexing, lexical and semantic search run on your machine with bundled models. AIRK needs no cloud service or API key.
 
-**AIRK Workbench** puts direct evidence retrieval in VS Code’s secondary sidebar. Search, inspect sources, review an editable plan and copy cited results without opening an agent conversation. History, settings and new-session icons share a compact header; the **+** composer menu holds scope, recipes and tool forms. Workbench uses no generative AI; supported intent parsing and semantic search use local models.
+**AIRK Workbench** puts direct evidence retrieval in VS Code’s secondary sidebar. Search, inspect sources, review an editable plan and copy cited results without opening an agent conversation. History, settings and new-session icons share a compact header; the **+** composer menu holds scope, recipes and tool forms. Ordinary intent parsing and semantic search use local models. Optional Arbiter contextual answers require explicit configuration and per-index enrollment; unavailable or unqualified choices are reported rather than silently substituted.
 
 ![AIRK Workbench 1.8.7 with cited code and document evidence](docs/workbench/images/workbench-1.8.7-results.png)
 
@@ -217,8 +232,8 @@ AIRK builds a searchable local index of your project so you and your coding tool
 
 ## Try AIRK
 
-1. Install the platform extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=iokaio.airk), or use a local candidate VSIX when testing unreleased changes. The runtime and models are bundled; VS Code 1.140+ is required.
-2. **Create an index and choose what to search.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and create the index. In **Search scope**, check the indexes or index sets you want and apply the selection. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
+1. Install [AIRK Service](docs/service-installation.md), then optionally install the extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=iokaio.airk), or use an identified candidate VSIX when testing unreleased changes. The extension contains no service runtime; VS Code 1.140+ is required for the editor client.
+2. **Create an index and choose what to search.** Open a trusted folder, then use **Indexes > Index library** to review source, storage and watching choices and create the index. In **Search scope**, check the indexes or index sets you want and apply the selection. Opening a folder alone does not register or index it. Activity and index details show progress, readiness and skipped or failed work.
 3. Open **AIRK: Open Workbench** and run `/files`. Search for a term from your project, inspect a cited result and open its source. Workbench opens once automatically after successful setup.
 4. To use an agent, run **AIRK: Connect Coding Agent**, review its configuration and enable AIRK in that client. Verify access with a scoped request; configuration alone does not prove a live connection.
 
@@ -301,7 +316,7 @@ The current published stable release is **1.7.6** (see its [release record](docs
 
 Successful CLI installation removes obsolete extension-managed terminal executable copies and eligible approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. It preserves the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to resume the exact cleanup transaction. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 
-Trusted VSIX activation can install the approved native runtime and terminal integration; `airk.cli.autoInstall: false` disables automatic installation. Opening a folder does not create an index or grant evidence access. Use **Indexing > Index library** to review sources, storage and watching, then create the index. In **Search scope**, select the indexes or index sets to search and apply the selection. Saved watching, pause and manual-update preferences govern existing work; explicit Stop remains authoritative. Upgrade preserves existing saved evidence and settings rather than requesting a fresh reindex as migration proof. Agent connection is a separate scoped action. See [reviewed setup](docs/service-project-setup.md); earlier automatic-folder behavior remains in the dated release records.
+Trusted VSIX activation can install the approved native runtime and terminal integration; `airk.cli.autoInstall: false` disables automatic installation. Opening a folder does not create an index or grant evidence access. Use **Indexes > Index library** to review sources, storage and watching, then create the index. In **Search scope**, select the indexes or index sets to search and apply the selection. Saved watching, pause and manual-update preferences govern existing work; explicit Stop remains authoritative. Upgrade preserves existing saved evidence and settings rather than requesting a fresh reindex as migration proof. Agent connection is a separate scoped action. See [reviewed setup](docs/service-project-setup.md); earlier automatic-folder behavior remains in the dated release records.
 
 **1.5.0 AIRK Explorer and Explorer Assistance.** See the [release record](docs/releases/release-1.5.0.md). The previous **1.4.4 native service and storage recovery** is recorded in its [release record](docs/releases/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. Publication is controlled by protected-main CI and the release workflows. [Routine CI](docs/ci-and-builds.md) runs the full workspace on Linux, focused Windows/macOS regressions and all native/VSIX build and smoke gates; full platform and multi-project lifecycle qualification is opt-in.
 
@@ -316,11 +331,11 @@ AIRK indexes local code and documents and serves bounded, cited evidence to codi
 
 A per-user service owns authenticated HTTPS ingress, registration, durable work and resource policy. It is the only resident AIRK process: project owners, cleanup owners and the source watcher run inside it, and an owner that does not drain by its deadline is quarantined (its project reports a stuck owner and the other projects keep running) until an explicit service restart. Its asynchronous adapter routes canonical evidence reads to those in-process project owners; source scanning and inference do not execute in the serialized metadata actor. The service owns shared in-process inference with bounded admission and truthful completion barriers.
 
-The modern approved payload contains one native `airk` executable with embedded MiniLM assets and static CPU ONNX Runtime. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one window helper per VS Code window (`airkctl session` after the split), CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of 1.8.23 remains pending. Earlier runtime-pair evidence retains its original version and scope.
+The split native payload contains matching `airk` and `airkctl` images, model assets and required notices. The service owns bundled MiniLM and static CPU ONNX Runtime; the client is a separate executable. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one window helper per VS Code window (`airkctl session` after the split), CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of the 1.9.0 candidate remains separately recorded. Earlier runtime-pair evidence retains its original version and scope.
 
-The modern Mac layout keeps that one main image inside its GUI-less signed app bundle, with a macOS 13.3 deployment target and direct managed service startup. Static inference and model license notices remain in the distribution. See the [current signing contract](docs/native-signing.md) and [native installation](docs/service-installation.md). Signing, lifecycle and installed-platform qualification remain separate from portable ownership/package checks.
+The Mac layout keeps the service and matching client in its verified app payload, with a macOS 13.3 deployment target and direct managed service startup. Static inference and model license notices remain in the distribution. See the [current signing contract](docs/native-signing.md) and [native installation](docs/service-installation.md). Signing, lifecycle and installed-platform qualification remain separate from portable ownership/package checks.
 
-Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. In-process native owners handle indexing and source watching. Automatic watching explicitly continues after editor windows close. Login startup is registered on every installation and upgrade unless the user ran `runtime login uninstall`.
+Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. In-process native owners handle indexing and source watching. Automatic watching explicitly continues after editor windows close. Login startup is an explicit native installation/lifecycle choice on supported platforms. Portable setup registers neither login startup nor PATH; macOS login registration remains unavailable.
 
 ## Historical 1.4 namespace transition
 
@@ -348,7 +363,7 @@ Approved managed payloads can remain read-only. In 1.8.14, clients use HTTPS and
 
 ## Native CLI
 
-Install/select an independently approved single-image runtime using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The interactive CLI and direct manager use the approved main; MCP clients use HTTPS. `airk` is the service; `airkctl`, installed beside it, is the CLI. Run `airk` with no arguments to start the service. `airkctl` finds the installation from its install record; neither executable edits `PATH`. The installer is being reworked under the split plan (Phase 7). The commands below assume an already reviewed Index mapping; `init` does not create one from a folder. For guided first use, see [standalone onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code).
+Install/select an independently approved matching service/client payload using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The CLI uses the verified service control owner; MCP clients use HTTPS. `airk` is the service; `airkctl`, installed beside it, is the CLI. Run `airk` with no arguments to start the service. `airkctl` finds the installation from its install record; neither executable edits `PATH`. Portable setup uses `airkctl service setup --portable --program <absolute runtime folder>`; recovery uses `service setup --resume <absolute original private request>`. The commands below assume an already reviewed Index mapping; `init` does not create one from a folder. For guided first use, see [standalone onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code).
 
 ```console
 airk
@@ -376,9 +391,9 @@ Storage uses independent collection ownership, admitted publication/replacement 
 
 ## Development and records
 
-Developer references: [every MCP tool: purpose, contracts and examples](docs/mcp-developer-guide.md) and [every CLI command: behavior and implementation](docs/cli-developer-guide.md). Current CLI `tools list/help/call/shell` and public HTTPS share the 29-tool unified catalog; its 19 native evidence/help/plan/scope operations are a backend subset.
+Developer references: [every MCP tool: purpose, contracts and examples](docs/mcp-developer-guide.md) and [every CLI command: behavior and implementation](docs/cli-developer-guide.md). Current CLI `tools list/help/call/shell` and public HTTPS share the Rust-owned unified catalog. Read `airkctl tools list --json` for the actual complete schemas and supported operations.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). For scoped Clippy, persistent targets and timed local iteration, follow the [local Rust workflow](CONTRIBUTING.md#local-rust-iteration). The 1.8.14 runtime builder stages one host-native executable with embedded models and static inference dependencies; VSIX packaging is a separate step. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures. The unreleased [CI follow-up](docs/ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) separates builds from validation, reuses verified same-run payloads and adds bounded Darwin failure diagnostics; hosted performance and the Intel cold-client failure remain unqualified.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). For scoped Clippy, persistent targets and timed local iteration, follow the [local Rust workflow](CONTRIBUTING.md#local-rust-iteration). The runtime builder stages a matched host-native service/client pair with model assets and static inference dependencies; the universal UI-only VSIX is packaged separately. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures. The unreleased [CI follow-up](docs/ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) separates builds from validation, reuses verified same-run payloads and adds bounded Darwin failure diagnostics; hosted performance and the Intel cold-client failure remain unqualified.
 
 [Semantic index optimization](docs/semantic-index-optimization.md) explains the
 1.6.0 switch to two bundled INT8 MiniLM exports: lower helper memory and CPU cost,

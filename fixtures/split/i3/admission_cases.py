@@ -646,6 +646,7 @@ def operations():
         ("catalog.policy_resume_receipt", "CatalogPolicyResumeReceipt", MGMT),
         # U103: usage and recent logs are basic status in the Explorer.
         ("usage.document", "UsageDocument", ALL4),
+        ("arbiter.status", "Arbiter.Status", MGMT),
         ("jobs.get", "Job", ALL4), ("requests.list", "ClientRequestList", MGMT),
         ("requests.receipt", "RequestReceipt", MGMT), ("recovery.plan", "Plan", MGMT),
         ("recovery.plan_items", "PlanItems", MGMT), ("storage.inventory", "StorageInventory", MGMT),
@@ -670,6 +671,8 @@ def operations():
         yield row(operation, method, "evidence", surfaces, "read", "read", read_e)
     yield row("search.select_scope", "AdminScopeGrant", "evidence", ["admin"], "mutation", "natural", natural)
     mutations = [
+        *[(f"arbiter.{operation}", f"Arbiter.{operation.title()}", MGMT, "mutation", "natural", natural)
+          for operation in ("configure", "provision", "cancel", "remove", "recover")],
         ("indexes.prepare_storage", "PrepareStorage", MGMT, "mutation", "natural", natural),
         ("indexes.register", "Register", MGMT, "mutation", "natural", natural),
         ("indexes.configure", "ConfigureProject", MGMT, "mutation", "request_key", keyed),
@@ -713,6 +716,8 @@ def operations():
 
 
 NEVER = [
+    {"item": "native_arbiter_scope", "methods": ["ArbiterApplication", "ArbiterNextRead"],
+     "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."},
     {"item": "bearer_credentials", "methods": [],
      "reason": "Bearer tokens and credential files never leave the owner plane."},
     {"item": "private_keys", "methods": [], "reason": "TLS leaf and issuer private keys."},

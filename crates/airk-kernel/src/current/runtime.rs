@@ -85,7 +85,7 @@ impl Kernel {
         let pending = crate::shared_models::semantic_upgrade_pending(
             &self.store,
             state.configuration.model.as_ref(),
-        );
+        )?;
         let freshness = self.changes_freshness();
         let health = if semantic.state == airk_core::readiness::SemanticState::Failed
             || discovery.state == airk_core::readiness::DiscoveryState::Failed
@@ -246,12 +246,12 @@ impl Kernel {
             lexical_backend: "sqlite-fts5-current",
             vector_backend: "microsoft-diskann-0.59.0/airk-current-provider",
             local_model_ready: c.model.is_some()
-                && !crate::shared_models::semantic_upgrade_pending(&self.store, c.model.as_ref()),
+                && !crate::shared_models::semantic_upgrade_pending(&self.store, c.model.as_ref())?,
             vectors_enabled: self.vectors_enabled()?,
             indexed_vectors: if crate::shared_models::semantic_upgrade_pending(
                 &self.store,
                 c.model.as_ref(),
-            ) {
+            )? {
                 0
             } else {
                 read.head().graph_head.live_nodes as usize

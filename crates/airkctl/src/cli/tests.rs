@@ -397,3 +397,48 @@ fn open_agent_arguments_are_checked_before_the_service() {
         assert_eq!(run_line(invalid).0, 2, "{invalid:?}");
     }
 }
+
+#[test]
+fn portable_recovery_parser_accepts_only_original_request_not_pid_or_location_overrides() {
+    assert!(
+        Cli::try_parse_from([
+            "airkctl",
+            "service",
+            "setup",
+            "--resume",
+            "/private/original.json"
+        ])
+        .is_ok()
+    );
+    for args in [
+        vec![
+            "airkctl",
+            "service",
+            "setup",
+            "--resume",
+            "/private/original.json",
+            "--pid",
+            "1234",
+        ],
+        vec![
+            "airkctl",
+            "service",
+            "setup",
+            "--resume",
+            "/private/original.json",
+            "--program",
+            "/other",
+        ],
+        vec![
+            "airkctl",
+            "service",
+            "setup",
+            "--resume",
+            "/private/original.json",
+            "--data",
+            "/other",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+}

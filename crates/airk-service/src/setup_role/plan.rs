@@ -7,8 +7,8 @@
 use airk_core::{
     identity::Sha256Digest,
     install_record::{
-        IndexDeletion, Locations, OperationKind, RECORD_FILE, SetupOperation, SetupOptions,
-        SetupPhase, SetupReceipt,
+        IndexDeletion, Locations, OperationKind, SetupOperation, SetupOptions, SetupPhase,
+        SetupReceipt,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,7 @@ use std::{
 /// beside the operation file).
 pub(crate) const INVENTORY_FILE: &str = "payload-inventory.json";
 /// The Windows installer's ownership receipt of its user `PATH` entry.
+#[cfg(test)]
 const PATH_RECEIPT: &str = "user-path-owner.txt";
 /// The macOS and Linux installers' ownership receipt of the `airkctl` link in
 /// `~/.local/bin` (§9.5), written beside the record after setup completes:
@@ -142,6 +143,9 @@ pub(crate) fn actions(
     if mode == Mode::Prepare {
         return Ok(list);
     }
+    if purges(kind, options) {
+        list.push(PurgeData);
+    }
     list.extend([VerifyPlacement, WriteRecord, WritePointer]);
     if options.login_startup {
         list.push(RegisterLogin);
@@ -151,6 +155,109 @@ pub(crate) fn actions(
     }
     list.extend([ApplyTrust, Close]);
     Ok(list)
+}
+
+/// Exact state contracts and release precedence are checked before drain.
+/// Unknown version spellings conservatively require the same explicit reset
+/// as a downgrade; they never gain preservation authority by string ordering.
+pub(crate) fn preserve_state(
+    existing_version: &str,
+    candidate_version: &str,
+    existing_state: &str,
+    candidate_state: &str,
+    acknowledged_reset: bool,
+    purge: bool,
+) -> Result<(), &'static str> {
+    if existing_state == candidate_state
+        && release_order(candidate_version, existing_version).is_some_and(|order| !order.is_lt())
+    {
+        return Ok(());
+    }
+    if acknowledged_reset && purge {
+        Ok(())
+    } else {
+        Err("state_reset_required")
+    }
+}
+
+fn release(version: &str) -> Option<([u64; 3], Option<&str>)> {
+    let (version, build) = version
+        .split_once('+')
+        .map_or((version, None), |(v, b)| (v, Some(b)));
+    let valid = |text: &str| {
+        !text.is_empty() && text.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+    };
+    if build.is_some_and(|build| !build.split('.').all(valid)) {
+        return None;
+    }
+    let (core, pre) = version
+        .split_once('-')
+        .map_or((version, None), |(v, p)| (v, Some(p)));
+    let number = |text: &str| {
+        if text.is_empty()
+            || (text.len() > 1 && text.starts_with('0'))
+            || !text.bytes().all(|c| c.is_ascii_digit())
+        {
+            None
+        } else {
+            text.parse::<u64>().ok()
+        }
+    };
+    let mut parts = core.split('.');
+    let core = [
+        number(parts.next()?)?,
+        number(parts.next()?)?,
+        number(parts.next()?)?,
+    ];
+    if parts.next().is_some()
+        || pre.is_some_and(|pre| {
+            !pre.split('.').all(|part| {
+                valid(part)
+                    && !(part.len() > 1
+                        && part.starts_with('0')
+                        && part.bytes().all(|c| c.is_ascii_digit()))
+            })
+        })
+    {
+        return None;
+    }
+    Some((core, pre))
+}
+
+fn release_order(left: &str, right: &str) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let (lc, lp) = release(left)?;
+    let (rc, rp) = release(right)?;
+    if lc != rc {
+        return Some(lc.cmp(&rc));
+    }
+    match (lp, rp) {
+        (None, None) => Some(Ordering::Equal),
+        (None, Some(_)) => Some(Ordering::Greater),
+        (Some(_), None) => Some(Ordering::Less),
+        (Some(left), Some(right)) => {
+            let mut left = left.split('.');
+            let mut right = right.split('.');
+            loop {
+                let (a, b) = match (left.next(), right.next()) {
+                    (None, None) => return Some(Ordering::Equal),
+                    (None, Some(_)) => return Some(Ordering::Less),
+                    (Some(_), None) => return Some(Ordering::Greater),
+                    (Some(a), Some(b)) => (a, b),
+                };
+                let numeric = |text: &str| text.bytes().all(|c| c.is_ascii_digit());
+                let order = match (numeric(a), numeric(b)) {
+                    (true, true) => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
+                    (true, false) => Ordering::Less,
+                    (false, true) => Ordering::Greater,
+                    (false, false) => a.cmp(b),
+                };
+                if !order.is_eq() {
+                    return Some(order);
+                }
+            }
+        }
+    }
 }
 
 /// Whether the recorded phases already satisfy `action`. The lock is taken
@@ -310,6 +417,7 @@ pub(crate) fn location_conflicts(
 /// payload inventory lists nor setup or the platform installer own (its
 /// uninstaller files, `PATH` receipt or `airkctl` link receipt). A chosen
 /// program folder holding any of them is not adopted (U50).
+#[cfg(test)]
 pub(crate) fn foreign_program_entries(
     entries: &[String],
     listed: &BTreeSet<String>,
@@ -331,7 +439,7 @@ pub(crate) fn foreign_program_entries(
         .filter(|entry| {
             !listed.contains(entry.as_str())
                 && entry.as_str() != INVENTORY_FILE
-                && entry.as_str() != RECORD_FILE
+                && entry.as_str() != airk_core::install_record::RECORD_FILE
                 && entry.as_str() != PATH_RECEIPT
                 && entry.as_str() != LINK_RECEIPT
                 && !uninstaller(entry)
@@ -342,15 +450,8 @@ pub(crate) fn foreign_program_entries(
 
 /// A program-relative `/`-separated path: no absolute path, no backslash, no
 /// empty, `.` or `..` component.
-pub(crate) fn relative_inside(relative: &str) -> bool {
-    !relative.is_empty()
-        && !relative.starts_with('/')
-        && !relative.contains('\\')
-        && !relative.contains(':')
-        && relative
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
-}
+#[cfg(test)]
+pub(crate) use airk_core::install_record::payload_inventory::relative_inside;
 
 /// `program` joined with a validated program-relative path, one native
 /// component at a time (so Windows paths never mix separators).
@@ -365,6 +466,19 @@ pub(crate) fn program_file(program: &Path, relative: &str) -> PathBuf {
 /// removes them; on Windows the Inno uninstaller does after setup returns.
 pub(crate) fn removes_program_files(host: Host) -> bool {
     host != Host::Windows
+}
+
+pub(crate) fn removes_owned_program(
+    host: Host,
+    installer: airk_core::install_record::Installer,
+) -> bool {
+    use airk_core::install_record::Installer;
+    match installer {
+        Installer::Portable => true,
+        Installer::Inno | Installer::Dmg | Installer::AppFirstLaunch | Installer::InstallSh => {
+            removes_program_files(host)
+        }
+    }
 }
 
 /// The link a link receipt owns, when the receipt is well formed and names
@@ -443,6 +557,7 @@ pub(crate) fn program_removal(listed: &BTreeSet<String>, own: &str) -> Vec<Strin
 
 /// The folders holding `files` (program-relative), deepest first; each is
 /// removed only when it is empty.
+#[cfg(any(windows, test))]
 pub(crate) fn program_folders(files: &[String]) -> Vec<String> {
     let mut folders = BTreeSet::new();
     for file in files {
@@ -461,4 +576,28 @@ pub(crate) fn program_folders(files: &[String]) -> Vec<String> {
             .then_with(|| left.cmp(right))
     });
     folders
+}
+
+pub(crate) fn cleanup_candidates(
+    inventory: &airk_core::install_record::payload_inventory::PayloadInventory,
+    record: &airk_core::install_record::InstallRecord,
+    inventory_sha: Sha256Digest,
+    full_proof: bool,
+) -> Vec<(String, Sha256Digest, Option<u64>)> {
+    if !full_proof {
+        return [&record.executables.airkctl, &record.executables.airk]
+            .into_iter()
+            .map(|image| (image.path.clone(), image.sha256, Some(image.bytes)))
+            .collect();
+    }
+    let listed = inventory.files.keys().cloned().collect();
+    program_removal(&listed, &inventory.executables.airk)
+        .into_iter()
+        .map(|name| {
+            let file = inventory.files.get(&name);
+            let sha = file.map_or(inventory_sha, |file| file.sha256);
+            let bytes = file.map(|file| file.bytes);
+            (name, sha, bytes)
+        })
+        .collect()
 }

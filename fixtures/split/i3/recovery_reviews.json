@@ -16,6 +16,7 @@
   ],
   "unknown_codes": [
     "service_request_outcome_unknown",
+    "admin_prepared_reply_unavailable",
     "catalog_apply_outcome_unknown",
     "catalog_index_setup_outcome_unknown",
     "catalog_split_apply_outcome_unknown",

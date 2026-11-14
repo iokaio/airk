@@ -230,7 +230,7 @@ pub(crate) fn search_current_read_with_filters(
         read.collection_state()?
             .as_ref()
             .and_then(|s| s.configuration.model.as_ref()),
-    );
+    )?;
     let discovery_readiness = super::progress::readiness(&read, store)?;
     let mode = if matches!(mode, CurrentSearchMode::Default) {
         use airk_core::readiness::{DefaultSearchPolicy, DiscoveryState, SemanticState};

@@ -8,7 +8,9 @@
 //! secrets, and constant fields, are written here by hand. Admission inputs
 //! and outcomes are server-side only and are not exported.
 use super::{
-    AdminCode, Envelope, ExchangeRequest, ExchangeResponse, OperationRow, ReviewedCall, StreamLine,
+    AcknowledgedMutationCall, AdminCode, Envelope, EventStreamRequest, ExchangeRequest,
+    ExchangeResponse, MutationPreparation, OperationRow, PreparedMutationCall, RecoverMutationCall,
+    ReviewedCall, StreamLine,
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings, json_schema};
 
@@ -53,8 +55,13 @@ pub fn document() -> serde_json::Value {
     root::<ExchangeRequest>(&mut generator, &mut roots);
     root::<ExchangeResponse>(&mut generator, &mut roots);
     root::<StreamLine>(&mut generator, &mut roots);
+    root::<EventStreamRequest>(&mut generator, &mut roots);
     root::<OperationRow>(&mut generator, &mut roots);
     root::<ReviewedCall>(&mut generator, &mut roots);
+    root::<MutationPreparation>(&mut generator, &mut roots);
+    root::<PreparedMutationCall>(&mut generator, &mut roots);
+    root::<RecoverMutationCall>(&mut generator, &mut roots);
+    root::<AcknowledgedMutationCall>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()

@@ -119,10 +119,58 @@ pub(super) fn names(method: &str, encoded: &Value) -> bool {
         Value::Object(object) if object.len() == 1 => match (object.get(&variant), action) {
             (Some(_), None) => true,
             (Some(inner), Some(action)) => {
-                inner.get("action").and_then(Value::as_str) == Some(snake(action).as_str())
+                if variant == "arbiter" {
+                    inner
+                        .get("request")
+                        .and_then(|request| request.get("operation"))
+                        .and_then(Value::as_str)
+                        == Some(snake(action).as_str())
+                } else {
+                    inner.get("action").and_then(Value::as_str) == Some(snake(action).as_str())
+                }
             }
             (None, _) => false,
         },
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod arbiter_tests {
+    use super::*;
+    #[test]
+    fn arbiter_rows_match_only_the_typed_nested_management_operation() {
+        for action in [
+            "Status",
+            "Configure",
+            "Provision",
+            "Cancel",
+            "Remove",
+            "Recover",
+        ] {
+            let body = serde_json::json!({"arbiter":{"request":{"operation":snake(action)}}});
+            assert!(names(&format!("Arbiter.{action}"), &body));
+            for other in [
+                "Status",
+                "Configure",
+                "Provision",
+                "Cancel",
+                "Remove",
+                "Recover",
+            ] {
+                assert_eq!(names(&format!("Arbiter.{other}"), &body), action == other);
+            }
+        }
+        assert!(!names(
+            "Arbiter.Status",
+            &serde_json::json!({"arbiter":{"action":"status"}})
+        ));
+        assert!(!names(
+            "Arbiter.Status",
+            &serde_json::json!({"arbiter_next_read":{}})
+        ));
+        let table = table().unwrap();
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_next_read":{}})));
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_application":{}})));
     }
 }

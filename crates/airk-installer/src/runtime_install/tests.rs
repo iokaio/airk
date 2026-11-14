@@ -313,6 +313,7 @@ fn fixture_with_layout(root: &Path, historical: bool) -> Result<String> {
         } else {
             String::new()
         },
+        split: None,
     };
     fs::write(root.join("airk-runtime.json"), serde_json::to_vec(&pair)?)?;
     let mut names = vec![
@@ -345,6 +346,42 @@ fn write_manifest(root: &Path, manifest: &InstallManifest) -> Result<String> {
     let bytes = serde_json::to_vec(manifest)?;
     fs::write(root.join("airk-install.json"), &bytes)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+/// Independent inert C7 schema-3 pair. Literal paths and interface versions
+/// are fixture inputs, not values generated from the reader under test.
+pub(super) fn split_pair_fixture(root: &Path) -> Result<String> {
+    fixture(root)?;
+    let cli = if cfg!(windows) {
+        "airkctl.exe"
+    } else if cfg!(target_os = "macos") {
+        "AIRK.app/Contents/MacOS/airkctl"
+    } else {
+        "airkctl"
+    };
+    fs::write(root.join(cli), b"Original inert split CLI fixture.")?;
+    let pair = serde_json::json!({
+        "schema": 3,
+        "version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "airk_sha256": runtime_pair::digest_file(&root.join(main_name()))?,
+        "airkctl_sha256": runtime_pair::digest_file(&root.join(cli))?,
+        "i1_protocol": 1,
+        "i2_contract": 1,
+        "admin_inventory_sha256": "ab".repeat(32),
+    });
+    fs::write(root.join("airk-runtime.json"), serde_json::to_vec(&pair)?)?;
+    let mut manifest: InstallManifest =
+        serde_json::from_slice(&fs::read(root.join("airk-install.json"))?)?;
+    manifest
+        .files
+        .insert(cli.into(), runtime_pair::digest_file(&root.join(cli))?);
+    manifest.files.insert(
+        "airk-runtime.json".into(),
+        runtime_pair::digest_file(&root.join("airk-runtime.json"))?,
+    );
+    write_manifest(root, &manifest)
 }
 
 #[test]

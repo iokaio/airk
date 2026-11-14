@@ -3,7 +3,7 @@
 //! The ignore crate compiles/matches supplied lines, but opens no policy inputs.
 use crate::native_name_boundary::NativeNameBoundaryUnavailable;
 use airk_core::source_policy::SourcePolicy;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::{
     collections::BTreeMap,
@@ -126,7 +126,15 @@ impl ProtectedIgnore {
                 }
                 return Ok(None);
             }
-            Err(_) => return Err(refused("ignore_control_metadata")),
+            Err(error) => {
+                return Err(refused("ignore_control_metadata")).with_context(|| {
+                    format!(
+                        "ignore control metadata {}: {error} (native {:?})",
+                        path.display(),
+                        error.raw_os_error()
+                    )
+                });
+            }
         };
         ensure!(
             metadata.is_file() && !metadata.file_type().is_symlink(),
@@ -255,9 +263,14 @@ impl ProtectedIgnore {
                     controls.directory_qualified(&git)?;
                 }
                 ensure!(
-                    !git.join("commondir")
-                        .try_exists()
-                        .map_err(|_| refused("ignore_control_metadata"))?,
+                    !git.join("commondir").try_exists().map_err(|error| refused(
+                        "ignore_control_metadata"
+                    )
+                    .context(format!(
+                        "ignore commondir metadata {}: {error} (native {:?})",
+                        git.join("commondir").display(),
+                        error.raw_os_error()
+                    )))?,
                     refused("ignore_control_git_reference")
                 );
             }
@@ -266,7 +279,15 @@ impl ProtectedIgnore {
                     controls.absent_qualified(&git)?;
                 }
             }
-            Err(_) => return Err(refused("ignore_control_metadata")),
+            Err(error) => {
+                return Err(refused("ignore_control_metadata")).with_context(|| {
+                    format!(
+                        "ignore directory metadata {}: {error} (native {:?})",
+                        git.display(),
+                        error.raw_os_error()
+                    )
+                });
+            }
         }
         if let Some(controls) = self.controls.clone() {
             let commondir = git.join("commondir");
@@ -281,7 +302,7 @@ impl ProtectedIgnore {
             self.compile(path, &path.join(".airkignore"))?,
             self.compile(path, &path.join(".ignore"))?,
             self.compile(path, &path.join(".gitignore"))?,
-            self.compile(path, &git.join("info/exclude"))?,
+            self.compile(path, &git.join("info").join("exclude"))?,
         ];
         self.directories.insert(path.to_path_buf(), rules);
         Ok(())
@@ -346,7 +367,7 @@ impl ProtectedIgnore {
             candidates.push(home.join(".gitconfig"));
         }
         if let Some(xdg) = &xdg {
-            candidates.push(xdg.join("git/config"));
+            candidates.push(xdg.join("git").join("config"));
         }
         candidates.push(
             std::env::var_os("GIT_CONFIG_SYSTEM")
@@ -354,7 +375,7 @@ impl ProtectedIgnore {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/etc/gitconfig")),
         );
-        let fallback = xdg.map(|xdg| xdg.join("git/ignore"));
+        let fallback = xdg.map(|xdg| xdg.join("git").join("ignore"));
         self.global_rules_from(&base, &candidates, fallback.as_deref(), home.as_deref())
     }
 
@@ -461,6 +482,38 @@ mod tests {
             }],
         };
         Ok((owned, policy))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_verbatim_ignore_controls_use_native_components_and_preserve_source_bytes()
+    -> Result<()> {
+        let (_owned, policy) = fixture()?;
+        let root = Path::new(&policy.roots[0].canonical_path);
+        ensure!(
+            root.to_string_lossy().starts_with(r"\\?\"),
+            "fixture must exercise actual canonical Windows verbatim naming"
+        );
+        let info = root.join(".git").join("info");
+        fs::create_dir_all(&info)?;
+        let control = info.join("exclude");
+        let rules = b"excluded.md\n";
+        fs::write(&control, rules)?;
+        let source = root.join("excluded.md");
+        let bytes = b"original read-only source evidence\n";
+        fs::write(&source, bytes)?;
+        let mut selected = ProtectedIgnore::local(root, &policy)?;
+        assert!(matches!(
+            selected.decision(Path::new("excluded.md"), false)?,
+            Decision::Ignore
+        ));
+        assert!(matches!(
+            selected.decision(Path::new("eligible.md"), false)?,
+            Decision::None
+        ));
+        assert_eq!(fs::read(&source)?, bytes);
+        assert_eq!(fs::read(&control)?, rules);
+        Ok(())
     }
 
     #[test]

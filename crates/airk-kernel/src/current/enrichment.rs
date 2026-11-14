@@ -253,7 +253,7 @@ pub(super) fn readiness_with_state(
     state: &CollectionState,
     policy: DefaultSearchPolicy,
 ) -> Result<SemanticReadiness> {
-    if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref()) {
+    if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref())? {
         return Ok(SemanticReadiness {
             version: 1,
             state: SemanticState::Pending,

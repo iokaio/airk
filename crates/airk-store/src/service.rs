@@ -15,6 +15,8 @@ use std::{
 
 pub mod data_scope;
 
+pub mod arbiter;
+pub mod arbiter_assets;
 pub mod collection;
 pub mod embedded_model;
 #[cfg(test)]

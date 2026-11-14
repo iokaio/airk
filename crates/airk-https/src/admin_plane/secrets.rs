@@ -17,10 +17,14 @@ use airk_endpoint::admin_contract::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU8, Ordering},
+};
 use subtle::ConstantTimeEq;
 
 /// At most this many launch codes are outstanding; the oldest is evicted.
-pub(super) const MAX_LAUNCH_CODES: usize = 8;
+pub(super) const MAX_LAUNCH_CODES: usize = airk_endpoint::admin_contract::MAX_LAUNCH_CODES;
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -147,11 +151,39 @@ pub(super) struct Review {
 #[derive(Clone, Copy)]
 pub(super) enum ReviewPurpose {
     Pending,
+    Prepared,
+    Acknowledged(Option<&'static str>),
     Ordinary,
     ReceiptOnly(&'static str),
 }
 
+#[derive(Clone)]
+pub(super) enum PreparedState {
+    Ready,
+    Submitted,
+    Known {
+        status: u16,
+        envelope: serde_json::Value,
+    },
+    Unknown,
+    BodyUnavailable {
+        refused: bool,
+    },
+}
+
+#[derive(Clone)]
+pub(super) struct PreparedMutation {
+    pub(super) token: Incarnation,
+    pub(super) operation: String,
+    pub(super) method: airk_core::service::ControlMethod,
+    pub(super) key: super::mutations::Key,
+    pub(super) receipt_operation: Option<&'static str>,
+    pub(super) receipt_method: Option<airk_core::service::ControlMethod>,
+    pub(super) state: PreparedState,
+}
+
 struct Session {
+    life: SessionLife,
     cookie: [u8; 32],
     csrf: [u8; 32],
     created_at_ms: u64,
@@ -159,9 +191,39 @@ struct Session {
     instance: Incarnation,
     grant: Option<Grant>,
     reviews: VecDeque<Review>,
+    preparations: Vec<PreparedMutation>,
+    acknowledgments: VecDeque<(Incarnation, String)>,
+    streams: Vec<Arc<AtomicU8>>,
+    event_cursors: VecDeque<(Incarnation, airk_core::service_events::EventCursor)>,
+}
+
+struct SessionLife(Arc<AtomicBool>);
+impl Drop for SessionLife {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Pure native admission observation: it may be checked under owning service
+/// gates without acquiring the session mutex or reversing its lock order.
+#[derive(Clone)]
+pub(super) struct SessionPermit {
+    live: Arc<AtomicBool>,
+    expires_at_ms: u64,
+}
+impl SessionPermit {
+    pub(super) fn valid(&self, now_ms: u64) -> bool {
+        self.live.load(Ordering::Acquire) && now_ms < self.expires_at_ms
+    }
 }
 
 impl Session {
+    fn end_streams(&self, reason: u8) {
+        self.life.0.store(false, Ordering::Release);
+        for stream in &self.streams {
+            stream.store(reason, Ordering::SeqCst);
+        }
+    }
     fn expired(&self, now_ms: u64) -> bool {
         now_ms.saturating_sub(self.last_used_at_ms) >= SESSION_IDLE_MS
             || now_ms.saturating_sub(self.created_at_ms) >= SESSION_ABSOLUTE_MS
@@ -217,6 +279,7 @@ impl Sessions {
     /// Service end: every session and its grant ends.
     pub(super) fn end(&mut self) {
         while let Some(session) = self.sessions.pop_front() {
+            session.end_streams(3);
             self.drop_grant(session.grant);
         }
     }
@@ -230,10 +293,12 @@ impl Sessions {
         };
         while self.sessions.len() >= MAX_SESSIONS {
             if let Some(evicted) = self.sessions.pop_front() {
+                evicted.end_streams(2);
                 self.drop_grant(evicted.grant);
             }
         }
         self.sessions.push_back(Session {
+            life: SessionLife(Arc::new(AtomicBool::new(true))),
             cookie: digest(&minted.cookie),
             csrf: digest(&minted.csrf),
             created_at_ms: now_ms,
@@ -241,6 +306,10 @@ impl Sessions {
             instance: self.instance,
             grant: None,
             reviews: VecDeque::new(),
+            preparations: Vec::new(),
+            acknowledgments: VecDeque::new(),
+            streams: Vec::new(),
+            event_cursors: VecDeque::new(),
         });
         minted
     }
@@ -250,6 +319,14 @@ impl Sessions {
         self.sessions
             .iter()
             .find(|session| bool::from(session.cookie[..].ct_eq(&digest[..])))
+    }
+
+    fn find_mut(&mut self, cookie: &str) -> Option<&mut Session> {
+        let digest = digest(cookie);
+        let instance = self.instance;
+        self.sessions.iter_mut().find(|session| {
+            session.instance == instance && bool::from(session.cookie[..].ct_eq(&digest[..]))
+        })
     }
 
     /// The facts admission needs. `cookies` are every presented admin
@@ -288,6 +365,26 @@ impl Sessions {
         {
             session.last_used_at_ms = session.last_used_at_ms.max(now_ms);
         }
+    }
+
+    /// Validate actual cookie/CSRF facts before any owning gate, then renew
+    /// idle lifetime once at native call admission and freeze its deadline.
+    pub(super) fn native_permit(
+        &mut self,
+        cookie: &str,
+        csrf: &str,
+        now_ms: u64,
+    ) -> Option<SessionPermit> {
+        let facts = self.facts(&[cookie], &[csrf], now_ms)?;
+        if !facts.same_instance || !facts.token_matches {
+            return None;
+        }
+        self.touch(cookie, now_ms);
+        let session = self.find(cookie)?;
+        Some(SessionPermit {
+            live: session.life.0.clone(),
+            expires_at_ms: session.expires_at(),
+        })
     }
 
     /// Replace the grant of the live session `cookie`; the session's expiry,
@@ -350,9 +447,18 @@ impl Sessions {
             let oldest = session
                 .reviews
                 .iter()
-                .position(|review| matches!(review.purpose, ReviewPurpose::Ordinary))
+                .position(|review| {
+                    matches!(
+                        review.purpose,
+                        ReviewPurpose::Ordinary | ReviewPurpose::Acknowledged(_)
+                    )
+                })
                 .ok_or(AdminCode::AdminReviewCapacity)?;
-            session.reviews.remove(oldest);
+            if let Some(review) = session.reviews.remove(oldest) {
+                session
+                    .preparations
+                    .retain(|prepared| prepared.token != review.token);
+            }
         }
         session.reviews.push_back(review);
         Ok(())
@@ -419,10 +525,151 @@ impl Sessions {
                     && match review.purpose {
                         ReviewPurpose::Ordinary => true,
                         ReviewPurpose::ReceiptOnly(receipt) => operation == receipt,
-                        ReviewPurpose::Pending => false,
+                        ReviewPurpose::Acknowledged(receipt) => receipt == Some(operation),
+                        ReviewPurpose::Pending | ReviewPurpose::Prepared => false,
                     }
             })
             .cloned()
+    }
+
+    /// Convert an already budgeted pending review slot into acknowledged,
+    /// immutable preparation custody. Both records share one pinned slot.
+    pub(super) fn store_preparation(
+        &mut self,
+        cookie: &str,
+        prepared: PreparedMutation,
+        now_ms: u64,
+    ) -> Result<(), AdminCode> {
+        self.purge(now_ms);
+        let session = self
+            .find_mut(cookie)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        let review = session
+            .reviews
+            .iter_mut()
+            .find(|review| {
+                review.token == prepared.token && matches!(review.purpose, ReviewPurpose::Pending)
+            })
+            .ok_or(AdminCode::AdminInternal)?;
+        review.purpose = ReviewPurpose::Prepared;
+        session.preparations.push(prepared);
+        Ok(())
+    }
+
+    /// Claim at most once under the same mutex as session lifetime validation.
+    /// The returned Ready snapshot is the only permission to dispatch.
+    pub(super) fn preparation(
+        &mut self,
+        cookie: &str,
+        token: Incarnation,
+        operation: &str,
+        submit: bool,
+        now_ms: u64,
+    ) -> Result<PreparedMutation, AdminCode> {
+        self.purge(now_ms);
+        let session = self
+            .find_mut(cookie)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        let prepared = session
+            .preparations
+            .iter_mut()
+            .find(|prepared| prepared.token == token && prepared.operation == operation)
+            .ok_or(AdminCode::AdminReviewUnknown)?;
+        let snapshot = prepared.clone();
+        if submit && matches!(prepared.state, PreparedState::Ready) {
+            prepared.state = PreparedState::Submitted;
+        }
+        Ok(snapshot)
+    }
+
+    pub(super) fn settle_preparation(
+        &mut self,
+        cookie: &str,
+        token: Incarnation,
+        state: PreparedState,
+        recovered: bool,
+        now_ms: u64,
+    ) -> Result<(), AdminCode> {
+        self.purge(now_ms);
+        let session = self
+            .find_mut(cookie)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        let prepared = session
+            .preparations
+            .iter_mut()
+            .find(|prepared| prepared.token == token)
+            .ok_or(AdminCode::AdminReviewUnknown)?;
+        if matches!(prepared.state, PreparedState::Submitted)
+            || (recovered
+                && matches!(
+                    prepared.state,
+                    PreparedState::Unknown | PreparedState::BodyUnavailable { .. }
+                ))
+        {
+            prepared.state = state;
+        }
+        Ok(())
+    }
+
+    pub(super) fn acknowledge_preparation(
+        &mut self,
+        cookie: &str,
+        token: Incarnation,
+        operation: &str,
+        now_ms: u64,
+    ) -> Result<(), AdminCode> {
+        self.purge(now_ms);
+        let session = self
+            .find_mut(cookie)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        if session
+            .acknowledgments
+            .iter()
+            .any(|(stored, stored_operation)| *stored == token && stored_operation == operation)
+        {
+            return Ok(());
+        }
+        let prepared = session
+            .preparations
+            .iter()
+            .find(|prepared| prepared.token == token && prepared.operation == operation)
+            .ok_or(AdminCode::AdminReviewUnknown)?;
+        let refused = match &prepared.state {
+            PreparedState::Known { envelope, .. } => {
+                envelope.get("ok") == Some(&serde_json::Value::Bool(false))
+            }
+            PreparedState::BodyUnavailable { refused } => *refused,
+            PreparedState::Ready | PreparedState::Submitted | PreparedState::Unknown => {
+                return Err(AdminCode::AdminReviewUnknown);
+            }
+        };
+        let receipt = prepared.receipt_operation;
+        if refused {
+            session
+                .preparations
+                .retain(|prepared| prepared.token != token);
+            session.reviews.retain(|review| review.token != token);
+        } else {
+            let review = session
+                .reviews
+                .iter_mut()
+                .find(|review| review.token == token)
+                .ok_or(AdminCode::AdminInternal)?;
+            review.purpose = ReviewPurpose::Acknowledged(receipt);
+        }
+        while session.acknowledgments.len() >= MAX_REVIEWS_PER_SESSION {
+            session.acknowledgments.pop_front();
+        }
+        session
+            .acknowledgments
+            .push_back((token, operation.to_owned()));
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn preparation_count(&self, cookie: &str) -> usize {
+        self.find(cookie)
+            .map_or(0, |session| session.preparations.len())
     }
 
     /// End one session; whether it existed.
@@ -436,6 +683,7 @@ impl Sessions {
         self.sessions = kept;
         let existed = !ended.is_empty();
         for session in ended {
+            session.end_streams(2);
             self.drop_grant(session.grant);
         }
         existed
@@ -448,8 +696,80 @@ impl Sessions {
             .partition::<VecDeque<_>, _>(|session| session.expired(now_ms));
         self.sessions = live;
         for session in expired {
+            session.end_streams(1);
             self.drop_grant(session.grant);
         }
+    }
+
+    pub(super) fn reserve_stream(
+        &mut self,
+        cookie: &str,
+        cursor: Option<Incarnation>,
+        now_ms: u64,
+    ) -> Result<
+        (
+            Arc<AtomicU8>,
+            Option<airk_core::service_events::EventCursor>,
+            bool,
+        ),
+        AdminCode,
+    > {
+        self.purge(now_ms);
+        if self
+            .sessions
+            .iter()
+            .map(|session| session.streams.len())
+            .sum::<usize>()
+            >= airk_endpoint::admin_contract::MAX_STREAMS
+        {
+            return Err(AdminCode::AdminStreamLimit);
+        }
+        let session = self
+            .find_mut(cookie)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        if session.streams.len() >= airk_endpoint::admin_contract::MAX_STREAMS_PER_SESSION {
+            return Err(AdminCode::AdminStreamLimit);
+        }
+        let native = cursor.and_then(|token| {
+            session
+                .event_cursors
+                .iter()
+                .find(|(stored, _)| *stored == token)
+                .map(|(_, cursor)| cursor.clone())
+        });
+        let lost = cursor.is_some() && native.is_none();
+        let lease = Arc::new(AtomicU8::new(0));
+        session.streams.push(lease.clone());
+        Ok((lease, native, lost))
+    }
+
+    pub(super) fn stream_live(&mut self, cookie: &str, now_ms: u64) -> bool {
+        self.purge(now_ms);
+        self.find(cookie).is_some()
+    }
+
+    pub(super) fn release_stream(&mut self, cookie: &str, lease: &Arc<AtomicU8>) {
+        if let Some(session) = self.find_mut(cookie) {
+            session.streams.retain(|stored| !Arc::ptr_eq(stored, lease));
+        }
+    }
+
+    pub(super) fn store_event_cursor(
+        &mut self,
+        cookie: &str,
+        token: Incarnation,
+        cursor: airk_core::service_events::EventCursor,
+        now_ms: u64,
+    ) -> Result<(), AdminCode> {
+        self.purge(now_ms);
+        let session = self
+            .find_mut(cookie)
+            .ok_or(AdminCode::AdminSessionInvalid)?;
+        while session.event_cursors.len() >= airk_endpoint::admin_contract::STREAM_BUFFER_EVENTS {
+            session.event_cursors.pop_front();
+        }
+        session.event_cursors.push_back((token, cursor));
+        Ok(())
     }
 
     #[cfg(test)]

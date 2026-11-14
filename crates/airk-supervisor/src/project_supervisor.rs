@@ -43,7 +43,11 @@ mod worker_resource_drains;
 use worker_resource_drains::{DrainProgress, WorkerResourceDrains};
 mod worker_read_settlement;
 use worker_read_settlement::ReadSettlement;
+#[cfg(feature = "local-inference")]
+mod arbiter_control;
 mod catalog;
+#[cfg(feature = "local-inference")]
+pub use arbiter_control::ArbiterManagement;
 #[cfg(all(test, feature = "local-inference"))]
 mod guarded_qualification_tests;
 #[cfg(test)]
@@ -973,6 +977,21 @@ impl ResourceCache {
     }
 }
 enum Envelope {
+    #[cfg(feature = "local-inference")]
+    ArbiterHandle {
+        configuration: Option<airk_core::arbiter::Configuration>,
+        deadline: Instant,
+        reply: oneshot::Sender<Result<airk_inference::inference_engine::pool::arbiter::Handle>>,
+    },
+    ReuseOptional {
+        reservation: Arc<airk_kernel::service_resources::OptionalReservation>,
+        reply: oneshot::Sender<Result<airk_kernel::service_resources::OptionalReuse>>,
+    },
+    ReserveOptional {
+        id: Incarnation,
+        bytes: u64,
+        reply: oneshot::Sender<Result<airk_kernel::service_resources::OptionalReservation>>,
+    },
     SettleRead {
         identity: WorkerIdentity,
         operation_id: Incarnation,
@@ -1827,6 +1846,8 @@ impl Supervisor {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
                 let mut catalog_gate: Option<airk_catalog_control::catalog_admission::NativeCatalogAdmission> = None;
                 let mut pool: Option<Pool> = None;
+                #[cfg(feature = "local-inference")]
+                let mut arbiter_waiting: Vec<arbiter_control::Waiting> = Vec::new();
                 let mut pool_recovery = PoolRecovery::new_owned(Instant::now(),ownership.clone(),instance);
                 let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
@@ -2253,6 +2274,8 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                             },
                         }
                     }
+                    #[cfg(feature = "local-inference")]
+                    arbiter_control::settle(&mut arbiter_waiting,pool.as_ref(),checkpoint_pause.load(std::sync::atomic::Ordering::Acquire),pool_recovery.suppressed);
                     let finished: Vec<_> = workers
                         .iter_mut()
                         .filter_map(|(project, worker)| match worker.child.try_wait() {
@@ -2424,6 +2447,33 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                 &mut registry, &root, instance, may_allocate, &mut backoff,
                                 WorkerAdmission { log: &log, policy: &policy, pool: &mut pool, resources: &mut resources, recovery: &mut pool_recovery, drains: &mut resource_drains }, hooks);
                             catalog::send_reply(&reply, result);
+                        },
+                        #[cfg(feature = "local-inference")]
+                        Ok(Envelope::ArbiterHandle {configuration,deadline,reply}) => {
+                            if let Some(configuration) = configuration {
+                                if arbiter_waiting.len() >= 8 || pool_recovery.suppressed || checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) {
+                                    let _ = reply.send(Err(anyhow::anyhow!("Arbiter owner startup unavailable")));
+                                } else {
+                                    pool_recovery.requested = true;
+                                    arbiter_waiting.push(arbiter_control::Waiting {configuration,deadline,reply});
+                                    arbiter_control::settle(&mut arbiter_waiting,pool.as_ref(),false,false);
+                                }
+                            } else {
+                                let result = pool.as_ref().context("inference owner is not running").and_then(Pool::arbiter);
+                                let _ = reply.send(result);
+                            }
+                        },
+                        Ok(Envelope::ReuseOptional {reservation,reply})=> {
+                            let result=if checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) {Err(anyhow::anyhow!("optional admission closed for checkpoint"))}else{resources.reuse_optional(&reservation,airk_kernel::service_resource_observations::available_memory())};
+                            let _=reply.send(result);
+                        },
+                        Ok(Envelope::ReserveOptional {id, bytes, reply}) => {
+                            let result = if checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) {
+                                Err(anyhow::anyhow!("optional admission closed for checkpoint"))
+                            } else {
+                                resources.reserve_optional(id, bytes, airk_kernel::service_resource_observations::available_memory())
+                            };
+                            let _ = reply.send(result);
                         },
                         Ok(Envelope::ConfigureResources {
                             configuration,
@@ -3072,6 +3122,36 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
     pub fn begin_checkpoint(&self) {
         self.checkpoint_closed
             .store(true, std::sync::atomic::Ordering::Release);
+    }
+    #[cfg(feature = "local-inference")]
+    pub async fn arbiter(&self) -> Result<airk_inference::inference_engine::pool::arbiter::Handle> {
+        self.arbiter_management().existing().await
+    }
+    pub async fn reuse_optional(
+        &self,
+        reservation: Arc<airk_kernel::service_resources::OptionalReservation>,
+    ) -> Result<airk_kernel::service_resources::OptionalReuse> {
+        let (reply, receive) = oneshot::channel();
+        self.sender
+            .as_ref()
+            .context("supervisor closed")?
+            .try_send(Envelope::ReuseOptional { reservation, reply })?;
+        receive.await.context("optional resource owner closed")?
+    }
+    pub async fn reserve_optional(
+        &self,
+        bytes: u64,
+    ) -> Result<airk_kernel::service_resources::OptionalReservation> {
+        let (reply, receive) = oneshot::channel();
+        self.sender
+            .as_ref()
+            .context("supervisor closed")?
+            .try_send(Envelope::ReserveOptional {
+                id: new_instance_id()?,
+                bytes,
+                reply,
+            })?;
+        receive.await.context("optional resource owner closed")?
     }
 
     pub fn read_settlement_requester(&self) -> airk_mcp::read_attempt::WorkerSettlementRequester {

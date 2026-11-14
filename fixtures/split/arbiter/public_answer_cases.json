@@ -1,0 +1,154 @@
+{
+  "examples": [
+    {
+      "accepted": true,
+      "arguments": {
+        "budget": {
+          "calls": 3,
+          "candidates": 4,
+          "deadline_ms": 20000,
+          "fanout": 2,
+          "input_tokens": 1024,
+          "max_bytes": 65536,
+          "rounds": 1
+        },
+        "question": "amber_marker",
+        "schema": "airk.arbiter.context.request/1"
+      },
+      "name": "complete_native_request"
+    },
+    {
+      "accepted": false,
+      "arguments": {
+        "budget": {
+          "calls": 3,
+          "candidates": 4,
+          "deadline_ms": 20000,
+          "fanout": 2,
+          "input_tokens": 1024,
+          "max_bytes": 65536,
+          "rounds": 1
+        },
+        "question": "amber_marker"
+      },
+      "name": "missing_required_schema"
+    }
+  ],
+  "input_schema": {
+    "$defs": {
+      "Budget": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "candidates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "deadline_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fanout": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rounds": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calls",
+          "rounds",
+          "fanout",
+          "input_tokens",
+          "candidates",
+          "max_bytes",
+          "deadline_ms"
+        ],
+        "type": "object"
+      },
+      "ResponseMode": {
+        "enum": [
+          "terse",
+          "full"
+        ],
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "budget": {
+        "$ref": "#/$defs/Budget"
+      },
+      "include_status": {
+        "default": false,
+        "description": "Include current freshness/readiness even when unchanged on this connection.",
+        "type": "boolean"
+      },
+      "project": {
+        "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "question": {
+        "type": "string"
+      },
+      "reply_detail": {
+        "description": "Lean/Rich changes available fact projection, never retention. Reads without an alternate projection keep their existing payload. Omission preserves legacy defaults; conflicts with compact reject. Search full_chunks is independent.",
+        "enum": [
+          "lean",
+          "rich",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "response_mode": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResponseMode"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
+      },
+      "schema": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "schema",
+      "question",
+      "budget"
+    ],
+    "type": "object"
+  },
+  "maximum_question_utf8_bytes": 16384,
+  "native_tool": "airk_answer",
+  "public_tool": "answer",
+  "schema": "airk.arbiter.public-answer-cases/1"
+}

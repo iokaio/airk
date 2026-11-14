@@ -35,14 +35,7 @@ impl ProtectedModelInput<'_> {
     pub fn inspect_plan(&self) -> Result<airk_core::model_objects::ModelObjectSet> {
         use airk_core::model_objects::{ModelAssetName, ModelAssetSource};
         let manifest = self.read_asset(ModelAssetName::ModelJson, 16_384)?;
-        if serde_json::from_slice::<Value>(&manifest)?["schema"].as_u64() == Some(2) {
-            let definition = serde_json::from_slice(&manifest)?;
-            airk_retrieval::model_catalog::approved_manifest(&definition)?;
-            ensure!(
-                definition == airk_retrieval::model_catalog::selected_profile()?.manifest,
-                "model selection differs from the bundled INT8 profile for this CPU; use bundled model setup"
-            );
-        }
+        airk_retrieval::model::require_selected_model_manifest(&manifest)?;
         let set = airk_retrieval::model::inspect_asset_plan(self)?;
         use sha2::{Digest, Sha256};
         ensure!(

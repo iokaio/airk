@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Local persistent candidate engines and bounded evidence responses.
+pub mod arbiter;
 pub mod bounded;
 pub mod embedding_batch;
 pub mod embedding_worker;

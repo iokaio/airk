@@ -14,6 +14,9 @@ use airk_core::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+mod agent_entry;
+pub(crate) use agent_entry::{Agent, Class, Entry, Scope, Transport};
+
 mod schema;
 pub use schema::document as schema_document;
 
@@ -27,6 +30,23 @@ pub const I2_CONTRACTS_SUPPORTED: &[u32] = &[1];
 pub const VERSION_SCHEMA: &str = "airkctl-version/1";
 /// `airkctl service status --output json` (U87).
 pub const STATUS_SCHEMA: &str = "airkctl-service-status/1";
+/// Native validation of the receipt that produced the current verified I4 record.
+pub const SETUP_RECEIPT_OBSERVATION_SCHEMA: &str = "airkctl-setup-receipt/1";
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetupReceiptObservation {
+    pub schema: String,
+    #[schemars(schema_with = "schema::incarnation")]
+    pub operation_id: Incarnation,
+    #[schemars(schema_with = "schema::incarnation")]
+    pub install_id: Incarnation,
+    pub closed: bool,
+    pub successful: bool,
+    /// Full Core-decoded receipt, without a second handwritten native schema.
+    #[schemars(schema_with = "schema::native_value")]
+    pub receipt: serde_json::Value,
+}
 /// The product this client belongs to (U31).
 pub const PRODUCT: &str = "AIRK Service";
 /// Editor session protocol. Version 1 stays with `airk service session` until
@@ -332,6 +352,23 @@ pub enum SessionMethod {
         #[schemars(schema_with = "schema::native_value")]
         method: ControlMethod,
     },
+    /// Native-owned Admin client. Raw JSON retains the exact I3 body budget.
+    AdminCall {
+        operation: String,
+        #[schemars(schema_with = "schema::native_value")]
+        body: Box<serde_json::value::RawValue>,
+        deadline_ms: u64,
+    },
+    AdminRead {
+        #[schemars(schema_with = "schema::incarnation")]
+        target: Incarnation,
+        offset: u64,
+    },
+    AdminCancel {
+        #[schemars(schema_with = "schema::incarnation")]
+        target: Incarnation,
+    },
+    AdminClose {},
     /// Cooperatively cancel an in-flight request.
     Cancel {
         #[schemars(schema_with = "schema::incarnation")]
@@ -386,6 +423,10 @@ pub struct SessionResponse {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionOutcome {
+    AdminChunk {
+        chunk: airk_core::native_admin::NativeAdminChunk,
+    },
+    AdminClosed {},
     Hello {
         protocol: u32,
         version: String,
@@ -445,6 +486,12 @@ pub enum SessionOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionFailure {
+    /// Native Admin work may have effects; preserve its original recovery identity.
+    /// Never automatically replay it or treat a later read failure as no effects.
+    AdminOutcomeUnknown,
+    /// Native authentication ended; effects remain unknown and this cached
+    /// context cannot reopen or replay the original operation.
+    AdminSessionEndedOutcomeUnknown,
     SessionInvalidRequest,
     SessionProtocolMismatch,
     /// Not allowlisted in a session, including token-returning one-shots.

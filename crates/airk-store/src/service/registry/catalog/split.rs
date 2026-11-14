@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded native split intent, exact jobs and resumable restrictive cutover.
 //! Registry reads never create storage, capture sources, start jobs or migrate.
+mod grouping;
 use super::{ServiceRegistry, operations::index_record};
 use airk_core::{
     catalog_management::{CatalogOperation, CatalogRequest, MAX_PAGE_BYTES, MAX_RECEIPT_BYTES},
@@ -524,12 +525,19 @@ impl ServiceRegistry {
             "split draft source state changed"
         );
         projects_current(&tx, request)?;
+        grouping::review(&tx, request)?;
         let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM index_operation_receipts WHERE kind='catalog_management_fenced' AND stage<>'metadata_applied')",[],|row|row.get(0))?;
         ensure!(!pending, "split waits for existing native catalog fence");
-        if inherited.is_some() {
+        if inherited.is_some() || request.grouping.is_some() {
             super::apply_split_extraction_v3_layout(&tx)?;
         } else {
             super::apply_split_v2_layout(&tx)?;
+        }
+        if request.grouping.is_some() {
+            tx.execute(
+                "UPDATE index_catalog_meta SET policy_contract=4,accepted_new_writes=1 WHERE id=1",
+                [],
+            )?;
         }
         let active: i64 = tx.query_row(
             "SELECT count(DISTINCT operation_id) FROM index_split_participants WHERE active=1",
@@ -1985,6 +1993,7 @@ impl ServiceRegistry {
             "split remainder publication is pending"
         );
         projects_current(&tx, &old.request)?;
+        grouping::review(&tx, &old.request)?;
         let source = super::policy::snapshot(&tx, old.request.original_index)?
             .context("split original policy missing")?;
         ensure!(
@@ -2006,6 +2015,18 @@ impl ServiceRegistry {
             [old.request.destination.index_id.to_string()],
         )?;
         for effect in &old.request.projects {
+            if old
+                .request
+                .grouping
+                .as_ref()
+                .is_some_and(|grouping| grouping.project_id == effect.project_id)
+            {
+                ensure!(
+                    effect.retain_original && effect.destination_scope.is_none(),
+                    "grouped split membership must have a no-op legacy effect"
+                );
+                continue;
+            }
             let mut scope = effect.expected_scope_revision;
             if let Some(atoms) = &effect.destination_scope {
                 let change = CatalogRequest {
@@ -2043,6 +2064,7 @@ impl ServiceRegistry {
                 super::operations::mutate(&tx, &change, &self.root)?;
             }
         }
+        grouping::publish(&tx, &old.request, &self.root)?;
         super::super::watch::ensure_row(&tx, old.request.destination_registration.binding)?;
         tx.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,backend=CASE WHEN ?1 THEN 'periodic_fallback' ELSE 'disabled' END WHERE project=?2 AND configuration_epoch=0",params![old.request.destination_watch_enabled,old.request.destination_registration.binding.to_string()])?;
         let revision = super::state(&tx)?.revision.next()?;
@@ -2053,14 +2075,26 @@ impl ServiceRegistry {
         let mut next = old.receipt.clone();
         next.stage = SplitStage::MembershipApplied;
         next.catalog_revision = revision;
-        next.membership_receipt = Some(framed_digest(
-            b"airk/split-reviewed-memberships/1",
-            &[
-                old.receipt.request_digest.as_bytes(),
-                &serde_json::to_vec(&old.request.projects)?,
-                &revision.get().to_le_bytes(),
-            ],
-        ));
+        next.membership_receipt = Some(if let Some(grouping) = &old.request.grouping {
+            framed_digest(
+                b"airk/split-grouped-memberships/1",
+                &[
+                    old.receipt.request_digest.as_bytes(),
+                    &serde_json::to_vec(&old.request.projects)?,
+                    &serde_json::to_vec(grouping)?,
+                    &revision.get().to_le_bytes(),
+                ],
+            )
+        } else {
+            framed_digest(
+                b"airk/split-reviewed-memberships/1",
+                &[
+                    old.receipt.request_digest.as_bytes(),
+                    &serde_json::to_vec(&old.request.projects)?,
+                    &revision.get().to_le_bytes(),
+                ],
+            )
+        });
         let value = replace(&tx, &old, next)?;
         tx.commit()?;
         Ok(value)

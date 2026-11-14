@@ -28,6 +28,20 @@ fn refused(message: impl std::fmt::Display) -> ErrorLine {
     )
 }
 
+fn edit_failed(error: config::EditFailure) -> ErrorLine {
+    let (class, code) = match error.kind {
+        config::EditFailureKind::OutcomeUnknown => (
+            ExitClass::OutcomeUnknown,
+            "agent_config_edit_outcome_unknown",
+        ),
+        config::EditFailureKind::ConflictRetained => {
+            (ExitClass::Refused, "agent_config_edit_conflict_retained")
+        }
+        config::EditFailureKind::Refused => (ExitClass::Refused, "agent_config_edit_refused"),
+    };
+    ErrorLine::new(class, code, false, &error.to_string())
+}
+
 /// The client `connect` writes for.
 pub fn agent(client: super::Client) -> Agent {
     match client {
@@ -248,6 +262,13 @@ pub fn connect(
     server_key: &str,
 ) -> Result<Value, ErrorLine> {
     let agent = agent(client);
+    let project = inputs
+        .projects
+        .first()
+        .cloned()
+        .ok_or_else(|| refused("connect needs a project folder"))?;
+    let file = target_file(agent, scope, &project)?;
+    config::preflight_edit(&file).map_err(edit_failed)?;
     let connection =
         match source {
             Source::Existing(id) => serde_json::from_value::<HttpConnectionInfo>(
@@ -265,12 +286,6 @@ pub fn connect(
                 client,
             )?,
         };
-    let project = inputs
-        .projects
-        .first()
-        .cloned()
-        .ok_or_else(|| refused("connect needs a project folder"))?;
-    let file = target_file(agent, scope, &project)?;
     let url = connection.endpoint.url.to_string();
     let airkctl = inputs.airkctl.to_string_lossy().into_owned();
     let written = Connection {
@@ -278,13 +293,25 @@ pub fn connect(
         url: &url,
         airkctl: &airkctl,
     };
-    let changed = config::edit_file(
+    let changed = config::edit_file_for(
+        config::EditOperation::Connect,
         &file,
         (scope == Scope::Project).then_some(project.as_path()),
         true,
         |source| config::connect(agent, scope, source, server_key, &written),
     )
-    .map_err(refused)?;
+    .map_err(|error| {
+        let error = edit_failed(error);
+        ErrorLine::new(
+            error.class,
+            &error.code,
+            false,
+            &format!(
+                "The selected connection is {}. {}",
+                connection.connection_id, error.message
+            ),
+        )
+    })?;
     let mut written = json!({
         "schema": 1,
         "client": agent.name(),
@@ -342,22 +369,28 @@ pub fn repair(inputs: &Inputs<'_>, replacement: Option<Incarnation>) -> Result<V
             airkctl: &airkctl,
         };
         let root = project_root_of(entry, inputs);
-        let outcome = config::edit_file(Path::new(&entry.file), root.as_deref(), false, |source| {
-            config::repair(
-                entry.agent,
-                entry.scope,
-                source.ok_or("configuration file disappeared")?,
-                &target,
-                &written,
-            )
-        });
+        let outcome = config::edit_file_for(
+            config::EditOperation::Repair,
+            Path::new(&entry.file),
+            root.as_deref(),
+            false,
+            |source| {
+                config::repair(
+                    entry.agent,
+                    entry.scope,
+                    source.ok_or("configuration file disappeared")?,
+                    &target,
+                    &written,
+                )
+            },
+        );
         actions.push(json!({
             "file": entry.file,
             "serverKey": entry.server_key,
             "problem": status,
             "connectionId": id,
             "changed": outcome.as_ref().ok(),
-            "error": outcome.err(),
+            "error": outcome.err().map(|error| error.to_string()),
         }));
     }
     Ok(json!({"schema": 1, "actions": actions, "blockers": report.blockers}))
@@ -380,21 +413,27 @@ pub fn remove(
             server_key: entry.server_key.clone(),
         };
         let root = project_root_of(entry, inputs);
-        let outcome = config::edit_file(Path::new(&entry.file), root.as_deref(), false, |source| {
-            let source = source.ok_or("configuration file disappeared")?;
-            if !selected.is_empty() {
-                observe(inputs, |observations| {
-                    config::revalidate_entry(source, entry, observations)
-                })?;
-            }
-            config::remove(entry.agent, entry.scope, source, &target)
-        });
+        let outcome = config::edit_file_for(
+            config::EditOperation::Remove,
+            Path::new(&entry.file),
+            root.as_deref(),
+            false,
+            |source| {
+                let source = source.ok_or("configuration file disappeared")?;
+                if !selected.is_empty() {
+                    observe(inputs, |observations| {
+                        config::revalidate_entry(source, entry, observations)
+                    })?;
+                }
+                config::remove(entry.agent, entry.scope, source, &target)
+            },
+        );
         actions.push(json!({
             "file": entry.file,
             "serverKey": entry.server_key,
             "connectionId": entry.connection_id,
             "changed": outcome.as_ref().ok(),
-            "error": outcome.err(),
+            "error": outcome.err().map(|error| error.to_string()),
         }));
     }
     Ok(json!({"schema": 1, "actions": actions, "blockers": report.blockers}))

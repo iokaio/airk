@@ -115,6 +115,7 @@ pub(crate) type Observation<'a> =
 /// neither runtime metadata, installation nor reference-refresh control.
 #[derive(Clone, Copy)]
 pub struct Hooks {
+    pub(crate) arbiter_controller: ArbiterControllerFactory,
     /// Runtime bundle for an unscoped `airk_diagnostics` call.
     pub(crate) runtime_bundle: for<'a> fn(
         &'a Path,
@@ -137,6 +138,8 @@ pub struct Hooks {
         airk_core::identity::Sha256Digest,
     ) -> Result<JobOutcome>,
 }
+type ArbiterControllerFactory =
+    fn(&Path) -> Result<Option<Arc<dyn airk_kernel::arbiter::NativeController>>>;
 
 struct State {
     control: std::path::PathBuf,
@@ -311,6 +314,10 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     };
     let response_kernel = tools.scoped_read_revocation_handle();
     let result = async {
+        if let Some(authority) = grant.scope
+            && let Some(owner) = (state.hooks.arbiter_controller)(&state.control)? {
+            tools = tools.native_arbiter_session(state.identity,authority,owner).await?;
+        }
         if let Some(scope) = grant.scope {
             state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
                 .attach(scope, session, tools.scoped_read_revocation_handle())?;

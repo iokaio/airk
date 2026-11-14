@@ -155,7 +155,7 @@ fn scopes(
     })
     .collect()
 }
-fn membership(db: &Connection, p: &str, i: &str) -> Result<Membership> {
+pub(super) fn membership(db: &Connection, p: &str, i: &str) -> Result<Membership> {
     let rev = db.query_row(
         "SELECT revision FROM project_index_memberships WHERE project_id=?1 AND index_id=?2",
         params![p, i],

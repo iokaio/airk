@@ -336,3 +336,30 @@ fn explicit_cpu16_tier_is_distinct_and_never_accepts_mixed_or_fallback_threads()
     assert!(spinning.validate().is_err());
     Ok(())
 }
+
+#[test]
+fn explicit_cpu24_tier_is_distinct_and_refuses_all_mixed_prior_tiers() -> Result<()> {
+    let fit: CpuFit = serde_json::from_slice(include_bytes!(
+        "../../../../fixtures/arbiter/cpu-fit-24.json"
+    ))?;
+    assert_eq!(fit.minimum_physical_cores, 24);
+    assert_eq!(fit.intra_threads, 24);
+    fit.validate()?;
+    assert_eq!(
+        fit.runtime_identity()?,
+        "onnxruntime-cpu/1.30.0/physical24/intra24/inter1/sequential/spinning0"
+    );
+    for prior in [1, 8, 16] {
+        let mut minimum = fit.clone();
+        minimum.minimum_physical_cores = prior;
+        assert!(minimum.validate().is_err());
+        let mut intra = fit.clone();
+        intra.intra_threads = prior;
+        assert!(intra.validate().is_err());
+    }
+    let mut arbitrary = fit;
+    arbitrary.minimum_physical_cores = 20;
+    arbitrary.intra_threads = 20;
+    assert!(arbitrary.validate().is_err());
+    Ok(())
+}

@@ -4,6 +4,14 @@
 export const I3_CONTRACT = 1;
 
 /**
+ * The client has retained the complete known final outcome. This releases
+ * pinned custody; it never accepts an uncertain or in-flight operation.
+ */
+export type AcknowledgedMutationCall = {
+    acknowledged: string;
+};
+
+/**
  * Codes the admin plane itself produces. Native refusals keep their own
  * code with class `refused`.
  */
@@ -45,6 +53,10 @@ export type ErrorBody = {
  */
 export type ErrorClass = "malformed" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "too_large" | "internal" | "unavailable" | "refused";
 
+export type EventStreamRequest = {
+    cursor?: string | null;
+};
+
 /**
  * `POST /admin/api/v1/session` body. `Debug` redacts the code.
  */
@@ -79,6 +91,20 @@ export type Idempotency = "read" | "request_key" | "operation_digest" | "natural
 
 export type KeyMode = "generate" | "review";
 
+/**
+ * Acknowledgment issued before a non-journaled keyed mutation can execute.
+ * The handle names an immutable operation and native method in this session;
+ * it contains no request identity and expires with the cookie/service.
+ */
+export type MutationPreparation = {
+    preparation: string;
+    /**
+     * The exact native receipt read available after uncertainty. Absence is
+     * honest lack of a canonical receipt, never permission to replay.
+     */
+    receipt_operation?: string | null;
+};
+
 export type OperationRow = {
     authorization: Array<Authorization>;
     /**
@@ -107,6 +133,20 @@ export type OperationRow = {
  * `fixtures/split/i3/admin_operations.json`.
  */
 export type Plane = "management" | "evidence";
+
+/**
+ * Explicit dispatch after the client has retained the preparation handle.
+ */
+export type PreparedMutationCall = {
+    prepared: string;
+};
+
+/**
+ * Observe the same prepared operation without repeating its mutation.
+ */
+export type RecoverMutationCall = {
+    recover: string;
+};
 
 /**
  * Request-identity placement. Paths are dotted field names inside the
@@ -163,7 +203,7 @@ export type StreamLine = {
     kind: "closing";
 };
 
-export type StreamResync = "overflow" | "native_gap" | "service_restarted";
+export type StreamResync = "overflow" | "native_gap" | "service_restarted" | "session_expired" | "session_ended";
 
 export type SuccessEnvelope = {
     ok: true;

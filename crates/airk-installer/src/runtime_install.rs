@@ -2886,6 +2886,41 @@ async fn activate_with_expected(
 // `runtime_commands` and `runtime_http_commands` (split step 2b).
 pub mod http_legacy;
 
+/// Full known predecessor roots, independent of which layout discovery prefers.
+/// Launcher pointers are verified by their existing owner before adding custom roots.
+pub fn predecessor_install_roots() -> Result<Vec<PathBuf>> {
+    Ok(predecessor_install_roster()?.0)
+}
+
+pub fn predecessor_discovery_leftovers() -> Result<Vec<airk_core::install_record::Leftover>> {
+    Ok(predecessor_install_roster()?.1)
+}
+
+fn predecessor_install_roster() -> Result<(Vec<PathBuf>, Vec<airk_core::install_record::Leftover>)>
+{
+    let mut roots = Vec::new();
+    let mut left = Vec::new();
+    for channel in [RuntimeChannel::Stable, RuntimeChannel::Preview] {
+        let historical = airk_host::user_paths::UserPaths::historical(channel)?;
+        roots.push(historical.install.clone());
+        roots.push(historical.install.with_file_name(channel.leaf("runtime")));
+        match discover_user_paths(channel) {Ok(paths)=>roots.push(paths.install),Err(error)=>left.push(airk_core::install_record::Leftover {
+            item:historical.launcher.display().to_string(),reason:format!("layout discovery unproven; fixed layouts still inspected and custom artifacts preserved: {error:#}"),restarts_old_service:true})}
+        match crate::universal_launcher::configured_selection(&historical.launcher) {
+            Ok(Some(selected)) => roots.push(selected),
+            Ok(None) => {}
+            Err(error) => left.push(airk_core::install_record::Leftover {
+                item: historical.launcher.display().to_string(),
+                reason: format!("custom launcher selection unproven; preserved: {error:#}"),
+                restarts_old_service: true,
+            }),
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    Ok((roots, left))
+}
+
 #[cfg(any(test, feature = "test-support"))]
 // Shared with airk-cli tests under `test-support`; its own `#[test]`s use the rest.
 #[cfg_attr(not(test), allow(dead_code))]

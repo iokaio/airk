@@ -12,9 +12,11 @@ publish.workspace = true
 [features]
 default = ["local-inference"]
 local-inference = ["dep:ort", "dep:tokenizers"]
+test-support = []
 
 [dependencies]
 airk-core.workspace = true
+airk-process.workspace = true
 anyhow.workspace = true
 diskann.workspace = true
 diskann-vector.workspace = true

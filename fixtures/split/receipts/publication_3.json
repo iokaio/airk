@@ -1,0 +1,2562 @@
+{
+  "schema": "airk.publication-cases/3",
+  "contract": "docs/split/contracts.md section9.3; hypothetical opaque native projection for pure publication tests, never model qualification or production authority",
+  "owner": {
+    "schema": "airk.arbiter.publication/1",
+    "tag": "v1.9.0",
+    "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "profiles": [
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222222222222222222222222222",
+      "3333333333333333333333333333333333333333333333333333333333333333",
+      "4444444444444444444444444444444444444444444444444444444444444444"
+    ],
+    "assets": {
+      "arbiter-a.part01": {
+        "bytes": 1,
+        "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+      },
+      "arbiter-b.part01": {
+        "bytes": 2,
+        "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+      },
+      "arbiter-c.part01": {
+        "bytes": 3,
+        "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+      },
+      "arbiter-d.part01": {
+        "bytes": 4,
+        "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "complete hypothetical optional stable catalog",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "name": "complete hypothetical optional preview catalog",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "preview",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "name": "complete hypothetical optional stable release",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "name": "complete hypothetical optional preview release",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "preview",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {},
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "name": "catalog refuses missing-part",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses extra-part",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf",
+          "foreign.part01": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses wrong-part-digest",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "0000000000000000000000000000000000000000000000000000000000000000",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses wrong-native-catalog",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses wrong-native-tag",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.1",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses missing-profile",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses unknown-native-field",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          },
+          "unknown": "unreviewed"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "catalog refuses wrong-part-length-type",
+      "kind": "catalog",
+      "input": {
+        "schema": "airk-release-catalog/3",
+        "package_version": "1.9.0",
+        "channel": "stable",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "producer": {
+          "run_id": "1001",
+          "attempt": "1"
+        },
+        "release": {
+          "run_id": "2002",
+          "attempt": "1"
+        },
+        "native_targets": [
+          "aarch64-apple-darwin",
+          "x86_64-apple-darwin",
+          "x86_64-pc-windows-msvc",
+          "x86_64-unknown-linux-gnu"
+        ],
+        "producer_artifacts": [
+          "airk-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-1001-1"
+        ],
+        "release_inputs": [
+          "airk-source-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-source-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-portable-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-aarch64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-apple-darwin-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-signed-native-x86_64-pc-windows-msvc-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-native-x86_64-unknown-linux-gnu-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-vsix-universal-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-a.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-b.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-c.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002",
+          "airk-arbiter-part-arbiter-d.part01-c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0-2002"
+        ],
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "tag": "v1.9.0",
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": true,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses missing-part",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses extra-part",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf",
+          "foreign.part01": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses wrong-part-digest",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "0000000000000000000000000000000000000000000000000000000000000000",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses wrong-native-catalog",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses wrong-native-tag",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.1",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses missing-profile",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses unknown-native-field",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": 1,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          },
+          "unknown": "unreviewed"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "release refuses wrong-part-length-type",
+      "kind": "release",
+      "input": {
+        "schema": "airk-github-release/3",
+        "tag": "v1.9.0",
+        "package_version": "1.9.0",
+        "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        "channel": "stable",
+        "run_id": "2002",
+        "attempt": "1",
+        "assets": {
+          "airk-1.9.0.vsix": "9999999999999999999999999999999999999999999999999999999999999999",
+          "airk-1.9.0.vsix-manifest.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "airk-1.9.0-aarch64-apple-darwin.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin.native-manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.zip": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-portable.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.dmg": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json": "1111111111111111111111111111111111111111111111111111111111111111",
+          "airk-1.9.0-x86_64-apple-darwin.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin.native-manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.zip": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-portable.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.dmg": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json": "2222222222222222222222222222222222222222222222222222222222222222",
+          "airk-1.9.0-x86_64-pc-windows-msvc.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc.native-manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.zip": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-portable.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json": "3333333333333333333333333333333333333333333333333333333333333333",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu.native-manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.zip": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-portable.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz": "4444444444444444444444444444444444444444444444444444444444444444",
+          "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json": "4444444444444444444444444444444444444444444444444444444444444444",
+          "arbiter-a.part01": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "arbiter-b.part01": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf",
+          "arbiter-c.part01": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe",
+          "arbiter-d.part01": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+        },
+        "producer": {
+          "schema": "airk-ci-producer/3",
+          "repository": "iokaio/airk",
+          "workflow_id": 4,
+          "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "run_id": "1001",
+          "attempt": "1",
+          "event": "workflow_dispatch",
+          "source_branch": "feat/advanced-split",
+          "qualified_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+          "artifacts": {}
+        },
+        "installers": {
+          "aarch64-apple-darwin": {
+            "artifact": "airk-1.9.0-aarch64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-aarch64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-apple-darwin": {
+            "artifact": "airk-1.9.0-x86_64-apple-darwin-installer.dmg",
+            "manifest": "airk-1.9.0-x86_64-apple-darwin-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-pc-windows-msvc": {
+            "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+            "manifest": "airk-1.9.0-x86_64-pc-windows-msvc-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          },
+          "x86_64-unknown-linux-gnu": {
+            "artifact": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+            "manifest": "airk-1.9.0-x86_64-unknown-linux-gnu-installer.manifest.json",
+            "headless": {
+              "arguments": [
+                "--silent"
+              ],
+              "stdin": "closed",
+              "prompts": false,
+              "certificate_trust": "skip",
+              "requires_reset_acknowledgement": true,
+              "success_requires": "native_setup_and_readiness"
+            }
+          }
+        },
+        "optional_models": {
+          "schema": "airk.arbiter.publication/1",
+          "tag": "v1.9.0",
+          "compiled_catalog_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "profiles": [
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "assets": {
+            "arbiter-a.part01": {
+              "bytes": true,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+            },
+            "arbiter-b.part01": {
+              "bytes": 2,
+              "sha256": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+            },
+            "arbiter-c.part01": {
+              "bytes": 3,
+              "sha256": "64daa44ad493ff28a96effab6e77f1732a3d97d83241581b37dbd70a7a4900fe"
+            },
+            "arbiter-d.part01": {
+              "bytes": 4,
+              "sha256": "5bf8aa57fc5a6bc547decf1cc6db63f10deb55a3c6c5df497d631fb3d95e1abf"
+            }
+          }
+        }
+      },
+      "accepted": false
+    }
+  ]
+}

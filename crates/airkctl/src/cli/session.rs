@@ -5,7 +5,9 @@
 //! Frames are length-prefixed JSON (`airk-ipc` codec) on the session's
 //! stdin/stdout. Rules kept from protocol 1 (`airk service session`):
 //! - `hello` comes first; anything else first is `session_protocol_mismatch`;
-//! - every request id receives exactly one reply; at most [`MAX_IN_FLIGHT`]
+//! - on a live output, each accepted id receives exactly one reply; bounded
+//!   reply overload closes authority without claiming accepted effects undone;
+//!   at most [`MAX_IN_FLIGHT`]
 //!   requests run at once, each on its own thread, and a further one is
 //!   `session_busy`; a deadline or a `cancel` answers at once while the slot
 //!   stays occupied until the thread has finished;
@@ -40,6 +42,7 @@ use airk_core::{
     service_events::{EventCursor, EventKind, EventPage, ServiceEvent},
 };
 use serde_json::Value;
+mod admin;
 use std::{
     collections::{HashMap, VecDeque},
     ffi::OsString,
@@ -98,6 +101,13 @@ pub type Wake = Box<dyn Fn() + Send + Sync>;
 pub trait Clock: Send + Sync {
     /// Milliseconds on a monotonic scale.
     fn now_ms(&self) -> u64;
+    /// Same-host absolute monotonic nanoseconds for native IPC deadlines.
+    /// Manual clocks default to their deterministic scale.
+    fn now_ns(&self) -> Result<u64, String> {
+        self.now_ms()
+            .checked_mul(1_000_000)
+            .ok_or_else(|| "native monotonic overflow".into())
+    }
     /// The real time to block for `ms` of clock time; `None` blocks until the
     /// waker given to [`Clock::attach`] runs (a manual clock).
     fn real_wait(&self, ms: u64) -> Option<Duration>;
@@ -115,6 +125,9 @@ impl Default for SystemClock {
 }
 
 impl Clock for SystemClock {
+    fn now_ns(&self) -> Result<u64, String> {
+        airk_process::monotonic::now_ns().map_err(|_| "native monotonic unavailable".into())
+    }
     fn now_ms(&self) -> u64 {
         u64::try_from(self.0.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
@@ -259,23 +272,31 @@ where
         connect,
         invoker,
     } = options;
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = event_channel();
     let waker = sender.clone();
     timing.clock.attach(Box::new(move || {
-        let _ = waker.send(Event::Wake);
+        let _ = waker.try_send(Event::Wake);
     }));
     let frames = sender.clone();
+    let read_clock = timing.clock.clone();
     let mut input = input;
     let reader = std::thread::Builder::new()
         .name("airkctl-session-input".into())
         .spawn(move || {
             loop {
-                let frame = airk_ipc::frame::read_frame_limited::<_, Value>(
-                    &mut input,
-                    MAX_REQUEST_FRAME_BYTES,
-                );
+                let frame = airk_ipc::frame::read_frame_limited::<
+                    _,
+                    Box<serde_json::value::RawValue>,
+                >(&mut input, MAX_REQUEST_FRAME_BYTES);
                 let stop = !matches!(frame, Ok(Some(_)));
-                if frames.send(Event::Frame(frame)).is_err() || stop {
+                if frames
+                    .send(Event::Frame {
+                        frame,
+                        received: Received::now(read_clock.as_ref()),
+                    })
+                    .is_err()
+                    || stop
+                {
                     break;
                 }
             }
@@ -306,7 +327,10 @@ where
             epoch: AtomicU64::new(0),
             scope_mutation: Mutex::new(()),
             scope: Mutex::new(ScopeState::default()),
+            admin: admin::Admin::default(),
+            clock: timing.clock.clone(),
         }),
+        received: Received::now(timing.clock.as_ref()),
         owner_at: owner.as_ref().map(|_| now + timing.owner_poll_ms),
         owner,
         timing,
@@ -328,6 +352,7 @@ where
         poll_at: u64::MAX,
         closing: None,
         window_closing: false,
+        admin_closing: 0,
     };
     session.run(&receiver)
 }
@@ -378,8 +403,24 @@ impl Invoker for CommandLine {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Received {
+    ms: u64,
+    ns: Option<u64>,
+}
+impl Received {
+    fn now(clock: &dyn Clock) -> Self {
+        Self {
+            ms: clock.now_ms(),
+            ns: clock.now_ns().ok(),
+        }
+    }
+}
 enum Event {
-    Frame(std::io::Result<Option<Value>>),
+    Frame {
+        frame: std::io::Result<Option<Box<serde_json::value::RawValue>>>,
+        received: Received,
+    },
     Wake,
     Finished {
         id: Incarnation,
@@ -388,11 +429,16 @@ enum Event {
     },
     Maintained(Box<Effects>),
     WindowClosed,
+    AdminClosed,
     OutputClosed,
 }
 
-/// Frames waiting for the output stream, in order. Only events count toward
-/// the event budget; replies are never dropped.
+fn event_channel() -> (mpsc::SyncSender<Event>, mpsc::Receiver<Event>) {
+    mpsc::sync_channel(MAX_IN_FLIGHT * 2)
+}
+
+/// Ordered output has independent event and reply budgets. A saturated reply
+/// lane closes transport authority instead of blocking cancellation/timers.
 #[derive(Default)]
 struct Outbox {
     queue: Mutex<Queue>,
@@ -404,6 +450,8 @@ struct Queue {
     frames: VecDeque<(Vec<u8>, bool)>,
     events: usize,
     event_bytes: usize,
+    replies: usize,
+    reply_bytes: usize,
     writing: bool,
     closed: bool,
     broken: bool,
@@ -414,19 +462,32 @@ impl Outbox {
         self.queue.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn reply(&self, bytes: Vec<u8>) {
+    fn reply(&self, bytes: Vec<u8>) -> bool {
         let mut queue = self.lock();
-        if !queue.broken {
-            queue.frames.push_back((bytes, false));
-            self.changed.notify_all();
+        // Never stall the actor behind an unread output stream. Overload ends
+        // this transport's authority; accepted native effects remain unknown.
+        if queue.broken || queue.closed {
+            return false;
         }
+        if queue.replies >= MAX_IN_FLIGHT
+            || bytes.len() > MAX_IN_FLIGHT * (MAX_RESPONSE_FRAME_BYTES + 4) - queue.reply_bytes
+        {
+            queue.closed = true;
+            self.changed.notify_all();
+            return false;
+        }
+        queue.replies += 1;
+        queue.reply_bytes += bytes.len();
+        queue.frames.push_back((bytes, false));
+        self.changed.notify_all();
+        true
     }
 
     /// Queue one event. On overflow the buffered events are dropped and one
     /// `resync { overflow }` takes their place; returns whether that happened.
     fn event(&self, bytes: Vec<u8>) -> bool {
         let mut queue = self.lock();
-        if queue.broken {
+        if queue.broken || queue.closed {
             return false;
         }
         let overflow = queue.events + 1 > MAX_BUFFERED_EVENTS
@@ -482,7 +543,7 @@ impl Outbox {
     }
 }
 
-fn write_loop<W: Write>(outbox: &Outbox, mut output: W, closed: &mpsc::Sender<Event>) {
+fn write_loop<W: Write>(outbox: &Outbox, mut output: W, closed: &mpsc::SyncSender<Event>) {
     loop {
         let bytes = {
             let mut queue = outbox.lock();
@@ -491,6 +552,9 @@ fn write_loop<W: Write>(outbox: &Outbox, mut output: W, closed: &mpsc::Sender<Ev
                     if event {
                         queue.events -= 1;
                         queue.event_bytes -= bytes.len();
+                    } else {
+                        queue.replies -= 1;
+                        queue.reply_bytes -= bytes.len();
                     }
                     queue.writing = true;
                     break bytes;
@@ -512,6 +576,8 @@ fn write_loop<W: Write>(outbox: &Outbox, mut output: W, closed: &mpsc::Sender<Ev
             queue.frames.clear();
             queue.events = 0;
             queue.event_bytes = 0;
+            queue.replies = 0;
+            queue.reply_bytes = 0;
             drop(queue);
             outbox.changed.notify_all();
             let _ = closed.send(Event::OutputClosed);
@@ -591,6 +657,8 @@ struct Snapshot {
 #[derive(Default)]
 struct Effects {
     epoch: u64,
+    admin_generation: Option<u64>,
+    admin_deadline_ns: Option<u64>,
     /// A fenced call reported another instance or a lost window.
     restart_suspected: bool,
     /// Upkeep found another instance or window (`None`: none could be opened).
@@ -606,11 +674,12 @@ struct Effects {
 }
 
 enum Work {
+    Admin(admin::Task),
     Invoke {
         argv: Vec<String>,
         stdin: Option<String>,
     },
-    Control(ControlMethod),
+    Control(Box<ControlMethod>),
     Subscribe {
         topics: Vec<EventTopic>,
         native: Option<EventCursor>,
@@ -699,6 +768,11 @@ fn relay_rule(method: &ControlMethod) -> Relay {
     match method {
         M::Connect { .. } | M::ConnectScoped { .. } => Relay::Brokerage,
         M::PrepareUpgradeCheckpoint { .. }
+        | M::AdminNativeOpen { .. }
+        | M::AdminNativeCall { .. }
+        | M::AdminNativeRead { .. }
+        | M::AdminNativeCancel { .. }
+        | M::AdminNativeClose { .. }
         | M::ObserveUpgradeCheckpoint { .. }
         | M::UpgradeRecoveryProbe { .. }
         | M::ReleaseUpgradeAdmission { .. }
@@ -848,6 +922,8 @@ fn split_error_line(stderr: String) -> (String, Option<ErrorLine>) {
 }
 
 struct Shared {
+    admin: admin::Admin,
+    clock: Arc<dyn Clock>,
     version: String,
     executable_sha256: String,
     capabilities: Vec<String>,
@@ -944,8 +1020,9 @@ impl Worker {
             ..Effects::default()
         };
         let outcome = match work {
+            Work::Admin(task) => self.admin_task(snapshot, task, &mut effects),
             Work::Invoke { argv, stdin } => self.invoke(snapshot, argv, stdin, &mut effects),
-            Work::Control(method) => self.control(snapshot, method, &mut effects),
+            Work::Control(method) => self.control(snapshot, *method, &mut effects),
             Work::Subscribe { topics, native } => {
                 self.subscribe(snapshot, topics, native, &mut effects)
             }
@@ -1104,9 +1181,8 @@ impl Worker {
             return failure("service_unavailable");
         };
         match service.request(method, instance) {
-            // Metadata only: a connection grant never crosses the relay.
-            Ok(ControlResponse::Connection { .. }) => failure("console_brokerage_forbidden"),
             Ok(response) => {
+                let response = response.public_metadata();
                 if let ControlResponse::Failure { code } = &response {
                     effects.restart_suspected |= code == "service_instance_changed";
                 }
@@ -1474,6 +1550,7 @@ struct Entry {
     deadline_ms: Option<u64>,
     cancel_requested: bool,
     answered: bool,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct Subscription {
@@ -1487,7 +1564,8 @@ struct Session {
     owner: Option<OwnerProbe>,
     owner_at: Option<u64>,
     connect: Connect,
-    sender: mpsc::Sender<Event>,
+    sender: mpsc::SyncSender<Event>,
+    received: Received,
     outbox: Arc<Outbox>,
     entries: HashMap<Incarnation, Entry>,
     greeted: bool,
@@ -1506,6 +1584,7 @@ struct Session {
     poll_at: u64,
     closing: Option<u64>,
     window_closing: bool,
+    admin_closing: usize,
 }
 
 impl Session {
@@ -1517,7 +1596,8 @@ impl Session {
         loop {
             let now = self.now();
             if let Some(until) = self.closing
-                && ((self.entries.is_empty() && !self.window_closing) || now >= until)
+                && ((self.entries.is_empty() && !self.window_closing && self.admin_closing == 0)
+                    || now >= until)
             {
                 self.outbox.close();
                 let rest = until.saturating_sub(self.now());
@@ -1541,12 +1621,16 @@ impl Session {
             };
             match event {
                 None | Some(Event::Wake) => {}
-                Some(Event::Frame(Ok(Some(value)))) => {
+                Some(Event::Frame {
+                    frame: Ok(Some(value)),
+                    received,
+                }) => {
                     if self.closing.is_none() {
-                        self.request(value);
+                        self.received = received;
+                        self.request(&value);
                     }
                 }
-                Some(Event::Frame(_) | Event::OutputClosed) => self.begin_close(),
+                Some(Event::Frame { .. } | Event::OutputClosed) => self.begin_close(),
                 Some(Event::Finished {
                     id,
                     outcome,
@@ -1556,6 +1640,10 @@ impl Session {
                         Some(entry) if !entry.answered => {
                             let outcome = if entry.cancel_requested {
                                 SessionOutcome::Cancelled
+                            } else if matches!(outcome.as_ref(), SessionOutcome::AdminChunk { .. })
+                                && !self.admin_delivery_current(&effects)
+                            {
+                                failed(SessionFailure::AdminOutcomeUnknown)
                             } else {
                                 *outcome
                             };
@@ -1572,6 +1660,9 @@ impl Session {
                     self.apply(*effects, false);
                 }
                 Some(Event::WindowClosed) => self.window_closing = false,
+                Some(Event::AdminClosed) => {
+                    self.admin_closing = self.admin_closing.saturating_sub(1)
+                }
             }
         }
     }
@@ -1670,8 +1761,10 @@ impl Session {
                 let outcome = failed(SessionFailure::SessionResponseOversize);
                 encode(&SessionResponse { id, outcome }, MAX_RESPONSE_FRAME_BYTES)
             });
-        if let Some(bytes) = bytes {
-            self.outbox.reply(bytes);
+        if let Some(bytes) = bytes
+            && !self.outbox.reply(bytes)
+        {
+            self.begin_close();
         }
     }
 
@@ -1687,6 +1780,7 @@ impl Session {
 
     /// The window's grant and Assistance state end with its window or instance.
     fn reset_plane(&mut self) {
+        self.close_admin_owner(false);
         {
             let mut scope = self.shared.scope();
             self.shared.epoch.fetch_add(1, Ordering::SeqCst);
@@ -1695,6 +1789,7 @@ impl Session {
         }
         self.delivered = 0;
         self.acked = None;
+        self.shared.admin.verified_context();
         if let Some(subscription) = self.subscription.as_mut() {
             subscription.native = None;
         }
@@ -1834,9 +1929,11 @@ impl Session {
             .map(|(id, _)| *id)
             .collect();
         for id in expired {
+            self.shared.admin.cancel(id);
             let mut cancelled = false;
             if let Some(entry) = self.entries.get_mut(&id) {
                 entry.answered = true;
+                entry.cancelled.store(true, Ordering::SeqCst);
                 cancelled = entry.cancel_requested;
             }
             self.respond(
@@ -1859,6 +1956,10 @@ impl Session {
             return;
         }
         self.closing = Some(self.now() + self.timing.drain_ms);
+        for entry in self.entries.values() {
+            entry.cancelled.store(true, Ordering::SeqCst);
+        }
+        self.close_admin_owner(true);
         {
             let mut scope = self.shared.scope();
             scope.generation = scope.generation.wrapping_add(1);
@@ -1921,16 +2022,32 @@ impl Session {
         self.renew_at = self.now() + self.timing.renew_every_ms;
     }
 
-    fn request(&mut self, value: Value) {
-        let id = value
-            .get("id")
-            .cloned()
-            .and_then(|id| serde_json::from_value::<Incarnation>(id).ok());
-        let other_protocol = value
-            .pointer("/request/hello/protocol")
-            .and_then(Value::as_u64)
-            .is_some_and(|protocol| protocol != u64::from(SESSION_PROTOCOL));
-        let Ok(request) = serde_json::from_value::<SessionRequest>(value) else {
+    fn request(&mut self, raw: &serde_json::value::RawValue) {
+        // Keep original body bytes/depth until their domain owner parses them.
+        #[derive(serde::Deserialize)]
+        struct Header {
+            id: Option<Incarnation>,
+            request: Option<Box<serde_json::value::RawValue>>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Hello {
+            protocol: u64,
+        }
+        let header = serde_json::from_str::<Header>(raw.get()).ok();
+        let id = header.as_ref().and_then(|header| header.id);
+        let other_protocol = header
+            .as_ref()
+            .and_then(|header| header.request.as_ref())
+            .and_then(|request| {
+                serde_json::from_str::<HashMap<String, Box<serde_json::value::RawValue>>>(
+                    request.get(),
+                )
+                .ok()
+            })
+            .and_then(|mut request| request.remove("hello"))
+            .and_then(|hello| serde_json::from_str::<Hello>(hello.get()).ok())
+            .is_some_and(|hello| hello.protocol != u64::from(SESSION_PROTOCOL));
+        let Ok(request) = serde_json::from_str::<SessionRequest>(raw.get()) else {
             match id {
                 Some(id) if other_protocol => {
                     self.respond(id, failed(SessionFailure::SessionProtocolMismatch));
@@ -1942,6 +2059,9 @@ impl Session {
             return;
         };
         let id = request.id;
+        if self.entries.contains_key(&id) {
+            return self.respond(id, failed(SessionFailure::SessionInvalidRequest));
+        }
         match request.request {
             SessionMethod::Hello {
                 protocol,
@@ -1952,6 +2072,10 @@ impl Session {
                 self.respond(id, failed(SessionFailure::SessionProtocolMismatch));
             }
             SessionMethod::Cancel { target } => {
+                if self.shared.admin.contains(target) {
+                    self.admin_cancel_request(id, target);
+                    return;
+                }
                 let Some(entry) = self
                     .entries
                     .get_mut(&target)
@@ -1960,6 +2084,7 @@ impl Session {
                     return self.respond(id, failed(SessionFailure::SessionInvalidRequest));
                 };
                 entry.cancel_requested = true;
+                entry.cancelled.store(true, Ordering::SeqCst);
                 self.respond(id, SessionOutcome::Cancelled);
             }
             SessionMethod::Invoke {
@@ -1982,7 +2107,7 @@ impl Session {
                 self.start(id, Some(deadline_ms), Work::Invoke { argv, stdin });
             }
             SessionMethod::Control { method } => match relay_rule(&method) {
-                Relay::Forward => self.start(id, None, Work::Control(method)),
+                Relay::Forward => self.start(id, None, Work::Control(Box::new(method))),
                 Relay::Refuse => self.respond(id, failed(SessionFailure::SessionCommandRefused)),
                 Relay::Brokerage => self.respond(
                     id,
@@ -1993,6 +2118,26 @@ impl Session {
                     },
                 ),
             },
+            SessionMethod::AdminCall {
+                operation,
+                body,
+                deadline_ms,
+            } => self.admin_call_request(id, operation, body, deadline_ms),
+            SessionMethod::AdminRead { target, offset } => {
+                if offset > airk_core::native_admin::MAX_RESPONSE_BYTES {
+                    self.respond(id, failed(SessionFailure::SessionInvalidRequest));
+                } else {
+                    self.start(id, None, Work::Admin(admin::Task::Read { target, offset }));
+                }
+            }
+            SessionMethod::AdminCancel { target } => self.admin_cancel_request(id, target),
+            SessionMethod::AdminClose {} => {
+                if self.entries.len() >= MAX_IN_FLIGHT {
+                    return self.respond(id, failed(SessionFailure::SessionBusy));
+                }
+                let ticket = self.shared.admin.invalidate(false);
+                self.start(id, None, Work::Admin(admin::Task::Close(ticket)));
+            }
             SessionMethod::Subscribe { topics, cursor } => {
                 if let Some(cursor) = &cursor
                     && (Some(cursor.service_instance) != self.instance
@@ -2020,6 +2165,11 @@ impl Session {
     }
 
     fn start(&mut self, id: Incarnation, deadline_ms: Option<u64>, work: Work) {
+        // Preserve full-frame receipt time through actor and worker queues.
+        let deadline_ms = deadline_ms.map(|deadline| self.received.ms.saturating_add(deadline));
+        if deadline_ms.is_some_and(|at| at <= self.now()) {
+            return self.respond(id, failed(SessionFailure::SessionDeadlineExceeded));
+        }
         if self.entries.contains_key(&id) {
             // Ids name exactly one in-flight request; a reuse is malformed.
             return self.respond(id, failed(SessionFailure::SessionInvalidRequest));
@@ -2028,11 +2178,31 @@ impl Session {
             return self.respond(id, failed(SessionFailure::SessionBusy));
         }
         let (worker, snapshot, sender) = (self.worker(), self.snapshot(), self.sender.clone());
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let before_dispatch = cancelled.clone();
         let spawned = std::thread::Builder::new()
             .name("airkctl-session-request".into())
             .stack_size(REQUEST_STACK_BYTES)
             .spawn(move || {
-                let (outcome, effects) = worker.run(&snapshot, work);
+                let (outcome, effects) = if before_dispatch.load(Ordering::SeqCst) {
+                    (
+                        SessionOutcome::Cancelled,
+                        Effects {
+                            epoch: snapshot.epoch,
+                            ..Effects::default()
+                        },
+                    )
+                } else if deadline_ms.is_some_and(|at| at <= worker.shared.clock.now_ms()) {
+                    (
+                        failed(SessionFailure::SessionDeadlineExceeded),
+                        Effects {
+                            epoch: snapshot.epoch,
+                            ..Effects::default()
+                        },
+                    )
+                } else {
+                    worker.run(&snapshot, work)
+                };
                 let _ = sender.send(Event::Finished {
                     id,
                     outcome: Box::new(outcome),
@@ -2042,13 +2212,13 @@ impl Session {
         if spawned.is_err() {
             return self.respond(id, failed(SessionFailure::SessionBusy));
         }
-        let now = self.now();
         self.entries.insert(
             id,
             Entry {
-                deadline_ms: deadline_ms.map(|deadline| now + deadline),
+                deadline_ms,
                 cancel_requested: false,
                 answered: false,
+                cancelled,
             },
         );
     }

@@ -140,6 +140,11 @@ pub fn write_private(
 
 /// An exclusive owner-private lock file, released on drop.
 pub struct PrivateLock(File);
+impl PrivateLock {
+    pub fn as_file(&self) -> &File {
+        &self.0
+    }
+}
 impl Drop for PrivateLock {
     fn drop(&mut self) {
         let _ = self.0.unlock();
@@ -170,3 +175,173 @@ pub fn lock(root: &Path, name: &str, busy: &'static str) -> Result<PrivateLock> 
     file.try_lock().context(busy)?;
     Ok(PrivateLock(file))
 }
+
+/// Read a private record relative to an already-pinned owner-private directory.
+pub fn read_private_at(
+    root: &airk_process::directory::OpenedDirectory,
+    name: &str,
+    limit: usize,
+) -> Result<Option<Vec<u8>>> {
+    use std::{ffi::OsStr, io::Read};
+    crate::endpoint::require_private_directory_handle(root.as_file())?;
+    let file = match root.open_file(OsStr::new(name)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    crate::endpoint::require_private_metadata_handle(&file)?;
+    ensure!(
+        file.metadata()?.len() <= limit as u64,
+        "private record exceeds bound"
+    );
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= limit, "private record exceeds bound");
+    Ok(Some(bytes))
+}
+
+/// Publish a bounded private record under a caller-held private directory.
+pub fn write_private_at(
+    root: &airk_process::directory::OpenedDirectory,
+    name: &str,
+    bytes: &[u8],
+    limit: usize,
+    replace: bool,
+) -> Result<()> {
+    crate::endpoint::require_private_directory_handle(root.as_file())?;
+    write_owner_at(root, name, bytes, limit, replace)
+}
+
+/// Publish a private file under a protected parent that may permit foreign reads.
+/// Caller owns the logical replacement authorization and serialization.
+pub fn write_owner_at(
+    root: &airk_process::directory::OpenedDirectory,
+    name: &str,
+    bytes: &[u8],
+    limit: usize,
+    replace: bool,
+) -> Result<()> {
+    use std::{
+        ffi::OsStr,
+        io::Write,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    ensure!(bytes.len() <= limit, "private record exceeds bound");
+    airk_process::directory::validate_child_name(OsStr::new(name))?;
+    crate::endpoint::require_protected_parent_handle(root.as_file())?;
+    // Opening the old leaf refuses redirection/aliases; publication replaces
+    // only its directory entry. Logical old-byte authority belongs to caller.
+    match root.open_file(OsStr::new(name)) {
+        Ok(file) => drop(file),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let mut staged = None;
+    for _ in 0..32 {
+        let temporary = format!(
+            ".airk-private-{}-{stamp}-{}.tmp",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        match crate::endpoint::create_private_file_at(root, OsStr::new(&temporary)) {
+            Ok(file) => {
+                staged = Some((temporary, file));
+                break;
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|error| error.kind() == io::ErrorKind::AlreadyExists) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let (temporary, mut file) = staged.context("private staging name collisions")?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    root.publish_file(OsStr::new(&temporary), OsStr::new(name), replace)?;
+    let published = root.open_file(OsStr::new(name))?;
+    crate::endpoint::require_private_metadata_handle(&published)?;
+    root.sync_all()?;
+    Ok(())
+}
+
+/// Remove exact private bytes within a held parent. Windows compares and
+/// disposes one stable handle; Unix uses original-dirfd unlink under the
+/// caller's serialization (not atomic compare/unlink against hostile writers).
+pub fn remove_private_at(
+    root: &airk_process::directory::OpenedDirectory,
+    name: &str,
+    expected: &[u8],
+) -> Result<bool> {
+    use std::{ffi::OsStr, io::Read};
+    crate::endpoint::require_protected_parent_handle(root.as_file())?;
+    let verify = |file: &mut File| -> io::Result<bool> {
+        #[cfg(unix)]
+        crate::endpoint::require_private_metadata_handle(file)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let mut bytes = Vec::new();
+        file.take(expected.len() as u64 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes != expected {
+            return Err(io::Error::other("private record changed before removal"));
+        }
+        Ok(true)
+    };
+    #[cfg(windows)]
+    let result = root.remove_file_if(OsStr::new(name), |file, proof| {
+        crate::endpoint::require_private_pending_metadata_handle(file, proof)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        verify(file)
+    });
+    #[cfg(unix)]
+    let result = (|| -> io::Result<bool> {
+        let mut file = root.open_file(OsStr::new(name))?;
+        verify(&mut file)?;
+        root.unlink_file(OsStr::new(name))?;
+        Ok(true)
+    })();
+    match result {
+        Ok(removed) => Ok(removed),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Acquire an exclusive lock through the original pinned parent.
+pub fn lock_at(
+    root: &airk_process::directory::OpenedDirectory,
+    name: &str,
+    busy: &'static str,
+) -> Result<PrivateLock> {
+    use std::ffi::OsStr;
+    crate::endpoint::require_private_directory_handle(root.as_file())?;
+    let file = match root.open_file(OsStr::new(name)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            match crate::endpoint::create_private_file_at(root, OsStr::new(name)) {
+                Ok(file) => drop(file),
+                Err(error)
+                    if error
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::AlreadyExists) => {}
+                Err(error) => return Err(error),
+            }
+            root.open_file(OsStr::new(name))?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    crate::endpoint::require_private_metadata_handle(&file)?;
+    file.try_lock().context(busy)?;
+    Ok(PrivateLock(file))
+}
+
+#[cfg(test)]
+mod rooted_tests;

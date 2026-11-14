@@ -302,6 +302,14 @@ fn draft_native(
         &selection.selectors,
         target.clone(),
     )?;
+    let grouping = SplitGrouping {
+        mode: SplitGroupingMode::Create,
+        project_id: SplitGrouping::project_id(operation)?,
+        name: source.index.name.clone(),
+        original_scope: SplitGrouping::whole_scope(&plan.remainder),
+        destination_scope: SplitGrouping::whole_scope(&plan.destination),
+    };
+    let grouping = registry.catalog_review_split_grouping(selection.index_id, grouping)?;
     let affected = source
         .affected_projects
         .iter()
@@ -324,6 +332,16 @@ fn draft_native(
             .find(|effect| effect.project_id == choice.project_id)
             .unwrap()
             .clone();
+        if effect.project_id == grouping.project_id {
+            ensure!(
+                choice.retain_original,
+                "split original-name set must retain the original index"
+            );
+            effect.retain_original = true;
+            effect.destination_scope = None;
+            projects.push(effect);
+            continue;
+        }
         effect.retain_original = choice.retain_original;
         let original_scope = match &choice.membership {
             SplitMembershipSelection::Omit => None,
@@ -356,13 +374,10 @@ fn draft_native(
     let destination_quota =
         Quota::review_service_funding_policy(Path::new(&destination.data_root))?;
     let request = SplitRequest {
+        grouping: Some(grouping),
         extraction_policy: extraction_policy.clone(),
         schema: 1,
-        required_policy_contract: if extraction_policy.is_some() {
-            3
-        } else {
-            SPLIT_CONTRACT
-        },
+        required_policy_contract: GROUPED_SPLIT_CONTRACT,
         caller,
         key: selection.key.clone(),
         expected_catalog_revision: selection.expected_catalog_revision,

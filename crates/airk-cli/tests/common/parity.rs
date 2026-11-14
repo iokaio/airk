@@ -16,6 +16,10 @@
 //! JSON-escaped and slash forms; then every 32- or 64-digit hex token is
 //! renamed `<H{n}>` by first occurrence within that one text, so identity
 //! equality inside a text is kept while fresh identifiers compare equal.
+// Strict new transport comparisons live separately. The original U95 v1
+// captures retain their approved, explicitly limited legacy comparison.
+pub mod strict;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -144,7 +148,7 @@ fn is_identifier(text: &str) -> bool {
 
 /// Every maximal run of exactly 32 or 64 ASCII hex digits renamed `<H{n}>`,
 /// numbered by first occurrence in `text`.
-fn rename_hex(text: &str) -> String {
+fn legacy_v1_rename_hex(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut names: BTreeMap<&str, usize> = BTreeMap::new();
     let mut out = String::with_capacity(text.len());
@@ -509,7 +513,7 @@ impl Parity {
     }
 
     fn canonical_with(&self, text: &str, used: &mut BTreeSet<String>) -> String {
-        rename_hex(&replace_all(&self.mask(text), &self.substitutions, used))
+        legacy_v1_rename_hex(&replace_all(&self.mask(text), &self.substitutions, used))
     }
 
     /// `text` (a case name) in canonical space.
@@ -538,7 +542,7 @@ impl Parity {
             );
             for text in [&stored.stdout, &stored.stderr] {
                 assert_eq!(
-                    rename_hex(text),
+                    legacy_v1_rename_hex(text),
                     *text,
                     "{}: case {case:?} keeps a 32/64-digit hex token",
                     self.test

@@ -36,7 +36,11 @@ impl ManagementReply {
     }
 }
 enum Envelope {
-    Request(Box<ControlMethod>, ManagementReply),
+    Request(
+        Box<ControlMethod>,
+        ManagementReply,
+        Option<airk_https::admin_plane::NativeDispatchCheck>,
+    ),
     Missing(airk_catalog_control::catalog_source_change_control::NativeMissingSourceEvent),
     AdministrativeRead(
         ProjectBinding,
@@ -72,7 +76,7 @@ fn receive_checkpoint_frozen(
         Ok(envelope) => {
             observed.store(false, Ordering::Release);
             match envelope {
-                Envelope::Request(_, reply) => {
+                Envelope::Request(_, reply, _) => {
                     active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(ControlResponse::Failure {
                         code: "runtime_upgrade_in_progress".into(),
@@ -470,6 +474,14 @@ impl Drop for Management {
     }
 }
 
+fn effect_refusal(
+    check: Option<&airk_https::admin_plane::NativeDispatchCheck>,
+) -> Option<ControlResponse> {
+    check
+        .and_then(|check| check().err())
+        .map(|code| ControlResponse::Failure { code: code.into() })
+}
+
 fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> ControlResponse {
     let read_only = request_is_read_only(&method);
     execute(registry, method).unwrap_or_else(|error| failure_response(error, read_only))
@@ -839,6 +851,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         .as_millis()
         .try_into()?;
     Ok(match method {
+        ControlMethod::AdminNativeOpen { .. }
+        | ControlMethod::AdminNativeCall { .. }
+        | ControlMethod::AdminNativeRead { .. }
+        | ControlMethod::AdminNativeCancel { .. }
+        | ControlMethod::AdminNativeClose { .. } => ControlResponse::Failure {
+            code: "native_admin_owner_required".into(),
+        },
         // Only the native Runtime's actual guarded socket writer can make a
         // final combined delivery observation; the metadata actor cannot.
         ControlMethod::ValidateCombinedDelivery { .. } => ControlResponse::Failure {
@@ -1190,6 +1209,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::CatalogSplitRecoveryReceipt { .. }
         | ControlMethod::EmbeddingStatus
         | ControlMethod::SourceStatus
+        | ControlMethod::Arbiter { .. }
+        | ControlMethod::ArbiterApplication { .. }
+        | ControlMethod::ArbiterNextRead { .. }
         | ControlMethod::Resources
         | ControlMethod::Workers { .. }
         | ControlMethod::Worker { .. }
@@ -1420,7 +1442,7 @@ impl Management {
                             continue;
                         },
                     };
-                    let (method, reply) = match envelope {
+                    let (method, reply, effect_check) = match envelope {
                         Envelope::AdministrativeRead(project,sender) => {
                             let result = match (registry.as_ref(),catalog.as_ref()) {
                                 (Ok(registry),Some(native)) => native.reconcile(registry).and_then(|_| native.control.administrative_read(project)),
@@ -1454,7 +1476,7 @@ impl Management {
                             }
                             continue;
                         }
-                        Envelope::Request(method,reply) => (*method,reply),
+                        Envelope::Request(method,reply,check) => (*method,reply,check),
                         Envelope::Missing(event) => {
                             if missing_work.iter().any(|work| work.event.binding() == event.binding()
                                 && work.event.registration_epoch() == event.registration_epoch()
@@ -1467,6 +1489,11 @@ impl Management {
                             continue;
                         }
                     };
+                    if let Some(refusal) = effect_refusal(effect_check.as_ref()) {
+                        active.fetch_sub(1, Ordering::AcqRel);
+                        let _ = reply.send(refusal);
+                        continue;
+                    }
                     if let ManagementReply::Scoped(sender) = reply {
                         let result = match (registry.as_mut(), catalog.as_ref()) {
                             (Ok(registry), Some(native)) => match method {
@@ -1585,6 +1612,13 @@ impl Management {
     }
 
     pub async fn request(&self, method: ControlMethod) -> ControlResponse {
+        self.request_guarded(method, None).await
+    }
+    pub(crate) async fn request_guarded(
+        &self,
+        method: ControlMethod,
+        effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
+    ) -> ControlResponse {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
         if self.sender.as_ref().is_none_or(|queue| {
@@ -1592,6 +1626,7 @@ impl Management {
                 .try_send(Envelope::Request(
                     Box::new(method),
                     ManagementReply::Control(sender),
+                    effect_check,
                 ))
                 .is_err()
         }) {
@@ -1698,6 +1733,7 @@ impl Management {
             queue.try_send(Envelope::Request(
                 Box::new(method),
                 ManagementReply::Scoped(sender),
+                None,
             ))
         });
         match sent {
@@ -1783,6 +1819,7 @@ mod tests {
                         .send(Envelope::Request(
                             Box::new(ControlMethod::RequestEpoch),
                             ManagementReply::Control(reply),
+                            None,
                         ))
                         .is_ok()
                 );
@@ -1951,6 +1988,106 @@ mod tests {
     }
 
     #[test]
+    fn native_management_queued_cancel_deadline_and_session_end_prevent_first_effect() -> Result<()>
+    {
+        for refusal in [
+            None,
+            Some("admin_request_cancelled"),
+            Some("admin_request_expired"),
+            Some("admin_session_invalid"),
+        ] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().join("runtime");
+            crate::local_ipc::prepare_root(&root)?;
+            let caller = Incarnation::from_bytes([89; 16]);
+            let mut registry = ServiceRegistry::open(&root, caller)?;
+            let project = ProjectRegistration::new(
+                owner.path().join("source").to_str().unwrap().into(),
+                owner.path().join("data").to_str().unwrap().into(),
+                "native-queued-guard".into(),
+            )?;
+            registry.register(&project)?;
+            let binding = project.binding;
+            let (sender, receiver) = sync_channel::<Envelope>(2);
+            let (observed, queued) = sync_channel(1);
+            let (release, gate) = sync_channel(1);
+            let (state, changed) = sync_channel(1);
+            let pending = Arc::new(AtomicUsize::new(0));
+            let active = pending.clone();
+            let actor = std::thread::spawn(move || {
+                let Envelope::Request(method, reply, check) =
+                    receiver.recv_timeout(Duration::from_secs(15)).unwrap()
+                else {
+                    panic!("unexpected actor event");
+                };
+                observed.send(()).unwrap();
+                gate.recv_timeout(Duration::from_secs(15)).unwrap();
+                // Same production guard at actor entry, after its queue wait.
+                let response = effect_refusal(check.as_ref())
+                    .unwrap_or_else(|| execute_request(&mut registry, *method));
+                active.fetch_sub(1, Ordering::AcqRel);
+                let _ = reply.send(response);
+                state.send(registry.get(binding).unwrap().paused).unwrap();
+            });
+            let management = Arc::new(Management {
+                checkpoint_pause: Arc::new(AtomicBool::new(false)),
+                checkpoint_observed: Arc::new(AtomicBool::new(false)),
+                sender: Some(Arc::new(sender)),
+                thread: Some(actor),
+                pending,
+                plans: Arc::new(AtomicBool::new(false)),
+                missing: Arc::new(AtomicUsize::new(0)),
+            });
+            let valid = Arc::new(AtomicBool::new(true));
+            let validity = valid.clone();
+            let check: airk_https::admin_plane::NativeDispatchCheck = Arc::new(move || {
+                if validity.load(Ordering::Acquire) {
+                    Ok(())
+                } else {
+                    Err(refusal.unwrap())
+                }
+            });
+            let client = management.clone();
+            let task = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(client.request_guarded(
+                        ControlMethod::Pause {
+                            project: binding,
+                            paused: true,
+                        },
+                        Some(check),
+                    ))
+            });
+            queued.recv_timeout(Duration::from_secs(15))?;
+            if refusal.is_some() {
+                valid.store(false, Ordering::Release);
+            }
+            release.send(())?;
+            let response = task.join().unwrap();
+            if let Some(code) = refusal {
+                assert_eq!(
+                    serde_json::to_value(response)?,
+                    serde_json::json!({"status":"failure","code":code})
+                );
+            } else {
+                assert!(
+                    matches!(response,ControlResponse::Registered { project } if project.registration.binding == binding && project.paused)
+                );
+            }
+            assert_eq!(
+                changed.recv_timeout(Duration::from_secs(15))?,
+                refusal.is_none()
+            );
+            assert_eq!(management.pending.load(Ordering::Acquire), 0);
+            drop(management);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn timed_out_metadata_keeps_ownership_and_exact_key_before_and_after_commit() -> Result<()> {
         use airk_core::service::{JobKind, RequestKey};
         for commit_before_timeout in [false, true] {
@@ -1985,7 +2122,7 @@ mod tests {
             // forces both ambiguous outcomes without relying on disk speed.
             let thread = std::thread::spawn(move || {
                 for attempt in 0..2 {
-                    let Envelope::Request(method, reply) =
+                    let Envelope::Request(method, reply, _) =
                         receiver.recv_timeout(Duration::from_secs(15)).unwrap()
                     else {
                         panic!("unexpected native event");

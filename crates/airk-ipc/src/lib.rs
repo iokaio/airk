@@ -6,4 +6,5 @@
 pub mod control;
 pub mod endpoint;
 pub mod frame;
+pub mod install_reader;
 pub mod private_record;

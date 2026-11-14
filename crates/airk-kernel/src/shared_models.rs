@@ -14,15 +14,18 @@ mod embedded_tests;
 pub(crate) fn semantic_upgrade_pending(
     store: &FileStore,
     objects: Option<&ModelObjectSet>,
-) -> bool {
-    objects.is_some_and(|objects| {
-        objects
-            .assets
-            .contains_key(&airk_core::model_objects::ModelAssetName::ModelOnnx)
-            && store
-                .shared_model_default()
-                .is_some_and(|default| objects.local_set() != *default)
-    })
+) -> Result<bool> {
+    let Some(objects) = objects else {
+        return Ok(false);
+    };
+    if !objects
+        .assets
+        .contains_key(&airk_core::model_objects::ModelAssetName::ModelOnnx)
+    {
+        return Ok(false);
+    }
+    let descriptor = descriptor(store, objects)?;
+    Ok(!airk_retrieval::model::onnx_descriptor_uses_current_runtime(&descriptor))
 }
 
 pub(crate) fn open_model(store: &FileStore, objects: &ModelObjectSet) -> Result<EmbeddingModel> {
@@ -127,7 +130,7 @@ impl Kernel {
             };
         };
         if let Some(objects) = self.selected_shared_model()?
-            && !semantic_upgrade_pending(&self.store, Some(&objects))
+            && !semantic_upgrade_pending(&self.store, Some(&objects))?
         {
             ensure!(
                 objects.shared.is_some(),

@@ -127,6 +127,7 @@ fn fixture_in_namespace(
         target.clone(),
     )?;
     let request = SplitRequest {
+        grouping: None,
         extraction_policy: None,
         schema: 1,
         required_policy_contract: SPLIT_CONTRACT,

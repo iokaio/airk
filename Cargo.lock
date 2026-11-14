@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "airk-catalog-control"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-endpoint",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "airk-cli"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -146,9 +146,10 @@ dependencies = [
 
 [[package]]
 name = "airk-core"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "anyhow",
+ "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -157,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "airk-endpoint"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-host",
@@ -198,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "airk-frontend"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -244,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "airk-host"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -284,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "airk-https"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -331,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "airk-inference"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-endpoint",
@@ -373,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "airk-ingest"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -455,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "airk-installer"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -500,9 +501,10 @@ dependencies = [
 
 [[package]]
 name = "airk-ipc"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
+ "airk-process",
  "anyhow",
  "libc",
  "serde",
@@ -515,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "airk-kernel"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -539,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "airk-mcp"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-kernel",
@@ -561,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "airk-process"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -575,9 +577,10 @@ dependencies = [
 
 [[package]]
 name = "airk-retrieval"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
+ "airk-process",
  "anyhow",
  "diskann",
  "diskann-vector",
@@ -592,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "airk-service"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -635,15 +638,17 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "toml",
+ "webpki-roots",
  "windows-sys 0.61.2",
  "x509-parser",
 ]
 
 [[package]]
 name = "airk-store"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
+ "airk-process",
  "anyhow",
  "libc",
  "lz4_flex",
@@ -657,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "airk-supervisor"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -702,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "airkctl"
-version = "1.8.35"
+version = "1.9.0"
 dependencies = [
  "airk-core",
  "airk-ipc",
@@ -710,12 +715,14 @@ dependencies = [
  "anyhow",
  "clap",
  "getrandom 0.3.4",
+ "libc",
  "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4346,6 +4353,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

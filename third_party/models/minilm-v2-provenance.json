@@ -1,0 +1,683 @@
+{
+  "schema": "airk.trained-encoder-provenance/1",
+  "status": "Candidate source/rights provenance; native held-out quality, resources, platform and release gates remain separate. No promotion claim.",
+  "base": {
+    "name": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+    "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+    "license": "Apache-2.0",
+    "model_safetensors_sha256": "53aa51172d142c89d9012cce15ae4d6cc0ca6895895114379cacb4fab128d9db"
+  },
+  "airk_modifications": {
+    "selected_checkpoint_sha256": "51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906",
+    "selection": "Epoch1 selected using development questions only; final questions not used to select checkpoint.",
+    "training_examples": 315,
+    "qasper_positive_pairs": 97,
+    "qasper_distinct_questions": 69,
+    "documentation_pairs": 218,
+    "objective": "InfoNCE with in-batch and lexical hard distractors, batch8, temperature0.05, AdamW2e-5 weightdecay0.01,3epochs, FP32,256tokens; negatives are unjudged distractors, not claimed human irrelevant labels",
+    "training_receipt_sha256": "3dc5a01b8d04f5ba3cac34839e960127d2380a52be4ac1c49656c1be0a7eecd0",
+    "training_rows_sha256": "1c0f106de7372b33a8b355aa5087fa466d830a5c4c6e00e14fedf5781f0659ac",
+    "private_corpus_sha256": "6e9d8ade6f799ed2a5e1903de69482db9fcd3cb1731a5fee4a504adede5fca6f",
+    "changes": [
+      "Contrastive update to base encoder weights; original tokenizer unchanged.",
+      "Attention-mask-aware mean pooling and L2 normalization; unused publisher pooler outside this embedding function.",
+      "Explicit mixed quantization: FP32 embeddings and six FFN output projections, other30of36constantlinear weights INT8; U8/S8 export identities distinct.",
+      "QASPER/S2ORC normalized text; quote-bearing paragraphs, figures/tables excluded; human annotation alternatives retained.",
+      "Original Requests docstrings mechanically paired with containing functions; not human context-role/sufficiency labels."
+    ]
+  },
+  "exports": [
+    {
+      "profile": "minilm-l6-v2-u8-v2",
+      "model_sha256": "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b"
+    },
+    {
+      "profile": "minilm-l6-v2-s8-v2",
+      "model_sha256": "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c"
+    }
+  ],
+  "shared_assets": {
+    "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+    "license_file": "minilm-v2-LICENSE.txt",
+    "license_sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd"
+  },
+  "qasper": {
+    "version": "0.3",
+    "attribution": "Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith and Matt Gardner (2021), A Dataset of Information-Seeking Questions and Answers Anchored in Research Papers.",
+    "url": "https://allenai.org/data/qasper",
+    "annotation_license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "metadata_revision": "fdc9d8214fbab5dd782958601db4d678e6934a54",
+    "metadata_url": "https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md",
+    "archive_url": "https://qasper-dataset.s3.us-west-2.amazonaws.com/qasper-train-dev-v0.3.tgz",
+    "archive_sha256": "a28fdf966db827bcee3d873107d6b6669864fb7ca8fbf73a192f5e39191bdb5a",
+    "use": "PublisherTRAIN only for weightupdates/mining; distinct development used for checkpointselection. Per-paper fulltext rights checked separately; annotation tag alone not used as fulltext grant.",
+    "training_papers": [
+      {
+        "source_id": "arxiv:1609.04186v1",
+        "paper_id": "1609.04186",
+        "title": "Neural Machine Translation with Supervised Attention",
+        "authors": [
+          "Liu, Lemao",
+          "Utiyama, Masao",
+          "Finch, Andrew",
+          "Sumita, Eiichiro"
+        ],
+        "url": "https://arxiv.org/abs/1609.04186v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "4c68f41374b8aaeb2501c4d8cbfbdded7242f5fb8fdfcab8ee26d1649b65b990",
+        "attribution": "Liu, Lemao; Utiyama, Masao; Finch, Andrew; Sumita, Eiichiro, Neural Machine Translation with Supervised Attention, arXiv:1609.04186v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1701.08118v1",
+        "paper_id": "1701.08118",
+        "title": "Measuring the Reliability of Hate Speech Annotations: The Case of the European Refugee Crisis",
+        "authors": [
+          "Ross, Björn",
+          "Rist, Michael",
+          "Carbonell, Guillermo",
+          "Cabrera, Benjamin",
+          "Kurowsky, Nils",
+          "Wojatzki, Michael"
+        ],
+        "url": "https://arxiv.org/abs/1701.08118v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "4cc8be5df64090dd247395992b3d24145cd0f98523e35b2db3a3e350b9f2fced",
+        "attribution": "Ross, Björn; Rist, Michael; Carbonell, Guillermo; Cabrera, Benjamin; Kurowsky, Nils; Wojatzki, Michael, Measuring the Reliability of Hate Speech Annotations: The Case of the European Refugee Crisis, arXiv:1701.08118v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1702.01517v1",
+        "paper_id": "1702.01517",
+        "title": "Opinion Recommendation using Neural Memory Model",
+        "authors": [
+          "Wang, Zhongqing",
+          "Zhang, Yue"
+        ],
+        "url": "https://arxiv.org/abs/1702.01517v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "cac0b21adb57c9b51ef8cb7aa0038d5eafbc7c19814de0e2cd941830263ae61e",
+        "attribution": "Wang, Zhongqing; Zhang, Yue, Opinion Recommendation using Neural Memory Model, arXiv:1702.01517v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1707.06878v1",
+        "paper_id": "1707.06878",
+        "title": "Unsupervised, Knowledge-Free, and Interpretable Word Sense Disambiguation",
+        "authors": [
+          "Panchenko, Alexander",
+          "Marten, Fide",
+          "Ruppert, Eugen",
+          "Faralli, Stefano",
+          "Ustalov, Dmitry",
+          "Ponzetto, Simone Paolo",
+          "Biemann, Chris"
+        ],
+        "url": "https://arxiv.org/abs/1707.06878v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "4cf81171efe14b9e428cc1296166ed2dbb286157ced23debd342de87ca34d182",
+        "attribution": "Panchenko, Alexander; Marten, Fide; Ruppert, Eugen; Faralli, Stefano; Ustalov, Dmitry; Ponzetto, Simone Paolo; Biemann, Chris, Unsupervised, Knowledge-Free, and Interpretable Word Sense Disambiguation, arXiv:1707.06878v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1707.06945v1",
+        "paper_id": "1707.06945",
+        "title": "Cross-Lingual Induction and Transfer of Verb Classes Based on Word Vector Space Specialisation",
+        "authors": [
+          "Vulić, Ivan",
+          "Mrkšić, Nikola",
+          "Korhonen, Anna"
+        ],
+        "url": "https://arxiv.org/abs/1707.06945v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "ad7c028fa1eb816fb2b4586ce66316dca25e87510f51acc34c4cc56fd881609e",
+        "attribution": "Vulić, Ivan; Mrkšić, Nikola; Korhonen, Anna, Cross-Lingual Induction and Transfer of Verb Classes Based on Word Vector Space Specialisation, arXiv:1707.06945v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1804.08782v1",
+        "paper_id": "1804.08782",
+        "title": "Towards an Unsupervised Entrainment Distance in Conversational Speech using Deep Neural Networks",
+        "authors": [
+          "Nasir, Md",
+          "Baucom, Brian",
+          "Narayanan, Shrikanth",
+          "Georgiou, Panayiotis"
+        ],
+        "url": "https://arxiv.org/abs/1804.08782v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "8f723662f520d121df79372585cae52edfa435c32ad60f0570b51c3d8b77574d",
+        "attribution": "Nasir, Md; Baucom, Brian; Narayanan, Shrikanth; Georgiou, Panayiotis, Towards an Unsupervised Entrainment Distance in Conversational Speech using Deep Neural Networks, arXiv:1804.08782v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1805.03122v1",
+        "paper_id": "1805.03122",
+        "title": "Bleaching Text: Abstract Features for Cross-lingual Gender Prediction",
+        "authors": [
+          "van der Goot, Rob",
+          "Ljubešić, Nikola",
+          "Matroos, Ian",
+          "Nissim, Malvina",
+          "Plank, Barbara"
+        ],
+        "url": "https://arxiv.org/abs/1805.03122v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "9c1f695bc737739576de4552588459aea87fe7a43d098877553fdd1cd2bbeef1",
+        "attribution": "van der Goot, Rob; Ljubešić, Nikola; Matroos, Ian; Nissim, Malvina; Plank, Barbara, Bleaching Text: Abstract Features for Cross-lingual Gender Prediction, arXiv:1805.03122v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1805.07966v1",
+        "paper_id": "1805.07966",
+        "title": "Aff2Vec: Affect--Enriched Distributional Word Representations",
+        "authors": [
+          "Khosla, Sopan",
+          "Chhaya, Niyati",
+          "Chawla, Kushal"
+        ],
+        "url": "https://arxiv.org/abs/1805.07966v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "5dc4e66c1a47501b864a579c9ec196ed421fe398cb736943539f77ed7f7ee322",
+        "attribution": "Khosla, Sopan; Chhaya, Niyati; Chawla, Kushal, Aff2Vec: Affect--Enriched Distributional Word Representations, arXiv:1805.07966v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1805.11189v1",
+        "paper_id": "1805.11189",
+        "title": "Graph-based Filtering of Out-of-Vocabulary Words for Encoder-Decoder Models",
+        "authors": [
+          "Katsumata, Satoru",
+          "Matsumura, Yukio",
+          "Yamagishi, Hayahide",
+          "Komachi, Mamoru"
+        ],
+        "url": "https://arxiv.org/abs/1805.11189v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "115620a1b8c22c5a76ea9715d98bf1c28563fffc1a83e8c49ec3b40221bf4f1b",
+        "attribution": "Katsumata, Satoru; Matsumura, Yukio; Yamagishi, Hayahide; Komachi, Mamoru, Graph-based Filtering of Out-of-Vocabulary Words for Encoder-Decoder Models, arXiv:1805.11189v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1805.12032v1",
+        "paper_id": "1805.12032",
+        "title": "Identifying and Understanding User Reactions to Deceptive and Trusted Social News Sources",
+        "authors": [
+          "Glenski, Maria",
+          "Weninger, Tim",
+          "Volkova, Svitlana"
+        ],
+        "url": "https://arxiv.org/abs/1805.12032v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "40940fc5f2c171f401a9bc6d938f5643812bc6d9f3c1bddce4d340560725b79f",
+        "attribution": "Glenski, Maria; Weninger, Tim; Volkova, Svitlana, Identifying and Understanding User Reactions to Deceptive and Trusted Social News Sources, arXiv:1805.12032v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1810.03459v1",
+        "paper_id": "1810.03459",
+        "title": "Multilingual sequence-to-sequence speech recognition: architecture, transfer learning, and language modeling",
+        "authors": [
+          "Cho, Jaejin",
+          "Baskar, Murali Karthick",
+          "Li, Ruizhi",
+          "Wiesner, Matthew",
+          "Mallidi, Sri Harish",
+          "Yalta, Nelson",
+          "Karafiat, Martin",
+          "Watanabe, Shinji",
+          "Hori, Takaaki"
+        ],
+        "url": "https://arxiv.org/abs/1810.03459v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "fccb5c2989b6337e1842b5f860e213b71d41eb6319d7720d4edae2f163436674",
+        "attribution": "Cho, Jaejin; Baskar, Murali Karthick; Li, Ruizhi; Wiesner, Matthew; Mallidi, Sri Harish; Yalta, Nelson; Karafiat, Martin; Watanabe, Shinji; Hori, Takaaki, Multilingual sequence-to-sequence speech recognition: architecture, transfer learning, and language modeling, arXiv:1810.03459v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1810.04528v1",
+        "paper_id": "1810.04528",
+        "title": "Is there Gender bias and stereotype in Portuguese Word Embeddings?",
+        "authors": [
+          "Santana, Brenda Salenave",
+          "Woloszyn, Vinicius",
+          "Wives, Leandro Krug"
+        ],
+        "url": "https://arxiv.org/abs/1810.04528v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "8adf0db9abd57ac4ed469f9d7e8770d6fecb5c5dcdd3a53663c3a74a0bee1564",
+        "attribution": "Santana, Brenda Salenave; Woloszyn, Vinicius; Wives, Leandro Krug, Is there Gender bias and stereotype in Portuguese Word Embeddings?, arXiv:1810.04528v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1811.11136v1",
+        "paper_id": "1811.11136",
+        "title": "SOC: hunting the underground inside story of the ethereum Social-network Opinion and Comment",
+        "authors": [
+          "Huang, TonTon Hsien-De",
+          "Hong, Po-Wei",
+          "Lee, Ying-Tse",
+          "Wang, Yi-Lun",
+          "Lok, Chi-Leong",
+          "Kao, Hung-Yu"
+        ],
+        "url": "https://arxiv.org/abs/1811.11136v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "f3abbbcea343a05e91b959f6bb526d959bfa250a6a7ce14cb2e6082d51a44fd9",
+        "attribution": "Huang, TonTon Hsien-De; Hong, Po-Wei; Lee, Ying-Tse; Wang, Yi-Lun; Lok, Chi-Leong; Kao, Hung-Yu, SOC: hunting the underground inside story of the ethereum Social-network Opinion and Comment, arXiv:1811.11136v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1905.01715v1",
+        "paper_id": "1905.01715",
+        "title": "A Parallel Corpus of Theses and Dissertations Abstracts",
+        "authors": [
+          "Soares, Felipe",
+          "Yamashita, Gabrielli Harumi",
+          "Anzanello, Michel Jose"
+        ],
+        "url": "https://arxiv.org/abs/1905.01715v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "043dffa9950e6c90a48295e9e544840c0acd53a93a0908252a8d1aa952423e32",
+        "attribution": "Soares, Felipe; Yamashita, Gabrielli Harumi; Anzanello, Michel Jose, A Parallel Corpus of Theses and Dissertations Abstracts, arXiv:1905.01715v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1905.11901v1",
+        "paper_id": "1905.11901",
+        "title": "Revisiting Low-Resource Neural Machine Translation: A Case Study",
+        "authors": [
+          "Sennrich, Rico",
+          "Zhang, Biao"
+        ],
+        "url": "https://arxiv.org/abs/1905.11901v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "4dd2f1796a2b0454bb8ec866e048abac6150e6e3caa10418d0075420335048ee",
+        "attribution": "Sennrich, Rico; Zhang, Biao, Revisiting Low-Resource Neural Machine Translation: A Case Study, arXiv:1905.11901v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1906.09774v1",
+        "paper_id": "1906.09774",
+        "title": "Emotionally-Aware Chatbots: A Survey",
+        "authors": [
+          "Pamungkas, Endang Wahyu"
+        ],
+        "url": "https://arxiv.org/abs/1906.09774v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "f3a8e9045eb6ba09d3802d790253222b1d710ecbd86d622042aa495ade0368ac",
+        "attribution": "Pamungkas, Endang Wahyu, Emotionally-Aware Chatbots: A Survey, arXiv:1906.09774v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1906.10519v1",
+        "paper_id": "1906.10519",
+        "title": "Embedding Projection for Targeted Cross-Lingual Sentiment: Model Comparisons and a Real-World Study",
+        "authors": [
+          "Barnes, Jeremy",
+          "Klinger, Roman"
+        ],
+        "url": "https://arxiv.org/abs/1906.10519v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "04aa064f48e344e486723d00fa63837623df7554495a834b25f3066c0ae598c7",
+        "attribution": "Barnes, Jeremy; Klinger, Roman, Embedding Projection for Targeted Cross-Lingual Sentiment: Model Comparisons and a Real-World Study, arXiv:1906.10519v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1907.02030v1",
+        "paper_id": "1907.02030",
+        "title": "Real-time Claim Detection from News Articles and Retrieval of Semantically-Similar Factchecks",
+        "authors": [
+          "Adler, Ben",
+          "Boscaini-Gilroy, Giacomo"
+        ],
+        "url": "https://arxiv.org/abs/1907.02030v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "8701ec57d3d67633e39cf207e8946dd59d946ef0efdda1e4a9117153282c58ca",
+        "attribution": "Adler, Ben; Boscaini-Gilroy, Giacomo, Real-time Claim Detection from News Articles and Retrieval of Semantically-Similar Factchecks, arXiv:1907.02030v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1907.05403v1",
+        "paper_id": "1907.05403",
+        "title": "Incrementalizing RASA's Open-Source Natural Language Understanding Pipeline",
+        "authors": [
+          "Rafla, Andrew",
+          "Kennington, Casey"
+        ],
+        "url": "https://arxiv.org/abs/1907.05403v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "d300b990c6d0ce11b07aa693c31d9fb7ffe945abfbe9be4256c31f4af6655eb3",
+        "attribution": "Rafla, Andrew; Kennington, Casey, Incrementalizing RASA's Open-Source Natural Language Understanding Pipeline, arXiv:1907.05403v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1907.08501v1",
+        "paper_id": "1907.08501",
+        "title": "A Comparative Evaluation of Visual and Natural Language Question Answering Over Linked Data",
+        "authors": [
+          "Wohlgenannt, Gerhard",
+          "Mouromtsev, Dmitry",
+          "Pavlov, Dmitry",
+          "Emelyanov, Yury",
+          "Morozov, Alexey"
+        ],
+        "url": "https://arxiv.org/abs/1907.08501v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "f26b2113283d3ffdfb9595ec79f04493ca53aa67c0193b3a44f05e7dc0c2ba28",
+        "attribution": "Wohlgenannt, Gerhard; Mouromtsev, Dmitry; Pavlov, Dmitry; Emelyanov, Yury; Morozov, Alexey, A Comparative Evaluation of Visual and Natural Language Question Answering Over Linked Data, arXiv:1907.08501v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1908.10275v1",
+        "paper_id": "1908.10275",
+        "title": "The Wiki Music dataset: A tool for computational analysis of popular music",
+        "authors": [
+          "Celli, Fabio"
+        ],
+        "url": "https://arxiv.org/abs/1908.10275v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "dc5f1394d9162994d39d86557aceeec9d3eb88b24dd2af66c861985d4a417107",
+        "attribution": "Celli, Fabio, The Wiki Music dataset: A tool for computational analysis of popular music, arXiv:1908.10275v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1908.11279v1",
+        "paper_id": "1908.11279",
+        "title": "Grounded Agreement Games: Emphasizing Conversational Grounding in Visual Dialogue Settings",
+        "authors": [
+          "Schlangen, David"
+        ],
+        "url": "https://arxiv.org/abs/1908.11279v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "f4845cd413d68bf9487a97f86454b8eeaa877567f7b828735a65bf2dd486f89e",
+        "attribution": "Schlangen, David, Grounded Agreement Games: Emphasizing Conversational Grounding in Visual Dialogue Settings, arXiv:1908.11279v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.04453v1",
+        "paper_id": "1909.04453",
+        "title": "Select and Attend: Towards Controllable Content Selection in Text Generation",
+        "authors": [
+          "Shen, Xiaoyu",
+          "Suzuki, Jun",
+          "Inui, Kentaro",
+          "Su, Hui",
+          "Klakow, Dietrich",
+          "Sekine, Satoshi"
+        ],
+        "url": "https://arxiv.org/abs/1909.04453v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "a50c4fa425d058bba95c6344929d1f138ce7a088346dbcd2505ad325ff0cdbb8",
+        "attribution": "Shen, Xiaoyu; Suzuki, Jun; Inui, Kentaro; Su, Hui; Klakow, Dietrich; Sekine, Satoshi, Select and Attend: Towards Controllable Content Selection in Text Generation, arXiv:1909.04453v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.04625v1",
+        "paper_id": "1909.04625",
+        "title": "Representation of Constituents in Neural Language Models: Coordination Phrase as a Case Study",
+        "authors": [
+          "An, Aixiu",
+          "Qian, Peng",
+          "Wilcox, Ethan",
+          "Levy, Roger"
+        ],
+        "url": "https://arxiv.org/abs/1909.04625v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "75325384b30423e4fac91e5dbe5efc7703152282a509d292425952b749cd0225",
+        "attribution": "An, Aixiu; Qian, Peng; Wilcox, Ethan; Levy, Roger, Representation of Constituents in Neural Language Models: Coordination Phrase as a Case Study, arXiv:1909.04625v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.05246v1",
+        "paper_id": "1909.05246",
+        "title": "Self-Attentional Models Application in Task-Oriented Dialogue Generation Systems",
+        "authors": [
+          "Mehrjardi, Mansour Saffar",
+          "Trabelsi, Amine",
+          "Zaiane, Osmar R."
+        ],
+        "url": "https://arxiv.org/abs/1909.05246v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "2ba5272c554478f46c2efef7e07b1397b648692831a79c1a3af8268e24f20410",
+        "attribution": "Mehrjardi, Mansour Saffar; Trabelsi, Amine; Zaiane, Osmar R., Self-Attentional Models Application in Task-Oriented Dialogue Generation Systems, arXiv:1909.05246v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.08402v1",
+        "paper_id": "1909.08402",
+        "title": "Enriching BERT with Knowledge Graph Embeddings for Document Classification",
+        "authors": [
+          "Ostendorff, Malte",
+          "Bourgonje, Peter",
+          "Berger, Maria",
+          "Moreno-Schneider, Julian",
+          "Rehm, Georg",
+          "Gipp, Bela"
+        ],
+        "url": "https://arxiv.org/abs/1909.08402v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "854cce6ddd15f572680e75f01170f632bd3630491ae1faf08079122c38231cc1",
+        "attribution": "Ostendorff, Malte; Bourgonje, Peter; Berger, Maria; Moreno-Schneider, Julian; Rehm, Georg; Gipp, Bela, Enriching BERT with Knowledge Graph Embeddings for Document Classification, arXiv:1909.08402v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.09986v1",
+        "paper_id": "1909.09986",
+        "title": "Improving Quality and Efficiency in Plan-based Neural Data-to-Text Generation",
+        "authors": [
+          "Moryossef, Amit",
+          "Dagan, Ido",
+          "Goldberg, Yoav"
+        ],
+        "url": "https://arxiv.org/abs/1909.09986v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "bcff504a0c866df471150720959a0ff3b64531efbff3191b0ea93c6ffd93bf2b",
+        "attribution": "Moryossef, Amit; Dagan, Ido; Goldberg, Yoav, Improving Quality and Efficiency in Plan-based Neural Data-to-Text Generation, arXiv:1909.09986v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.11189v1",
+        "paper_id": "1909.11189",
+        "title": "Diachronic Topics in New High German Poetry",
+        "authors": [
+          "Haider, Thomas N."
+        ],
+        "url": "https://arxiv.org/abs/1909.11189v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "c846dd2811769ab26876e1fdaabaa4f3d1ad8465992cfd5be15085d3f54136c2",
+        "attribution": "Haider, Thomas N., Diachronic Topics in New High German Poetry, arXiv:1909.11189v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1909.12140v1",
+        "paper_id": "1909.12140",
+        "title": "DisSim: A Discourse-Aware Syntactic Text Simplification Frameworkfor English and German",
+        "authors": [
+          "Niklaus, Christina",
+          "Cetto, Matthias",
+          "Freitas, Andre",
+          "Handschuh, Siegfried"
+        ],
+        "url": "https://arxiv.org/abs/1909.12140v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "0054a56d6613d7510515c2d55050e0dd2538382cfcdad4260661495a7e938a9e",
+        "attribution": "Niklaus, Christina; Cetto, Matthias; Freitas, Andre; Handschuh, Siegfried, DisSim: A Discourse-Aware Syntactic Text Simplification Frameworkfor English and German, arXiv:1909.12140v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1910.04269v1",
+        "paper_id": "1910.04269",
+        "title": "Spoken Language Identification using ConvNets",
+        "authors": [
+          "Sarthak",
+          "Shukla, Shikhar",
+          "Mittal, Govind"
+        ],
+        "url": "https://arxiv.org/abs/1910.04269v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "e0c91df60f2a0e6cc406bccc384d801658ba5f16c9913b7bfda156e3cd235b19",
+        "attribution": "Sarthak; Shukla, Shikhar; Mittal, Govind, Spoken Language Identification using ConvNets, arXiv:1910.04269v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1910.06748v1",
+        "paper_id": "1910.06748",
+        "title": "Language Identification on Massive Datasets of Short Message using an Attention Mechanism CNN",
+        "authors": [
+          "Vo, Duy Tin",
+          "Khoury, Richard"
+        ],
+        "url": "https://arxiv.org/abs/1910.06748v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "419a7a2520a4c3f919d0ed16819f60b5f2bd522bcbbbd5cb907dd3b70f2d46fa",
+        "attribution": "Vo, Duy Tin; Khoury, Richard, Language Identification on Massive Datasets of Short Message using an Attention Mechanism CNN, arXiv:1910.06748v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1911.08829v1",
+        "paper_id": "1911.08829",
+        "title": "Casting a Wide Net: Robust Extraction of Potentially Idiomatic Expressions",
+        "authors": [
+          "Haagsma, Hessel",
+          "Nissim, Malvina",
+          "Bos, Johan"
+        ],
+        "url": "https://arxiv.org/abs/1911.08829v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "fa9de1345b4b49c17e7689f3e254576b59faf2255bb0827383b970357eff4d1e",
+        "attribution": "Haagsma, Hessel; Nissim, Malvina; Bos, Johan, Casting a Wide Net: Robust Extraction of Potentially Idiomatic Expressions, arXiv:1911.08829v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:1912.08320v1",
+        "paper_id": "1912.08320",
+        "title": "Garbage In, Garbage Out? Do Machine Learning Application Papers in Social Computing Report Where Human-Labeled Training Data Comes From?",
+        "authors": [
+          "Geiger, R. Stuart",
+          "Yu, Kevin",
+          "Yang, Yanlai",
+          "Dai, Mindy",
+          "Qiu, Jie",
+          "Tang, Rebekah",
+          "Huang, Jenny"
+        ],
+        "url": "https://arxiv.org/abs/1912.08320v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "cf8e289171779f28c54255bad9f9be14ebf865c19c450f27fb3c635053d51b4f",
+        "attribution": "Geiger, R. Stuart; Yu, Kevin; Yang, Yanlai; Dai, Mindy; Qiu, Jie; Tang, Rebekah; Huang, Jenny, Garbage In, Garbage Out? Do Machine Learning Application Papers in Social Computing Report Where Human-Labeled Training Data Comes From?, arXiv:1912.08320v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:2002.02427v1",
+        "paper_id": "2002.02427",
+        "title": "Irony Detection in a Multilingual Context",
+        "authors": [
+          "Ghanem, Bilal",
+          "Karoui, Jihen",
+          "Benamara, Farah",
+          "Rosso, Paolo",
+          "Moriceau, Véronique"
+        ],
+        "url": "https://arxiv.org/abs/2002.02427v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "8c9ecbb447d5b5c57d023c585d50643b3d3c63889b35f051723b51005a6f3f5f",
+        "attribution": "Ghanem, Bilal; Karoui, Jihen; Benamara, Farah; Rosso, Paolo; Moriceau, Véronique, Irony Detection in a Multilingual Context, arXiv:2002.02427v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:2002.05058v1",
+        "paper_id": "2002.05058",
+        "title": "Learning to Compare for Better Training and Evaluation of Open Domain Natural Language Generation Models",
+        "authors": [
+          "Zhou, Wangchunshu",
+          "Xu, Ke"
+        ],
+        "url": "https://arxiv.org/abs/2002.05058v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "6d011c859131ceabd21b731401b11edb8ffb081c6e4f3f41ce261f743bdd657f",
+        "attribution": "Zhou, Wangchunshu; Xu, Ke, Learning to Compare for Better Training and Evaluation of Open Domain Natural Language Generation Models, arXiv:2002.05058v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      },
+      {
+        "source_id": "arxiv:2004.03034v1",
+        "paper_id": "2004.03034",
+        "title": "The Role of Pragmatic and Discourse Context in Determining Argument Impact",
+        "authors": [
+          "Durmus, Esin",
+          "Ladhak, Faisal",
+          "Cardie, Claire"
+        ],
+        "url": "https://arxiv.org/abs/2004.03034v1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_text_sha256": "2a1660ef545ca2ed04310e0dacf99ee7e506cdee735bfc9f5c351a2536725195",
+        "attribution": "Durmus, Esin; Ladhak, Faisal; Cardie, Claire, The Role of Pragmatic and Discourse Context in Determining Argument Impact, arXiv:2004.03034v1, CC BY4.0; QASPER/S2ORC normalized extraction; quote-bearing paragraphs and figures/tables excluded.",
+        "publisher_split": "train"
+      }
+    ]
+  },
+  "requests": {
+    "name": "Requests",
+    "version": "2.25.1",
+    "revision": "c2b307dbefe21177af03f9feb37181a89a799fcc",
+    "url": "https://github.com/psf/requests/tree/c2b307dbefe21177af03f9feb37181a89a799fcc",
+    "license": "Apache-2.0",
+    "copyright_notice": "Requests\nCopyright 2019 Kenneth Reitz\n",
+    "pairs_sha256": "916b398de0fc9774041fe174d0e585c862bc68e9aa18fa04028c3126f693a18f",
+    "license_artifacts": [
+      {
+        "file": "LICENSE",
+        "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+      },
+      {
+        "file": "NOTICE",
+        "sha256": "f5110972dedad2b4e9d314518daf3b7d72d6e02e499acd802181de6f74571dcc"
+      }
+    ]
+  },
+  "excluded": "HotpotQA/Wikipedia heldout evaluation data did not enter weighttraining/mining. No raw dataset, source implementations, questions, evidence text or live indexes included in this provenance file.",
+  "cc_by_legal_text": {
+    "file": "CC-BY-4.0.txt",
+    "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+    "canonical_url": "https://creativecommons.org/licenses/by/4.0/legalcode",
+    "source_url": "https://raw.githubusercontent.com/creativecommons/cc-legal-tools-data/a0dac18d1a773b4cdb7d8dd5d9bf4efab7901030/docs/licenses/by/4.0/legalcode.txt"
+  }
+}

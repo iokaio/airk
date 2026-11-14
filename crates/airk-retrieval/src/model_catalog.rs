@@ -76,7 +76,7 @@ pub fn detect_capabilities() -> ModelCapabilities {
 #[serde(deny_unknown_fields)]
 pub struct ModelAsset {
     pub name: String,
-    pub url: String,
+    pub url: Option<String>,
     pub bytes: u64,
     pub sha256: String,
 }
@@ -96,8 +96,71 @@ pub struct ModelProfile {
     pub precision: String,
     pub runtime: String,
     pub qualification: Qualification,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantization: Option<QuantizationPolicy>,
     pub manifest: OnnxManifest,
     pub assets: Vec<ModelAsset>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuantizationPolicy {
+    pub schema: String,
+    pub activation_precision: String,
+    pub signed_lowering: Option<IntegerLowering>,
+    pub fp32_embeddings_retained: bool,
+    pub protected_fp32_nodes: Vec<String>,
+    pub constant_linear_parameters: u64,
+    pub quantized_linear_parameters: u64,
+    pub trained_checkpoint_sha256: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerLowering {
+    pub split_matmul_nodes: usize,
+    pub shared_activation_splits: usize,
+    pub maximum_inner_dimension: usize,
+    pub identity: String,
+    pub converted_weight_parameters: usize,
+    pub weight_identity: String,
+}
+impl QuantizationPolicy {
+    fn validate(&self, signed: bool) -> Result<()> {
+        ensure!(
+            self.schema == "airk.minilm.quantization/2"
+                && self.activation_precision
+                    == if signed {
+                        "unsigned asymmetric8bit split into exact low7/high1 MatMulInteger passes"
+                    } else {
+                        "unsigned asymmetric INT8"
+                    }
+                && self.fp32_embeddings_retained
+                && self.constant_linear_parameters == 10_616_832
+                && self.quantized_linear_parameters == 7_077_888
+                && self.trained_checkpoint_sha256
+                    == "51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906"
+                && self.protected_fp32_nodes
+                    == (0..6)
+                        .map(|layer| format!("/inner/encoder/layer.{layer}/output/dense/MatMul"))
+                        .collect::<Vec<_>>(),
+            "unapproved trained mixed-precision policy"
+        );
+        match (&self.signed_lowering, signed) {
+            (None, false) => {}
+            (Some(lowering), true) => ensure!(
+                lowering.split_matmul_nodes == 30
+                    && lowering.shared_activation_splits == 18
+                    && lowering.maximum_inner_dimension == 32768
+                    && lowering.converted_weight_parameters == 60
+                    && lowering.identity
+                        == "(Alo-Zlo)(B-Zb)+128(Ahi-Zhi)(B-Zb)=(A-Za)(B-Zb); Alo,Zlo<=127, Ahi,Zhi<=1, signed weights/zero-points[-128,127]"
+                    && lowering.weight_identity
+                        == "Qs=Qu-128; Zs=Zu-128; identical scale bytes, so S(Qs-Zs)=S(Qu-Zu) exactly",
+                "unapproved signed integer lowering"
+            ),
+            _ => anyhow::bail!("mixed-precision signed lowering differs"),
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -111,9 +174,9 @@ pub struct ModelCatalog {
 impl ModelCatalog {
     fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema == 1
+            self.schema == 2
                 && self.profiles.len() == 2
-                && self.default_profile == "minilm-l6-v2-u8-v1",
+                && self.default_profile == "minilm-l6-v2-u8-v2",
             "unsupported model catalog"
         );
         let mut ids = BTreeSet::new();
@@ -124,48 +187,60 @@ impl ModelCatalog {
                     && profile.manifest.schema == 2,
                 "invalid INT8 profile"
             );
-            let approved_hash = match profile.precision.as_str() {
-                "uint8" => "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
-                "int8" => "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
-                _ => anyhow::bail!("FP32 and unknown model precisions are forbidden"),
-            };
+            let (approved_hash, approved_size, signed) =
+                match (profile.id.as_str(), profile.precision.as_str()) {
+                    ("minilm-l6-v2-u8-v2", "mixed-u8") => (
+                        "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+                        69_325_926,
+                        false,
+                    ),
+                    ("minilm-l6-v2-s8-v2", "mixed-s8") => (
+                        "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
+                        69_355_444,
+                        true,
+                    ),
+                    _ => anyhow::bail!("FP32 and unknown model precisions are forbidden"),
+                };
+            profile
+                .quantization
+                .as_ref()
+                .context("trained quantization policy missing")?
+                .validate(signed)?;
+            let mut expected = legacy_catalog()?
+                .profiles
+                .into_iter()
+                .find(|old| old.precision == if signed { "int8" } else { "uint8" })
+                .context("retained base profile missing")?
+                .manifest;
+            expected.model_sha256 = approved_hash.into();
+            expected.license_sha256 =
+                "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd".into();
+            ensure!(
+                profile.manifest == expected,
+                "trained model base/tokenizer/ABI metadata differs"
+            );
             ensure!(
                 profile.manifest.model_sha256 == approved_hash,
                 "unapproved weight hash"
             );
-            let export = match (profile.id.as_str(), profile.precision.as_str()) {
-                ("minilm-l6-v2-u8-v1", "uint8") => "model_quint8_avx2.onnx",
-                ("minilm-l6-v2-s8-v1", "int8") => "model_qint8_avx512_vnni.onnx",
-                _ => anyhow::bail!("unsupported INT8 profile"),
-            };
             ensure!(
                 profile.assets.len() == 3,
                 "model catalog asset inventory differs"
             );
             let mut names = BTreeSet::new();
             for asset in &profile.assets {
-                let (expected, maximum, url) = match asset.name.as_str() {
+                let (expected, maximum, exact_size) = match asset.name.as_str() {
                     "model.onnx" => (
                         &profile.manifest.model_sha256,
                         MAX_MODEL_BYTES,
-                        format!(
-                            "{}/resolve/{}/onnx/{export}",
-                            profile.manifest.source, profile.manifest.revision
-                        ),
+                        approved_size,
                     ),
                     "tokenizer.json" => (
                         &profile.manifest.tokenizer_sha256,
                         MAX_TOKENIZER_BYTES,
-                        format!(
-                            "{}/resolve/{}/tokenizer.json",
-                            profile.manifest.source, profile.manifest.revision
-                        ),
+                        466_247,
                     ),
-                    "LICENSE" => (
-                        &profile.manifest.license_sha256,
-                        262_144,
-                        "https://www.apache.org/licenses/LICENSE-2.0.txt".to_owned(),
-                    ),
+                    "LICENSE" => (&profile.manifest.license_sha256, 262_144, 34_889),
                     _ => anyhow::bail!("unsupported model catalog asset"),
                 };
                 ensure!(
@@ -178,8 +253,8 @@ impl ModelCatalog {
                             .sha256
                             .bytes()
                             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-                        && asset.url == url
-                        && asset.url.starts_with("https://"),
+                        && asset.bytes == exact_size
+                        && asset.url.is_none(),
                     "invalid model catalog asset binding"
                 );
             }
@@ -187,6 +262,19 @@ impl ModelCatalog {
         Ok(())
     }
 }
+fn legacy_catalog() -> Result<ModelCatalog> {
+    use sha2::{Digest, Sha256};
+    let bytes = include_bytes!("model_catalog_v1.json");
+    ensure!(
+        format!("{:x}", Sha256::digest(bytes))
+            == "5250cecb29775ac45d8d813f83403c011541d172f6829866e9c3ec76a9888a67",
+        "retained v1 catalog identity changed"
+    );
+    Ok(serde_json::from_slice(bytes)?)
+}
+
+#[cfg(test)]
+mod policy_cases;
 
 #[derive(Debug, Serialize)]
 pub struct ModelSelection {
@@ -208,16 +296,16 @@ pub struct ModelCatalogReport {
 fn select_profile(catalog: &ModelCatalog, hardware: &ModelCapabilities) -> Result<ModelSelection> {
     catalog.validate()?;
     let (id, reason) = match hardware.architecture {
-        "aarch64" => ("minilm-l6-v2-s8-v1", "arm64_signed_int8"),
+        "aarch64" => ("minilm-l6-v2-s8-v2", "arm64_signed_int8"),
         "x86_64"
             if hardware
                 .cpu_features
                 .iter()
                 .any(|feature| matches!(*feature, "avxvnni" | "avx512vnni")) =>
         {
-            ("minilm-l6-v2-s8-v1", "vnni_signed_int8")
+            ("minilm-l6-v2-s8-v2", "vnni_signed_int8")
         }
-        "x86_64" => ("minilm-l6-v2-u8-v1", "portable_unsigned_int8"),
+        "x86_64" => ("minilm-l6-v2-u8-v2", "portable_unsigned_int8"),
         _ => anyhow::bail!("unsupported INT8 architecture"),
     };
     let profile = catalog
@@ -279,11 +367,11 @@ mod tests {
     fn selection_covers_non_vnni_vnni_and_arm_without_fp32_fallback() -> Result<()> {
         let mut report = inspect_catalog()?;
         for (architecture, features, expected) in [
-            ("x86_64", vec![], "minilm-l6-v2-u8-v1"),
-            ("x86_64", vec!["avx2", "avx512f"], "minilm-l6-v2-u8-v1"),
-            ("x86_64", vec!["avxvnni"], "minilm-l6-v2-s8-v1"),
-            ("x86_64", vec!["avx512vnni"], "minilm-l6-v2-s8-v1"),
-            ("aarch64", vec!["neon"], "minilm-l6-v2-s8-v1"),
+            ("x86_64", vec![], "minilm-l6-v2-u8-v2"),
+            ("x86_64", vec!["avx2", "avx512f"], "minilm-l6-v2-u8-v2"),
+            ("x86_64", vec!["avxvnni"], "minilm-l6-v2-s8-v2"),
+            ("x86_64", vec!["avx512vnni"], "minilm-l6-v2-s8-v2"),
+            ("aarch64", vec!["neon"], "minilm-l6-v2-s8-v2"),
         ] {
             report.capabilities.architecture = architecture;
             report.capabilities.cpu_features = features;

@@ -49,3 +49,12 @@ historical/public-result fencing, actual transport comparisons, all platform
 native aliases/filesystems, handle-private archive creation and Git/package
 admission remain separate obligations. This change neither enables archives
 nor alters source policy formats, digests, user ignore files or publication.
+
+Native ignore-control locators join each directory component separately,
+including .git/info/exclude and XDG git/config and git/ignore. Windows canonical
+verbatim paths do not treat a literal forward slash as an ordinary Win32
+separator. Missing controls retain their existing absence handling; unavailable
+metadata still refuses with the actual failing locator and native error code.
+The focused verbatim-path regression loads an actual exclusion and confirms
+source and control bytes remain unchanged. No naming normalization substitutes
+a different source authority or changes policy/ignore precedence.

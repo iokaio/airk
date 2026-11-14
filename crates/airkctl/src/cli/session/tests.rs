@@ -5,6 +5,8 @@
 //! Time is a manual clock; tests wait only for observed frames or pipe calls
 //! under a deadline, never for a fixed interval.
 use super::*;
+mod admin;
+mod backpressure;
 use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -135,11 +137,13 @@ struct Input {
     frames: Receiver<Vec<u8>>,
     pending: Vec<u8>,
     at: usize,
+    read_next: Sender<()>,
 }
 
 impl Read for Input {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         while self.at == self.pending.len() {
+            let _ = self.read_next.send(());
             match self.frames.recv() {
                 Ok(bytes) => (self.pending, self.at) = (bytes, 0),
                 Err(_) => return Ok(0),
@@ -177,6 +181,7 @@ struct Client {
     exit: Receiver<u8>,
     gate: Gate,
     text: String,
+    read_next: Receiver<()>,
 }
 
 impl Client {
@@ -184,6 +189,7 @@ impl Client {
         let (input, frames) = channel();
         let (bytes, output) = channel();
         let (code, exit) = channel();
+        let (read_next, reads) = channel();
         let gate = Gate::default();
         let writer = Output {
             bytes,
@@ -194,6 +200,7 @@ impl Client {
                 frames,
                 pending: Vec::new(),
                 at: 0,
+                read_next,
             };
             let _ = code.send(serve_streams(reader, writer, options));
         });
@@ -204,6 +211,7 @@ impl Client {
             exit,
             gate,
             text: String::new(),
+            read_next: reads,
         }
     }
 

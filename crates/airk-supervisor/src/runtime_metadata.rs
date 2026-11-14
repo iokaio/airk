@@ -5,6 +5,7 @@ use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Read, path::Path, sync::OnceLock};
+mod arbiter;
 
 static PROCESS: OnceLock<RuntimeProcess> = OnceLock::new();
 static PROCESS_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -163,6 +164,7 @@ pub fn project_worker_hooks() -> crate::project_worker::Hooks {
         runtime_work: observe_runtime_work,
         rebuild_observation: airk_installer::runtime_install::rebuild_observation_for_control,
         refresh_references: airk_catalog_control::reference_refresh_control::execute,
+        arbiter_controller: arbiter::controller,
     }
 }
 

@@ -3,7 +3,9 @@
 
 One resident airk process per user and machine is the service. Production code
 may start the running executable again only for the reviewed purposes below,
-each a short-lived child that its owner waits for or kills. Test modules and
+with explicit lifetime ownership. Awaited observations are bounded; admitted
+detached setup retains original recovery custody and reports pending/unknown
+rather than killing effects on timeout. Test modules and
 test-only files are excluded. The scan is per function: a function that both
 names the running executable and contains a process-start primitive is a self
 spawn. Every such function must be listed in ALLOWED with its reason, and every
@@ -88,9 +90,43 @@ STARTS = {
     ("crates/airk-service/src/setup_role/effects.rs", "start"):
         "external: the installed airkctl `service start` from the setup role's start step "
         "(U94: one start implementation); setup waits for it",
-    ("crates/airkctl/src/uninstall.rs", "spawn_setup"):
-        "airk's private setup role, detached, for `airkctl service uninstall` (U20); the "
-        "role admits only the owner-only single-use operation file airkctl just wrote",
+    ("crates/airk-service/src/setup_role/mac_login.rs", "checked"):
+        "external: /usr/bin/codesign --verify --strict on the exact C10/I4/hash-"
+        "verified placed AIRK.app; bounded awaited resource-signature observation",
+    ("crates/airk-service/src/setup_role/mac_login.rs", "apply"):
+        "one-shot: verified placed airk service-login-control status/register/"
+        "unregister helper; original active setup/installation fences bind the "
+        "request, parent retains install.lock, bounded awaited SMAppService result",
+    ("crates/airk-service/src/setup_role/predecessor_roster.rs", "native_os"):
+        "external: bounded awaited read-only native OS roster: fixed PowerShell "
+        "task/registry/PATH observation, systemctl --user list queries or launchctl "
+        "print; uncertainty preserves leftovers, names never authorize deletion",
+    ("crates/airk-service/src/setup_role/wrapper_lease.rs", "exec_script"):
+        "external: Unix exec replaces the setup helper with /bin/bash running the "
+        "absolute external installer script and exact original --resume request; "
+        "the actual private file lock survives placement descendants and is "
+        "close-on-exec in native service children (setup CONTRACT outer lease)",
+    ("crates/airkctl/src/agents/config/eligibility.rs", "git"):
+        "external: resolved Git outside the target/current worktrees, no shell, "
+        "five-second bounded rev-parse/ls-files/check-ignore observations only; "
+        "GIT_ overrides refuse, fsmonitor and optional locks disabled (config CONTRACT)",
+    ("crates/airkctl/src/portable.rs", "invoke_plan"):
+        "one-shot: full C7/C10/inventory-verified candidate airk private setup --plan "
+        "with the original private request, awaited under its bounded operation "
+        "lifetime; read-only review, not admitted Complete (I2 portable contract)",
+    ("crates/airkctl/src/uninstall.rs", "admit_removal"):
+        "one-shot: retained verified recovery airk private --admit-removal, bounded "
+        "and awaited; exact original operation/I4 Active owner must be observed "
+        "before detached removal or Inno handoff (setup/R10 contracts)",
+    ("crates/airkctl/src/uninstall.rs", "spawn_inno"):
+        "external: detached C10-verified Inno uninstaller with matching finalized "
+        "EXE/DAT custody, exact admitted original operation and retained native "
+        "recovery image; returns pending, wrapper owns tracked cleanup and lease",
+    ("crates/airkctl/src/uninstall/recovery_child.rs", "launch"):
+        "one-shot: detached verified airk private setup Complete for original "
+        "portable/removal requests; surviving owner replaces uninstall.spawn_setup "
+        "process primitive; exact child observation never kills admitted effects "
+        "on timeout, original custody/receipt remains authoritative (I2/R10)",
     ("crates/airkctl/src/launch.rs", "launch"):
         "external: the user's Claude Code, Codex or VS Code client in the foreground "
         "(`airkctl agents launch`, U91); not an airk process",

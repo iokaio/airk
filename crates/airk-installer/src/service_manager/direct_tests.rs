@@ -179,3 +179,22 @@ fn a_pre_split_windows_registration_is_owned_for_removal_but_never_launched() ->
     assert!(manager.check_launchable().is_err());
     Ok(())
 }
+
+#[test]
+fn split_mac_job_requires_exact_static_role_and_placed_bundle() {
+    let main = Path::new("/Applications/AIRK.app/Contents/MacOS/airk");
+    let bundle = Path::new("/Applications/AIRK.app");
+    let text = "job = {\n\tprogram = /Applications/AIRK.app/Contents/MacOS/airk\n\tpath = /Applications/AIRK.app/Contents/Library/LaunchAgents/io.iokaio.airk.service.stable.plist\n\targuments = {\n\t\tairk\n\t\t__airk_role\n\t\tservice-login-current\n\t}\n}\n";
+    verify_split_mac_job(text, main, bundle, "stable").unwrap();
+    assert!(
+        verify_split_mac_job(
+            &text.replace("service-login-current", "login-serve"),
+            main,
+            bundle,
+            "stable"
+        )
+        .is_err()
+    );
+    assert!(verify_split_mac_job(text, Path::new("/other/airk"), bundle, "stable").is_err());
+    assert!(verify_split_mac_job(text, main, bundle, "preview").is_err());
+}

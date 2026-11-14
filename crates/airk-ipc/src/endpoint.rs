@@ -15,6 +15,13 @@ mod unix;
 #[cfg(unix)]
 use self::unix as platform;
 pub use platform::require_existing_root;
+mod handle_policy;
+#[cfg(windows)]
+pub use handle_policy::require_private_pending_metadata_handle;
+pub use handle_policy::{
+    require_private_directory_handle, require_private_metadata_handle,
+    require_protected_parent_handle,
+};
 pub use platform::{Listener, Stream, connect, current_user, prepare_root, require_owner_private};
 #[cfg(windows)]
 pub use platform::{create_root, process_user, require_job_user, require_not_writable_by_others};
@@ -349,6 +356,48 @@ pub async fn write_message_limited<S: AsyncWrite + Unpin, T: Serialize>(
     .await
     .context("native frame write deadline exceeded")??;
     Ok(())
+}
+
+/// Fresh owner-private child, created through the original pinned parent.
+pub fn create_root_at(
+    parent: &airk_process::directory::OpenedDirectory,
+    name: &std::ffi::OsStr,
+) -> Result<airk_process::directory::OpenedDirectory> {
+    require_protected_parent_handle(parent.as_file())?;
+    let child = parent.create_child_directory(name, 0o700, |path| {
+        #[cfg(windows)]
+        {
+            platform::create_root(path).map_err(|error| std::io::Error::other(error.to_string()))
+        }
+        #[cfg(unix)]
+        {
+            let _ = path;
+            unreachable!("Unix uses rooted mkdirat")
+        }
+    })?;
+    require_private_directory_handle(child.as_file())?;
+    parent.sync_all()?;
+    Ok(child)
+}
+
+pub fn create_private_file_at(
+    parent: &airk_process::directory::OpenedDirectory,
+    name: &std::ffi::OsStr,
+) -> Result<std::fs::File> {
+    let file = parent.create_file_with(name, |path| {
+        #[cfg(windows)]
+        {
+            platform::create_private_file(path)
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        }
+        #[cfg(unix)]
+        {
+            let _ = path;
+            unreachable!("Unix uses rooted openat")
+        }
+    })?;
+    require_private_metadata_handle(&file)?;
+    Ok(file)
 }
 
 #[cfg(test)]

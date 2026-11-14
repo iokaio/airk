@@ -5,63 +5,31 @@
 //! reparse points and hard-link aliases; owner-private files are checked with
 //! the shared `airk-ipc` checks. Every write goes through a temporary file
 //! and a rename; the pointer and receipt folders are owner-only.
-use super::plan::{self, INVENTORY_FILE};
 use airk_core::{
     identity::Sha256Digest,
     install_record::{
-        AdminAssets, InstallPointer, InstallRecord, MAX_POINTER_BYTES, MAX_RECORD_BYTES,
+        InstallPointer, InstallRecord, MAX_POINTER_BYTES, MAX_RECORD_BYTES,
         MAX_REPLACEMENT_NOTICE_BYTES, MAX_SETUP_OPERATION_BYTES, MAX_SETUP_RECEIPT_BYTES,
-        RECORD_FILE, REPLACEMENT_NOTICE_FILE, ReplacementNotice, SetupReceipt, Signing, canonical,
+        RECORD_FILE, REPLACEMENT_NOTICE_FILE, ReplacementNotice, SetupReceipt, canonical,
     },
 };
 use airk_ipc::private_record::{self, PrivateLock};
 use anyhow::{Context, Result, bail, ensure};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 
 /// `airk-service-payload/1`: the complete placed payload, written by the
 /// packaging script beside the platform installer's files. Its SHA-256 is
 /// pinned by the owner-private operation (`payload_inventory_sha256`).
-pub(crate) const INVENTORY_SCHEMA: &str = "airk-service-payload/1";
-const MAX_INVENTORY_BYTES: usize = 256 * 1024;
-const MAX_INVENTORY_FILES: usize = 4096;
+use airk_core::install_record::payload_inventory::MAX_INVENTORY_BYTES;
 const MAX_LISTED_ENTRIES: usize = 8192;
 const POINTER_FILE: &str = "current.json";
 const LOCK_FILE: &str = "install.lock";
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct InventoryFile {
-    pub sha256: Sha256Digest,
-    pub bytes: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct InventoryExecutables {
-    pub airkctl: String,
-    pub airk: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct PayloadInventory {
-    pub schema: String,
-    pub version: String,
-    pub channel: String,
-    pub target: String,
-    pub executables: InventoryExecutables,
-    /// Program-relative `/`-separated path → digest and size.
-    pub files: BTreeMap<String, InventoryFile>,
-    pub admin_assets: AdminAssets,
-    /// `None` for a payload whose images were not signed.
-    pub signing: Option<Signing>,
-}
+pub(crate) use airk_core::install_record::payload_inventory::PayloadInventory;
 
 /// The current installation as the pointer names it.
 pub(crate) struct Installed {
@@ -77,7 +45,12 @@ pub(crate) fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
 pub(crate) fn digest_file(path: &Path) -> Result<(Sha256Digest, u64)> {
     private_record::require_regular_unlinked(path)
         .with_context(|| format!("{} is not a regular file", path.display()))?;
-    let mut file = std::fs::File::open(path)?;
+    let parent = airk_process::directory::OpenedDirectory::open(
+        path.parent().context("payload parent missing")?,
+    )?;
+    let mut file = parent.open_file(path.file_name().context("payload filename missing")?)?;
+    #[cfg(windows)]
+    airk_process::directory::require_default_stream(path, &file)?;
     let mut hash = Sha256::new();
     let bytes = std::io::copy(&mut file, &mut hash)?;
     Ok((Sha256Digest::from_bytes(hash.finalize().into()), bytes))
@@ -121,29 +94,7 @@ pub(crate) fn read_inventory(path: &Path, expected: Sha256Digest) -> Result<Payl
         "payload_inventory_mismatch: {} differs from the operation's payload inventory",
         path.display()
     );
-    let inventory: PayloadInventory =
-        serde_json::from_slice(&bytes).context("payload_inventory_malformed")?;
-    ensure!(
-        inventory.schema == INVENTORY_SCHEMA,
-        "payload_inventory_malformed: unknown schema"
-    );
-    ensure!(
-        inventory.files.len() <= MAX_INVENTORY_FILES,
-        "payload_inventory_malformed: too many files"
-    );
-    for name in inventory.files.keys() {
-        ensure!(
-            plan::relative_inside(name) && name != INVENTORY_FILE && name != RECORD_FILE,
-            "payload_inventory_malformed: invalid path {name:?}"
-        );
-    }
-    for executable in [&inventory.executables.airk, &inventory.executables.airkctl] {
-        ensure!(
-            inventory.files.contains_key(executable),
-            "payload_inventory_malformed: executable {executable:?} is not listed"
-        );
-    }
-    Ok(inventory)
+    PayloadInventory::decode(&bytes, expected)
 }
 
 /// `<state>/setup`: the owner-only receipt folder.
@@ -164,8 +115,8 @@ pub(crate) fn read_receipt(
     if std::fs::symlink_metadata(&folder).is_err() {
         return Ok(None);
     }
-    let Some(bytes) = private_record::read_private(
-        &folder,
+    let Some(bytes) = private_record::read_private_at(
+        &airk_process::directory::OpenedDirectory::open(&folder)?,
         &receipt_name(operation_id),
         MAX_SETUP_RECEIPT_BYTES,
     )?
@@ -178,12 +129,19 @@ pub(crate) fn read_receipt(
 }
 
 /// Durably replace the receipt.
-pub(crate) fn write_receipt(state: &Path, receipt: &SetupReceipt) -> Result<()> {
-    airk_ipc::endpoint::prepare_root(state)?;
-    let folder = receipt_folder(state);
-    airk_ipc::endpoint::prepare_root(&folder)?;
-    private_record::write_private(
-        &folder,
+pub(crate) fn write_receipt(
+    state: &airk_process::directory::OpenedDirectory,
+    receipt: &SetupReceipt,
+) -> Result<()> {
+    let setup = match state.open_child(std::ffi::OsStr::new("setup")) {
+        Ok(pin) => pin,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            airk_ipc::endpoint::create_root_at(state, std::ffi::OsStr::new("setup"))?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    private_record::write_private_at(
+        &setup,
         &receipt_name(&receipt.operation_id),
         &canonical(receipt),
         MAX_SETUP_RECEIPT_BYTES,
@@ -241,11 +199,12 @@ fn read_record(pointer: &InstallPointer) -> Result<InstallRecord> {
 }
 
 /// Write the pointer last, atomically (temporary file, rename, folder sync).
-pub(crate) fn write_pointer(pointer: &InstallPointer) -> Result<()> {
-    let folder = pointer_folder()?;
-    airk_ipc::endpoint::prepare_root(&folder)?;
-    private_record::write_private(
-        &folder,
+pub(crate) fn write_pointer(
+    authority: &airk_process::directory::OpenedDirectory,
+    pointer: &InstallPointer,
+) -> Result<()> {
+    private_record::write_private_at(
+        authority,
         POINTER_FILE,
         &canonical(pointer),
         MAX_POINTER_BYTES,
@@ -258,8 +217,8 @@ pub(crate) fn write_pointer(pointer: &InstallPointer) -> Result<()> {
 pub(crate) fn write_replacement_notice(notice: &ReplacementNotice) -> Result<()> {
     let folder = pointer_folder()?;
     airk_ipc::endpoint::prepare_root(&folder)?;
-    private_record::write_private(
-        &folder,
+    private_record::write_private_at(
+        &airk_process::directory::OpenedDirectory::open(&folder)?,
         REPLACEMENT_NOTICE_FILE,
         &canonical(notice),
         MAX_REPLACEMENT_NOTICE_BYTES,
@@ -282,27 +241,24 @@ pub(crate) fn remove_replacement_notice() -> Result<bool> {
 }
 
 /// Remove the pointer; `false` when none existed.
-pub(crate) fn remove_pointer() -> Result<bool> {
-    let path = pointer_path()?;
-    match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-        Ok(_) => {
-            private_record::private_file(&path)?;
-            std::fs::remove_file(&path)?;
-            Ok(true)
-        }
-    }
+pub(crate) fn remove_pointer(
+    authority: &airk_process::directory::OpenedDirectory,
+    pointer: &InstallPointer,
+) -> Result<bool> {
+    private_record::remove_private_at(authority, POINTER_FILE, &canonical(pointer))
 }
 
 /// Write the record into the program folder; returns its canonical bytes.
-pub(crate) fn write_record(program: &Path, record: &InstallRecord) -> Result<Vec<u8>> {
+pub(crate) fn write_record(
+    program: &airk_process::directory::OpenedDirectory,
+    record: &InstallRecord,
+) -> Result<Vec<u8>> {
     let bytes = canonical(record);
     ensure!(
         bytes.len() <= MAX_RECORD_BYTES,
         "install record exceeds its bound"
     );
-    write_owner_file(program, RECORD_FILE, &bytes)?;
+    private_record::write_owner_at(program, RECORD_FILE, &bytes, MAX_RECORD_BYTES, true)?;
     Ok(bytes)
 }
 
@@ -312,40 +268,19 @@ pub(crate) fn record_bytes(program: &Path) -> Result<Vec<u8>> {
 }
 
 /// Remove the record; `false` when none existed.
-pub(crate) fn remove_record(program: &Path) -> Result<bool> {
-    let path = program.join(RECORD_FILE);
-    match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-        Ok(_) => {
-            private_record::require_regular_unlinked(&path)?;
-            std::fs::remove_file(&path)?;
-            Ok(true)
-        }
-    }
+pub(crate) fn remove_record(
+    program: &airk_process::directory::OpenedDirectory,
+    record: &InstallRecord,
+) -> Result<bool> {
+    private_record::remove_private_at(program, RECORD_FILE, &canonical(record))
 }
 
 /// An owner-private file in a folder that is not itself owner-only (the
 /// program folder, the operation folder): temporary sibling, mode 0600 on
 /// Unix, rename over the target, then the owner-private check.
 pub(crate) fn write_owner_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<()> {
-    no_links(folder)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(folder)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        temporary
-            .as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    temporary.write_all(bytes)?;
-    temporary.as_file().sync_all()?;
-    let path = folder.join(name);
-    temporary.persist(&path).map_err(|error| error.error)?;
-    airk_ipc::endpoint::require_owner_private(&path)?;
-    #[cfg(unix)]
-    std::fs::File::open(folder)?.sync_all()?;
-    Ok(())
+    let root = airk_process::directory::OpenedDirectory::open(folder)?;
+    airk_ipc::private_record::write_owner_at(&root, name, bytes, bytes.len(), true)
 }
 
 /// The record's data and cache folders exist and are private to this user

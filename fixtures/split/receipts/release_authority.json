@@ -155,19 +155,43 @@
       },
       {
         "name": "Native / x86_64-unknown-linux-gnu",
-        "conclusion": "success"
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Two additional full native qualification passes",
+            "conclusion": "success"
+          }
+        ]
       },
       {
         "name": "Native / x86_64-pc-windows-msvc",
-        "conclusion": "success"
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Two additional full native qualification passes",
+            "conclusion": "success"
+          }
+        ]
       },
       {
         "name": "Native / aarch64-apple-darwin",
-        "conclusion": "success"
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Two additional full native qualification passes",
+            "conclusion": "success"
+          }
+        ]
       },
       {
         "name": "Native / x86_64-apple-darwin",
-        "conclusion": "success"
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Two additional full native qualification passes",
+            "conclusion": "success"
+          }
+        ]
       },
       {
         "name": "Contracts / ubuntu-24.04",
@@ -451,5 +475,88 @@
         }
       ]
     }
-  ]
+  ],
+  "qualification_steps": {
+    "required": "Two additional full native qualification passes",
+    "faults": [
+      "missing",
+      "skipped",
+      "failure",
+      "duplicate"
+    ]
+  },
+  "publisher": {
+    "run": {
+      "id": 789,
+      "run_attempt": 1,
+      "workflow_id": 5,
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_branch": "feat/advanced-split",
+      "path": ".github/workflows/github-release.yml",
+      "event": "workflow_dispatch",
+      "status": "in_progress",
+      "conclusion": null,
+      "repository": {
+        "full_name": "iokaio/airk"
+      },
+      "head_repository": {
+        "full_name": "iokaio/airk"
+      }
+    },
+    "workflow": {
+      "id": 5
+    },
+    "cases": [
+      {
+        "field": "id",
+        "value": 788
+      },
+      {
+        "field": "run_attempt",
+        "value": 2
+      },
+      {
+        "field": "workflow_id",
+        "value": 6
+      },
+      {
+        "field": "head_sha",
+        "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "field": "head_branch",
+        "value": "main"
+      },
+      {
+        "field": "path",
+        "value": ".github/workflows/other.yml"
+      },
+      {
+        "field": "event",
+        "value": "push"
+      },
+      {
+        "field": "status",
+        "value": "completed"
+      },
+      {
+        "field": "status",
+        "value": "queued"
+      },
+      {
+        "field": "conclusion",
+        "value": "failure"
+      },
+      {
+        "field": "repository",
+        "value": {
+          "full_name": "other/airk"
+        }
+      },
+      {
+        "field": "head_repository",
+        "value": null
+      }
+    ]
+  }
 }

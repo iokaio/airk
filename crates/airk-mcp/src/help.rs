@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::OnceLock};
 
+#[cfg(test)]
+mod content_cases;
 mod topics;
 type CliCatalog = BTreeMap<String, String>;
 static CLI: OnceLock<CliCatalog> = OnceLock::new();
@@ -26,7 +28,7 @@ fn embedded_cli_help() -> CliCatalog {
 pub struct HelpArgs {
     /// Omit for overview and the topic catalog; use topics to list available guidance.
     pub topic: Option<String>,
-    /// Exact CLI command path, e.g. runtime retire-previous, tools call or usage report. Never executed.
+    /// Exact airkctl command path, e.g. service status, tools call or usage report. Never executed.
     pub command: Option<String>,
     /// Known MCP tool name or its single airk_ compatibility alias, e.g. search or airk_search; returns the selected catalog's current description and input schema. Exact catalog names take precedence.
     pub tool: Option<String>,
@@ -148,9 +150,9 @@ fn answer_with_catalog(
                     .keys()
                     .map(|name| {
                         if name.is_empty() {
-                            "airk".into()
+                            "airkctl".into()
                         } else {
-                            format!("airk {name}")
+                            format!("airkctl {name}")
                         }
                     })
                     .collect::<Vec<_>>()
@@ -252,7 +254,7 @@ pub fn reply(args: HelpArgs) -> CallToolResult {
 }
 fn error(code: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),
-        "error":{"code":code},"guidance":"Call airk_help with no arguments for the topic catalog; use airk tools list and airk --help for native command discovery."}).to_string())])
+        "error":{"code":code},"guidance":"Call airk_help with no arguments for the topic catalog; use airkctl tools list and airkctl --help for native command discovery."}).to_string())])
 }
 /// `detail` belongs to Explorer guidance, not native topic/CLI/tool selectors.
 /// This validation is shared by public unified dispatch and native CLI help.
@@ -447,7 +449,9 @@ mod tests {
         }
         let explorer = answer(args(json!({"topic":"explorer","max_bytes":32768}))).unwrap();
         let text = explorer["content"].as_str().unwrap();
-        assert!(text.contains("one airk MCP connection with 28 unprefixed tools"));
+        assert!(text.contains("running MCP catalog"));
+        assert!(text.contains("schemas"));
+        assert!(!text.contains("28 unprefixed tools"));
         assert!(text.contains("offline"));
         assert!(text.contains("Suggestions wait for the user; applied never means executed"));
     }

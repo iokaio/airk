@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native reports travel directly to their project worker, in exact bounded pages.
+#[cfg(test)]
+mod ui_pilot_cases;
 use airk_core::service::{ControlMethod, ControlResponse, ProjectBinding};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;

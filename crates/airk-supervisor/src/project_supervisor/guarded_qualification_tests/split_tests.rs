@@ -4,7 +4,8 @@
 use super::*;
 use airk_core::{
     catalog_management::{
-        CatalogEntity, CatalogItem, CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES,
+        CatalogEntity, CatalogItem, CatalogKind, CatalogOperation, CatalogPageRequest,
+        CatalogRequest, MAX_PAGE_BYTES,
     },
     catalog_split::{SplitFinalizationProgress, SplitJobPurpose, SplitRunState, SplitStage},
     catalog_split_draft::SplitMembershipSelection,
@@ -34,6 +35,7 @@ fn real_empty_native_owner_completes_witness_fence_remainder_membership_and_fund
 -> Result<()> {
     run_empty_native_split(
         airk_catalog_control::catalog_split_control::tests::native_fixture(false)?,
+        false,
     )
 }
 #[test]
@@ -44,10 +46,62 @@ fn real_empty_native_owner_completes_inherited_rich_fence_membership_and_two_roo
             false,
             Some(airk_core::retention::RetainedProfile::Rich),
         )?,
+        false,
     )
+}
+#[test]
+fn real_empty_native_owner_reuses_original_named_set_and_deletion_keeps_both_publications()
+-> Result<()> {
+    let mut fixture = airk_catalog_control::catalog_split_control::tests::native_fixture(false)?;
+    let projects = page(&mut fixture.registry, CatalogKind::Projects)?;
+    let [CatalogItem::Project(project)] = projects.as_slice() else {
+        anyhow::bail!("fixture needs one original set");
+    };
+    let project = project.clone();
+    for (nonce, operation) in [
+        (
+            101,
+            CatalogOperation::RenameIndex {
+                id: fixture.selection.index_id,
+                expected_definition_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+                name: "Project Atlas 日本語".into(),
+            },
+        ),
+        (
+            102,
+            CatalogOperation::RenameProject {
+                id: project.id,
+                expected_definition_revision: project.definition_revision,
+                name: "Project Atlas 日本語".into(),
+            },
+        ),
+    ] {
+        let request = CatalogRequest {
+            caller: Incarnation::from_bytes([103; 16]),
+            key: airk_core::service::RequestKey {
+                nonce: Incarnation::from_bytes([nonce; 16]),
+                ..fixture.selection.key.clone()
+            },
+            expected_catalog_revision: fixture
+                .registry
+                .catalog_state()?
+                .context("catalog absent")?
+                .revision,
+            operation,
+        };
+        let preview = fixture.registry.catalog_preview(&request)?.identity()?;
+        fixture.registry.catalog_apply(&request, preview)?;
+    }
+    fixture.selection.expected_catalog_revision = fixture
+        .registry
+        .catalog_state()?
+        .context("catalog absent")?
+        .revision;
+    run_empty_native_split(fixture, true)
 }
 fn run_empty_native_split(
     mut fixture: airk_catalog_control::catalog_split_control::tests::NativeSplitFixture,
+    existing_group: bool,
 ) -> Result<()> {
     ensure!(
         !fixture.selection.projects.is_empty(),
@@ -59,6 +113,12 @@ fn run_empty_native_split(
     let grants_before = page(&mut fixture.registry, CatalogKind::Grants)?;
     let contexts_before = page(&mut fixture.registry, CatalogKind::Contexts)?;
     let projects_before = page(&mut fixture.registry, CatalogKind::Projects)?;
+    let original_definition = fixture.registry.catalog_detail(
+        &CatalogEntity::Index {
+            id: fixture.selection.index_id,
+        },
+        None,
+    )?;
     let source = Path::new(&fixture.original.root);
     let selected_bytes = std::fs::read(source.join("docs/selected.md"))?;
     let remainder_bytes = std::fs::read(source.join("remainder.md"))?;
@@ -146,12 +206,33 @@ fn run_empty_native_split(
     else {
         anyhow::bail!("canonical split draft missing");
     };
+    let grouping = draft
+        .request
+        .grouping
+        .as_ref()
+        .context("split omitted original-named set")?
+        .clone();
+    ensure!(
+        matches!(
+            grouping.mode,
+            airk_core::catalog_split::SplitGroupingMode::ExistingNamedSet { .. }
+        ) == existing_group,
+        "split review chose the wrong grouping mode"
+    );
+    ensure!(
+        matches!(original_definition.item,Some(CatalogItem::Index(ref index)) if index.name == grouping.name && index.definition_revision == draft.request.expected_definition_revision),
+        "split grouping did not retain the reviewed original name and definition"
+    );
     ensure!(
         draft
             .request
             .projects
             .iter()
-            .all(|effect| effect.destination_scope.is_some()),
+            .all(|effect| if effect.project_id == grouping.project_id {
+                effect.retain_original && effect.destination_scope.is_none()
+            } else {
+                effect.destination_scope.is_some()
+            }),
         "review omitted requested Project destination"
     );
     let Some(ControlResponse::CatalogSplitAccepted { snapshot: accepted }) =
@@ -577,6 +658,15 @@ fn run_empty_native_split(
         "original publication never changed"
     );
     for effect in &complete.request.projects {
+        let expected_scope = if effect.project_id == grouping.project_id {
+            ensure!(
+                effect.retain_original && effect.destination_scope.is_none(),
+                "grouping effect was not exclusively owned by grouped publication"
+            );
+            Some(&grouping.destination_scope)
+        } else {
+            effect.destination_scope.as_ref()
+        };
         let detail = fixture.registry.catalog_detail(
             &CatalogEntity::Membership {
                 project_id: effect.project_id,
@@ -585,7 +675,7 @@ fn run_empty_native_split(
             None,
         )?;
         ensure!(
-            matches!(detail.item, Some(CatalogItem::Membership(ref membership)) if Some(&membership.scope) == effect.destination_scope.as_ref()),
+            matches!(detail.item, Some(CatalogItem::Membership(ref membership)) if Some(&membership.scope) == expected_scope),
             "actual destination membership differs from accepted review"
         );
         let original_membership = fixture.registry.catalog_detail(
@@ -600,6 +690,45 @@ fn run_empty_native_split(
             "original membership differs from accepted choice"
         );
     }
+    let grouped_project = fixture.registry.catalog_detail(
+        &CatalogEntity::Project {
+            id: grouping.project_id,
+        },
+        None,
+    )?;
+    ensure!(
+        matches!(grouped_project.item,Some(CatalogItem::Project(ref project)) if project.name == grouping.name),
+        "completed split lost the original-named set"
+    );
+    for (index_id, expected) in [
+        (complete.request.original_index, &grouping.original_scope),
+        (
+            complete.request.destination.index_id,
+            &grouping.destination_scope,
+        ),
+    ] {
+        let member = fixture.registry.catalog_detail(
+            &CatalogEntity::Membership {
+                project_id: grouping.project_id,
+                index_id,
+            },
+            None,
+        )?;
+        ensure!(
+            matches!(member.item,Some(CatalogItem::Membership(ref value)) if &value.scope == expected),
+            "completed split did not confirm both full grouping memberships"
+        );
+    }
+    let original_after = fixture.registry.catalog_detail(
+        &CatalogEntity::Index {
+            id: complete.request.original_index,
+        },
+        None,
+    )?;
+    ensure!(
+        matches!((&original_definition.item,&original_after.item),(Some(CatalogItem::Index(before)),Some(CatalogItem::Index(after))) if before.name==after.name && before.definition_revision==after.definition_revision),
+        "policy cutover changed original definition/name pins"
+    );
     let projects_after = page(&mut fixture.registry, CatalogKind::Projects)?;
     for before in projects_before {
         let CatalogItem::Project(before) = before else {
@@ -631,6 +760,96 @@ fn run_empty_native_split(
             && std::fs::read(source.join("remainder.md"))? == remainder_bytes,
         "native split modified source files"
     );
+    if existing_group {
+        let Some(CatalogItem::Project(project)) = grouped_project.item else {
+            anyhow::bail!("completed grouping absent");
+        };
+        let before_original = original.status()?.publication;
+        let before_destination = destination.status()?.publication;
+        let destination_definition = fixture
+            .registry
+            .catalog_detail(
+                &CatalogEntity::Index {
+                    id: complete.request.destination.index_id,
+                },
+                None,
+            )?
+            .item;
+        let request = CatalogRequest {
+            caller: complete.request.caller,
+            key: airk_core::service::RequestKey {
+                nonce: Incarnation::from_bytes([104; 16]),
+                ..complete.request.key.clone()
+            },
+            expected_catalog_revision: fixture
+                .registry
+                .catalog_state()?
+                .context("catalog absent")?
+                .revision,
+            operation: CatalogOperation::DeleteProject {
+                id: project.id,
+                expected_definition_revision: project.definition_revision,
+                expected_scope_revision: project.scope_revision,
+                expected_defaults_revision: project.defaults_revision,
+            },
+        };
+        airk_catalog_control::catalog_coordinator::refresh_catalog_clock(&gate, &fixture.registry)?;
+        let preview = fixture.registry.catalog_preview(&request)?.identity()?;
+        let removed = coordinator.apply_fenced(&mut fixture.registry, &request, preview)?;
+        let replay = coordinator.apply_fenced(&mut fixture.registry, &request, preview)?;
+        ensure!(
+            removed == replay,
+            "lost set-deletion reply changed its original receipt"
+        );
+        ensure!(
+            fixture
+                .registry
+                .catalog_detail(&CatalogEntity::Project { id: project.id }, None)?
+                .item
+                .is_none(),
+            "split-created grouping survived deletion"
+        );
+        ensure!(
+            fixture
+                .registry
+                .catalog_detail(
+                    &CatalogEntity::Index {
+                        id: complete.request.original_index
+                    },
+                    None
+                )?
+                .item
+                == original_after.item
+                && fixture
+                    .registry
+                    .catalog_detail(
+                        &CatalogEntity::Index {
+                            id: complete.request.destination.index_id
+                        },
+                        None
+                    )?
+                    .item
+                    == destination_definition,
+            "set deletion changed member definitions"
+        );
+        original.require_unrestricted_read()?;
+        destination.require_unrestricted_read()?;
+        ensure!(
+            original.status()?.publication == before_original
+                && destination.status()?.publication == before_destination,
+            "set deletion changed member publications"
+        );
+        ensure!(
+            original.list_files("", 32, MAX_PAGE_BYTES)?.paths == remainder_files.paths
+                && destination.list_files("", 32, MAX_PAGE_BYTES)?.paths == destination_files.paths,
+            "set deletion changed retained member evidence"
+        );
+        ensure!(
+            std::fs::read(source.join("docs/selected.md"))? == selected_bytes
+                && std::fs::read(source.join("remainder.md"))? == remainder_bytes,
+            "set deletion modified source bytes"
+        );
+    }
     drop(coordinator);
     drop(control);
     drop(sources);

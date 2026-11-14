@@ -1596,7 +1596,7 @@ help in MCP comes from the running parser (`install_cli_help`, `main.rs:1341`).
 | `unified_explorer.json`, `explorer_templates.json` | Hand-maintained source in `airk-mcp`; `content_version` replaces `extension_version` (served by `explorer_offline.rs:47` [V], so the explorer goldens change in a recorded, reviewed step) | `packages/vscode/src/generated/explorer_catalog.json` copied by `node scripts/sync-catalogs.cjs --check` |
 | Help topics | `airk-mcp` emits `help/topics.json` from `topics.rs` | `cargo test -p airk-mcp --lib help_topics_json` (writes observation on mismatch); extension consumes the JSON, not `topics.rs` |
 | `airk_help command=…` catalog | Generated data `airk-mcp/src/help/cli_commands.json`, produced from the current `airk` parser in C11a and from the `airkctl` tree from Phase 3; `airk-mcp` embeds it, so `airk` needs no parser | `cargo test -p airkctl --lib help_catalog` (Phase 3+; before that `-p airk-cli`) |
-| `build-explorer.cjs` | Stops reading `topics.rs` and stops writing native catalogs (C11b) | Boundary test: no native build step reads `packages/vscode` (plan §4.4) |
+| `build-explorer.cjs` | Stops reading `topics.rs` and stops writing native catalogs (C11b) | Native Rust compilation consumes sealed Admin assets. The Node frontend build consumes the exact pure C9 and Admin bridges `packages/vscode/src/uiPilotContract.ts` and `packages/vscode/src/adminUiContract.ts`, plus generated type input `packages/vscode/src/generated/i2.ts`; all are explicit runtime-source/container inputs. No VS Code host/client classes cross into Admin. |
 
 ## 9. C7 — Artifact receipts and release catalog
 
@@ -1700,6 +1700,58 @@ state refuses automated restoration and retains diagnostics. Do not blindly
 restore an old environment snapshot. The pure contract tests neither mutate
 settings nor establish publisher membership, signing or release qualification.
 
+
+Campaign CI authentication additionally requires exactly one successful actual GitHub job step
+named `Two additional full native qualification passes` in each of the four Native jobs.
+Missing, skipped, failed or duplicate steps refuse publication. GitHub's run REST document
+omits dispatch inputs; successful job counts or a caller's `qualification` string therefore
+cannot replace this observation. The frozen workflow runs that step only in full qualification
+and passes the same input to native workspace checks and the container qualification build.
+
+Campaign publication reuses a prior successful, non-publishing signed assembly nominated by
+`signed_run_id`. A fresh campaign run may rehearse with `publish:false`; `publish:true`
+requires this retained-artifact route. The later publisher authenticates its own active manual
+run through the GitHub run/workflow API, the prior signed-producer `/2` and immutable artifact
+digest through the existing signed-assembly API checks, and the original complete CI producer.
+Its source SHA, package version/channel, producer and tree must agree. It preserves the original
+bundle, `release.json`, signing/assembly run identity and every asset byte; it does not rebuild,
+re-sign or retag the qualified payload. Main's existing fresh publication path is unchanged.
+The nominated bundle's installed/artifact qualification remains an explicit prerequisite to
+this final dispatch; a mutable local receipt is not substituted for live producer provenance.
+
+### 9.2 Portable publication and official installer selection (approved contract)
+
+These are Python publication contracts; they do not add a native wire or install-record format.
+`publication-contract.py` owns the pure validators. The original `airk-release-catalog/1`
+validator and retained fixtures keep their exact original semantics, including the future-version
+fixture. Production versions from 1.8.35 use `airk-release-catalog/2`: the same fields,
+five CI producer artifacts and four native targets, with four additional same-run inputs named
+`airk-portable-<target>-<commit>-<release-run-id>`. Its published inventory adds exactly
+`airk-<version>-<target>-portable.zip` and
+`airk-<version>-<target>-portable.manifest.json` for each target, in stable and preview channels.
+The original C7 native ZIP remains a separate developer artifact with its original roster.
+
+For those versions `release.json` uses `airk-github-release/2`, retaining the existing
+`tag`, `package_version`, `commit`, `tree`, `channel`, `run_id`, `attempt`, `assets` and
+`producer` fields and adding `installers`. When the existing installer policy requires them,
+`installers` has exactly the four native target keys; otherwise it is an empty object.
+Each row has exactly `artifact`, `manifest` and `headless`. Artifact/manifest values are the
+standalone contract owner's exact basenames, bound to the same release's `assets` digest map.
+URLs derive only from the official repository, verified tag and basename. No row supplies
+an arbitrary download URL. `headless` is exactly:
+
+```json
+{"arguments":["--silent"],"stdin":"closed","prompts":false,"certificate_trust":"skip","requires_reset_acknowledgement":true,"success_requires":"native_setup_and_readiness"}
+```
+
+The extension offers automatic installation only from this verified `/2` record, following
+its user's explicit choice and supported host/signature policy. The record does not authorize
+execution, trust, reset, uninstall or ambient startup. The complete released bytes remain
+bound by GitHub asset digests, `assets`, platform signature checks and the live producer
+qualification chain. Historic `/1` records remain readable through their existing versioned
+paths; they do not acquire the new headless capability by inference.
+
+
 ## 10. C8 — Rust-emitted cases for `nativeOutcome.ts` and `readRetryDelay`
 
 | Inventory | |
@@ -1769,3 +1821,34 @@ Only genuine gaps found by this review; none reopens a U decision.
 | Q4 | Admin-page **Restart** (plan §7.3): the P0 decision makes restart "`airkctl` observes exit, then starts", but a browser has no `airkctl`. | The service records a restart intent and exits with a distinguished status that the login manager restarts; when no login registration exists, the page offers Stop plus the start guidance. Needs a login-manager behavior check per platform. | **Closed (C5):** the operation table admits `service.restart` on the admin surface; its Phase 5 handler restarts through the OS login manager when login startup is registered and otherwise refuses with the start guidance.
 | Q5 | Windows: the pointer lives under the `LocalAppData` Known Folder, which can be redirected; Node has no Known Folder API, and the extension must not trust `LOCALAPPDATA`. | Extension derives `<token profile>\AppData\Local` from `os.userInfo().homedir`; if the Known Folder is redirected (detected with a reviewed read-only `reg.exe query` of `User Shell Folders`), it reads the redirected path, still applying all owner checks. |
 | Q6 | U77 window grants and the admin session grant must not create agent grants, but authority-contract-1 workers require a catalog `GrantId` in `ScopedReadRef` [V `service.rs:840-848`]. | An ephemeral, in-memory broker grant kind bound to the window lease or admin session; if it needs a persisted catalog row, that is an `airk-state/1` change needing a schema-identity proof or user approval before C3b. |
+
+
+### 9.3 Optional model publication closure (approved advanced split)
+
+Production 1.9.0 adds `airk-release-catalog/3` and `airk-github-release/3`.
+Original `/1` and `/2` fixtures and decoder semantics remain unchanged. The new
+`optional_models` value equals the actual native-emitted
+`airk.arbiter.publication/1` projection: exact final `tag`,
+`compiled_catalog_sha256`, four qualified manifest IDs in `profiles`, and
+`assets` mapping each exact part basename to `bytes` and `sha256`. Retrieval
+owns complete qualified compiled-profile/download closure and the emission;
+publication code never parses a handwritten Core Profile mirror or treats a
+hypothetical case/downloaded catalog as native authority.
+
+Each original optional part is positive and at most 1 GiB. The published asset
+map adds exactly those native-pinned part names/digests. `/3` release catalogs
+add exactly one same-run input per part named
+`airk-arbiter-part-<basename>-<commit>-<release_run_id>`. Every artifact holds
+one original regular part file, verified before and after staging. Native
+provisioning additionally verifies ordered parts and the complete logical
+asset's hash before publication; part verification does not replace that duty.
+
+`airk-signed-release-producer/3` preserves the small assembly's existing
+`artifact_name` and `artifact:{id,digest}` fields and adds `optional_models`
+and `parts:{<basename>:{id,digest,artifact_name}}`. Other campaign `/2` source,
+workflow/run/attempt and origin fields remain required. Part IDs are distinct
+from each other and the assembly. Actual GitHub API provenance and each
+successful same-run part-upload job/interval bind these original bytes. The
+existing 2 GiB assembly ZIP boundary remains; models travel as separately
+bounded artifacts. Final publication reuses the qualified original assembly
+and original part artifacts without rebuilding or resigning them.

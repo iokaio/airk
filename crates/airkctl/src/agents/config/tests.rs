@@ -9,6 +9,385 @@ use std::collections::HashMap;
 const CASES: &str = include_str!("../../../../../fixtures/split/agents/config_cases.json");
 const A: &str = "0123456789abcdef0123456789abcdef";
 
+const LATE_ORIGINAL: &str = "{\"servers\":{\"airk\":{}},\"unrelated\":\"old\"}\n";
+const LATE_PREPARED: &str = "{\"servers\":{},\"unrelated\":\"old\"}\n";
+const LATE_USER: &str = "{\"servers\":{\"airk\":{}},\"unrelated\":\"user edit\"}\n";
+
+// Distinct approved Option A behavior step. The original failed observations
+// remain in their retained diagnostic receipts: native retained publication now
+// keeps BOTH exact proposal and displaced user bytes, with the original typed
+// private receipt. Deletion and absent-file no-clobber still refuse ordinarily.
+fn late_record(
+    parent: &std::path::Path,
+    state: edit_record::State,
+) -> (PathBuf, edit_record::Receipt) {
+    use airk_process::directory::{ObjectIdentity, OpenedDirectory};
+    use std::fs::File;
+    fn identity(record: &edit_record::NativeIdentity, actual: ObjectIdentity) {
+        match (record, actual) {
+            (
+                edit_record::NativeIdentity::Unix { device, inode },
+                ObjectIdentity::Unix {
+                    device: actual_device,
+                    inode: actual_inode,
+                },
+            ) => assert_eq!((*device, *inode), (actual_device, actual_inode)),
+            (
+                edit_record::NativeIdentity::Windows {
+                    volume_serial,
+                    file_id,
+                },
+                ObjectIdentity::Windows {
+                    volume_serial: actual_volume,
+                    file_id: actual_id,
+                },
+            ) => assert_eq!(
+                (*volume_serial, *file_id),
+                (actual_volume, Incarnation::from_bytes(actual_id))
+            ),
+            _ => panic!("native platform identity changed"),
+        }
+    }
+    for suffix in [".airk", ".airk/agent-edits", ".airk/agent-edits/v1"] {
+        let directory = OpenedDirectory::open(&parent.join(suffix)).unwrap();
+        airk_ipc::endpoint::require_private_directory_handle(directory.as_file()).unwrap();
+    }
+    let root = parent.join(".airk/agent-edits/v1");
+    let marker_path = root.join("owner.json");
+    let marker = edit_record::RootMarker::decode(&std::fs::read(&marker_path).unwrap()).unwrap();
+    let user = airk_ipc::endpoint::current_user().unwrap();
+    match &marker.owner {
+        edit_record::Owner::Unix { uid } => assert_eq!(uid.to_string(), user),
+        edit_record::Owner::Windows { sid } => assert_eq!(*sid, user),
+    }
+    airk_ipc::endpoint::require_private_metadata_handle(&File::open(marker_path).unwrap()).unwrap();
+    identity(
+        &marker.root,
+        OpenedDirectory::open(&root).unwrap().identity().unwrap(),
+    );
+    identity(
+        &marker.parent,
+        OpenedDirectory::open(parent).unwrap().identity().unwrap(),
+    );
+    let directories: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert_eq!(
+        directories.len(),
+        1,
+        "exactly the original matching transaction is retained"
+    );
+    let directory = directories.into_iter().next().unwrap();
+    let held = OpenedDirectory::open(&directory).unwrap();
+    airk_ipc::endpoint::require_private_directory_handle(held.as_file()).unwrap();
+    let path = directory.join("receipt.json");
+    airk_ipc::endpoint::require_private_metadata_handle(&File::open(&path).unwrap()).unwrap();
+    let receipt = edit_record::Receipt::decode(&std::fs::read(&path).unwrap()).unwrap();
+    let transaction = directory
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    receipt
+        .validate_binding(&marker, transaction, "mcp.json")
+        .unwrap();
+    assert_eq!(receipt.operation, EditOperation::Repair);
+    assert_eq!(receipt.state, state);
+    assert_eq!(receipt.sequence, 2);
+    for (snapshot, bytes) in [
+        (&receipt.original, LATE_ORIGINAL),
+        (&receipt.prepared, LATE_PREPARED),
+    ] {
+        use sha2::Digest;
+        assert_eq!(snapshot.length, bytes.len() as u64);
+        assert_eq!(
+            snapshot.sha256,
+            airk_core::identity::Sha256Digest::from_bytes(
+                sha2::Sha256::digest(bytes.as_bytes()).into()
+            )
+        );
+    }
+    let after = receipt.after.as_ref().unwrap();
+    for (observation, path) in [
+        (&after.target, parent.join("mcp.json")),
+        (&after.prepared, directory.join("prepared")),
+        (&after.before, directory.join("before")),
+    ] {
+        match observation {
+            edit_record::Observation::Absent => assert!(!path.exists(), "{}", path.display()),
+            edit_record::Observation::Complete { file } => {
+                use sha2::Digest;
+                let bytes = std::fs::read(&path).unwrap();
+                identity(
+                    &file.identity,
+                    airk_process::directory::identity(&File::open(&path).unwrap()).unwrap(),
+                );
+                assert_eq!(file.length, bytes.len() as u64);
+                assert_eq!(
+                    file.sha256,
+                    airk_core::identity::Sha256Digest::from_bytes(
+                        sha2::Sha256::digest(&bytes).into()
+                    )
+                );
+            }
+            edit_record::Observation::Incomplete { .. } => {
+                panic!("stable bounded fixture must retain complete evidence")
+            }
+        }
+    }
+    (directory, receipt)
+}
+
+fn displaced_path(directory: &std::path::Path, receipt: &edit_record::Receipt) -> PathBuf {
+    directory.join(match receipt.primitive {
+        edit_record::Primitive::ReplaceFile => "before",
+        edit_record::Primitive::RenameExchange | edit_record::Primitive::RenameSwap => "prepared",
+    })
+}
+
+fn late_native_identity(path: &std::path::Path) -> airk_process::directory::ObjectIdentity {
+    airk_process::directory::identity(&std::fs::File::open(path).unwrap()).unwrap()
+}
+
+fn late_record_identity(
+    record: &edit_record::NativeIdentity,
+) -> airk_process::directory::ObjectIdentity {
+    match record {
+        edit_record::NativeIdentity::Unix { device, inode } => {
+            airk_process::directory::ObjectIdentity::Unix {
+                device: *device,
+                inode: *inode,
+            }
+        }
+        edit_record::NativeIdentity::Windows {
+            volume_serial,
+            file_id,
+        } => airk_process::directory::ObjectIdentity::Windows {
+            volume_serial: *volume_serial,
+            file_id: *file_id.as_bytes(),
+        },
+    }
+}
+#[test]
+fn late_config_publication_preserves_an_in_place_user_edit() {
+    let directory = writer_test_support::Editable::new();
+    let file = directory.path().join("mcp.json");
+    std::fs::write(&file, LATE_ORIGINAL).unwrap();
+    let original_identity = late_native_identity(&file);
+    let result = io::with_before_publish(
+        |path| std::fs::write(path, LATE_USER).unwrap(),
+        || {
+            edit_file_for(
+                EditOperation::Repair,
+                &file,
+                Some(directory.path()),
+                false,
+                |_| Ok(LATE_PREPARED.into()),
+            )
+        },
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        LATE_PREPARED,
+        "{result:?}"
+    );
+    assert!(
+        result.is_err(),
+        "a late user edit must be an explicit conflict"
+    );
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, EditFailureKind::ConflictRetained);
+    let (transaction, receipt) =
+        late_record(directory.path(), edit_record::State::ConflictRetained);
+    assert_eq!(
+        late_record_identity(&receipt.original.identity),
+        original_identity
+    );
+    assert_eq!(
+        std::fs::read(displaced_path(&transaction, &receipt)).unwrap(),
+        LATE_USER.as_bytes()
+    );
+    assert_eq!(
+        late_native_identity(&displaced_path(&transaction, &receipt)),
+        original_identity,
+        "the edited original object is retained, not copied"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(&transaction.join("receipt.json").display().to_string())
+    );
+}
+
+#[test]
+fn late_config_publication_preserves_an_editor_atomic_replacement() {
+    let directory = writer_test_support::Editable::new();
+    let file = directory.path().join("mcp.json");
+    std::fs::write(&file, LATE_ORIGINAL).unwrap();
+    let original_identity = late_native_identity(&file);
+    let editor_identity = std::rc::Rc::new(std::cell::Cell::new(None));
+    let observed = editor_identity.clone();
+    let result = io::with_before_publish(
+        move |path| {
+            use std::io::Write;
+            let mut replacement = tempfile::NamedTempFile::new_in(path.parent().unwrap()).unwrap();
+            replacement.write_all(LATE_USER.as_bytes()).unwrap();
+            replacement.as_file().sync_all().unwrap();
+            replacement.persist(path).unwrap();
+            observed.set(Some(late_native_identity(path)));
+        },
+        || {
+            edit_file_for(
+                EditOperation::Repair,
+                &file,
+                Some(directory.path()),
+                false,
+                |_| Ok(LATE_PREPARED.into()),
+            )
+        },
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        LATE_PREPARED,
+        "{result:?}"
+    );
+    assert!(
+        result.is_err(),
+        "an editor save must be an explicit conflict"
+    );
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, EditFailureKind::ConflictRetained);
+    let (transaction, receipt) =
+        late_record(directory.path(), edit_record::State::ConflictRetained);
+    assert_eq!(
+        late_record_identity(&receipt.original.identity),
+        original_identity
+    );
+    assert_eq!(
+        std::fs::read(displaced_path(&transaction, &receipt)).unwrap(),
+        LATE_USER.as_bytes()
+    );
+    assert_ne!(editor_identity.get(), Some(original_identity));
+    assert_eq!(
+        Some(late_native_identity(&displaced_path(
+            &transaction,
+            &receipt
+        ))),
+        editor_identity.get(),
+        "the actual editor replacement object is retained"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(&transaction.join("receipt.json").display().to_string())
+    );
+}
+
+#[test]
+fn late_config_publication_preserves_a_user_deletion() {
+    let directory = writer_test_support::Editable::new();
+    let file = directory.path().join("mcp.json");
+    std::fs::write(&file, LATE_ORIGINAL).unwrap();
+    let original_identity = late_native_identity(&file);
+    let result = io::with_before_publish(
+        |path| std::fs::remove_file(path).unwrap(),
+        || {
+            edit_file_for(
+                EditOperation::Repair,
+                &file,
+                Some(directory.path()),
+                false,
+                |_| Ok(LATE_PREPARED.into()),
+            )
+        },
+    );
+    assert!(
+        !file.exists(),
+        "a user's deletion must not be undone: {result:?}"
+    );
+    assert!(
+        result.is_err(),
+        "a late deletion must be an explicit conflict"
+    );
+    assert_eq!(result.unwrap_err().kind, EditFailureKind::Refused);
+    let (transaction, receipt) = late_record(directory.path(), edit_record::State::RefusedRetained);
+    assert_eq!(
+        late_record_identity(&receipt.original.identity),
+        original_identity
+    );
+    assert_eq!(
+        std::fs::read(transaction.join("prepared")).unwrap(),
+        LATE_PREPARED.as_bytes()
+    );
+    assert_eq!(
+        receipt.after.unwrap().target,
+        edit_record::Observation::Absent
+    );
+}
+
+#[test]
+fn late_config_publication_does_not_clobber_a_concurrently_created_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("mcp.json");
+    let result = io::with_before_publish(
+        |path| std::fs::write(path, LATE_USER).unwrap(),
+        || {
+            edit_file(&file, Some(directory.path()), false, |before| {
+                assert_eq!(before, None);
+                Ok(LATE_PREPARED.into())
+            })
+        },
+    );
+    assert!(
+        result.is_err(),
+        "existing no-clobber publication must refuse"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), LATE_USER);
+    assert!(!directory.path().join(".airk/agent-edits").exists());
+}
+
+#[test]
+fn late_config_publication_noop_observer_keeps_exact_prepared_bytes() {
+    let directory = writer_test_support::Editable::new();
+    let file = directory.path().join("mcp.json");
+    std::fs::write(&file, LATE_ORIGINAL).unwrap();
+    let original_identity = late_native_identity(&file);
+    let observed = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = observed.clone();
+    let result = io::with_before_publish(
+        move |path| {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), LATE_ORIGINAL);
+            count.set(count.get() + 1);
+        },
+        || {
+            edit_file(&file, Some(directory.path()), false, |_| {
+                Ok(LATE_PREPARED.into())
+            })
+        },
+    );
+    assert_eq!(result, Ok(true));
+    assert_eq!(observed.get(), 1);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), LATE_PREPARED);
+    let (transaction, receipt) =
+        late_record(directory.path(), edit_record::State::PublishedRetained);
+    assert_eq!(
+        late_record_identity(&receipt.original.identity),
+        original_identity
+    );
+    assert_eq!(
+        std::fs::read(displaced_path(&transaction, &receipt)).unwrap(),
+        LATE_ORIGINAL.as_bytes()
+    );
+    assert_eq!(
+        late_native_identity(&displaced_path(&transaction, &receipt)),
+        original_identity
+    );
+}
+
 #[test]
 fn exact_entry_revalidation_refuses_live_changes_and_keeps_concurrent_source_bytes() {
     let ownership = |_: Incarnation| Ownership::Unavailable;
@@ -21,7 +400,7 @@ fn exact_entry_revalidation_refuses_live_changes_and_keeps_concurrent_source_byt
         verified_launchers: &[],
         windows: false,
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = writer_test_support::Editable::new();
     let file = directory.path().join(".mcp.json");
     let original = r#"{"mcpServers":{"airk":{"command":"airk"}}}"#;
     let changed = r#"{"mcpServers":{"airk":{"command":"changed"}},"keep":"concurrent bytes"}"#;
@@ -405,8 +784,8 @@ fn user_locations_follow_the_platform() {
 
 #[test]
 fn edit_file_creates_project_folders_and_replaces_atomically() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let root = root.path().canonicalize().expect("canonical root");
+    let fixture = writer_test_support::Editable::new();
+    let root = fixture.path().to_path_buf();
     let file = root.join(".vscode").join("mcp.json");
     let wrote = edit_file(&file, Some(root.as_path()), true, |before| {
         assert_eq!(before, None);

@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 
 pub mod agent_connection;
 pub mod agent_scope;
-pub mod native_admin;
 pub mod binding;
 pub mod catalog_fences;
 pub mod catalog_host;
@@ -39,6 +38,7 @@ pub mod lexical;
 pub mod location;
 pub mod mapped_binding;
 pub mod model_objects;
+pub mod native_admin;
 pub mod native_reads;
 pub mod profile_families;
 pub mod publication;

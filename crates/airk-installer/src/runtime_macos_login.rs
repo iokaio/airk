@@ -7,6 +7,7 @@ use std::ffi::CString;
 unsafe extern "C" {
     fn airk_macos_login(
         action: std::ffi::c_int,
+        split: std::ffi::c_int,
         plist: *const std::ffi::c_char,
         bundle: *const std::ffi::c_char,
         observed: *mut std::ffi::c_int,
@@ -17,6 +18,7 @@ unsafe extern "C" {
 // unavailable Apple framework. Product commands are rejected on other systems.
 #[cfg(not(target_os = "macos"))]
 unsafe fn airk_macos_login(
+    _: std::ffi::c_int,
     _: std::ffi::c_int,
     _: *const std::ffi::c_char,
     _: *const std::ffi::c_char,
@@ -372,6 +374,7 @@ pub(crate) fn native(
     let result = unsafe {
         airk_macos_login(
             operation,
+            0,
             plist.as_ptr(),
             bundle.as_ptr(),
             &mut observed,

@@ -277,6 +277,7 @@ fn modern_checkpoint_fixture_accepts_independent_install_runtime_and_build_schem
         arch: std::env::consts::ARCH.into(),
         airk_sha256: airk_host::runtime_pair::digest_file(&main)?,
         embed_sha256: String::new(),
+        split: None,
     };
     let pair_bytes = serde_json::to_vec(&pair)?;
     std::fs::write(runtime.join("airk-runtime.json"), &pair_bytes)?;
@@ -447,6 +448,7 @@ fn modern_checkpoint_fixture_verifies_single_main_and_legacy_requires_helper() -
         arch: std::env::consts::ARCH.into(),
         airk_sha256: format!("{:x}", Sha256::digest(std::fs::read(&main)?)),
         embed_sha256: String::new(),
+        split: None,
     };
     let manifest = airk_host::runtime_pair::payload_root(&main)?.join("airk-runtime.json");
     std::fs::write(&manifest, serde_json::to_vec(&pair)?)?;

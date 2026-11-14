@@ -1,5 +1,9 @@
 # Release records
 
+- [1.9.0 advanced split source candidate](release-1.9.0.md): synchronized native/extension source versions, shared Help/UI, native Admin custody, portable setup/recovery and optional default-off Arbiter controls. Unpublished; exact implementation and qualification status remain in the active plan and ledger.
+
+The following notices retain historical candidate status and do not stop the currently authorized advanced-split work.
+
 The 1.8.23 manual installation reported an HTTP cleanup refusal. Its subsequent
 native fix is an untested source checkpoint; no replacement installer was built.
 Repair and qualification stopped at the user's direction on 10 November 2026.

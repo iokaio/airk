@@ -557,3 +557,40 @@ impl AsyncWrite for Stream {
 
 #[cfg(test)]
 mod path_tests;
+
+pub(super) fn create_private_file(path: &Path) -> Result<std::fs::File> {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::{
+        Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{
+            CREATE_NEW, CreateFileW, FILE_FLAG_OPEN_REPARSE_POINT, READ_CONTROL,
+        },
+    };
+    let user = current_user()?;
+    let security = descriptor(&format!("O:{user}D:P(A;;FA;;;{user})"))?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: security.0,
+        bInheritHandle: 0,
+    };
+    let path = filesystem_path(path)?;
+    // SAFETY: terminated path, live descriptor and attributes; exclusive fresh file.
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE | READ_CONTROL,
+            0,
+            &attributes,
+            CREATE_NEW,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    ensure!(
+        handle != INVALID_HANDLE_VALUE,
+        "private file creation failed: {}",
+        io::Error::last_os_error()
+    );
+    // SAFETY: successful CreateFileW returns a fresh owned handle.
+    Ok(unsafe { std::fs::File::from_raw_handle(handle) })
+}

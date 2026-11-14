@@ -1,4 +1,16 @@
-# Planned AIRK 1.9.0 release and development checkpoints
+# AIRK 1.9.0 source candidate and historical development checkpoints
+
+## Advanced split candidate (14 November 2026)
+
+Native and extension manifests and lockfiles are synchronized at **1.9.0**. Official GitHub release/tag inventories and the Marketplace version inventory contained no 1.9.0 collision when selected. The retained decision receipt is `artifacts/advanced-split/release-version-decision.json`.
+
+This is an unpublished source candidate. The [active plan](../split/codex-plan.md) and [execution ledger](../simplify/one-process-ledger.md) record implementation and qualification status. Earlier artifact receipts retain their original source and version identities. Cross-platform qualification, installed journeys and verification of published installers, portable ZIPs, VSIX and Help remain required. Current source changes include the shared editor/browser destinations and generated offline Help catalog; explicit portable setup and same-request recovery; one online CLI admission policy that preserves saved Stop and mismatch refusals; private native Admin custody with bounded full-result chunks, original deadlines and nonretryable unknown outcomes; and typed request-key projection/recovery rather than exposing held keys. Optional Arbiter adds explicit configuration/provisioning controls and the canonical contextual answer path inside the service, with per-index enrollment and model availability/qualification gates. These descriptions identify implemented source paths, not completed platform, artifact or model acceptance.
+
+The first complete native six-family retrieval campaign failed its frozen absolute quality gates. Both trained candidates reached 52.3% mean fact recall and 35.1% complete-support recall against required 85% and 70%, despite improving complete-support recall by 13.66 percentage points over the shipped baseline. Separate byte-set verification matched all 1,230 graded queries. The result remains failed; no model promotion or completed release is claimed. The ledger retains the source identities, exact scores and other qualification work.
+
+A later native authentication refusal ends the captured editor Admin context while preserving uncertainty about the original operation. It never fabricates an I3 response, silently opens another session or replays a mutation. Recovery availability belongs to the original owning session and native receipt; process death is not fake persistence.
+
+The material below is retained historical planning and development evidence.
 
 Post-P14 removed-source/storage retirement and fresh 1.8.7 legacy upgrade
 recovery are implemented in the working source with selected local validation.

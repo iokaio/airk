@@ -1,7 +1,7 @@
 # Offline INT8 transformer embeddings
 
-AIRK 1.8.14 embeds both pinned MiniLM INT8 exports and statically links ONNX
-Runtime 1.22.1 CPU into the main executable. Inference runs inside the native
+The AIRK 1.9.0 build embeds two pinned trained MiniLM mixed-precision INT8
+exports and statically links ONNX Runtime 1.30.0 CPU into the main executable. Inference runs inside the native
 service under its actual service lease; compatible projects share its model
 session. There is no separate semantic inference process or runtime-library DLL
 payload. Project index/source workers retain their process isolation and request
@@ -10,24 +10,35 @@ post-install model download is needed.
 
 The optimization reduces embedding memory and CPU cost and bundled weight size.
 [Measurements and limitations](semantic-index-optimization.md) explain the choice.
-FP32 weights, tract inference and precision fallbacks are removed. Floating-point
-pooling, normalization and output vectors remain; INT8 describes quantized weights.
+The trained exports retain FP32 embeddings and six sensitive feed-forward output
+projections; 66.7% of linear parameters are quantized. Floating-point pooling,
+normalization and output vectors remain. There is no precision fallback.
 
 ## Bundled profiles
 
-Both exports use `sentence-transformers/all-MiniLM-L6-v2`, revision
-`10dbd2f06a8baf40ad285b037edda610c1b9a57c`, Apache-2.0, WordPiece tokenization,
-256-token context and 384-dimensional normalized output.
+Both trained exports derive from `sentence-transformers/all-MiniLM-L6-v2`,
+revision `10dbd2f06a8baf40ad285b037edda610c1b9a57c`, with retained Apache-2.0
+notices, WordPiece tokenization, 256-token context and 384-dimensional normalized
+output. The native catalog binds the actual trained bytes, tokenizer,
+quantization policy and runtime to a distinct embedding pipeline.
 
 | Execution CPU | Profile | Weight bytes |
 |---|---|---:|
-| x64 without VNNI | `minilm-l6-v2-u8-v1` | 23,046,789 |
-| x64 with AVX-VNNI or AVX-512-VNNI; ARM64 | `minilm-l6-v2-s8-v1` | 23,026,053 |
+| x64 without VNNI | `minilm-l6-v2-u8-v2` | 69,325,926 |
+| x64 with AVX-VNNI or AVX-512-VNNI; ARM64 | `minilm-l6-v2-s8-v2` | 69,355,444 |
 
-The signed export is byte-identical to the pinned upstream ARM64 export. Native
-CPU detection selects the profile. Export names do not establish performance
-qualification. `airkctl model-catalog` reports observations, selection and hashes
-without opening an index. Both profiles ship in every platform installer.
+The signed export exactly recodes the unsigned weight values and uses a two-pass
+integer activation calculation to avoid AVX2 saturation. Native CPU detection
+selects the profile. Numerical admission and profile selection do not establish
+retrieval or platform qualification; campaign results remain in the release
+record. `airkctl model-catalog` reports selection and hashes without opening an
+index. Both profiles are inputs to every platform installer.
+
+Historical `*-v1` model identities and hashes remain compatibility metadata.
+Their original runtime and pipeline are preserved when reading old collections.
+Semantic search and incremental vector publication require an explicit full
+rebuild for the new pipeline; retained lexical and source reads remain available.
+Old vector bytes are never relabeled as trained-v2 vectors.
 
 ## Offline build inputs
 
@@ -53,8 +64,10 @@ inputs and supplies only the approved static variables to the child process.
 Cargo/npm dependency restoration remains separate from model/ORT provisioning.
 
 Model provisioning uses `scripts/provision-local-model.py --destination
-target/local-vector-model`; add `--download` only to permit fetching missing
-inputs. `AIRK_BUNDLED_MODEL_DIR` selects another verified model parent. Each
+target/local-vector-model` with verified build inputs. The trained catalog URLs
+are null: `--download` cannot substitute historical upstream weights. CI acquires
+the authenticated, pinned build-input artifact through
+`scripts/model-build-inputs.py`; installed clients do not download these weights. `AIRK_BUNDLED_MODEL_DIR` selects another verified model parent. Each
 profile contains `model.json`, `model.onnx`, `tokenizer.json` and `LICENSE`.
 Cargo never downloads model assets or ORT libraries. Offline caches must preserve
 exact native archives, source/tool/build receipts and notices, not just copy a

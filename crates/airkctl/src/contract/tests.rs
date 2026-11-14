@@ -50,21 +50,19 @@ fn exact_agent_entry_contract_round_trips_and_rejects_malformed_selectors() {
             .any(|choice| choice["type"] == "null")
     );
     for case in cases(&fixture, "documents") {
-        round_trip::<crate::agents::config::Entry>(case);
+        round_trip::<super::Entry>(case);
     }
     for case in cases(&fixture, "rejected") {
         assert!(
-            serde_json::from_value::<crate::agents::config::Entry>(case["json"].clone()).is_err(),
+            serde_json::from_value::<super::Entry>(case["json"].clone()).is_err(),
             "{}",
             case["name"]
         );
     }
     for case in cases(&fixture, "rejected_text") {
         assert!(
-            serde_json::from_str::<crate::agents::config::Entry>(
-                case["json"].as_str().expect("raw Entry JSON")
-            )
-            .is_err(),
+            serde_json::from_str::<super::Entry>(case["json"].as_str().expect("raw Entry JSON"))
+                .is_err(),
             "{}",
             case["name"]
         );

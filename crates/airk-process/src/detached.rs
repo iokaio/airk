@@ -68,6 +68,22 @@ impl DetachedChild {
             _ => Err(io::Error::last_os_error()),
         }
     }
+    /// Observe this exact owned process handle, without killing on timeout.
+    pub fn wait_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> io::Result<Option<std::process::ExitStatus>> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        let millis = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        // SAFETY: exact owned process handle, finite bounded wait.
+        match unsafe { WaitForSingleObject(self.handle.as_raw_handle(), millis) } {
+            0 => self.try_wait(),
+            258 => Ok(None),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
     pub fn kill(&mut self) -> io::Result<()> {
         use std::os::windows::io::AsRawHandle;
         // SAFETY: owned handle is for this exact launched process, never a reused PID.

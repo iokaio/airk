@@ -84,6 +84,130 @@ fn operation(kind: OperationKind) -> SetupOperation {
     }
 }
 
+#[test]
+fn compatibility_preflight_preserves_only_same_or_newer_compatible_state() {
+    for (existing, candidate, old_state, new_state, expected) in [
+        ("1.8.37", "1.8.37", "airk-state/1", "airk-state/1", true),
+        ("1.8.37", "1.8.38", "airk-state/1", "airk-state/1", true),
+        ("1.8.38", "1.8.37", "airk-state/1", "airk-state/1", false),
+        ("1.8.37", "1.8.38", "airk-state/2", "airk-state/1", false),
+        (
+            "1.8.37-beta.2",
+            "1.8.37-beta.10",
+            "airk-state/1",
+            "airk-state/1",
+            true,
+        ),
+        (
+            "1.8.37",
+            "1.8.37-beta.10",
+            "airk-state/1",
+            "airk-state/1",
+            false,
+        ),
+        (
+            "1.8.37+previous",
+            "1.8.37+candidate",
+            "airk-state/1",
+            "airk-state/1",
+            true,
+        ),
+        (
+            "unrecognized",
+            "1.8.38",
+            "airk-state/1",
+            "airk-state/1",
+            false,
+        ),
+    ] {
+        assert_eq!(
+            plan::preserve_state(existing, candidate, old_state, new_state, false, false).is_ok(),
+            expected,
+            "{existing} -> {candidate}"
+        );
+    }
+    assert_eq!(
+        plan::preserve_state(
+            "1.8.38",
+            "1.8.37",
+            "airk-state/1",
+            "airk-state/1",
+            true,
+            false
+        ),
+        Err("state_reset_required")
+    );
+    assert_eq!(
+        plan::preserve_state(
+            "1.8.38",
+            "1.8.37",
+            "airk-state/1",
+            "airk-state/1",
+            false,
+            true
+        ),
+        Err("state_reset_required")
+    );
+    assert_eq!(
+        plan::preserve_state(
+            "1.8.38",
+            "1.8.37",
+            "airk-state/2",
+            "airk-state/1",
+            true,
+            true
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn acknowledged_placing_reset_purges_after_drain_and_before_any_publication() {
+    let mut options = operation(OperationKind::Install).options;
+    options.delete_indexes = IndexDeletion::Purge;
+    assert_eq!(
+        plan::actions(OperationKind::Upgrade, &options, Mode::Complete).unwrap(),
+        vec![
+            Action::Lock,
+            Action::RetirePredecessors,
+            Action::Drain,
+            Action::PurgeData,
+            Action::VerifyPlacement,
+            Action::WriteRecord,
+            Action::WritePointer,
+            Action::RegisterLogin,
+            Action::Start,
+            Action::ApplyTrust,
+            Action::Close,
+        ]
+    );
+    assert_eq!(
+        plan::actions(OperationKind::Upgrade, &options, Mode::Prepare).unwrap(),
+        vec![Action::Lock, Action::RetirePredecessors, Action::Drain,]
+    );
+}
+
+#[test]
+fn portable_windows_cleanup_is_native_and_inno_keeps_its_wrapper_owner() {
+    use airk_core::install_record::Installer;
+    assert!(plan::removes_owned_program(
+        plan::Host::Windows,
+        Installer::Portable
+    ));
+    assert!(!plan::removes_owned_program(
+        plan::Host::Windows,
+        Installer::Inno
+    ));
+    assert!(plan::removes_owned_program(
+        plan::Host::Linux,
+        Installer::InstallSh
+    ));
+    assert!(plan::removes_owned_program(
+        plan::Host::Macos,
+        Installer::Dmg
+    ));
+}
+
 fn receipt(operation_sha256: Sha256Digest, closed: bool) -> SetupReceipt {
     SetupReceipt {
         schema: SETUP_RECEIPT_SCHEMA.into(),
@@ -467,4 +591,48 @@ fn the_record_step_creates_missing_data_and_cache_locations() -> anyhow::Result<
     std::fs::create_dir(&locations.cache)?;
     super::files::prepare_locations(&locations)?;
     Ok(())
+}
+
+#[test]
+fn unbound_legacy_inventory_cannot_add_foreign_cleanup_targets() {
+    use airk_core::install_record::{InstallRecord, payload_inventory::PayloadInventory};
+    let cases: Value =
+        serde_json::from_str(include_str!("../../../../fixtures/split/i4/i4_cases.json")).unwrap();
+    let record: InstallRecord =
+        serde_json::from_str(cases["records"][0]["text"].as_str().unwrap()).unwrap();
+    let inventory:PayloadInventory=serde_json::from_value(serde_json::json!({
+        "schema":"airk-service-payload/1","version":"1.9.0","channel":"stable","target":"x86_64-pc-windows-msvc",
+        "executables":{"airk":record.executables.airk.path,"airkctl":record.executables.airkctl.path},"files":{
+            (record.executables.airk.path.clone()):{"sha256":record.executables.airk.sha256,"bytes":record.executables.airk.bytes},
+            (record.executables.airkctl.path.clone()):{"sha256":record.executables.airkctl.sha256,"bytes":record.executables.airkctl.bytes},
+            "foreign-source.txt":{"sha256":"44".repeat(32),"bytes":123}},"admin_assets":record.admin_assets,"signing":record.signing,
+    })).unwrap();
+    let selected = plan::cleanup_candidates(
+        &inventory,
+        &record,
+        Sha256Digest::from_bytes([5; 32]),
+        false,
+    );
+    assert_eq!(selected.len(), 2);
+    assert_eq!(
+        selected[0],
+        (
+            record.executables.airkctl.path.clone(),
+            record.executables.airkctl.sha256,
+            Some(record.executables.airkctl.bytes)
+        )
+    );
+    assert_eq!(
+        selected[1],
+        (
+            record.executables.airk.path.clone(),
+            record.executables.airk.sha256,
+            Some(record.executables.airk.bytes)
+        )
+    );
+    assert!(
+        !selected
+            .iter()
+            .any(|(name, _, _)| name == "foreign-source.txt" || name == "payload-inventory.json")
+    );
 }

@@ -12,6 +12,63 @@ const HEADERS: &str = include_str!("../../../../fixtures/split/i3/headers.json")
 const ENVELOPES: &str = include_str!("../../../../fixtures/split/i3/envelopes.json");
 const OPERATIONS: &str = include_str!("../../../../fixtures/split/i3/admin_operations.json");
 const RECOVERY_REVIEWS: &str = include_str!("../../../../fixtures/split/i3/recovery_reviews.json");
+const MUTATION_PREPARATION: &str =
+    include_str!("../../../../fixtures/split/i3/mutation_preparation.json");
+const EVENTS_AND_RATES: &str = include_str!("../../../../fixtures/split/i3/events_and_rates.json");
+
+#[test]
+fn admin_events_and_rates_follow_independent_contract_cases() {
+    let fixture = json(EVENTS_AND_RATES);
+    assert_eq!(fixture["schema"], "airk.split.admin.events-and-rates/1");
+    assert_eq!(
+        fixture["limits"],
+        serde_json::json!({"streams_per_session":MAX_STREAMS_PER_SESSION,
+        "streams_total":MAX_STREAMS,"buffer_events":STREAM_BUFFER_EVENTS,"buffer_bytes":STREAM_BUFFER_BYTES,
+        "stream_seconds":STREAM_SECONDS,"poll_ms":EVENT_POLL_MS,"native_page":NATIVE_EVENT_PAGE_LIMIT,
+        "admin_requests":MAX_ADMIN_REQUESTS,"exchange_attempts":EXCHANGE_BURST,"exchange_window_ms":EXCHANGE_WINDOW_MS})
+    );
+    for value in cases(&fixture, "requests") {
+        let parsed: EventStreamRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), *value);
+    }
+    for value in cases(&fixture, "invalid_requests") {
+        assert!(serde_json::from_value::<EventStreamRequest>(value.clone()).is_err());
+    }
+    for value in cases(&fixture, "endings") {
+        let parsed: StreamLine = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), *value);
+    }
+}
+
+#[test]
+fn r17_preparation_wire_is_explicit_and_cannot_rebind_a_prepared_mutation() {
+    let fixture = json(MUTATION_PREPARATION);
+    assert_eq!(fixture["schema"], "airk.split.admin.mutation-preparation/1");
+    for value in cases(&fixture, "preparations") {
+        let parsed: MutationPreparation = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), *value);
+    }
+    let submit: PreparedMutationCall = serde_json::from_value(fixture["submit"].clone()).unwrap();
+    assert_eq!(serde_json::to_value(submit).unwrap(), fixture["submit"]);
+    let recover: RecoverMutationCall = serde_json::from_value(fixture["recover"].clone()).unwrap();
+    assert_eq!(serde_json::to_value(recover).unwrap(), fixture["recover"]);
+    let acknowledged: AcknowledgedMutationCall =
+        serde_json::from_value(fixture["acknowledge"].clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(acknowledged).unwrap(),
+        fixture["acknowledge"]
+    );
+    for value in cases(&fixture, "invalid_submit") {
+        assert!(serde_json::from_value::<PreparedMutationCall>(value.clone()).is_err());
+    }
+    for value in cases(&fixture, "invalid_acknowledge") {
+        assert!(serde_json::from_value::<AcknowledgedMutationCall>(value.clone()).is_err());
+    }
+    assert_eq!(
+        fixture["semantics"]["shares_review_capacity"],
+        MAX_REVIEWS_PER_SESSION
+    );
+}
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).expect("fixture is JSON")

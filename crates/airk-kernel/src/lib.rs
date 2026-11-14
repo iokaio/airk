@@ -64,6 +64,7 @@ use remote_tokenization as tokenization;
 pub mod usage;
 /// Moved to `airk-core` (split plan C1); re-exported so existing paths resolve.
 pub use airk_core::usage_page;
+pub mod arbiter;
 pub mod vectors;
 pub mod verification;
 pub mod watcher;
@@ -109,6 +110,7 @@ pub struct Kernel {
     verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     progress: Option<ProgressObserver>,
     rebuild_observer: Option<Arc<rebuild_observation::RebuildObserver>>,
+    arbiter_context: Option<Arc<arbiter::NativeContext>>,
     root: PathBuf,
     collection: String,
     data_root: PathBuf,
@@ -400,6 +402,7 @@ impl Kernel {
             verification_cancellation: None,
             progress: None,
             rebuild_observer: None,
+            arbiter_context: None,
             root,
             collection: collection.into(),
             data_root: directory.clone(),
@@ -459,6 +462,7 @@ impl Kernel {
             verification_cancellation: None,
             progress: None,
             rebuild_observer: None,
+            arbiter_context: None,
             root: PathBuf::from(&registration.root),
             collection: registration.collection.clone(),
             data_root: PathBuf::from(&registration.data_root),

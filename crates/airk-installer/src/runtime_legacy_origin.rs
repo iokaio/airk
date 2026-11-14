@@ -695,7 +695,7 @@ fn move_new(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn native_global_stores() -> Result<Vec<PathBuf>> {
+pub fn native_global_stores() -> Result<Vec<PathBuf>> {
     let base = if cfg!(target_os = "macos") {
         airk_host::user_paths::home()?.join("Library/Application Support")
     } else if cfg!(windows) {
@@ -734,7 +734,7 @@ pub(crate) fn verified_global_storage(global: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-pub(crate) fn native_cache_roots() -> Result<Vec<PathBuf>> {
+pub fn native_cache_roots() -> Result<Vec<PathBuf>> {
     let mut roots = Vec::new();
     for root in native_global_stores()? {
         match fs::symlink_metadata(&root) {

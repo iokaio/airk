@@ -14,6 +14,23 @@ and remove an AIRK Service installation (U33: no third executable):
   consumes one `airk-setup-operation/1` file and runs the §5.6 transaction.
 - `airk __airk_role service-login --install-id <32 hex>` is the entry the
   login registration starts.
+- `airk __airk_role setup --operation <original-operation-request.json>
+  --seal-inno` seals finalized Inno EXE/DAT custody after native completion and
+  wrapper PATH success. This Windows-only mode requires the original successful
+  closed receipt, settled active owner and exact current I4 pair/root/image
+  proof. It writes Core's private `wrapper-handoff.json`, holding both actual
+  EXE/DAT read handles without write/delete sharing while hashing/signature
+  checks and the seal write run. On failure it preserves the original request,
+  active/main receipts and files and writes `error.txt` beside the request;
+  it never emits a valid new handoff or changes prior receipts to success.
+- `setup --operation <original operation> --admit-removal` verifies private
+  snapshots of the original canonical I4 pointer/record beside the request
+  (`expected-current.json`, `expected-install-record.json`). Under the native
+  install lock they must equal the exact current original I4 image. Native
+  admission persists the Active removal owner and returns `status: admitted`
+  before any drain/removal. The CLI then launches the verified wrapper/native
+  completion with that same operation. This closes the handoff gap without a
+  new SetupOperation field. Existing `--prepare` still refuses removal.
 
 ## Interface
 
@@ -80,6 +97,76 @@ Single use: the operation file (and its folder's inventory and plan copies)
 is deleted when the receipt closes. A failure closes the receipt with
 `failure`; an interruption leaves it open for a resume.
 
+### Private transaction custody and recovery
+
+The reviewed Core `setup_recovery::active::ActiveSetup` is the durable owner
+beside the fixed pointer. Setup holds the native installation lock before
+loading it. Another operation cannot replace an unsettled owner, including
+after expiry. A matching owner supplies its original admission time even
+when interruption preceded the first main receipt write. The ordinary I4
+reader remains strict: only the exact admitted operation can classify prior
+pair, candidate-record/prior-pointer and complete candidate-pair bytes.
+Third records and pointer-before-record states refuse without restoration.
+
+Before effects, the native adapter captures nofollow, owner-private directory
+handles and native IDs for the selected and original roots. Missing roots
+are created in fresh nonce staging, recorded with their parent/object IDs,
+then published with a no-replace rooted rename and pinned directory flush.
+Unclaimed interrupted staging is preserved; an appearing unbound directory
+is never adopted. The candidate record/pointer, including timestamps, are
+fixed in the active owner before publication. Every resumed candidate must
+still match the exact operation and approved payload inventory.
+
+Keep-data removal saves the original I4 pair, exact uninstall and four native
+root observations in the separate Core retained receipt before removing the
+pointer. Reinstall additionally requires the matching successful main receipt,
+the original four locations and exact live root IDs. Foreign nonempty roots,
+incomplete/failed removals, changed roots and ambiguous retained evidence
+refuse. Purge uses the held root object on Unix and a name-pinned exact-ID
+adapter on Windows, never follows descendant symlinks, and retains root IDs.
+
+A failed active operation retains its original request, payload inventory and
+setup image custody. An exact owned retry archives the complete original
+failed main receipt bytes at `state/setup/failures/<operation>-<digest>.json`
+before reopening that same operation. It removes only the terminal Complete
+step from the live receipt; the archived failure is immutable evidence.
+Ordinary replay of a closed receipt remains refused. Success settles only
+after the terminal main receipt, exact publication/removal and root continuity
+checks; a terminal tag or an expired process alone does not free custody.
+Before replacing a settled fixed owner, its exact canonical bytes are retained
+at `<pointer parent>/setup-history/<operation_id>.json`. This uses the existing
+ActiveSetup schema. Later removal verifies the current inventory digest against
+that original completed placing operation when this evidence exists. An
+installation predating these private records has no invented history proof;
+the surviving legacy ownership boundary must be qualified separately.
+
+Candidate build/state preflight runs before drain or placement. Same-build
+repair and upgrades with the exact supported state contract preserve state.
+A downgrade, unknown version precedence or incompatible state requires both
+explicit reset acknowledgement and purge. A placing reset purges after drain
+and before placement verification/publication; the four root IDs survive.
+The inventory version must equal the setup executable's build before effects.
+
+Native program cleanup uses the original opened program object and nofollow
+ancestors, retaining changed/aliased payload files. Windows opens each file
+with read/delete access without write/delete sharing, checks the exact-handle
+privacy/alias policy and expected payload hash, then disposes that same handle.
+After releasing its own program name pins, empty-root deletion reacquires a
+DELETE handle under the pinned parent and compares its original native ID
+before disposition. A replacement is preserved. Unix uses original dirfds
+for approved tracked names and never follows renamed roots or symlinked
+ancestors. It does not claim atomic content comparison plus unlink against
+arbitrary uncooperative same-user writers; current wrappers honor the native
+transaction fence. Empty Unix program roots/directories are preserved and
+reported because no equally strong identity-bound directory removal has been
+qualified. No pathname-removal fallback invents continuity evidence.
+
+Installer::Portable uses native program cleanup on Windows too. It never
+delegates to Inno or consumes PATH, login or trust integration ownership merely
+from portable locations. Its retained external recovery runtime includes the
+full approved payload inventory/bundle, so removing tracked program files does
+not erase the setup executable's dependencies or original request.
+
 ## Transaction (§5.6)
 
 Pure in `plan.rs`, tested against `fixtures/split/i4/interruptions.json`.
@@ -90,6 +177,11 @@ Placing kinds (`install`, `repair`, `upgrade`): `lock` → `retire_predecessors`
 
 Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
 `remove_pointer` → `remove_record` → `purge_data`? → `close`.
+
+Purge/reset removes contents while retaining the native directory identities
+of data, state, cache and logs. State additionally retains `setup/` receipts.
+Empty roots remain deliberate ownership/recovery evidence; a third directory
+at the same path is never adopted as the original root.
 
 - `lock` validates locations every run. Placing kinds (U39/U50): absolute,
   below a top-level folder, no links, no nesting between the five locations,
@@ -173,8 +265,9 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
 - `register_login` (Windows Task Scheduler, Linux systemd user unit) through
   `ServiceManager::for_installation` (`airk-service-<hash>`, definition and
   receipt under `<state>/login/` on Windows): registered without starting.
-  macOS records `login_unsupported`. A failure is recorded
-  (`login_failed`), not raised.
+  macOS uses the exact placed I4 bundle's SMAppService adapter described below;
+  approval requirements and refusals are reported. A failure is recorded
+  (`login_failed`) and makes completion unsuccessful.
 - `start`: the installed `airkctl --output json service start` (U94, one
   start implementation). A failure is recorded and reported when the receipt
   closes (`service_not_healthy`, non-zero exit), never hidden.
@@ -199,13 +292,16 @@ Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
   purge` (U32; `ask` keeps); the state folder keeps `setup/`; a location
   containing the program or pointer folder is refused.
 
-## Not implemented (reported, not hidden)
+## Remaining qualification and preserved recovery limits
 
-macOS SMAppService login (U40/U78: setup records `login_unsupported`); the
-U40 first-launch fallback inside `AIRK.app`; notices inside the bundle (they
-sit beside it until the signed runtime stages them before codesign); removing a
-moved program folder; U74 roster widening (Inno `standalone`, extension CLI copies
-and PATH, 1.3 schedulers beyond what `replace_installation` covers).
+The U40 first-launch fallback inside `AIRK.app` remains separate from the
+implemented SMAppService adapter. Actual Mac registration, OS consent and
+signed-package notice placement require their platform/artifact qualification.
+Moved-program cleanup retires only matching proven payload entries and retains
+the old exact I4 record/root for recovery. The root-independent predecessor
+roster now discovers orphan registrations, standalone/editor/PATH remnants and
+saved schedulers; observation never authorizes name-based deletion. Unproven
+ownership remains explicit preserved leftovers, as detailed below.
 
 ## Service locations (U89)
 
@@ -251,3 +347,137 @@ cargo test -p airk-core --lib install_record
 Each Cargo selection must report nonzero selected tests. Record selected test
 identities and outcomes; compatibility re-exports do not include dependency
 unit tests. Platform-only cases require their native host.
+
+
+Active owner, terminal history, retained-root proofs, failed receipts, program
+record/inventory, fixed pointer and main receipt publication use shared rooted
+Process operations through IPC. The owner passes its original authority/program/
+state directory handles for the final writes; pathname rechecks are not used
+as a replacement for those handles. Root staging creation is relative to its
+held parent. On Unix rebinding writes remain within the original directory;
+subsequent live-root validation refuses changed names. Windows retains ancestor
+name pins. Owner-private staging files are synced before rename and parent
+sync errors propagate. Arbitrary uncooperative same-user changes outside the
+operation fence remain outside the cooperative installer serialization proof.
+
+
+## I4 macOS login adapter
+
+Split signed plists invoke `__airk_role service-login-current`; this derives the
+installation ID only from strict current I4 and verifies the executing service
+path, bytes and C10 before automatic startup. Historical explicit-ID
+`service-login` syntax is unchanged. The static signed plist does not contain a
+per-install random ID. `service-login-control --install-id <id> --action
+status|register|unregister [--operation <absolute-original-request>]` runs only
+from the exact placed I4 AIRK.app. A setup request must match the durable active
+owner and original receipt/roots; ordinary service mutations acquire install.lock
+and refuse any unsettled owner. Status cannot authorize mutation. The same
+SMAppService Objective-C bridge validates the exact split plist dictionary;
+legacy managed plists keep their original branch. RequiresApproval is reported
+as consent-required; registration never claims Enabled from API success alone.
+
+
+A moved-program setup drains both exact old/new image sets and unregisters the
+old I4 login target before publishing the new pair. Failure to remove that
+registration halts placement. After publication, cleanup uses the original
+pinned prior program root and the previous settled operation's approved raw
+inventory digest. Only matching listed files/inventory are deleted; changed,
+foreign, aliased or unprovable files remain explicit leftovers. The old exact
+I4 record and old directory root remain as recovery custody because the current
+publication contract requires their continued identity. They do not authorize
+startup or make the old location the current installation. No recursive old
+program deletion or unverified metadata adoption occurs. Missing historical
+inventory proof leaves the old payload intact and reports manual recovery.
+
+Before removing any moved prior payload entry, the exact approved raw existing
+payload inventory is retained at selected-state/setup/prior-inventories/
+<current-operation-id>.json through the private rooted writer. This is the
+existing payload format and original digest, not a reconstructed inventory.
+Crash resume reads that copy before considering any absent old program file.
+
+
+Predecessor discovery enumerates both historical and migrated runtime roots
+unconditionally for stable/preview, plus every verified fixed universal-launcher
+selection (including custom roots). A layout preference is not an absence proof.
+Discovery returns paths only; existing native replacement plans must still prove
+ownership of every data/state/log/settings/launcher/trust/registration artifact.
+Malformed or missing selected launcher targets are reported, never guessed.
+
+The [predecessor orphan roster](predecessor_roster/CONTRACT.md) also runs when no
+install root survives. Native registration and saved receipt/path observations
+locate candidates; names never authorize deletion. Unknown, refused and unproven
+items remain explicit preserved leftovers. Bounded merging prioritizes restart
+risks and records an omission marker rather than silently dropping evidence at
+Core's existing limit. A predecessor step with remaining observations reports
+`leftovers_preserved`, rather than claiming complete retirement.
+
+A legacy I4 image without completed private inventory history grants cleanup
+only for its exact two record-bound executable paths/digests/sizes. An editable
+unbound inventory cannot add deletion targets. Support files and the unproven
+inventory remain visible leftovers for original-installer recovery. Current
+settled-history proof enables the full exact listed-file cleanup path.
+
+
+Wrapper recovery uses exclusive `--recovery-field <closed-selector>` with the
+original operation. Native Core canonical/private decoding, original admitted
+key/time and live roots, actual native image/inventory/C10 authorize projection.
+Fresh unadmitted valid-TTL requests are reviewable but still require Prepare's
+full preflight before placement; competing unsettled owners refuse. Selectors
+include requested-by, kind, operation-id, inventory-sha256, all five locations,
+login-startup, trust, start, placement-required and completion-required. Each
+returns one exact UTF-8 scalar (no BOM/newline/control) on stdout and atomically
+writes fixed owner-private recovery-<selector>.txt beside that same request.
+These derived files grant no independent authority; wrappers read only after
+successful verified helper exit. Completion-required is false only for exact
+settled successful original receipt and current pair/removal reconciliation;
+placing success additionally verifies full actual C7/C10/inventory. Read-only
+Active observation classifies interrupted metadata without archiving/retiring
+an owner or weakening ordinary I4 reads. Wrappers preserve their outer cleanup.
+
+Core Close durably retains the exact original canonical operation bytes at
+operation-request.json (digest/equality checked, conflicting backup refuses)
+and retains its original raw inventory outside tracked program files. Successful
+core completion cannot retire those inputs before outer PATH/seal/tracked
+cleanup succeeds. A resume using the backup never deletes that backup. Normal
+operation.json remains consumed; no new operation/key or reconstructed inventory
+is created. Recovery projection can therefore reconcile successful removal even
+when the outer uninstaller already removed the program's inventory.
+
+Outer producer exclusion uses an actual kernel lease, not an expiry or env
+boolean. Unix --wrapper-lease-script execs /bin/bash with only the original
+--resume request (+--silent when --wrapper-silent); the exclusive private
+wrapper.lock open-description is inherited by shell copy/mv descendants. Native
+setup children verify the inherited file identity/privacy/lock and mark their
+own descriptor close-on-exec, so their resident service descendants cannot
+retain it. Windows wrapper-lock-handle creates/validates an exact-user protected
+Global mutex, duplicates an unowned handle to the kernel-captured birth-checked
+launcher. The Inno producer thread must acquire it, hold through placement and
+outer finalization, then release on that same thread. Kernel abandonment follows
+actual owner death, never a supplied PID or time limit. The environment FD value
+is only a lookup hint and never authority. Fresh requests still need full native
+Prepare admission; same-key recovery uses the exact admitted original bytes.
+
+The Windows opaque HANDLE scalar is create-new only in a fresh per-producer
+private projection directory. Inno copies the exact original request and raw
+inventory bytes there, retaining their hashes; these diagnostic copies share
+the original key and grant no new admission. Every scalar query uses that
+producer's projection context. Prepare, Complete and final seal retain the
+original operation path. Concurrent same-original producers cannot overwrite
+each other's process-local numeric HANDLE rendezvous.
+
+Inno NativeComplete seals finalized EXE and DAT custody immediately after
+PairPublished and before login registration or StartRequested. This pending
+writer requires the typed active owner, identical original operation and
+published candidate, unchanged roots, full C7/inventory and actual C10 proofs.
+Ordinary and candidate-continuation startup both require the matching private
+handoff plus actual EXE/DAT hashes and uninstaller signature. The outer
+--seal-inno revalidates the same record after PATH; it does not mint a new key.
+A pending handoff alone never grants removal: completed private inventory
+history remains mandatory. Missing or sibling-operation custody refuses start.
+
+Interrupted placing resumes that already recorded PointerWritten repeat the
+same typed-owner seal before each remaining RegisterLogin/Start action. They
+reverify full payload and actual original candidate/root proofs before invoking
+the existing verified writer. A missing custody record can therefore recover
+under the same operation; changed/foreign I4 and sibling operations never reach
+the writer. The existing startup custody refusal remains mandatory.

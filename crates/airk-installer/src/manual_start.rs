@@ -8,7 +8,7 @@
 //!
 //! One implementation of start and status exists, in `airkctl` (it verifies
 //! the installation and admits the private `service-detached` role, contracts
-//! §5.7). `airk` runs the `airkctl` installed beside it and renders its JSON;
+//! §5.7). `airk` resolves its verified I4 pair and renders the CLI's JSON;
 //! the rendering is pure and tested here.
 use serde_json::Value;
 use std::{
@@ -25,7 +25,7 @@ pub struct Outcome {
 
 const STOP: &str = "`airkctl service stop` stops it.";
 
-/// The `airkctl` installed beside this `airk`.
+/// The sibling CLI of an explicit uninstalled development layout.
 pub fn sibling_airkctl(airk: &Path) -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "airkctl.exe"
@@ -33,6 +33,62 @@ pub fn sibling_airkctl(airk: &Path) -> Option<PathBuf> {
         "airkctl"
     };
     airk.parent().map(|folder| folder.join(name))
+}
+
+fn resolve_airkctl(
+    airk: &Path,
+    discovery: airk_ipc::install_reader::Discovery,
+    development: bool,
+) -> Result<PathBuf, String> {
+    use airk_ipc::install_reader::Discovery;
+    match discovery {
+        Discovery::Verified(installed) => {
+            let own = airk.canonicalize().map_err(|error| format!("cannot identify this airk image: {error}"))?;
+            let expected = installed.airk.canonicalize().map_err(|error| format!("cannot identify the installed airk image: {error}"))?;
+            if own != expected || installed.record.version != env!("CARGO_PKG_VERSION") {
+                return Err("This airk image is not the verified installed service. Run the airk executable named by the AIRK Service installation.".into());
+            }
+            Ok(installed.airkctl)
+        }
+        Discovery::Unverified { code, message } => Err(format!("AIRK Service installation could not be verified ({code}): {message}")),
+        Discovery::NotFound if development && airk.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("debug")) => {
+            sibling_airkctl(airk).ok_or_else(|| "The development image has no program folder.".into())
+        }
+        Discovery::NotFound => Err("AIRK Service is not installed for this image. Use the AIRK Service installer or the portable setup instructions.".into()),
+    }
+}
+
+fn installed_pair() -> airk_ipc::install_reader::Discovery {
+    use airk_core::install_record::Signing;
+    use airk_process::signature::Claim;
+    let pointer = match airk_process::user_folders::install_pointer() {
+        Ok(pointer) => pointer,
+        Err(error) => {
+            return airk_ipc::install_reader::Discovery::Unverified {
+                code: "installation_unverified".into(),
+                message: format!("{error:#}"),
+            };
+        }
+    };
+    airk_ipc::install_reader::read(&pointer, |signing, images| {
+        let claim = match signing {
+            Signing::Windows {
+                publisher,
+                identity_eku,
+            } => Claim::Windows {
+                publisher,
+                identity_eku,
+            },
+            Signing::Macos { team_id } => Claim::Macos { team_id },
+            Signing::Linux { signed, integrity } => Claim::Linux {
+                signed: *signed,
+                integrity,
+            },
+        };
+        airk_process::signature::verify(claim, images)
+            .map(|_| ())
+            .map_err(|refusal| (refusal.code.to_owned(), refusal.message))
+    })
 }
 
 fn version(health: &Value) -> String {
@@ -104,7 +160,7 @@ pub fn takes_no_commands(state: Option<&str>) -> Outcome {
     }
 }
 
-/// Run the sibling `airkctl` with `--output json` and `arguments`.
+/// Run the verified paired `airkctl` with `--output json` and `arguments`.
 fn airkctl(program: &Path, arguments: &[&str]) -> std::io::Result<(i32, String, String)> {
     let output = Command::new(program)
         .args(["--output", "json"])
@@ -121,7 +177,7 @@ fn airkctl(program: &Path, arguments: &[&str]) -> std::io::Result<(i32, String, 
 fn missing(program: &Path, error: &std::io::Error) -> Outcome {
     Outcome {
         message: format!(
-            "airkctl was not found beside airk ({}: {error}); reinstall AIRK Service.",
+            "The paired airkctl could not be run ({}: {error}); repair AIRK Service.",
             program.display()
         ),
         code: 1,
@@ -130,8 +186,10 @@ fn missing(program: &Path, error: &std::io::Error) -> Outcome {
 
 /// §5.1 for `airk` at `airk` with `user_arguments` (empty: start).
 pub fn run(airk: &Path, user_arguments: bool) -> Outcome {
-    let Some(program) = sibling_airkctl(airk) else {
-        return missing(airk, &std::io::Error::other("no program folder"));
+    let program = match resolve_airkctl(airk, installed_pair(), cfg!(debug_assertions)) {
+        Ok(program) => program,
+        Err(_) if user_arguments => return takes_no_commands(None),
+        Err(message) => return Outcome { message, code: 1 },
     };
     let status = airkctl(&program, &["service", "status"]);
     let status = match status {
@@ -156,6 +214,9 @@ pub fn run(airk: &Path, user_arguments: bool) -> Outcome {
         Err(error) => missing(&program, &error),
     }
 }
+
+#[cfg(test)]
+mod pair_tests;
 
 #[cfg(test)]
 mod tests {

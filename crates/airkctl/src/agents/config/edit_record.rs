@@ -136,7 +136,7 @@ pub(super) struct Snapshot {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum Operation {
+pub(crate) enum Operation {
     Connect,
     Repair,
     Remove,
@@ -250,6 +250,39 @@ pub(super) struct Receipt {
     pub after: Option<After>,
 }
 
+pub(super) fn validate_target_basename(owner: &Owner, basename: &str) -> Validation {
+    if basename.is_empty()
+        || basename.len() > 255
+        || matches!(basename, "." | "..")
+        || basename.ends_with(['.', ' '])
+        || basename
+            .chars()
+            .any(|c| c.is_control() || "/\\:<>\"|?*".contains(c))
+    {
+        return Err("invalid target basename");
+    }
+    if matches!(owner, Owner::Windows { .. }) {
+        let stem = basename
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ["COM", "LPT"].iter().any(|prefix| {
+                stem.strip_prefix(prefix).is_some_and(|suffix| {
+                    matches!(
+                        suffix,
+                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                    )
+                })
+            })
+        {
+            return Err("reserved target basename");
+        }
+    }
+    Ok(())
+}
+
 impl Receipt {
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() > MAX_RECEIPT_BYTES {
@@ -280,36 +313,7 @@ impl Receipt {
             parent: self.parent.clone(),
         }
         .validate()?;
-        let basename = &self.target_basename;
-        if basename.is_empty()
-            || basename.len() > 255
-            || matches!(basename.as_str(), "." | "..")
-            || basename.ends_with(['.', ' '])
-            || basename
-                .chars()
-                .any(|c| c.is_control() || "/\\:<>\"|?*".contains(c))
-        {
-            return Err("invalid target basename");
-        }
-        if matches!(self.owner, Owner::Windows { .. }) {
-            let stem = basename
-                .split('.')
-                .next()
-                .unwrap_or_default()
-                .to_ascii_uppercase();
-            if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-                || ["COM", "LPT"].iter().any(|prefix| {
-                    stem.strip_prefix(prefix).is_some_and(|suffix| {
-                        matches!(
-                            suffix,
-                            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                        )
-                    })
-                })
-            {
-                return Err("reserved target basename");
-            }
-        }
+        validate_target_basename(&self.owner, &self.target_basename)?;
         if self.original.length > MAX_INPUT_BYTES
             || self.prepared.length > MAX_INPUT_BYTES
             || !self.original.identity.same_volume(&self.root)

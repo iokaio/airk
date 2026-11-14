@@ -5,6 +5,17 @@ connections and dispatches them to their native owning components. The I1
 request/response formats remain owned by `airk-ipc` and Core; this contract
 records the service lifetime obligations at the connection delivery boundary.
 
+## Setup exclusion at startup
+
+Every foreground, detached, login and OS-manager entry converges on the same
+startup gate before opening control state. For an installed or active setup
+control root, normal startup holds the native installation lock through the
+ready control listener. An admitted/prepared owner refuses startup regardless
+of expiry. The exact fully published candidate may start under its completing
+setup owner's lock only when the bound operation requested start, the live
+I4 pair/root IDs and native image/signatures match. Other development control
+roots retain their independent lifecycle. This adds no lifecycle record fields.
+
 ## Accepted stop and restart
 
 - A matching `Lifecycle` request is durably accepted through the existing

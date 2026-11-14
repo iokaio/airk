@@ -6,11 +6,18 @@
 use airk_core::service::{ControlResponse, HttpIssuerRotationStep};
 use std::path::Path;
 
-pub(super) async fn response(control: &Path, action: HttpIssuerRotationStep) -> ControlResponse {
+pub(super) async fn response(
+    control: &Path,
+    action: HttpIssuerRotationStep,
+    effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
+) -> ControlResponse {
     let control = control.to_path_buf();
-    let read = tokio::task::spawn_blocking(move || match action {
-        HttpIssuerRotationStep::Status => {
-            airk_endpoint::http_endpoint::rotation::output(&control, None)
+    let read = tokio::task::spawn_blocking(move || {
+        super::native_admin::check_effect(effect_check.as_ref())?;
+        match action {
+            HttpIssuerRotationStep::Status => {
+                airk_endpoint::http_endpoint::rotation::output(&control, None)
+            }
         }
     })
     .await

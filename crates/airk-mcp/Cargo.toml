@@ -9,6 +9,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+local-inference = ["airk-kernel/local-inference"]
+test-support = ["airk-kernel/test-support"]
+
 [dependencies]
 airk-core.workspace = true
 airk-kernel.workspace = true

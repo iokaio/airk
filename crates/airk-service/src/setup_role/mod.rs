@@ -11,7 +11,16 @@
 //! like `service-detached` in automatic mode after its authority check.
 mod effects;
 mod files;
+mod inno;
+mod mac_login;
+mod predecessor_roster;
+mod recovery;
+mod transaction;
+mod wrapper_lease;
+pub use recovery::RecoveryField;
 pub(crate) mod plan;
+#[cfg(test)]
+mod purge_tests;
 #[cfg(test)]
 mod tests;
 
@@ -21,7 +30,7 @@ use airk_core::{
         Contracts, Executable, Executables, InstallPointer, InstallRecord, InstalledBy, Installer,
         Leftover, MAX_REPLACEMENT_NOTICE_LIFETIME_MS, POINTER_SCHEMA, RECORD_FILE, RECORD_SCHEMA,
         REPLACEMENT_NOTICE_SCHEMA, ReplacementNotice, SETUP_RECEIPT_SCHEMA, SetupFailure,
-        SetupOperation, SetupPhase, SetupReceipt, SetupStep, Signing, TrustChoice,
+        SetupOperation, SetupPhase, SetupReceipt, SetupStep, Signing, TrustChoice, canonical,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -49,6 +58,12 @@ pub enum SetupMode {
     Prepare,
     /// Every remaining step.
     Complete,
+    /// Seal finalized Inno EXE/DAT custody for this successful original setup.
+    SealInno,
+    /// Capture exact original removal ownership before a detached wrapper handoff.
+    AdmitRemoval,
+    RecoveryField(RecoveryField),
+    WrapperLease,
 }
 
 /// An admitted `setup` request (role admission checked its syntax).
@@ -56,6 +71,8 @@ pub enum SetupMode {
 pub struct SetupRequest {
     pub operation: PathBuf,
     pub mode: SetupMode,
+    pub wrapper_script: Option<PathBuf>,
+    pub wrapper_silent: bool,
 }
 
 /// The injected clock (Unix milliseconds).
@@ -93,6 +110,16 @@ pub async fn run(request: SetupRequest) -> Result<()> {
 }
 
 async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
+    wrapper_lease::protect_inherited()?;
+    if let SetupMode::RecoveryField(field) = request.mode {
+        return recovery::emit(&request, field, clock);
+    }
+    if request.mode == SetupMode::WrapperLease {
+        return wrapper_lease::exec_script(&request, clock);
+    }
+    if request.mode == SetupMode::SealInno {
+        return inno::seal(&request);
+    }
     let bytes = files::read_operation(&request.operation)?;
     let operation_sha256 = files::digest_bytes(&bytes);
     // The receipt is found through the operation's own state location; the
@@ -105,40 +132,84 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         "setup_operation_refused: install_location_relative"
     );
     let receipt = files::read_receipt(&state, &preview.operation_id)?;
+    let pointer_path = files::pointer_path()?;
+    let active_admission = transaction::admission_time(&pointer_path, &preview, operation_sha256)?;
     // First admission is checked against the clock; a resume against the
     // admission time its receipt recorded (the bytes are bound by digest).
-    let admitted_at = receipt
-        .as_ref()
-        .and_then(|receipt| receipt.steps.first())
-        .map(|step| step.at_unix_ms)
+    let admitted_at = active_admission
+        .or_else(|| {
+            receipt
+                .as_ref()
+                .and_then(|receipt| receipt.steps.first())
+                .map(|step| step.at_unix_ms)
+        })
         .unwrap_or_else(clock);
     let operation = SetupOperation::decode(&bytes, admitted_at)
         .map_err(|refusal| anyhow::anyhow!("setup_operation_refused: {}", refusal.code()))?;
     if let Some(receipt) = &receipt {
-        plan::admit_resume(receipt, &operation, operation_sha256)
+        let mut observation = receipt.clone();
+        if active_admission.is_some() && observation.failure.is_some() {
+            observation.closed = false;
+        }
+        plan::admit_resume(&observation, &operation, operation_sha256)
             .map_err(|code| anyhow::anyhow!("{code}: operation {}", operation.operation_id))?;
     }
     let mode = match request.mode {
-        SetupMode::Plan | SetupMode::Prepare => Mode::Prepare,
-        SetupMode::Complete => Mode::Complete,
+        SetupMode::Plan | SetupMode::Prepare | SetupMode::SealInno => Mode::Prepare,
+        SetupMode::RecoveryField(_) | SetupMode::WrapperLease => {
+            unreachable!("recovery dispatched before setup")
+        }
+        SetupMode::Complete | SetupMode::AdmitRemoval => Mode::Complete,
     };
-    if plan::removes(operation.kind) && request.mode != SetupMode::Complete {
+    if plan::removes(operation.kind)
+        && !matches!(request.mode, SetupMode::Complete | SetupMode::AdmitRemoval)
+    {
         bail!(
             "setup_prepare_not_applicable: {:?} runs as one step",
             operation.kind
         );
     }
+    ensure!(
+        request.mode != SetupMode::AdmitRemoval || plan::removes(operation.kind),
+        "setup_admission_not_applicable: admission-only is for removal"
+    );
     let program = PathBuf::from(&operation.locations.program);
     let inventory_path = match request.mode {
-        SetupMode::Complete => program.join(INVENTORY_FILE),
-        SetupMode::Plan | SetupMode::Prepare => request
+        SetupMode::Complete | SetupMode::AdmitRemoval => program.join(INVENTORY_FILE),
+        SetupMode::RecoveryField(_) | SetupMode::WrapperLease => {
+            unreachable!("recovery dispatched before setup")
+        }
+        SetupMode::Plan | SetupMode::Prepare | SetupMode::SealInno => request
             .operation
             .parent()
             .context("operation folder")?
             .join(INVENTORY_FILE),
     };
+    let external_inventory = request
+        .operation
+        .parent()
+        .context("operation folder")?
+        .join(INVENTORY_FILE);
+    let inventory_path = if external_inventory.try_exists()? {
+        external_inventory
+    } else {
+        inventory_path
+    };
     let inventory = files::read_inventory(&inventory_path, operation.payload_inventory_sha256)?;
-    let existing = files::read_installation()?;
+    let _lock = if request.mode == SetupMode::Plan {
+        None
+    } else {
+        Some(files::lock()?)
+    };
+    let owner = if request.mode == SetupMode::Plan {
+        None
+    } else {
+        transaction::Owner::load(&pointer_path, &operation)?
+    };
+    let existing = match &owner {
+        Some(owner) => owner.existing(&pointer_path)?,
+        None => files::read_installation()?,
+    };
     let (own_path, own_digest) = own_image()?;
     authorize_image(
         &operation,
@@ -147,6 +218,7 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         request.mode,
         &own_path,
         own_digest,
+        owner.is_some(),
     )?;
     let mut setup = Setup {
         receipt: receipt.unwrap_or_else(|| SetupReceipt {
@@ -169,13 +241,117 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         clock,
         host: Host::current(),
         readiness: None,
+        owner,
+        retained: None,
     };
     if request.mode == SetupMode::Plan {
+        if setup.existing.is_none() {
+            setup.retained = transaction::retained_for(&pointer_path, &setup.operation.locations)?;
+        }
+        if setup.operation.requested_by == "airkctl-portable" {
+            setup.verify_payload()?;
+        }
         return setup.plan_report();
     }
-    let _lock = files::lock()?;
-    // Re-read under the lock: another setup may have finished meanwhile.
-    setup.existing = files::read_installation()?;
+    if request.mode == SetupMode::AdmitRemoval {
+        use airk_core::install_record::setup_recovery::active::{
+            EXPECTED_POINTER_FILE, EXPECTED_RECORD_FILE,
+        };
+        let folder = setup.operation_path.parent().context("operation folder")?;
+        let pointer = InstallPointer::decode(&files::read_bounded(
+            &folder.join(EXPECTED_POINTER_FILE),
+            airk_core::install_record::MAX_POINTER_BYTES,
+            true,
+        )?)
+        .map_err(|error| anyhow::anyhow!("removal_ownership_unproven: {}", error.code()))?;
+        let record = InstallRecord::decode(
+            &files::read_bounded(
+                &folder.join(EXPECTED_RECORD_FILE),
+                airk_core::install_record::MAX_RECORD_BYTES,
+                true,
+            )?,
+            &pointer,
+        )
+        .map_err(|error| anyhow::anyhow!("removal_ownership_unproven: {}", error.code()))?;
+        let actual = setup
+            .existing
+            .as_ref()
+            .context("removal_ownership_unproven: original installation missing")?;
+        ensure!(
+            actual.pointer == pointer && actual.record == record,
+            "removal_ownership_unproven: the verified original I4 image changed before admission"
+        );
+    }
+    if setup.receipt.closed && setup.receipt.failure.is_some() {
+        setup
+            .owner
+            .as_mut()
+            .context("failed_setup_ownership_unproven: active owner missing")?
+            .reopen_failed(&mut setup.receipt)?;
+    }
+    if let Some(owner) = &setup.owner
+        && !plan::removes(setup.operation.kind)
+    {
+        let saved = &owner.candidate()?.record;
+        let mut expected = setup.candidate_record()?;
+        expected.installed_by.installed_unix_ms = saved.installed_by.installed_unix_ms;
+        ensure!(
+            &expected == saved,
+            "setup_owner_refused: candidate differs from the actual approved inventory"
+        );
+    }
+    if !plan::removes(setup.operation.kind) && setup.receipt.reached(SetupPhase::Placed) {
+        setup.verify_payload()?;
+    }
+    if setup.owner.is_none() {
+        let admission_roots = transaction::admission_roots(&setup.operation.locations)?;
+        if setup.existing.is_none() && !plan::removes(setup.operation.kind) {
+            setup.retained = transaction::retained_for(&pointer_path, &setup.operation.locations)?;
+        }
+        setup.compatibility_preflight()?;
+        let problems = setup.location_problems()?;
+        ensure!(
+            problems.is_empty(),
+            "location_refused: {}",
+            problems.join("; ")
+        );
+        if let Some(installed) = &setup.existing
+            && plan::removes(setup.operation.kind)
+            && let Some(approved) = transaction::approved_inventory(&pointer_path, installed)?
+        {
+            ensure!(
+                approved == setup.operation.payload_inventory_sha256,
+                "payload_inventory_mismatch: removal inventory differs from the original completed setup"
+            );
+        }
+        let candidate = if plan::removes(setup.operation.kind) {
+            None
+        } else {
+            Some(setup.candidate_image()?)
+        };
+        setup.owner = Some(transaction::Owner::admit(
+            &pointer_path,
+            &setup.operation,
+            admitted_at,
+            setup.existing.as_ref(),
+            candidate,
+            Some(&admission_roots),
+        )?);
+    }
+    setup
+        .owner
+        .as_mut()
+        .context("setup owner missing")?
+        .ensure_roots()?;
+    if request.mode == SetupMode::AdmitRemoval {
+        println!(
+            "{}",
+            json!({"schema":"airk-setup-result/1", "operation_id": setup.operation.operation_id,
+            "kind":setup.operation.kind, "status":"admitted", "receipt":files_receipt_path(&state, setup.operation.operation_id),
+            "retired":0,"leftovers":[]})
+        );
+        return Ok(());
+    }
     let actions = plan::remaining(
         setup.operation.kind,
         &setup.operation.options,
@@ -184,10 +360,27 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
     )
     .map_err(|code| anyhow::anyhow!("{code}"))?;
     for action in actions {
+        setup
+            .owner
+            .as_mut()
+            .context("setup owner missing")?
+            .revalidate()?;
         if let Err(error) = setup.perform(action).await {
             // Editor windows reconnect to whatever the failure left in place.
             let _ = files::remove_replacement_notice();
             return setup.fail(error);
+        }
+        if action == Action::Drain
+            && setup.owner.as_ref().is_some_and(|owner| {
+                owner.active.stage
+                    == airk_core::install_record::setup_recovery::active::Stage::Admitted
+            })
+        {
+            setup
+                .owner
+                .as_mut()
+                .context("setup owner missing")?
+                .advance(airk_core::install_record::setup_recovery::active::Stage::Prepared)?;
         }
     }
     if setup.receipt.closed {
@@ -255,26 +448,40 @@ fn authorize_image(
     mode: SetupMode,
     own_path: &Path,
     own_digest: Sha256Digest,
+    prepared_custody: bool,
 ) -> Result<()> {
     let listed = &inventory.files[&inventory.executables.airk];
     ensure!(
         listed.sha256 == own_digest,
         "role_admission_refused: this airk image is not the payload's airk"
     );
-    if mode == SetupMode::Complete {
+    let signing = inventory
+        .signing
+        .as_ref()
+        .context("payload_unsigned: missing signing identity")?;
+    airk_process::signature::verify(signature_claim(signing), &[own_path])
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message))?;
+    if matches!(mode, SetupMode::Complete | SetupMode::AdmitRemoval) {
         let program = PathBuf::from(&operation.locations.program);
         let placed = canonical_or_same(&plan::program_file(&program, &inventory.executables.airk));
-        ensure!(
-            placed == own_path,
-            "role_admission_refused: setup must run from {}",
-            placed.display()
-        );
-        if let Some(installed) = existing.filter(|installed| {
-            plan::removes(operation.kind) && installed.record.locations == operation.locations
-        }) {
+        if plan::removes(operation.kind) {
+            let installed = existing
+                .filter(|installed| installed.record.locations == operation.locations)
+                .context("removal_ownership_unproven: no exact original installation")?;
             ensure!(
                 installed.record.executables.airk.sha256 == own_digest,
                 "role_admission_refused: this airk image is not the installed airk"
+            );
+            airk_process::signature::verify(
+                signature_claim(&installed.record.signing),
+                &[own_path],
+            )
+            .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message))?;
+        } else {
+            ensure!(
+                placed == own_path || prepared_custody,
+                "role_admission_refused: setup must run from {} or its exact prepared owner",
+                placed.display()
             );
         }
     }
@@ -300,6 +507,23 @@ fn signature_claim(signing: &Signing) -> airk_process::signature::Claim<'_> {
     }
 }
 
+fn verify_existing(pointer: &Path) -> Result<()> {
+    let discovery = airk_ipc::install_reader::read(pointer, |signing, images| {
+        airk_process::signature::verify(signature_claim(signing), images)
+            .map(|_| ())
+            .map_err(|error| (error.code.into(), error.message))
+    });
+    match discovery {
+        airk_ipc::install_reader::Discovery::Verified(_) => Ok(()),
+        airk_ipc::install_reader::Discovery::NotFound => {
+            bail!("removal_ownership_unproven: installation disappeared")
+        }
+        airk_ipc::install_reader::Discovery::Unverified { code, message } => {
+            bail!("{code}: {message}")
+        }
+    }
+}
+
 /// One running setup operation.
 struct Setup {
     operation: SetupOperation,
@@ -313,6 +537,8 @@ struct Setup {
     /// A start/health failure: reported at the end, after the remaining
     /// independent steps, never hidden (§9.6.4).
     readiness: Option<(String, String)>,
+    owner: Option<transaction::Owner>,
+    retained: Option<airk_core::install_record::setup_recovery::RetainedInstallation>,
 }
 
 fn bounded(text: String) -> String {
@@ -357,17 +583,33 @@ impl Setup {
             outcome: bounded(outcome.to_owned()),
             detail: bounded(detail.into()),
         });
-        files::write_receipt(&self.state(), &self.receipt)
+        self.save_receipt()
+    }
+
+    fn save_receipt(&self) -> Result<()> {
+        let state = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .pinned_root("state")?
+            .context("setup state missing")?;
+        files::write_receipt(&state, &self.receipt)
     }
 
     fn leave(&mut self, item: impl Into<String>, reason: impl Into<String>, restarts: bool) {
-        if self.receipt.leftovers.len() < airk_core::install_record::MAX_SETUP_LEFTOVERS {
-            self.receipt.leftovers.push(Leftover {
-                item: bounded(item.into()),
-                reason: bounded(reason.into()),
+        let context = self
+            .state()
+            .join("setup")
+            .join(format!("{}.json", self.operation.operation_id));
+        predecessor_roster::retain_bounded(
+            &mut self.receipt.leftovers,
+            Leftover {
+                item: item.into(),
+                reason: reason.into(),
                 restarts_old_service: restarts,
-            });
-        }
+            },
+            &context,
+        );
     }
 
     /// Close the receipt with the failure and return it.
@@ -392,12 +634,15 @@ impl Setup {
         self.receipt.closed = true;
         // A receipt that cannot be written leaves the original error to report.
         if !self.receipt.steps.is_empty() || std::fs::symlink_metadata(self.state()).is_ok() {
-            let _ = files::write_receipt(&self.state(), &self.receipt);
+            let _ = self.save_receipt();
         }
         Err(error)
     }
 
     async fn perform(&mut self, action: Action) -> Result<()> {
+        if inno::resume_seal_required(self.receipt.reached(SetupPhase::PointerWritten), action) {
+            inno::seal_published(self)?;
+        }
         match action {
             Action::Lock => self.lock(),
             Action::RetirePredecessors => self.retire(),
@@ -461,23 +706,56 @@ impl Setup {
             if owner != path {
                 continue;
             }
-            let adopted = ours.is_some_and(|ours| {
-                plan::roles(ours)
-                    .into_iter()
-                    .any(|(other, previous)| other == role && previous == path)
-            });
+            let adopted = self.owner.is_some()
+                || ours.is_some_and(|ours| {
+                    plan::roles(ours)
+                        .into_iter()
+                        .any(|(other, previous)| other == role && previous == path)
+                })
+                || (role != "program"
+                    && self.retained.as_ref().is_some_and(|retained| {
+                        plan::roles(&retained.installation.record.locations)
+                            .into_iter()
+                            .any(|(other, previous)| other == role && previous == path)
+                    }));
             if adopted {
                 continue;
             }
             let acceptable = match role {
                 // Placed files are this payload's; nothing else may be there.
-                "program" if self.mode == Mode::Complete => {
-                    let foreign =
-                        plan::foreign_program_entries(&files::list_files(&path)?, &listed);
-                    foreign.is_empty()
+                "program"
+                    if self.mode == Mode::Complete
+                        || self.operation.requested_by == "airkctl-portable" =>
+                {
+                    let entries = files::list_files(&path)?;
+                    let exact = entries
+                        .iter()
+                        .all(|name| listed.contains(name) || name == INVENTORY_FILE);
+                    if exact {
+                        if entries.iter().any(|name| name == INVENTORY_FILE) {
+                            let inventory = files::read_bounded(
+                                &path.join(INVENTORY_FILE),
+                                airk_core::install_record::payload_inventory::MAX_INVENTORY_BYTES,
+                                false,
+                            )?;
+                            ensure!(
+                                files::digest_bytes(&inventory)
+                                    == self.operation.payload_inventory_sha256,
+                                "candidate_payload_unverified: existing inventory differs from the approved operation"
+                            );
+                        }
+                        for (relative, expected) in &self.inventory.files {
+                            let (digest, bytes) = files::digest_file(&path.join(relative))?;
+                            ensure!(
+                                digest == expected.sha256 && bytes == expected.bytes,
+                                "candidate_payload_unverified: {relative} differs from the approved inventory"
+                            );
+                        }
+                    }
+                    exact
                 }
                 // Prepare may have created the receipt folder already.
-                "state" => std::fs::read_dir(&path)?.all(|entry| {
+                "state" if self.owner.is_some() => std::fs::read_dir(&path)?.all(|entry| {
                     entry.is_ok_and(|entry| entry.file_name() == std::ffi::OsStr::new("setup"))
                 }),
                 _ => files::absent_or_empty(&path)?,
@@ -493,6 +771,7 @@ impl Setup {
     }
 
     fn lock(&mut self) -> Result<()> {
+        self.compatibility_preflight()?;
         let problems = self.location_problems()?;
         ensure!(
             problems.is_empty(),
@@ -522,6 +801,38 @@ impl Setup {
         }
         if !self.receipt.reached(SetupPhase::Locked) {
             self.record(SetupPhase::Locked, "locked", format!("{:?}", self.mode))?;
+        }
+        Ok(())
+    }
+
+    fn compatibility_preflight(&self) -> Result<()> {
+        if plan::removes(self.operation.kind) {
+            return Ok(());
+        }
+        ensure!(
+            self.inventory.version == VERSION,
+            "candidate_build_mismatch: inventory {} differs from setup {VERSION}",
+            self.inventory.version
+        );
+        let original = self
+            .existing
+            .as_ref()
+            .map(|installed| &installed.record)
+            .or_else(|| {
+                self.retained
+                    .as_ref()
+                    .map(|retained| &retained.installation.record)
+            });
+        if let Some(original) = original {
+            plan::preserve_state(&original.version, &self.inventory.version, &original.contracts.state, STATE_CONTRACT,
+                self.operation.acknowledgements.index_reset, plan::purges(self.operation.kind, &self.operation.options))
+                .map_err(|code| anyhow::anyhow!("{code}: downgrade or incompatible state requires explicit index reset and purge"))?;
+        }
+        if plan::purges(self.operation.kind, &self.operation.options) {
+            ensure!(
+                self.operation.acknowledgements.index_reset,
+                "state_reset_required: purge requires explicit reset acknowledgement"
+            );
         }
         Ok(())
     }
@@ -570,13 +881,15 @@ impl Setup {
             .sort_by_key(|leftover| !leftover.restarts_old_service);
         let outcome = if removed + left == 0 {
             "none_found"
+        } else if left > 0 {
+            "leftovers_preserved"
         } else {
             "retired"
         };
         self.record(
             SetupPhase::PredecessorsRetired,
             outcome,
-            format!("{removed} removed, {left} left"),
+            format!("{removed} owned roots retired; {left} leftover observations made (not an exact artifact count); inspect the bounded list and any uncertainty/omission markers"),
         )
     }
 
@@ -635,10 +948,44 @@ impl Setup {
         if self.mode == Mode::Prepare || plan::removes(self.operation.kind) {
             details.push(effects::await_sessions(&paths)?);
         }
+        if self.mode != Mode::Prepare
+            && !plan::removes(self.operation.kind)
+            && let Some((prior, _)) = self
+                .owner
+                .as_ref()
+                .context("setup owner missing")?
+                .moved_prior()?
+        {
+            let program = Path::new(&prior.record.locations.program);
+            details.push(effects::await_sessions(&[
+                program.join(&prior.record.executables.airk.path),
+                program.join(&prior.record.executables.airkctl.path),
+            ])?);
+        }
+        if let Some((prior, _)) = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .moved_prior()?
+            && prior.record.installed_by.installer != Installer::Portable
+        {
+            let airk = Path::new(&prior.record.locations.program)
+                .join(&prior.record.executables.airk.path);
+            effects::unregister_login(
+                self.host,
+                Path::new(&prior.record.locations.state),
+                &airk,
+                prior.record.install_id,
+                Some(&self.operation_path),
+            )
+            .context(
+                "old_login_startup_removal_failed: old program must not restart after relocation",
+            )?;
+        }
         self.record(SetupPhase::ServiceDrained, outcome, details.join("; "))
     }
 
-    fn verify_placement(&mut self) -> Result<()> {
+    fn verify_payload(&self) -> Result<&'static str> {
         let program = self.program();
         files::no_links(&program)?;
         for (relative, listed) in &self.inventory.files {
@@ -656,11 +1003,6 @@ impl Setup {
             self.inventory.version
         );
         let airkctl = plan::program_file(&program, &self.inventory.executables.airkctl);
-        airk_installer::service_manager::check_executable_identity(
-            &airkctl,
-            &format!("airkctl {VERSION}"),
-        )
-        .context("pair_mismatch: the placed airkctl reports another version")?;
         let (inventory_sha256, bundle_sha256) = airk_https::admin_plane::embedded_asset_digests();
         ensure!(
             self.inventory.admin_assets.inventory_sha256 == inventory_sha256
@@ -684,10 +1026,18 @@ impl Setup {
                 "the pair is unsigned (Linux: integrity rests on the record digest)"
             }
         };
+        airk_installer::service_manager::check_executable_identity(
+            &airkctl,
+            &format!("airkctl {VERSION}"),
+        )
+        .context("pair_mismatch: the placed airkctl reports another version")?;
+        Ok(signatures)
+    }
+
+    fn verify_placement(&mut self) -> Result<()> {
+        let signatures = self.verify_payload()?;
         self.record(
-            SetupPhase::Placed,
-            "verified",
-            format!(
+            SetupPhase::Placed, "verified", format!(
                 "{} files match the payload inventory; the pair reports version {VERSION}; {signatures}",
                 self.inventory.files.len()
             ),
@@ -712,7 +1062,7 @@ impl Setup {
         Incarnation::from_bytes(bytes)
     }
 
-    fn write_record(&mut self) -> Result<()> {
+    fn candidate_record(&self) -> Result<InstallRecord> {
         let executable = |relative: &str| {
             let listed = &self.inventory.files[relative];
             Executable {
@@ -726,6 +1076,7 @@ impl Setup {
             "dmg" => Installer::Dmg,
             "app-first-launch" => Installer::AppFirstLaunch,
             "install-sh" => Installer::InstallSh,
+            "airkctl-portable" => Installer::Portable,
             other => bail!("setup_operation_refused: unknown installer {other:?}"),
         };
         let record = InstallRecord {
@@ -758,12 +1109,79 @@ impl Setup {
                 installed_unix_ms: (self.clock)(),
             },
         };
+        Ok(record)
+    }
+
+    fn candidate_image(
+        &self,
+    ) -> Result<airk_core::install_record::setup_recovery::InstallationImage> {
+        let record = self.candidate_record()?;
+        let pointer = InstallPointer {
+            schema: POINTER_SCHEMA.into(),
+            install_id: record.install_id,
+            program: record.locations.program.clone(),
+            record: RECORD_FILE.into(),
+            record_sha256: files::digest_bytes(&airk_core::install_record::canonical(&record)),
+            version: record.version.clone(),
+            written_unix_ms: record.installed_by.installed_unix_ms,
+        };
+        let image =
+            airk_core::install_record::setup_recovery::InstallationImage { pointer, record };
+        image
+            .validate()
+            .map_err(|error| anyhow::anyhow!("installation_unverified: {}", error.code()))?;
+        Ok(image)
+    }
+
+    fn write_record(&mut self) -> Result<()> {
+        let record = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .candidate()?
+            .record
+            .clone();
+        let external = self
+            .operation_path
+            .parent()
+            .context("operation folder")?
+            .join(INVENTORY_FILE);
+        if external.try_exists()? {
+            let bytes = files::read_bounded(
+                &external,
+                airk_core::install_record::payload_inventory::MAX_INVENTORY_BYTES,
+                false,
+            )?;
+            ensure!(
+                files::digest_bytes(&bytes) == self.operation.payload_inventory_sha256,
+                "payload_inventory_mismatch: original operation inventory changed"
+            );
+            let program = self
+                .owner
+                .as_ref()
+                .context("setup owner missing")?
+                .pinned_root("program")?
+                .context("program root missing")?;
+            airk_ipc::private_record::write_owner_at(
+                &program,
+                INVENTORY_FILE,
+                &bytes,
+                airk_core::install_record::payload_inventory::MAX_INVENTORY_BYTES,
+                true,
+            )?;
+        }
         // The service keeps index storage under `locations.data` and its cache
         // under `locations.cache`; an index setup review needs the data folder
         // to exist. A fresh install, and a reinstall after "delete data", have
         // neither. They are created owner-only, as the state folder is.
         files::prepare_locations(&self.operation.locations)?;
-        files::write_record(&self.program(), &record)?;
+        let program = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .pinned_root("program")?
+            .context("program root missing")?;
+        files::write_record(&program, &record)?;
         self.record(
             SetupPhase::RecordWritten,
             "written",
@@ -775,41 +1193,87 @@ impl Setup {
     }
 
     fn write_pointer(&mut self) -> Result<()> {
-        let program = self.program();
-        let bytes = files::record_bytes(&program)?;
-        let unchecked: InstallRecord =
-            serde_json::from_slice(&bytes).context("install record is unreadable")?;
-        let pointer = InstallPointer {
-            schema: POINTER_SCHEMA.into(),
-            install_id: unchecked.install_id,
-            program: self.operation.locations.program.clone(),
-            record: RECORD_FILE.into(),
-            record_sha256: files::digest_bytes(&bytes),
-            version: unchecked.version.clone(),
-            written_unix_ms: (self.clock)(),
-        };
-        // The pointer is written only for a record its readers will accept.
-        InstallRecord::decode(&bytes, &pointer)
-            .map_err(|refusal| anyhow::anyhow!("installation_unverified: {}", refusal.code()))?;
-        let moved = self
-            .existing
+        let pointer = self
+            .owner
             .as_ref()
-            .map(|previous| previous.record.locations.program.clone())
-            .filter(|previous| *previous != self.operation.locations.program);
-        if let Some(previous) = moved {
-            self.leave(
-                previous,
-                "the earlier program folder of this AIRK Service; moving the program folder does not remove it in this build",
-                false,
-            );
-        }
-        files::write_pointer(&pointer)?;
+            .context("setup owner missing")?
+            .candidate()?
+            .pointer
+            .clone();
+        let bytes = files::record_bytes(&self.program())?;
+        InstallRecord::decode(&bytes, &pointer)
+            .map_err(|error| anyhow::anyhow!("installation_unverified: {}", error.code()))?;
+        let authority = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .authority();
+        files::write_pointer(authority, &pointer)?;
+        self.owner
+            .as_mut()
+            .context("setup owner missing")?
+            .advance(airk_core::install_record::setup_recovery::active::Stage::PairPublished)?;
+        inno::seal_published(self)?;
+        self.cleanup_moved_program()?;
         self.existing = files::read_installation()?;
         self.record(
             SetupPhase::PointerWritten,
             "written",
             files::pointer_path()?.display().to_string(),
         )
+    }
+
+    fn cleanup_moved_program(&mut self) -> Result<()> {
+        let Some((prior, root)) = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .moved_prior()?
+        else {
+            return Ok(());
+        };
+        let program = PathBuf::from(&prior.record.locations.program);
+        let Some(expected) = transaction::approved_inventory(&files::pointer_path()?, &prior)?
+        else {
+            self.leave(program.display().to_string(),"old payload retained: no settled original inventory proof; remove only through its original installer/recovery",false);
+            return Ok(());
+        };
+        let inventory = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .prior_inventory(&root, expected)?;
+        let old_cli = plan::program_file(&program, &prior.record.executables.airkctl.path);
+        if prior.record.installed_by.installer != Installer::Portable {
+            let _ = self.remove_link(&program, &old_cli);
+        }
+        let listed = inventory.files.keys().cloned().collect();
+        for relative in plan::program_removal(&listed, &inventory.executables.airk) {
+            let file = inventory.files.get(&relative);
+            match effects::program_files::remove(
+                &root,
+                &relative,
+                file.map_or(expected, |file| file.sha256),
+                file.map(|file| file.bytes),
+            ) {
+                Ok(
+                    effects::program_files::Removal::Removed
+                    | effects::program_files::Removal::Absent,
+                ) => {}
+                Ok(effects::program_files::Removal::Changed) => self.leave(
+                    program.join(&relative).display().to_string(),
+                    "old payload changed; preserved",
+                    false,
+                ),
+                Err(error) => self.leave(
+                    program.join(&relative).display().to_string(),
+                    format!("old payload preserved: {error:#}"),
+                    false,
+                ),
+            }
+        }
+        self.leave(program.display().to_string(),"old exact I4 record and directory retained for publication recovery; listed matching payload files retired, other files preserved",false);
+        Ok(())
     }
 
     /// This operation's installation as the pointer now names it.
@@ -830,8 +1294,16 @@ impl Setup {
 
     fn register_login(&mut self) -> Result<()> {
         let (airk, install_id) = self.installed_airk()?;
-        let (phase, outcome, detail) =
-            effects::register_login(self.host, &self.state(), &airk, install_id);
+        let (phase, outcome, detail) = effects::register_login(
+            self.host,
+            &self.state(),
+            &airk,
+            install_id,
+            Some(&self.operation_path),
+        );
+        if phase == SetupPhase::LoginFailed {
+            self.readiness = Some(("login_startup_failed".into(), detail.clone()));
+        }
         self.record(phase, outcome, detail)
     }
 
@@ -885,20 +1357,48 @@ impl Setup {
     }
 
     fn unregister_login(&mut self) -> Result<()> {
+        if self
+            .existing
+            .as_ref()
+            .is_some_and(|installed| installed.record.installed_by.installer == Installer::Portable)
+        {
+            return self.record(
+                SetupPhase::LoginUnregistered,
+                "absent",
+                "portable installation owns no login integration",
+            );
+        }
         let Some((airk, install_id)) = self.removal_target() else {
             return self.record(SetupPhase::LoginUnregistered, "absent", "no installation");
         };
-        match effects::unregister_login(self.host, &self.state(), &airk, install_id) {
+        match effects::unregister_login(
+            self.host,
+            &self.state(),
+            &airk,
+            install_id,
+            Some(&self.operation_path),
+        ) {
             Ok(outcome) => self.record(SetupPhase::LoginUnregistered, outcome, ""),
             Err(error) => {
                 let reason = format!("{error:#}");
-                self.leave("login startup registration", reason.clone(), false);
-                self.record(SetupPhase::LoginUnregistered, "left", reason)
+                self.leave("login startup registration", reason.clone(), true);
+                Err(anyhow::anyhow!("login_startup_removal_failed: {reason}"))
             }
         }
     }
 
     fn remove_trust(&mut self) -> Result<()> {
+        if self
+            .existing
+            .as_ref()
+            .is_some_and(|installed| installed.record.installed_by.installer == Installer::Portable)
+        {
+            return self.record(
+                SetupPhase::TrustRemoved,
+                "absent",
+                "portable installation owns no OS trust integration",
+            );
+        }
         if self.existing.is_none() {
             return self.record(SetupPhase::TrustRemoved, "absent", "no installation");
         }
@@ -913,9 +1413,23 @@ impl Setup {
     }
 
     fn remove_pointer(&mut self) -> Result<()> {
+        self.owner
+            .as_mut()
+            .context("setup owner missing")?
+            .retain_before_removal()?;
         let outcome = match &self.existing {
             Some(installed) if installed.record.locations == self.operation.locations => {
-                if files::remove_pointer()? {
+                if files::remove_pointer(
+                    self.owner
+                        .as_ref()
+                        .context("setup owner missing")?
+                        .authority(),
+                    &self
+                        .existing
+                        .as_ref()
+                        .context("original installation missing")?
+                        .pointer,
+                )? {
                     "removed"
                 } else {
                     "absent"
@@ -930,12 +1444,31 @@ impl Setup {
     /// The record, then (macOS, Linux) the placed files and the owned
     /// `airkctl` link: there `airkctl service uninstall` is the uninstaller.
     fn remove_record(&mut self) -> Result<()> {
-        let outcome = if files::remove_record(&self.program())? {
-            "removed"
+        let program = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .pinned_root("program")?;
+        let removed = if let Some(program) = program {
+            files::remove_record(
+                &program,
+                &self
+                    .existing
+                    .as_ref()
+                    .context("original installation missing")?
+                    .record,
+            )?
         } else {
-            "absent"
+            false
         };
-        let detail = if plan::removes_program_files(self.host) {
+        let outcome = if removed { "removed" } else { "absent" };
+        self.owner
+            .as_mut()
+            .context("setup owner missing")?
+            .advance(airk_core::install_record::setup_recovery::active::Stage::RemovalApplied)?;
+        let detail = if self.existing.as_ref().is_some_and(|installed| {
+            plan::removes_owned_program(self.host, installed.record.installed_by.installer)
+        }) {
             self.remove_program()?
         } else {
             String::new()
@@ -952,34 +1485,55 @@ impl Setup {
             return Ok("the program folder is absent".into());
         }
         files::no_links(&program)?;
+        let program_pin = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .pinned_root("program")?
+            .context("original program root not pinned")?;
         let airkctl = plan::program_file(&program, &self.inventory.executables.airkctl);
-        let link = self.remove_link(&program, &airkctl);
-        let listed: std::collections::BTreeSet<String> =
-            self.inventory.files.keys().cloned().collect();
-        let order = plan::program_removal(&listed, &self.inventory.executables.airk);
-        let mut removed = 0;
-        for relative in &order {
-            let path = plan::program_file(&program, relative);
-            if std::fs::symlink_metadata(&path).is_err() {
-                continue;
-            }
-            let observed = files::digest_file(&path).ok();
-            let unchanged = match self.inventory.files.get(relative) {
-                Some(listed) => observed == Some((listed.sha256, listed.bytes)),
-                // The inventory itself, as the operation pinned it.
-                None => observed
-                    .is_some_and(|(digest, _)| digest == self.operation.payload_inventory_sha256),
+        let link =
+            if self.existing.as_ref().is_some_and(|installed| {
+                installed.record.installed_by.installer == Installer::Portable
+            }) {
+                "portable installation owns no PATH link".into()
+            } else {
+                self.remove_link(&program, &airkctl)
             };
-            if !unchanged {
-                self.leave(
+        let installed = self
+            .existing
+            .as_ref()
+            .context("original installation missing")?;
+        let approved = transaction::approved_inventory(&files::pointer_path()?, installed)?;
+        let full_proof = approved == Some(self.operation.payload_inventory_sha256);
+        ensure!(
+            approved.is_none() || full_proof,
+            "original removal inventory proof changed"
+        );
+        let entries = plan::cleanup_candidates(
+            &self.inventory,
+            &installed.record,
+            self.operation.payload_inventory_sha256,
+            full_proof,
+        );
+        if !full_proof {
+            self.leave(program.display().to_string(),"unproven legacy inventory: only exact I4 executables retired; support files/inventory preserved for original-installer recovery",false);
+        }
+        let order = entries
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect::<Vec<_>>();
+        let mut removed = 0;
+        for (relative, digest, bytes) in entries {
+            let path = plan::program_file(&program, &relative);
+            match effects::program_files::remove(&program_pin, &relative, digest, bytes) {
+                Ok(effects::program_files::Removal::Removed) => removed += 1,
+                Ok(effects::program_files::Removal::Absent) => {}
+                Ok(effects::program_files::Removal::Changed) => self.leave(
                     path.display().to_string(),
                     "it differs from the payload inventory, so it was not removed",
                     false,
-                );
-                continue;
-            }
-            match std::fs::remove_file(&path) {
-                Ok(()) => removed += 1,
+                ),
                 Err(error) => self.leave(
                     path.display().to_string(),
                     format!("it could not be removed: {error}"),
@@ -987,13 +1541,20 @@ impl Setup {
                 ),
             }
         }
+        #[cfg(windows)]
         for folder in plan::program_folders(&order) {
-            let _ = std::fs::remove_dir(plan::program_file(&program, &folder));
+            let _ = effects::program_files::empty_folder(&program_pin, &folder);
         }
-        if std::fs::remove_dir(&program).is_err() {
+        drop(program_pin);
+        if let Err(error) = self
+            .owner
+            .as_mut()
+            .context("setup owner missing")?
+            .remove_program_root(&program)
+        {
             self.leave(
                 program.display().to_string(),
-                "the program folder holds files this installation did not place; they were left",
+                format!("the program folder was preserved: {error:#}"),
                 false,
             );
         }
@@ -1060,10 +1621,30 @@ impl Setup {
                 .to_path_buf(),
         ];
         let mut removed = 0;
-        for location in [&locations.data, &locations.cache, &locations.logs] {
-            removed += effects::purge(Path::new(location), &protected, &[])?;
+        for (role, location) in [
+            ("data", &locations.data),
+            ("cache", &locations.cache),
+            ("logs", &locations.logs),
+            ("state", &locations.state),
+        ] {
+            if let Some(held) = self
+                .owner
+                .as_ref()
+                .context("setup owner missing")?
+                .pinned_root(role)?
+            {
+                let keep = if role == "state" {
+                    &["setup"][..]
+                } else {
+                    &[][..]
+                };
+                removed += effects::purge_held(&held, Path::new(location), &protected, keep)?;
+            }
         }
-        removed += effects::purge(Path::new(&locations.state), &protected, &["setup"])?;
+        self.owner
+            .as_mut()
+            .context("setup owner missing")?
+            .revalidate()?;
         self.record(
             SetupPhase::DataPurged,
             "purged",
@@ -1072,6 +1653,34 @@ impl Setup {
     }
 
     fn close(&mut self) -> Result<()> {
+        let custody = airk_process::directory::OpenedDirectory::open(
+            self.operation_path
+                .parent()
+                .context("operation parent missing")?,
+        )?;
+        let original = canonical(&self.operation);
+        ensure!(
+            files::digest_bytes(&original) == self.receipt.operation_sha256,
+            "original operation bytes changed before custody retention"
+        );
+        if let Some(saved) = airk_ipc::private_record::read_private_at(
+            &custody,
+            "operation-request.json",
+            airk_core::install_record::MAX_SETUP_OPERATION_BYTES,
+        )? {
+            ensure!(
+                saved == original,
+                "original recovery backup conflicts with admitted request"
+            );
+        } else {
+            airk_ipc::private_record::write_private_at(
+                &custody,
+                "operation-request.json",
+                &original,
+                airk_core::install_record::MAX_SETUP_OPERATION_BYTES,
+                false,
+            )?;
+        }
         if let Some((code, message)) = &self.readiness {
             self.receipt.failure = Some(SetupFailure {
                 code: code.clone(),
@@ -1081,6 +1690,13 @@ impl Setup {
         }
         self.receipt.closed = true;
         self.record(SetupPhase::Complete, "closed", "")?;
+        if self.receipt.failure.is_some() {
+            return Ok(());
+        }
+        self.owner
+            .as_mut()
+            .context("setup owner missing")?
+            .settle(&self.receipt)?;
         // What setup could not remove stays installed and may still run; the
         // platform installer shows `leftovers.txt` (best effort, not removed
         // with the operation files below).
@@ -1090,11 +1706,12 @@ impl Setup {
         ) {
             let _ = files::write_owner_file(folder, "leftovers.txt", notice.as_bytes());
         }
-        // Single use: the operation file and its folder go once the receipt
-        // is closed; a replay then finds the closed receipt.
-        let _ = std::fs::remove_file(&self.operation_path);
+        // Consume the ordinary admission filename. Retain the exact backup and
+        // raw inventory for outer cleanup reconciliation under the same key.
+        if self.operation_path.file_name() != Some(std::ffi::OsStr::new("operation-request.json")) {
+            let _ = std::fs::remove_file(&self.operation_path);
+        }
         if let Some(folder) = self.operation_path.parent() {
-            let _ = std::fs::remove_file(folder.join(INVENTORY_FILE));
             let _ = std::fs::remove_file(folder.join("plan.json"));
             let _ = std::fs::remove_file(folder.join("plan.txt"));
             let _ = std::fs::remove_file(folder.join("error.txt"));
@@ -1199,6 +1816,47 @@ pub fn installed_locations() -> Result<Option<airk_core::install_record::Locatio
     Ok(files::read_installation()?.map(|installed| installed.record.locations))
 }
 
+/// Shared by every foreground/detached/login/OS-manager service entry before
+/// opening control state. The exact published setup candidate may start under
+/// its completing owner's lock; normal starts hold exclusion until ready.
+pub(crate) fn start_gate(control: &Path) -> Result<Option<airk_ipc::private_record::PrivateLock>> {
+    let pointer = files::pointer_path()?;
+    match transaction::owns_control(&pointer, control)? {
+        Some(false) => return Ok(None),
+        None => {
+            let installed = files::read_installation()?;
+            if installed.as_ref().is_none_or(|installed| {
+                canonical_or_same(Path::new(&installed.record.locations.state))
+                    != canonical_or_same(control)
+            }) {
+                return Ok(None);
+            }
+        }
+        Some(true) => {}
+    }
+    match files::lock() {
+        Ok(lock) => {
+            transaction::startup_allowed(&pointer, control)?;
+            if let Some(installed) = files::read_installation()? {
+                inno::require_start_custody(
+                    &airk_core::install_record::setup_recovery::InstallationImage {
+                        pointer: installed.pointer,
+                        record: installed.record,
+                    },
+                )?;
+            }
+            Ok(Some(lock))
+        }
+        Err(error) => {
+            if transaction::startup_allowed(&pointer, control)? {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
 /// U101: the login registration of this user's installation, as the service
 /// manages it for the admin Service page and `airkctl service login`. The
 /// identity (`ServiceManager::for_installation`) and the register/unregister
@@ -1213,6 +1871,12 @@ pub(crate) struct LoginTarget {
 impl LoginTarget {
     /// What the registration starts (`service-login` role).
     pub(crate) fn command(&self) -> String {
+        if cfg!(target_os = "macos") {
+            return format!(
+                "\"{}\" __airk_role service-login-current",
+                self.airk.display()
+            );
+        }
         format!(
             "\"{}\" __airk_role service-login --install-id {}",
             self.airk.display(),
@@ -1255,17 +1919,37 @@ pub(crate) fn login_target(control: &Path) -> Result<Option<LoginTarget>> {
 
 /// Whether the installation's own login registration exists (read-only).
 pub(crate) fn login_registered(target: &LoginTarget) -> Result<bool> {
+    if cfg!(target_os = "macos") {
+        return Ok(mac_login::direct(target.install_id, "status")?
+            == airk_installer::service_manager::MacLoginState::Enabled);
+    }
     target.manager()?.owned_registration_exists()
+}
+
+fn require_current_login_target(target: &LoginTarget) -> Result<()> {
+    verify_existing(&files::pointer_path()?)?;
+    let current = login_target(&target.state)?
+        .context("login_startup_identity_mismatch: installation changed")?;
+    ensure!(
+        current.install_id == target.install_id
+            && canonical_or_same(&current.airk) == canonical_or_same(&target.airk)
+            && canonical_or_same(&current.state) == canonical_or_same(&target.state),
+        "login_startup_identity_mismatch: installation changed before OS action"
+    );
+    Ok(())
 }
 
 /// Register login startup (idempotent: `already_registered`).
 pub(crate) fn login_install(target: &LoginTarget) -> Result<&'static str> {
     let _lock = files::lock()?;
+    transaction::ordinary_management_allowed(&files::pointer_path()?)?;
+    require_current_login_target(target)?;
     let (phase, outcome, detail) = effects::register_login(
         Host::current(),
         &target.state,
         &target.airk,
         target.install_id,
+        None,
     );
     ensure!(
         phase == SetupPhase::LoginRegistered,
@@ -1280,6 +1964,21 @@ pub(crate) fn login_install(target: &LoginTarget) -> Result<&'static str> {
 /// never be delivered.
 pub(crate) fn login_uninstall(target: &LoginTarget) -> Result<&'static str> {
     let _lock = files::lock()?;
+    transaction::ordinary_management_allowed(&files::pointer_path()?)?;
+    require_current_login_target(target)?;
+    if cfg!(target_os = "macos") {
+        ensure!(
+            !login_registered(target)?,
+            "login_startup_in_use: stop the registered service before removing login startup"
+        );
+        return effects::unregister_login(
+            Host::current(),
+            &target.state,
+            &target.airk,
+            target.install_id,
+            None,
+        );
+    }
     let manager = target.manager()?;
     if manager.owned_registration_exists()? {
         ensure!(
@@ -1292,6 +1991,7 @@ pub(crate) fn login_uninstall(target: &LoginTarget) -> Result<&'static str> {
         &target.state,
         &target.airk,
         target.install_id,
+        None,
     )
 }
 
@@ -1306,6 +2006,7 @@ pub(crate) fn login_uninstall_allowed(running: Option<bool>) -> bool {
 /// and the login receipt must name this registration. Then the service runs
 /// as `service-detached` does, in automatic mode (a saved Stop is honored).
 pub async fn serve_login(install_id: Incarnation) -> Result<()> {
+    verify_existing(&files::pointer_path()?)?;
     let installed = files::read_installation()
         .context("role_admission_refused: the installation could not be verified")?
         .context("role_admission_refused: no AIRK Service installation")?;
@@ -1334,9 +2035,28 @@ pub async fn serve_login(install_id: Incarnation) -> Result<()> {
         &install_id.to_string(),
     )?;
     ensure!(
-        manager.owned_registration_exists()?,
-        "role_admission_refused: no login receipt names this registration"
+        if cfg!(target_os = "macos") {
+            mac_login::direct(install_id, "status")?
+                == airk_installer::service_manager::MacLoginState::Enabled
+        } else {
+            manager.owned_registration_exists()?
+        },
+        "role_admission_refused: no owned enabled login registration"
     );
     crate::service_runtime::serve_admitted(&state, airk_core::install_record::StartMode::Automatic)
         .await
+}
+
+pub async fn serve_login_current() -> Result<()> {
+    ensure!(
+        cfg!(target_os = "macos"),
+        "role_admission_refused: static current login is macOS-only"
+    );
+    let installed =
+        files::read_installation()?.context("role_admission_refused: no current installation")?;
+    serve_login(installed.record.install_id).await
+}
+
+pub fn control_login(install_id: Incarnation, action: &str, operation: &Path) -> Result<()> {
+    mac_login::control(install_id, action, operation)
 }

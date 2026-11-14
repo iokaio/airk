@@ -2,6 +2,42 @@
 use super::*;
 use serde::Deserialize;
 
+#[test]
+fn sampled_conversion_charges_nanoseconds_and_repeated_frames_without_refresh() -> Result<()> {
+    use std::time::Duration;
+    let base = Instant::now();
+    let context = ReadAttemptContext::new(base + Duration::from_nanos(1_000), Default::default())
+        .with_native_retry_deadline(base + Duration::from_nanos(200));
+    // A shared clock epoch maps base to tick 1_000. Encode's native sample
+    // precedes its Instant sample by one nanosecond.
+    let budget = encode_sampled(
+        &context,
+        Incarnation::from_bytes([3; 16]),
+        1_010,
+        base + Duration::from_nanos(11),
+    )?;
+    assert_eq!(budget.expires_monotonic_ns, 1_999);
+    assert_eq!(budget.native_retry_expires_monotonic_ns, Some(1_199));
+    for (instant_ns, tick, expected_retry_ns, expected_read_ns) in
+        [(20, 1_022, 197, 997), (100, 1_103, 196, 996)]
+    {
+        // Decode's Instant sample precedes its native sample. Reusing the
+        // original frame later consumes time rather than resetting its expiry.
+        let decoded = decode_sampled(budget, base + Duration::from_nanos(instant_ns), tick)?;
+        assert_eq!(
+            decoded.deadline(),
+            base + Duration::from_nanos(expected_read_ns)
+        );
+        assert_eq!(
+            decoded.native_retry_deadline(),
+            Some(base + Duration::from_nanos(expected_retry_ns))
+        );
+        assert!(decoded.deadline() <= context.deadline());
+        assert!(decoded.native_retry_deadline() <= context.native_retry_deadline());
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyQuery {
