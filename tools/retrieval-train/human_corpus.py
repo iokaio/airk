@@ -18,6 +18,36 @@ def hash_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def append_hotpot_rows(hotpot_rows, selected_set, documents, tasks, hotpot_exclusions):
+    """Append exact neutral Hotpot conversion; caller owns sealed input selection."""
+    for row in hotpot_rows:
+        if row["id"] not in selected_set:
+            continue
+        mapping = {}
+        for title, sentences in zip(row["context"]["title"], row["context"]["sentences"]):
+            text = "".join(sentences)
+            identifier = "hotpot:" + hash_bytes((title + "\n" + text).encode())
+            if any(character in text for character in '"“”«»„'):
+                hotpot_exclusions.append({"task_id": row["id"], "source_id": identifier, "reason": "quote-bearing context excluded"})
+                continue
+            documents[identifier] = {"id": identifier, "text": text, "title": title, "source_group": "wikipedia:" + title,
+                "url": "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_")), "paragraph_sha256": hash_bytes(text.encode()),
+                "license": "CC-BY-SA-4.0", "dataset": "HotpotQA", "attribution": "Wikipedia contributors, " + title + "; HotpotQA (Yang, Qi, Zhang et al.,2018), CC BY-SA4.0; publisher normalized paragraph, no text modification"}
+            for sentence_index, sentence in enumerate(sentences):
+                mapping[(title, sentence_index)] = (identifier, sentence)
+        evidence = []
+        for title, sentence_index in zip(row["supporting_facts"]["title"], row["supporting_facts"]["sent_id"]):
+            location = mapping.get((title, sentence_index))
+            evidence.append({"source_title": title, "sentence_index": sentence_index,
+                "source_evidence_sha256": hash_bytes(location[1].encode()) if location else None,
+                "allowed_locations": [location[0]] if location else []})
+        tasks.append({"id": "hotpot:" + row["id"], "question_id": row["id"], "question": row["question"], "dataset": "HotpotQA", "split": "test",
+            "publisher_split": "validation", "source_group": "hotpot-question:" + row["id"], "disagreement": False,
+            "human_alternatives": [{"human_annotation_id": "hotpot-original:" + row["id"], "unanswerable": False,
+                "original_human_answer": row["answer"], "original_evidence_count": len(evidence), "evidence": evidence,
+                "alignment": "all_original_evidence_maps_to_allowed_text" if evidence and all(e["allowed_locations"] for e in evidence) else "unsupported_or_excluded_evidence_not_admitted"}]})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rights", type=Path, required=True)
@@ -75,32 +105,7 @@ def main():
     selected = sorted((row["id"] for row in hotpot_rows), key=lambda identifier: hash_bytes(("airk.hotpot.final.v1:" + identifier).encode()))[:512]
     selected_set = set(selected)
     hotpot_exclusions = []
-    for row in hotpot_rows:
-        if row["id"] not in selected_set:
-            continue
-        mapping = {}
-        for title, sentences in zip(row["context"]["title"], row["context"]["sentences"]):
-            text = "".join(sentences)
-            identifier = "hotpot:" + hash_bytes((title + "\n" + text).encode())
-            if any(character in text for character in '"“”«»„'):
-                hotpot_exclusions.append({"task_id": row["id"], "source_id": identifier, "reason": "quote-bearing context excluded"})
-                continue
-            documents[identifier] = {"id": identifier, "text": text, "title": title, "source_group": "wikipedia:" + title,
-                "url": "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_")), "paragraph_sha256": hash_bytes(text.encode()),
-                "license": "CC-BY-SA-4.0", "dataset": "HotpotQA", "attribution": "Wikipedia contributors, " + title + "; HotpotQA (Yang, Qi, Zhang et al.,2018), CC BY-SA4.0; publisher normalized paragraph, no text modification"}
-            for sentence_index, sentence in enumerate(sentences):
-                mapping[(title, sentence_index)] = (identifier, sentence)
-        evidence = []
-        for title, sentence_index in zip(row["supporting_facts"]["title"], row["supporting_facts"]["sent_id"]):
-            location = mapping.get((title, sentence_index))
-            evidence.append({"source_title": title, "sentence_index": sentence_index,
-                "source_evidence_sha256": hash_bytes(location[1].encode()) if location else None,
-                "allowed_locations": [location[0]] if location else []})
-        tasks.append({"id": "hotpot:" + row["id"], "question_id": row["id"], "question": row["question"], "dataset": "HotpotQA", "split": "test",
-            "publisher_split": "validation", "source_group": "hotpot-question:" + row["id"], "disagreement": False,
-            "human_alternatives": [{"human_annotation_id": "hotpot-original:" + row["id"], "unanswerable": False,
-                "original_human_answer": row["answer"], "original_evidence_count": len(evidence), "evidence": evidence,
-                "alignment": "all_original_evidence_maps_to_allowed_text" if evidence and all(e["allowed_locations"] for e in evidence) else "unsupported_or_excluded_evidence_not_admitted"}]})
+    append_hotpot_rows(hotpot_rows, selected_set, documents, tasks, hotpot_exclusions)
     for path, data in retained.items():
         if path.read_bytes() != data:
             raise ValueError("human corpus source drift: " + str(path))

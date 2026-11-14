@@ -3390,3 +3390,37 @@ within each run. Receipts and Cargo timing reports are retained under
 `receipts/native-context-r3/`, with target `artifacts/v190/p10-target` and
 incremental enabled. These scoped results do not replace the pending final
 workspace, real-transport, installed-product or platform qualification.
+
+### 2026-11-14 — fixed DEV64 materialization
+
+The separately frozen A1 experiment materialized its fixed 64 development
+questions in 0.742s using 207,532,032 committed bytes, under the unchanged
+60-second/256MiB limits. Twenty questions have fully aligned evidence; 44 remain
+explicit alignment refusals. There were 266 quote-context exclusions and 366
+source documents. No refill or reseeding occurred. All 150 input seals matched
+before and after execution. Completion receipt:
+`models/a1-component-development-materialized-r1/execution-completion.json`
+(SHA256 `29d301e3650e76e243a875f3dd5462951c96ab7b5c742d0460b05806b8e49fe7`).
+This establishes development materialization only. No CAL/FINAL content, model
+scoring, training or promotion was consumed. The original failed A1 quality
+result remains binding; the new experiment's eligibility and evaluation are
+separate unfinished work.
+The public Hotpot conversion was mechanically moved into a reusable helper;
+AST and synthetic exact-output comparisons preserve the original default
+512-question conversion. Seven synthetic controls pass, including exclusion of
+CAL/FINAL sentinels and rejection of missing, duplicate or foreign sources.
+Retained implementation review: `models/a1-component-development-experiment-r1/implementation-review.json`.
+
+### 2026-11-14 — routed original-deadline admission
+
+The remaining Unified/combined argument projection uses the actual native and
+public schema owners, leaving full original arguments unchanged. Answer's
+nested ceiling narrows the original parent before scope/setup work; repeated
+admission cannot extend it. Generic 90-second reads retain their own allowance.
+Scoped MCP/Supervisor/airkctl all-target/all-feature Clippy passed in 5.682s.
+Five selected admission/remote regressions passed in 0.067s (81.732s including
+compilation), with 188 excluded. Native/harness/fixture inputs remained unchanged.
+Receipts: `receipts/native-context-r5/`, persistent isolated target, incremental
+enabled. R4's missing `anyhow::Context` import diagnosis is retained separately.
+Current allocated context carriers still explicitly refuse the old /1 composer;
+joint /2 execution and actual fresh matched-pair transport proof remain pending.

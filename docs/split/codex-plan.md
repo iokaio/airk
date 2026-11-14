@@ -52,23 +52,30 @@ Earlier planning sessions exposed no AIRK MCP tools and used scoped local search
 
 ### Current implementation checkpoint (14 November 2026)
 
-Source checkpoint `0b3f48ee` is an unpublished 1.9.0 candidate. A1's frozen
+Source checkpoint `6e73dd25` is an unpublished 1.9.0 candidate. A1's frozen
 absolute retrieval-quality gates failed and still block model promotion. The
 planning rows and §1.1 below retain the earlier alignment and artifact identities;
 they are not current-source qualification.
 
-On 14 November, A6 fixture R7's actual development baselines completed 1/9 goals
-with ordinary follow-up and 3/9 with deterministic packets. Fresh R8 development
-conditions completed 1/9, 3/9 and 2/9 respectively for ordinary follow-up,
-deterministic packets and `arbiter-small-intern-08b`, without infrastructure
-errors. Remaining development conditions and final-100 acceptance are outstanding;
-these observations do not establish an A6 quality pass.
+On 14 November, A6 fixture R8 completed five development conditions: ordinary
+follow-up 1/9, deterministic packets 3/9, small Intern 2/9, small Strands 2/9
+and large Intern 3/9. Large Kev completed eight turns before its ninth call
+exceeded the original I2 deadline with unknown inner work. Its poisoned session
+and fixture closed; that incomplete condition remains separate. The five
+completed conditions do not demonstrate the required turn reduction. The
+original-deadline consumer repair, joint context-action runtime, mixed-index
+Answer execution and final-100 acceptance remain outstanding.
 
-The checkpoint preserves the original native deadline and mandatory initial
-Search receipt; 29 IPC tests and six packet regressions pass. Mac R11's
-eight-crate Clippy passed in 86.51 seconds with unchanged inputs. Its Nextest
-batch never launched because the receipt runner treated the filter as a filename;
-the test-only follow-up remains outstanding.
+The checkpoint preserves the mandatory initial Search receipt. Core's current
+/2 joint-action and whole-selection allocation contracts precede consumers;
+all 281 Core tests pass, plus 51 focused native consumer tests and two current
+CLI comparisons. Workspace Clippy passes on those frozen inputs. These are
+scoped implementation checks, not complete transport qualification. Mac R11's
+eight-crate Clippy passed in 86.51 seconds; after repairing the receipt runner,
+R13's test-only batch passed 47 tests. That Mac evidence predates the new Core
+and deadline consumer changes and remains tied to its original source seals.
+Workbench source navigation passes 79 focused units and one actual Chromium DOM
+test in the verified checkout-owner context; installed-editor evidence is pending.
 The [execution ledger](../simplify/one-process-ledger.md) retains the evidence;
 installed, platform and publication acceptance remain separate.
 
