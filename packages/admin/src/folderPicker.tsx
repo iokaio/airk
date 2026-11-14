@@ -7,7 +7,7 @@
 // here: a folder that does not exist yet is chosen by name, and the setup
 // review says it will be created.
 import type { JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { call, type CallResult } from './api';
 import { body, OPS } from './operations';
 
@@ -124,10 +124,28 @@ export function FolderPicker(props: {
   const ticket = useRef(0);
 
   // Focus moves into the dialog and returns to the opener when it closes.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Isolate sibling branches at every ancestor, including the host's other
+    // pages and body-level controls. Preserve pre-existing inert state.
+    const background: { element: HTMLElement; inert: boolean }[] = [];
+    let branch: HTMLElement | null = dialog.current;
+    while (branch !== null && branch !== document.body) {
+      const parent: HTMLElement | null = branch.parentElement;
+      if (parent === null) break;
+      for (const sibling of parent.children) {
+        if (sibling instanceof HTMLElement && sibling !== branch) {
+          background.push({ element: sibling, inert: sibling.inert });
+          sibling.inert = true;
+        }
+      }
+      branch = parent;
+    }
     pathInput.current?.focus();
-    return () => opener?.focus();
+    return () => {
+      for (const previous of background) previous.element.inert = previous.inert;
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
 
   /** Escape closes; Tab stays inside the dialog (aria-modal). */
@@ -238,6 +256,7 @@ export function FolderPicker(props: {
           <label class="field wide">
             Path
             <input
+              ref={pathInput}
               type="text"
               autocomplete="off"
               spellcheck={false}

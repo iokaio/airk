@@ -269,7 +269,8 @@ function isWindowsPlatform(platform: string | undefined): boolean {
 }
 
 function setEnvCommand(name: string, value: string, windows: boolean): string {
-  return windows ? `$env:${name} = "${value}"` : `export ${name}="${value}"`;
+  const literal = windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", `'"'"'`)}'`;
+  return windows ? `$env:${name} = ${literal}` : `export ${name}=${literal}`;
 }
 
 // ---------------------------------------------------------------------------
