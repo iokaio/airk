@@ -23,6 +23,19 @@ use std::{
 
 pub use airk_store::current::source_policy::SourcePolicyReadUnavailable;
 
+fn require_public_capture_path(path: &std::path::Path) -> Result<()> {
+    let absolute = std::path::absolute(path)?;
+    ensure!(
+        !airk_core::source_policy::retained_agent_edit_path(
+            absolute
+                .to_str()
+                .ok_or(airk_core::scoped_reads::ScopeReadRefused)?
+        ),
+        airk_core::scoped_reads::ScopeReadRefused
+    );
+    Ok(())
+}
+
 pub(crate) struct PolicyInputEpoch(Arc<AtomicBool>);
 impl PolicyInputEpoch {
     pub(crate) fn validate(&self) -> Result<()> {
@@ -271,6 +284,11 @@ impl Kernel {
     }
 
     pub(crate) fn require_source_policy_source(&self, root: &str, path: &str) -> Result<()> {
+        ensure!(
+            !airk_core::source_policy::source_root_is_reserved(root)
+                && !airk_core::source_policy::source_root_is_reserved(path),
+            airk_core::scoped_reads::ScopeReadRefused
+        );
         if let Some(policy) = self.source_policy_for_work()? {
             ensure!(
                 airk_ingest::permanent_policy::allows_checked(&policy, root, path, false)?,
@@ -300,6 +318,7 @@ impl Kernel {
     /// Authorize the exact spelling supplied to protected capture, without
     /// resolving it a second time and changing the path that was authorized.
     pub(crate) fn require_source_policy_capture_path(&self, path: &std::path::Path) -> Result<()> {
+        require_public_capture_path(path)?;
         let Some(policy) = self.source_policy_for_work()? else {
             return Ok(());
         };
@@ -315,6 +334,7 @@ impl Kernel {
         &self,
         path: &std::path::Path,
     ) -> Result<()> {
+        require_public_capture_path(path)?;
         let Some(policy) = self.source_policy_for_work()? else {
             return Ok(());
         };
@@ -776,6 +796,46 @@ mod tests {
         index_catalog::{CatalogRevision, DenyId, IndexId, PathScope, SourceRootId},
         source_policy::{DenyReason, DenyRule, POLICY_SCHEMA, SourceRoot},
     };
+
+    #[test]
+    fn retained_archive_gates_apply_without_permanent_source_policy() -> Result<()> {
+        let (_owner, kernel, _unused_policy) = fixture(false)?;
+        assert!(kernel.source_policy_for_work()?.is_none());
+        let archive = kernel.root().join(".AiRk/agent-edits/v1/old");
+        std::fs::create_dir_all(&archive)?;
+        let displaced = archive.join("config.json");
+        std::fs::write(&displaced, b"private")?;
+        assert!(
+            kernel
+                .require_source_policy_capture_path(&displaced)
+                .is_err()
+        );
+        assert!(
+            kernel
+                .require_source_policy_directory_capture_path(&archive)
+                .is_err()
+        );
+        assert!(
+            kernel
+                .require_source_policy_source(archive.to_str().unwrap(), "config.json")
+                .is_err()
+        );
+        assert!(
+            kernel
+                .require_source_policy_source(
+                    &kernel.root_id(),
+                    ".airk/agent-edits/v1/old/config.json"
+                )
+                .is_err()
+        );
+        assert!(
+            kernel
+                .require_source_policy_capture_path(&kernel.root().join("public.rs"))
+                .is_ok()
+        );
+        assert_eq!(std::fs::read(&displaced)?, b"private");
+        Ok(())
+    }
 
     fn fixture(index: bool) -> Result<(tempfile::TempDir, Kernel, SourcePolicy)> {
         let owner = crate::unlinked_tempdir()?;

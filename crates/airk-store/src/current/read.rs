@@ -84,7 +84,8 @@ pub(super) fn scoped_import_test_reader(
             record_bytes: 16,
         })?,
     };
-    Ok(CurrentRead {
+    let read = CurrentRead {
+        frozen_sources: Default::default(),
         source_policy_fence: Default::default(),
         source_policy: Default::default(),
         read_scope: Default::default(),
@@ -102,12 +103,15 @@ pub(super) fn scoped_import_test_reader(
         clock: super::clock::system(),
         writer_active: None,
         _gate: Gate::shared(store)?,
-    })
+    };
+    read.freeze_source_roots()?;
+    Ok(read)
 }
 
 /// The connection/read transaction drops before the gate. Providers may clone
 /// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
+    pub(super) frozen_sources: std::sync::OnceLock<super::source_policy::ReadSources>,
     pub(super) source_policy_fence: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>>,
     pub(super) source_policy: std::sync::OnceLock<super::source_policy::ReadPolicy>,
     pub(super) read_scope: std::sync::OnceLock<Arc<airk_core::scoped_reads::CompiledReadScope>>,
@@ -132,6 +136,38 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// Freeze one authenticated map before exposure. This deliberately avoids
+    /// with_connection/live: live admission itself consults the frozen roots.
+    /// Candidate filters never acquire this connection again for projection.
+    fn freeze_source_roots(&self) -> Result<()> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
+        let bytes = map::get(
+            &connection,
+            &self.head.scope,
+            self.head.artifact_root,
+            map::key(&self.head.scope, map::MapDomain::Metadata, b"collection")?,
+        )
+        .map_err(read_error)?;
+        let state = bytes
+            .as_deref()
+            .map(super::collection::CollectionState::decode)
+            .transpose()?;
+        let sources = super::source_policy::ReadSources {
+            primary_root: self.head.scope.root.clone(),
+            has_configuration: state.is_some(),
+            aliases: state
+                .map(|state| state.configuration.roots)
+                .unwrap_or_default(),
+        };
+        ensure!(
+            self.frozen_sources.set(sources).is_ok(),
+            "reader source roots already frozen"
+        );
+        Ok(())
+    }
     /// Ordinary public readers have no capability and remain strict. A native
     /// owner installs the sealed capability before exposing its request reader.
     pub fn private_query_eligible(&self) -> Result<bool> {
@@ -600,7 +636,8 @@ impl FileStore {
             "current index requires writer recovery before reads"
         );
         let head = decode_head(&bytes, scope)?;
-        Ok(Arc::new(CurrentRead {
+        let read = Arc::new(CurrentRead {
+            frozen_sources: Default::default(),
             source_policy_fence: Default::default(),
             source_policy: Default::default(),
             read_scope: std::sync::OnceLock::new(),
@@ -618,7 +655,10 @@ impl FileStore {
             clock,
             writer_active,
             _gate: gate,
-        }))
+        });
+        read.freeze_source_roots()?;
+        read.require_source_policy_live()?;
+        Ok(read)
     }
 }
 
@@ -664,11 +704,18 @@ mod scope_tests {
     };
 
     fn fixture() -> Result<(tempfile::TempDir, CurrentRead)> {
+        fixture_roots("fixture-root", None)
+    }
+
+    fn fixture_roots(
+        primary: &str,
+        aliases: Option<std::collections::BTreeMap<String, String>>,
+    ) -> Result<(tempfile::TempDir, CurrentRead)> {
         let directory = tempfile::tempdir()?;
         let store = FileStore::new(directory.path().join("collections-1.2/scoped"));
         drop(store.lock()?);
         let scope = CurrentScope {
-            root: "fixture-root".into(),
+            root: primary.into(),
             collection: "scoped".into(),
             incarnation: Incarnation::from_bytes([1; 16]),
         };
@@ -705,11 +752,36 @@ mod scope_tests {
             super::super::lexical::replace(&connection, path, Some(&artifact))?;
         }
         super::super::lexical::flush(&connection)?;
+        let mut artifact_root = map::empty_root(&scope)?;
+        let has_configuration = aliases.is_some();
+        if let Some(roots) = aliases {
+            let state = super::super::collection::CollectionState {
+                version: 1,
+                configuration: super::super::collection::CollectionConfiguration {
+                    retained_profile: None,
+                    source_policy_digest: None,
+                    roots,
+                    extractor_version: "archive-exclusion-fixture/1".into(),
+                    extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),
+                    index_detail: airk_core::extraction::IndexDetail::Balanced,
+                    vector_selection: Default::default(),
+                    model: None,
+                },
+                counts: Default::default(),
+            };
+            artifact_root = map::put(
+                &connection,
+                &scope,
+                artifact_root,
+                map::key(&scope, map::MapDomain::Metadata, b"collection")?,
+                Some(&serde_json::to_vec(&state)?),
+            )?;
+        }
         let head = CurrentHead {
             version: 2,
             scope: scope.clone(),
             sequence: 1,
-            artifact_root: map::empty_root(&scope)?,
+            artifact_root,
             lexical_sequence: 1,
             lexical_commit: Sha256Digest::from_bytes([4; 32]),
             graph_head: GraphHead::empty(GraphScope {
@@ -722,6 +794,7 @@ mod scope_tests {
             })?,
         };
         let read = CurrentRead {
+            frozen_sources: Default::default(),
             source_policy_fence: Default::default(),
             source_policy: Default::default(),
             connection: Mutex::new(connection),
@@ -742,11 +815,56 @@ mod scope_tests {
         };
         // This fixture targets actual candidate SQL, not physical manifest audit.
         read.lexical_verified.set(()).expect("new fixture");
-        assert!(
-            read.collection_state()?.is_none(),
-            "production empty-map absence proof must remain available without optional projections"
-        );
+        read.freeze_source_roots()?;
+        if !has_configuration {
+            assert!(
+                read.collection_state()?.is_none(),
+                "production empty-map absence proof must remain available without optional projections"
+            );
+        } else {
+            assert!(read.frozen_sources.get().unwrap().has_configuration);
+        }
         Ok((directory, read))
+    }
+
+    #[test]
+    fn historical_reserved_primary_cannot_supply_public_candidates_without_policy() -> Result<()> {
+        let (_directory, read) =
+            fixture_roots("/source/.AiRk/agent-edits/v1/old", Some(Default::default()))?;
+        assert!(read.lexical_search(&query(100)).is_err());
+        assert!(!read.accepts_path("public/a.rs"));
+        assert!(
+            !read.source_policy_allows_source("/source/.airk/agent-edits/v1/old", "receipt.json")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn historical_reserved_alias_cannot_supply_public_candidates_without_policy() -> Result<()> {
+        let (_directory, read) = fixture_roots(
+            "/source",
+            Some(std::collections::BTreeMap::from([(
+                "docs".into(),
+                "/other/.airk/agent-edits/v1/old".into(),
+            )])),
+        )?;
+        assert!(read.lexical_search(&query(100)).is_err());
+        assert!(!read.accepts_path("@docs/a.md"));
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_published_aliases_still_supply_public_candidates_without_policy() -> Result<()> {
+        let (_directory, read) = fixture_roots(
+            "/source",
+            Some(std::collections::BTreeMap::from([(
+                "docs".into(),
+                "/other/documents".into(),
+            )])),
+        )?;
+        assert_eq!(read.lexical_search(&query(100))?.values.len(), 6);
+        assert!(read.accepts_path("@docs/a.md"));
+        Ok(())
     }
 
     fn scope(kind: PathScope, path: &str) -> Arc<CompiledReadScope> {

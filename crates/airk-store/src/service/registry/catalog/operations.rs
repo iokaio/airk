@@ -33,6 +33,22 @@ fn revision(value: i64) -> Result<CatalogRevision> {
 fn number(value: CatalogRevision) -> i64 {
     i64::try_from(value.get()).expect("CatalogRevision validates the signed SQLite range")
 }
+// Public projection refuses unsafe historical records. Private mutation and
+// recovery readers must still be able to inspect those original rows.
+fn require_public_catalog_item(item: &CatalogItem) -> Result<()> {
+    let allowed = match item {
+        CatalogItem::Index(index) => {
+            !airk_core::source_policy::source_root_is_reserved(&index.backing.root)
+                && !airk_core::source_policy::retained_agent_edit_path(&index.backing.data_root)
+        }
+        CatalogItem::Source(source) => {
+            !airk_core::source_policy::source_root_is_reserved(&source.canonical_path)
+        }
+        _ => true,
+    };
+    ensure!(allowed, airk_core::scoped_reads::ScopeReadRefused);
+    Ok(())
+}
 fn ready(db: &Connection) -> Result<super::CatalogState> {
     validate_existing(db)?;
     let current = state(db)?;
@@ -962,6 +978,9 @@ impl ServiceRegistry {
             revision: current.revision,
             item,
         };
+        if let Some(item) = &detail.item {
+            require_public_catalog_item(item)?;
+        }
         encoded_size(&detail, MAX_PAGE_BYTES)?;
         Ok(detail)
     }
@@ -1040,7 +1059,9 @@ impl ServiceRegistry {
             if position >= request.limit {
                 break;
             }
-            page.items.push(item(&tx, request.kind, id)?);
+            let value = item(&tx, request.kind, id)?;
+            require_public_catalog_item(&value)?;
+            page.items.push(value);
             page.continuation = Some(CatalogCursor {
                 kind: request.kind,
                 index_id: request.index_id,
@@ -1077,6 +1098,121 @@ impl ServiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn seed_historical_paths(
+        registry: &ServiceRegistry,
+        root: &str,
+        data: &str,
+        source_path: &str,
+    ) -> Result<(IndexId, SourceRootId)> {
+        let index = IndexId::from_identity(Incarnation::from_bytes([93; 16]));
+        let source = SourceRootId::from_identity(Incarnation::from_bytes([94; 16]));
+        let backing = ProjectRegistration::new(root.into(), data.into(), "historical".into())?;
+        registry.connection.execute("INSERT INTO index_definitions VALUES(?1,?2,NULL,?3,?4,'collections-1.4',?5,'Fixture',1,1,0,NULL,0,'complete')",
+            params![index.to_string(), backing.binding.to_string(), backing.root, backing.data_root, backing.collection])?;
+        registry.connection.execute(
+            "INSERT INTO index_sources VALUES(?1,?2,?3,1,1)",
+            params![source.to_string(), index.to_string(), source_path],
+        )?;
+        Ok((index, source))
+    }
+
+    fn historical_retained_catalog_read_refuses(column: &str) -> Result<()> {
+        let (_owner, mut registry) = setup()?;
+        let archive = "/fixture/.AiRk/agent-edits/v1/private-transaction";
+        let (index, source) = seed_historical_paths(
+            &registry,
+            if column == "root" {
+                archive
+            } else {
+                "/fixture/source"
+            },
+            if column == "data" {
+                archive
+            } else {
+                "/fixture/data"
+            },
+            if column == "source" {
+                archive
+            } else {
+                "/fixture/source"
+            },
+        )?;
+        let (kind, id, entity) = if column == "source" {
+            (
+                CatalogKind::Sources,
+                source.to_string(),
+                CatalogEntity::Source { id: source },
+            )
+        } else {
+            (
+                CatalogKind::Indexes,
+                index.to_string(),
+                CatalogEntity::Index { id: index },
+            )
+        };
+        // Historical rows remain syntax-valid and available to private repair.
+        let before = serde_json::to_vec(&item(&registry.connection, kind, &id)?)?;
+        assert!(registry.catalog_detail(&entity, None).is_err());
+        assert!(
+            registry
+                .catalog_page(&CatalogPageRequest {
+                    kind,
+                    index_id: (column == "source").then_some(index),
+                    project_id: None,
+                    after: None,
+                    expected_catalog_revision: None,
+                    limit: MAX_SELECTION,
+                    max_bytes: MAX_PAGE_BYTES,
+                })
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::to_vec(&item(&registry.connection, kind, &id)?)?,
+            before
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn historical_retained_source_is_not_public_catalog_metadata() -> Result<()> {
+        historical_retained_catalog_read_refuses("source")
+    }
+    #[test]
+    fn historical_retained_backing_root_is_not_public_catalog_metadata() -> Result<()> {
+        historical_retained_catalog_read_refuses("root")
+    }
+    #[test]
+    fn historical_retained_backing_data_is_not_public_catalog_metadata() -> Result<()> {
+        historical_retained_catalog_read_refuses("data")
+    }
+    #[test]
+    fn ordinary_catalog_reads_preserve_legacy_airk_data_assets() -> Result<()> {
+        let (_owner, mut registry) = setup()?;
+        let (index, _) = seed_historical_paths(
+            &registry,
+            "/fixture/source",
+            "/fixture/.airk/index-data",
+            "/fixture/source",
+        )?;
+        let detail = registry.catalog_detail(&CatalogEntity::Index { id: index }, None)?;
+        let Some(CatalogItem::Index(value)) = detail.item else {
+            panic!("index detail")
+        };
+        assert_eq!(value.backing.data_root, "/fixture/.airk/index-data");
+        let page = registry.catalog_page(&CatalogPageRequest {
+            kind: CatalogKind::Indexes,
+            index_id: None,
+            project_id: None,
+            after: None,
+            expected_catalog_revision: None,
+            limit: MAX_SELECTION,
+            max_bytes: MAX_PAGE_BYTES,
+        })?;
+        assert_eq!(page.items.len(), 1);
+        assert!(page.continuation.is_none());
+        Ok(())
+    }
     #[test]
     fn exact_details_filtered_memberships_and_context_key_lookup_are_bounded() -> Result<()> {
         let (_root, mut registry) = setup()?;

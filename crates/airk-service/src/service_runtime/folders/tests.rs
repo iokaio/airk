@@ -10,6 +10,63 @@ fn found(name: &str, hidden: bool) -> Found {
     }
 }
 
+#[test]
+fn retained_edit_folders_refuse_direct_listing_without_exposing_breadcrumbs() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = PathBuf::from(shown(&owner.path().canonicalize()?));
+    let archive = base.join(".AiRk/agent-edits/v1/private-transaction");
+    std::fs::create_dir_all(&archive)?;
+    for path in [base.join(".AiRk/agent-edits"), archive.clone()] {
+        let error = folder(&path, &Marks::default(), true, None).unwrap_err();
+        assert_eq!(
+            super::super::storage::failure_code(&error, "other"),
+            NOT_READABLE
+        );
+        assert!(!error.to_string().contains("private-transaction"));
+    }
+    assert!(starting_list(&Marks::default(), &[], Some(archive.clone())).is_err());
+    let marks = Marks {
+        data: Some(archive.clone()),
+        ..Default::default()
+    };
+    assert!(starting_list(&marks, &[], None).is_err());
+    assert!(archive.is_dir());
+    Ok(())
+}
+
+#[test]
+fn retained_edit_children_do_not_enter_folder_pages_or_continuations() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = PathBuf::from(shown(&owner.path().canonicalize()?)).join(".airk");
+    std::fs::create_dir_all(base.join("agent-edits/v1/private-transaction"))?;
+    std::fs::create_dir(base.join("cache"))?;
+    for n in 0..MAX_FOLDER_ENTRIES + 2 {
+        std::fs::create_dir(base.join(format!("asset{n:04}")))?;
+    }
+    let mut after = None;
+    let mut listed = Vec::new();
+    loop {
+        let listing = folder(&base, &Marks::default(), true, after.as_deref())?;
+        assert!(!listing.truncated);
+        assert!(
+            !listing
+                .entries
+                .iter()
+                .any(|entry| entry.name == "agent-edits")
+        );
+        assert_ne!(listing.continuation.as_deref(), Some("agent-edits"));
+        listed.extend(listing.entries.into_iter().map(|entry| entry.name));
+        after = listing.continuation;
+        if after.is_none() {
+            break;
+        }
+    }
+    assert_eq!(listed.len(), MAX_FOLDER_ENTRIES + 3);
+    assert!(listed.contains(&"cache".into()));
+    assert!(folder(&base.join("cache"), &Marks::default(), true, None).is_ok());
+    Ok(())
+}
+
 fn names(listing: &FolderListing) -> Vec<&str> {
     listing
         .entries

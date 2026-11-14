@@ -208,12 +208,22 @@ fn validate_resolved_sources(
     data: &Path,
     roots: &BTreeMap<String, String>,
 ) -> Result<()> {
+    ensure!(
+        !airk_core::source_policy::source_root_is_reserved(
+            owner.to_str().context("non-UTF-8 source root")?
+        ),
+        "reserved AIRK directories cannot be source roots"
+    );
     let mut accepted = vec![owner.to_path_buf()];
     for (alias, root) in roots {
         let path = Path::new(root);
         let resolved = path
             .canonicalize()
             .with_context(|| format!("resolve source alias {alias}"))?;
+        ensure!(
+            !airk_core::source_policy::source_root_is_reserved(root),
+            "reserved AIRK directories cannot be source roots"
+        );
         ensure!(
             resolved == path && resolved.is_dir(),
             "source alias {alias} changed identity or is not a directory"
@@ -253,6 +263,11 @@ pub fn source_location(
     path: &str,
 ) -> Result<SourceLocation> {
     ensure!(
+        !airk_core::source_policy::source_root_is_reserved(owner)
+            && !airk_core::source_policy::source_root_is_reserved(path),
+        airk_core::scoped_reads::ScopeReadRefused
+    );
+    ensure!(
         !path.is_empty() && path.len() <= 4096 && !path.contains('\\') && !path.starts_with('/'),
         "invalid indexed source path"
     );
@@ -265,6 +280,10 @@ pub fn source_location(
         && let Some(alias) = prefix.strip_prefix('@')
         && let Some(root) = roots.get(alias)
     {
+        ensure!(
+            !airk_core::source_policy::source_root_is_reserved(root),
+            airk_core::scoped_reads::ScopeReadRefused
+        );
         return Ok(SourceLocation {
             alias: alias.into(),
             root: root.clone(),
@@ -374,6 +393,45 @@ mod tests {
         fs::remove_dir(&docs)?;
         std::os::unix::fs::symlink(temp.path().join("replacement"), &docs)?;
         assert!(validate_sources(&owner, &data, &config.roots).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn reserved_source_roots_and_retained_locations_are_not_public_sources() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let owner = temp.path().join("source");
+        let archive = temp.path().join(".AiRk/agent-edits/v1/displaced");
+        let data = temp.path().join("data");
+        for path in [&owner, &archive, &data] {
+            fs::create_dir_all(path)?;
+        }
+        let owner = owner.canonicalize()?;
+        let archive = archive.canonicalize()?;
+        let data = data.canonicalize()?;
+        assert!(validate_sources(&owner, &data, &BTreeMap::new()).is_ok());
+        assert!(validate_sources(&archive, &data, &BTreeMap::new()).is_err());
+        let roots = BTreeMap::from([("old".into(), archive.to_str().unwrap().into())]);
+        assert!(validate_sources(&owner, &data, &roots).is_err());
+        assert!(source_location(owner.to_str().unwrap(), &roots, "@old/receipt.json").is_err());
+        assert!(
+            source_location(archive.to_str().unwrap(), &BTreeMap::new(), "receipt.json").is_err()
+        );
+        assert!(
+            source_location(
+                owner.to_str().unwrap(),
+                &BTreeMap::new(),
+                ".airk/agent-edits/v1/receipt.json"
+            )
+            .is_err()
+        );
+        assert!(
+            source_location(
+                owner.to_str().unwrap(),
+                &BTreeMap::new(),
+                "public/receipt.json"
+            )
+            .is_ok()
+        );
         Ok(())
     }
 }

@@ -20,6 +20,29 @@ fn owner() -> Result<tempfile::TempDir> {
     })
 }
 
+#[test]
+fn retained_agent_edits_are_not_administrative_inputs_without_a_policy() -> Result<()> {
+    let owner = owner()?;
+    let root = owner.path().join("source");
+    let archive = root.join(".AiRk/agent-edits/v1/transaction");
+    let data = owner.path().join("data");
+    fs::create_dir_all(&archive)?;
+    fs::create_dir(&data)?;
+    let ordinary = root.join("public.json");
+    let displaced = archive.join("displaced.json");
+    fs::write(&ordinary, b"{\"public\":true}")?;
+    fs::write(&displaced, b"{\"private\":true}")?;
+    let kernel = Kernel::open(&root, Some(data))?;
+    let pin = kernel.prepare_source_input(&ordinary, 1024)?;
+    assert_eq!(
+        kernel.verified_source_input(&pin, 1024)?,
+        b"{\"public\":true}"
+    );
+    assert!(kernel.prepare_source_input(&displaced, 1024).is_err());
+    assert_eq!(fs::read(&displaced)?, b"{\"private\":true}");
+    Ok(())
+}
+
 fn restrict(kernel: &Kernel) -> Result<()> {
     let registration = ProjectRegistration::new(
         kernel

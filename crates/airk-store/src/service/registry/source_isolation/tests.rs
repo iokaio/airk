@@ -12,6 +12,37 @@ fn project(root: &Path, source: &str, data: &str, collection: &str) -> Result<Pr
 }
 
 #[test]
+fn reserved_primary_and_additional_sources_refuse_without_a_policy() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let runtime = base.join("runtime");
+    std::fs::create_dir(&runtime)?;
+    let mut registry = ServiceRegistry::open(&runtime, Incarnation::from_bytes([93; 16]))?;
+    let ordinary = project(&base, "source", "data", "ordinary")?;
+    registry.register(&ordinary)?;
+    let reserved = project(&base, ".AiRk/agent-edits/v1/old", "other-data", "reserved")?;
+    assert!(
+        registry
+            .register(&reserved)
+            .unwrap_err()
+            .is::<SourceBoundary>()
+    );
+    let additional = base
+        .join(".airk/agent-edits/v1/old")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        registry
+            .preflight_source_isolation(&ordinary, &[additional])
+            .unwrap_err()
+            .is::<SourceBoundary>()
+    );
+    assert!(registry.preflight_source_isolation(&ordinary, &[]).is_ok());
+    Ok(())
+}
+
+#[test]
 fn managed_layout_origin_preserves_strict_receipts_namespace_and_payload_isolation() -> Result<()> {
     // Inert receipt-format fixture only: no activation or process qualification.
     let directory = tempfile::tempdir()?;

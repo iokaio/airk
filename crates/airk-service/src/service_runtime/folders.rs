@@ -232,6 +232,9 @@ pub(super) fn starting_list(
     drives: &[PathBuf],
     home: Option<PathBuf>,
 ) -> Result<FolderListing> {
+    for path in drives.iter().chain(home.iter()).chain(marks.data.iter()) {
+        require_public_folder(path)?;
+    }
     let mut entries = Vec::new();
     for drive in drives {
         entries.push(start_entry(
@@ -307,6 +310,7 @@ pub(super) fn folder(
     show_hidden: bool,
     after: Option<&str>,
 ) -> Result<FolderListing> {
+    require_public_folder(path)?;
     if !path.is_absolute()
         || path
             .components()
@@ -384,6 +388,9 @@ fn walk(path: &Path) -> Result<(Vec<Found>, bool)> {
             return Ok((found, true));
         }
         let Ok(entry) = entry else { continue };
+        if require_public_folder(&entry.path()).is_err() {
+            continue;
+        }
         let Ok(metadata) = entry.metadata() else {
             continue;
         };
@@ -402,6 +409,15 @@ fn walk(path: &Path) -> Result<(Vec<Found>, bool)> {
         found.push(Found { name, kind, hidden });
     }
     Ok((found, false))
+}
+
+fn require_public_folder(path: &Path) -> Result<()> {
+    let private =
+        |path: &Path| airk_core::source_policy::retained_agent_edit_path(&path.to_string_lossy());
+    if private(path) || path.canonicalize().is_ok_and(|resolved| private(&resolved)) {
+        bail!("{NOT_READABLE}: private retained configuration folders cannot be listed");
+    }
+    Ok(())
 }
 
 /// Not followed: a symbolic link, or on Windows a junction. Rust reports

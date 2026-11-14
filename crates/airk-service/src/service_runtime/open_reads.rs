@@ -395,3 +395,77 @@ pub(super) async fn defaults(
         Err(_) => refused("agent_defaults_unavailable"),
     }
 }
+
+#[cfg(test)]
+mod retained_source_tests {
+    use super::*;
+    use airk_core::{
+        index_catalog::{IndexId, SourceRootId},
+        service::ProjectRegistration,
+    };
+
+    #[test]
+    fn historical_retained_sources_refuse_the_real_open_catalog_listing() -> anyhow::Result<()> {
+        for variant in ["ordinary", "source", "root"] {
+            let owner = tempfile::tempdir()?;
+            let lease = airk_store::service::ServiceLease::acquire(owner.path())?;
+            let lease = super::super::first_start::ensure_catalog(lease)?;
+            let control = lease.root();
+            let connection = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+            let index = IndexId::from_identity(Incarnation::from_bytes([91; 16]));
+            let source = SourceRootId::from_identity(Incarnation::from_bytes([92; 16]));
+            let archive = "/fixture/.airk/agent-edits/v1/private-transaction";
+            let root = if variant == "root" {
+                archive
+            } else {
+                "/fixture/source"
+            };
+            let source_path = if variant == "source" {
+                archive
+            } else {
+                "/fixture/source"
+            };
+            let backing = ProjectRegistration::new(
+                root.into(),
+                "/fixture/.airk/data".into(),
+                "archive-read".into(),
+            )?;
+            connection.execute("INSERT INTO index_definitions VALUES(?1,?2,NULL,?3,?4,'collections-1.4',?5,'Fixture',1,1,0,NULL,0,'complete')",
+                rusqlite::params![index.to_string(), backing.binding.to_string(), backing.root, backing.data_root, backing.collection])?;
+            connection.execute(
+                "INSERT INTO index_sources VALUES(?1,?2,?3,1,1)",
+                rusqlite::params![source.to_string(), index.to_string(), source_path],
+            )?;
+            if variant == "ordinary" {
+                let ordinary = read_listing(control, true).map_err(anyhow::Error::msg)?;
+                assert_eq!(ordinary.sources.len(), 1);
+                assert_eq!(ordinary.sources[0].canonical_path, "/fixture/source");
+            } else {
+                assert!(
+                    matches!(
+                        read_listing(control, variant == "source"),
+                        Err(agent_scope::SCOPE_UNAVAILABLE)
+                    ),
+                    "historical {variant} must refuse"
+                );
+            }
+            assert_eq!(
+                connection.query_row(
+                    "SELECT backing_root FROM index_definitions WHERE id=?1",
+                    [index.to_string()],
+                    |row| row.get::<_, String>(0)
+                )?,
+                root
+            );
+            assert_eq!(
+                connection.query_row(
+                    "SELECT canonical_path FROM index_sources WHERE id=?1",
+                    [source.to_string()],
+                    |row| row.get::<_, String>(0)
+                )?,
+                source_path
+            );
+        }
+        Ok(())
+    }
+}
