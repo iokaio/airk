@@ -145,8 +145,27 @@ conversion cannot add time. One retained absolute Tokio deadline covers connect,
 encoding, write and response; connect/write retain their five-second ceilings.
 After encoding and before the first write, expired work refuses without sending.
 The response may arrive after five seconds only within that original deadline;
-no fresh 30-second response window or retry is created. Other control methods,
-including ToolsCall's 135-second response window, keep their existing deadlines.
+no fresh 30-second response window or retry is created. Other control methods keep their existing deadlines. ToolsCall without an
+attempt retains its legacy135-second response window; the supplied-attempt
+variant follows the original allowance documented below.
 Tests use the actual framed duplex exchange, observed request barriers and paused
 Tokio time to prove delayed response acceptance, original-deadline refusal and
 one request without replay. They do not qualify an OS endpoint or model outcome.
+
+
+## Original ToolsCall allowance (A6 correction)
+
+Core owns the optional read_attempt carrier and strict old-reader/None byte
+rules in [its contract](../airk-core/src/read_attempt/CONTRACT.md). A validated
+Some uses its existing same-host absolute expiry and sender ceiling for one
+connect/encode/write/read exchange; validation, clock conversion and expiry
+checks occur before any endpoint/backend work, then again before write and
+read/model dispatch. Native/Tokio sampling is conservative. Existing shorter
+connect/write caps and all frame/input limits remain unchanged. No timeout,
+unknown response or old closed-reader refusal creates a retry or None fallback.
+Generic queries can retain budgets above30s, up to Core's existing125s ceiling.
+Only Answer intersects its own serialized30000ms ceiling; optional next-read
+keeps its existing30s cap. None remains125s canonical/135s response behavior.
+Service scope/backend resolution, frontend/MCP capacity handling, native member
+reads, Kernel and scorer share the earliest decoded parent context. Existing
+accepted-work ownership and cleanup/settlement guards remain in force.

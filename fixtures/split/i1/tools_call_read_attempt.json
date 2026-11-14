@@ -1,0 +1,70 @@
+{
+  "schema": "airk.split-fixture.tools-call-read-attempt/1",
+  "none": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
+  "some": [
+    {
+      "name": "two_seconds_is_an_original_ceiling",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1500000000,
+      "remaining_ns": 1500000000
+    },
+    {
+      "name": "ordinary_query_can_exceed_optional_thirty_seconds",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":91000000000,\"remaining_ns\":90000000000}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 2000000000,
+      "remaining_ns": 89000000000
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown_schema",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":2,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1000000000
+    },
+    {
+      "name": "foreign_native_clock",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000}}}",
+      "clock": "windows_performance_counter",
+      "now_ns": 1000000000
+    },
+    {
+      "name": "expired_original",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 3000000000
+    },
+    {
+      "name": "zero_remaining",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":0}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1000000000
+    },
+    {
+      "name": "above_existing_125_second_limit",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":125000000001}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1000000000
+    },
+    {
+      "name": "retry_after_original_expiry",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000,\"native_retry_expires_monotonic_ns\":3000000001}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1000000000
+    },
+    {
+      "name": "unknown_nested_field",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"unix_monotonic\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000,\"future_budget\":true}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1000000000
+    },
+    {
+      "name": "unsupported_clock",
+      "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"original budget\"},\"selection\":\"unselected\",\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_attempt\":{\"schema\":1,\"request_id\":\"01010101010101010101010101010101\",\"clock\":\"wall_clock\",\"expires_monotonic_ns\":3000000000,\"remaining_ns\":2000000000}}}",
+      "clock": "unix_monotonic",
+      "now_ns": 1000000000
+    }
+  ]
+}

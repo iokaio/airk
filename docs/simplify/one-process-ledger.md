@@ -3311,3 +3311,32 @@ not scientific, model, read, resource or quality limits. Any final fixture must
 also prove original native/process/lease closure with no forced termination.
 The prepared final wrapper has not been launched; remaining development and
 source-acceptance review precede any separately frozen final phase.
+
+### 2026-11-14 — current-version scope and deadline contract
+
+User explicitly states previous-version compatibility is not required and index
+replacement is acceptable when data cannot be upgraded. The plan and identical
+agent instructions record this precedence. Current-version scope, source
+preservation, authority, budgets and qualification remain required. Retained old
+receipts stay historical; no recapture or relabeling is authorized by this change.
+
+Windows workspace R3 passed full all-feature/all-target Clippy in 48.223s on
+unchanged native/harness/fixture inputs. Tests then stopped after 826.557s:
+248 selected, 245 passed, one failed and two ignored across the completed
+groups. The failure was a U95 historical catalog comparison: the new canonical
+`answer` tool is absent from the retained old catalog. Doctests did not run.
+Receipt directory: `receipts/windows-workspace-r3/`. The surviving current
+catalog proof is being made explicit; current fields and supported operations
+must not be removed to satisfy an obsolete comparison.
+
+Kev's ninth development call separately exceeded its original I2 deadline with
+unknown inner work and a poisoned session close. Five complete conditions and
+the partial sixth remain distinct in
+`models/native-goal-r8-development-incomplete-review.json`. R8's service then
+closed normally with original process/image/birth, zero exit, lease recovery,
+and no forced job termination. No final cohort was consumed. Source tracing
+found I2's original expiry was not carried into ToolsCall, allowing canonical
+execution to construct a later allowance. The Core-only contract/type/fixture
+substep passes scoped Clippy (42.111s) and five read-attempt tests (0.027s after
+compilation), under `receipts/core-read-attempt-contract-r1/`. Consumer repair
+and actual transport proof remain pending; this is not an end-to-end pass.

@@ -240,3 +240,34 @@ setup. OutcomeUnknown carries the original operation path and observed child
 PID as diagnostic context only. Repeated native invocations converge under the
 same durable owner/lock. Service, receipt and custody identity, not PID, prove
 completion; no arbitrary process is attached or stopped by this command.
+
+
+## Invoke canonical read lifetime (A6 correction)
+
+Invoke's existing maximum120000ms deadline starts at complete frame receipt.
+Its original request ID, native monotonic expiry and cancellation state survive
+actor/worker queues and the one already permitted predispatch scope reselection.
+The internal Io/command seam carries that parent only into actual canonical
+ToolsCall reads through Core's optional ReadAttemptBudget; it does not rewrite
+caller argument JSON or manufacture a new allowance after selection.
+
+The new M3 field follows [Core's owner contract](../../../airk-core/src/read_attempt/CONTRACT.md):
+missing/None old bytes remain identical, Some uses old strict refusal without a
+fallback or fabricated capability gate. Same-version identity alone does not
+prove an older development service supports the field. A sent/lost response
+retains existing nonretryable/unknown classification. Core's125s read maximum
+and ordinary budgets above30s remain supported; Answer intersects its original
+parent remaining with its serialized30000ms ceiling, and NativeNextRead keeps
+its existing30s cap. None retains125s canonical/135s transport response behavior.
+
+Generic Invoke can perform nonread operations too. Do not interpret this read
+carrier or session timeout/cancel as proof an admitted mutation did not run,
+permission to replay it, or authority to discard foreground custody. Expiry or
+cancellation before a new read submission forbids that submission; already
+accepted work retains its owning completion/settlement obligations.
+
+The shared SDK floors one sampled remaining duration before sending Invoke or
+AdminCall. A zero or negative floor uses the existing not-sent
+session_deadline_exceeded path; it never grants a minimum1ms after exhaustion.
+A changed compiled SDK requires a new scientific protocol/input freeze. Earlier
+calls, samples and unknown failures remain immutable under their old identities.

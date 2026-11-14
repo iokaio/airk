@@ -513,6 +513,10 @@ pub enum ControlMethod {
         /// arguments already name it (the CLI's `AIRK_MCP_RESPONSE_MODE`).
         response_mode: ToolResponseMode,
         usage_client: crate::usage::ClientFamily,
+        /// Original same-host canonical read allowance. Omission retains the
+        /// legacy M3 lifetime; a supplied parent must never be downgraded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_attempt: Option<crate::read_attempt::ReadAttemptBudget>,
     },
     /// M19 (U85): stop or restart this service through its lifecycle ledger.
     /// The service records the request, answers `LifecycleAccepted`, then

@@ -244,6 +244,7 @@ Campaign execution rules:
 | Standing simplification decisions | docs/simplify-plan.md |
 
 - Precedence: later user instructions, then recorded approvals, then the plan text. Planning-only restrictions and gates already satisfied in those documents no longer apply.
+- Current-version delivery: previous-version compatibility is not required. If indexed data cannot be upgraded, index replacement/regeneration is authorized. Preserve source files and unrelated user work; current-version contracts, authority, budgets, quality and release gates still apply. Historical receipts remain historical evidence, not compatibility obligations.
 - Resume from the working tree, the ledger and the relevant receipts.
 - The advanced split's approved local Arbiter work follows its own boundaries in the plan.
 - DiskANN is the selected final disk-backed vector engine. The lexical/SQLite bootstrap storage is not that implementation; do not treat it as one.

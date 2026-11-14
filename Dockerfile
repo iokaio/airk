@@ -136,6 +136,7 @@ COPY fixtures/split/i3/native_outcomes.json ./fixtures/split/i3/native_outcomes.
 COPY fixtures/split/i3/recovery_reviews.json ./fixtures/split/i3/recovery_reviews.json
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
 COPY fixtures/split/i1/control_methods.json ./fixtures/split/i1/control_methods.json
+COPY fixtures/split/i1/tools_call_read_attempt.json ./fixtures/split/i1/tools_call_read_attempt.json
 COPY fixtures/split/i1/window_plane.json ./fixtures/split/i1/window_plane.json
 COPY fixtures/split/i1/admin_launch_code.json ./fixtures/split/i1/admin_launch_code.json
 COPY fixtures/split/agents/config_cases.json ./fixtures/split/agents/config_cases.json

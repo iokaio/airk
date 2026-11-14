@@ -13,8 +13,10 @@ pub enum ReadClock {
     WindowsPerformanceCounter,
 }
 
-/// Sent only after the native peer's feature-version gate. Existing service and
-/// grant identities still fence the same-machine, same-boot worker connection.
+/// Worker Query budgets use their existing peer feature-version gate. M3
+/// ToolsCall budgets instead require strict refusal by older closed readers,
+/// with no missing-budget fallback after sending a supplied parent. Existing
+/// service/grant identities still fence the same-machine, same-boot connection.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadAttemptBudget {
@@ -52,3 +54,6 @@ impl ReadAttemptBudget {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tools_call_tests;
