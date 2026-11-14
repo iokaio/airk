@@ -97,8 +97,18 @@ intact canonical result; its identity binds both. The existing 64 KiB native
 reply limit remains in force. Internal canonical reads use at most 4 KiB each;
 an oversized composed packet omits whole records and their dependent paragraphs,
 with exact omission counts and `budget` stop. It never removes fields from a
-retained native result. Additional indexed reads take precedence over an
-initial search receipt when whole records must be selected to fit that frame.
+retained native result. The initial original-question canonical search is mandatory: it preserves the
+actual retrieval population, including its full execution/readiness metadata.
+If the first receipt cannot fit the original gathering retention allocation
+(one half of `max_bytes`, unchanged), observation explicitly refuses before a
+success packet can be finished. The initial receipt is never counted as an
+omitted candidate that allows a metadata-only success. Exact-boundary receipts
+remain whole; later receipts retain the existing counted-omission behavior.
+Packing omits later search receipts newest first, then later other receipts
+newest first, preserving the initial search and exact omission accounting.
+If the initial receipt and remaining packet metadata alone exceed the escaped
+native envelope budget, the operation explicitly refuses with a reply-budget
+error; it never returns an apparently complete packet without that receipt.
 
 ## Installation identity decision (2026-11-14)
 

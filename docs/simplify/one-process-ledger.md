@@ -3226,3 +3226,41 @@ only the exact-hash obsolete auto-discovered CLI build script. The first new
 CLI batch stopped before Cargo on logical `code` versus physical `Code` target
 path identity. Its corrected runner must derive the physical root, retain the
 failure and preserve target/alias guards. No Mac CLI qualification is claimed.
+
+### 2026-11-14 — downstream development trials and platform gate corrections
+
+The first complete development comparison on private fixture R7 measured the
+ordinary baseline at 1/9 successful goals and the deterministic baseline at
+3/9. These are development observations, not final-cohort qualification. The
+first optional-model trial stopped before an external answering turn because
+the candidate became unavailable; normal session/service close was retained.
+Its actual inference work and exact failure cause remain unknown. Separately,
+source review demonstrated that IPC applied its generic five-second reply
+timeout inside the original longer Arbiter attempt. The repair carries one
+original absolute deadline through connect/write/reply without rebasing or
+replay; all 29 IPC tests pass, including four focused deadline controls. Logs:
+`receipts/delivery-10-ipc-deadline-clippy-final.log` and
+`receipts/delivery-10-ipc-tests-final.log`.
+
+Native packet tests exposed loss of the initial Search receipt under packing
+pressure. Packing now preserves that mandatory receipt or explicitly refuses
+an impossible budget. A second review found the earlier retention stage could
+drop the same receipt at small byte budgets; that path now refuses explicitly.
+Six focused regressions pass, with scoped Clippy passing in 7.41s. Logs:
+`receipts/delivery-10-small-packet-clippy.log` and
+`receipts/delivery-10-small-packet-tests.log`. These checks do not establish
+downstream model quality. Fresh fixture R8 completed all twelve original
+indexing jobs and is repeating the six development conditions under its own
+original service identity; no final-100 result exists yet.
+
+Mac combined CLI/platform Clippy has not passed. Successive retained batches
+found mixed-width statvfs arithmetic, inaccessible Unix guardian exports,
+inaccessible direct-runtime installer exports, then two Windows-only setup
+declarations compiled on macOS. Narrow source corrections preserve arithmetic
+refusal, function bodies and shared recovery duties. Every failed batch retained
+diagnostics and verified compiler exit before cleaning its target. Latest R10
+failed in 78.665s; its follow-on tests did not run. The next batch must consume
+a fresh source seal, including the two reviewed Windows cfg placements.
+
+A1's failed absolute quality floors remain a release blocker. Resource passes,
+development improvements and packaging candidates do not override that result.

@@ -260,3 +260,198 @@ fn literal_bridge_preserves_original_call_and_publication_fences() -> Result<()>
     assert!(!serde_json::to_string(&response)?.contains("FOREIGN source"));
     Ok(())
 }
+
+fn packing_fixture() -> Result<ContextResponse> {
+    let now = Instant::now();
+    let scope = scope();
+    let mut gathering = Gathering::new(request(), scope.clone(), application(&scope), now)?;
+    assert_eq!(gathering.next(now)?.unwrap().tool, "search");
+    gathering.observe(
+        Ok(json!({"publication": scope.publication, "hits": []})),
+        now,
+    )?;
+    gathering.finish(now)
+}
+
+#[test]
+fn native_packet_packing_keeps_original_search_and_omits_whole_later_receipts() -> Result<()> {
+    let mut response = packing_fixture()?;
+    let original = json!({"execution":{"served_mode":"hybrid","incomplete":false},
+        "query":request().question,"intact":"\"".repeat(10_000)});
+    response.records[0].canonical_result = original.clone();
+    let initial_id = response.records[0].id;
+    let mut context = response.records[0].clone();
+    context.id = Sha256Digest::from_bytes([21; 32]);
+    context.operation = NativeRead::Context;
+    context.canonical_result = json!({"context":"\"".repeat(10_000)});
+    let context_id = context.id;
+    let mut later_search = context.clone();
+    later_search.id = Sha256Digest::from_bytes([22; 32]);
+    later_search.operation = NativeRead::Search;
+    later_search.canonical_result = json!({"query":"literal bridge","intact":"\"".repeat(10_000)});
+    let later_id = later_search.id;
+    response.records.extend([context, later_search]);
+    response.candidate_count = 3;
+    response.paragraphs = vec![
+        GroundedParagraph {
+            text: "Initial evidence".into(),
+            evidence: vec![initial_id],
+            interpretation: false,
+        },
+        GroundedParagraph {
+            text: "Additional context".into(),
+            evidence: vec![context_id],
+            interpretation: false,
+        },
+        GroundedParagraph {
+            text: "Bridge relationship".into(),
+            evidence: vec![initial_id, later_id],
+            interpretation: true,
+        },
+    ];
+    // The wire encodes the complete result inside a JSON string. Quotes must
+    // count at that boundary, rather than just measuring the inner object.
+    let envelope_scope = json!({"original_scope":"retained"});
+    assert!(
+        native_response_bytes(&response, Some(&envelope_scope))? > airk_core::MAX_RESPONSE_BYTES
+    );
+    pack_native_response(&mut response, Some(&envelope_scope))?;
+    assert_eq!(response.records.len(), 1);
+    assert_eq!(response.records[0].id, initial_id);
+    assert_eq!(response.records[0].canonical_result, original);
+    assert_eq!(response.records[0].arguments["query"], request().question);
+    assert_eq!(response.candidate_count, 3);
+    assert_eq!(response.omitted_count, 2);
+    assert_eq!(response.stop, StopReason::Budget);
+    assert_eq!(response.paragraphs.len(), 1);
+    assert_eq!(response.paragraphs[0].evidence, vec![initial_id]);
+    assert!(
+        native_response_bytes(&response, Some(&envelope_scope))? <= airk_core::MAX_RESPONSE_BYTES
+    );
+    response.validate(&request().budget)?;
+    Ok(())
+}
+
+#[test]
+fn native_packet_packing_refuses_oversized_initial_search_without_removing_or_truncating_it()
+-> Result<()> {
+    let mut response = packing_fixture()?;
+    response.records[0].canonical_result =
+        json!({"full_result":"x".repeat(airk_core::MAX_RESPONSE_BYTES)});
+    let original = serde_json::to_value(&response.records[0])?;
+    let error = pack_native_response(&mut response, None).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("mandatory initial canonical search")
+    );
+    assert_eq!(response.records.len(), 1);
+    assert_eq!(serde_json::to_value(&response.records[0])?, original);
+    assert_eq!(response.omitted_count, 0);
+    Ok(())
+}
+
+#[test]
+fn native_packet_packing_omits_later_search_before_retaining_additional_context() -> Result<()> {
+    let mut response = packing_fixture()?;
+    let original = serde_json::to_value(&response.records[0])?;
+    let mut context = response.records[0].clone();
+    context.id = Sha256Digest::from_bytes([31; 32]);
+    context.operation = NativeRead::Context;
+    context.canonical_result = json!({"complete_context":"retained"});
+    let original_context = serde_json::to_value(&context)?;
+    let mut search = context.clone();
+    search.id = Sha256Digest::from_bytes([32; 32]);
+    search.operation = NativeRead::Search;
+    search.canonical_result = json!({"later_search":"\"".repeat(20_000)});
+    response.records.extend([context, search]);
+    response.candidate_count = 3;
+    pack_native_response(&mut response, None)?;
+    assert_eq!(response.records.len(), 2);
+    assert_eq!(serde_json::to_value(&response.records[0])?, original);
+    assert_eq!(
+        serde_json::to_value(&response.records[1])?,
+        original_context
+    );
+    assert_eq!(response.omitted_count, 1);
+    assert_eq!(response.candidate_count, 3);
+    assert_eq!(response.stop, StopReason::Budget);
+    response.validate(&request().budget)?;
+    Ok(())
+}
+
+fn exact_sized_initial_result(scope: &ScopeBinding, bytes: usize) -> Result<Value> {
+    let mut body = json!({"publication":scope.publication,"hits":[],"padding":""});
+    let overhead = serde_json::to_vec(&body)?.len();
+    assert!(bytes >= overhead);
+    body["padding"] = Value::String("x".repeat(bytes - overhead));
+    assert_eq!(serde_json::to_vec(&body)?.len(), bytes);
+    Ok(body)
+}
+
+#[test]
+fn native_initial_retention_small_budget_refuses_instead_of_packing_an_empty_success() -> Result<()>
+{
+    let now = Instant::now();
+    let scope = scope();
+    let mut request = request();
+    request.budget.max_bytes = 4096;
+    request.validate()?;
+    let mut gathering = Gathering::new(request, scope.clone(), application(&scope), now)?;
+    assert_eq!(gathering.next(now)?.unwrap().tool, "search");
+    let body = exact_sized_initial_result(&scope, 3072)?;
+    let error = gathering.observe(Ok(body), now).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("mandatory initial canonical search exceeds original retention budget")
+    );
+    // Even a caller that catches the admission error cannot finish and pack an
+    // apparently valid metadata-only success after losing the initial receipt.
+    assert!(gathering.finish(now).is_err());
+    Ok(())
+}
+
+#[test]
+fn native_initial_retention_exact_boundary_keeps_full_receipt_through_finish_and_pack() -> Result<()>
+{
+    let now = Instant::now();
+    let scope = scope();
+    let mut request = request();
+    request.budget.max_bytes = 8192;
+    request.validate()?;
+    let mut gathering = Gathering::new(request.clone(), scope.clone(), application(&scope), now)?;
+    assert_eq!(gathering.next(now)?.unwrap().tool, "search");
+    let body = exact_sized_initial_result(&scope, 4096)?;
+    gathering.observe(Ok(body.clone()), now)?;
+    let mut response = gathering.finish(now)?;
+    pack_native_response(&mut response, None)?;
+    assert_eq!(response.records.len(), 1);
+    assert_eq!(response.records[0].canonical_result, body);
+    assert_eq!(response.records[0].arguments["query"], request.question);
+    assert_eq!(response.candidate_count, 1);
+    assert_eq!(response.omitted_count, 0);
+    response.validate(&request.budget)?;
+    Ok(())
+}
+
+#[test]
+fn native_initial_retention_one_byte_over_boundary_refuses_without_raising_budget() -> Result<()> {
+    let now = Instant::now();
+    let scope = scope();
+    let mut request = request();
+    request.budget.max_bytes = 8192;
+    request.validate()?;
+    let mut gathering = Gathering::new(request, scope.clone(), application(&scope), now)?;
+    assert_eq!(gathering.next(now)?.unwrap().tool, "search");
+    let error = gathering
+        .observe(Ok(exact_sized_initial_result(&scope, 4097)?), now)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("mandatory initial canonical search exceeds original retention budget")
+    );
+    assert!(gathering.finish(now).is_err());
+    Ok(())
+}

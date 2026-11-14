@@ -232,43 +232,53 @@ impl crate::Kernel {
             "Arbiter source authority or publication changed after final optional observation"
         );
         let mut response = gathering.finish(Instant::now())?;
-        // The composed work budget does not enlarge the existing native reply
-        // frame. Omit whole receipts, never fields of a canonical result.
-        loop {
-            let mut value = serde_json::to_value(&response)?;
-            if let Some(scope) = self.scope_observation() {
-                value["scope_observation"] = serde_json::to_value(scope)?;
-            }
-            let encoded = serde_json::to_vec(&serde_json::to_string(&value)?)?
-                .len()
-                .saturating_add(4096);
-            if encoded <= airk_core::MAX_RESPONSE_BYTES {
-                break;
-            }
-            ensure!(
-                !response.records.is_empty(),
-                "Arbiter packet metadata exceeds native reply budget"
-            );
-            let remove = if response.records.len() > 1 {
-                response
-                    .records
-                    .iter()
-                    .position(|record| record.operation == NativeRead::Search)
-                    .unwrap_or(response.records.len() - 1)
-            } else {
-                0
-            };
-            let omitted = response.records.remove(remove).id;
-            response
-                .paragraphs
-                .retain(|paragraph| !paragraph.evidence.contains(&omitted));
-            response.omitted_count += 1;
-            response.stop = StopReason::Budget;
-            response.advice.clear();
-        }
+        let scope_observation = self
+            .scope_observation()
+            .map(serde_json::to_value)
+            .transpose()?;
+        pack_native_response(&mut response, scope_observation.as_ref())?;
         response.validate(&request.budget)?;
         Ok(response)
     }
+}
+
+// Account for the same escaped native envelope and reserved frame overhead used
+// at delivery. Keep the original question search intact, even when later reads
+// must be omitted; it records the actual retrieval population for this packet.
+fn native_response_bytes(response: &ContextResponse, scope: Option<&Value>) -> Result<usize> {
+    let mut value = serde_json::to_value(response)?;
+    if let Some(scope) = scope {
+        value["scope_observation"] = scope.clone();
+    }
+    Ok(serde_json::to_vec(&serde_json::to_string(&value)?)?
+        .len()
+        .saturating_add(4096))
+}
+
+fn pack_native_response(response: &mut ContextResponse, scope: Option<&Value>) -> Result<()> {
+    while native_response_bytes(response, scope)? > airk_core::MAX_RESPONSE_BYTES {
+        ensure!(
+            response.records.len() > 1,
+            "Arbiter mandatory initial canonical search or packet metadata exceeds native reply budget"
+        );
+        // Later search receipts are omitted newest first, then later context
+        // receipts newest first. Record zero is the mandatory initial search.
+        let remove = response
+            .records
+            .iter()
+            .enumerate()
+            .skip(1)
+            .rfind(|(_, record)| record.operation == NativeRead::Search)
+            .map_or(response.records.len() - 1, |(index, _)| index);
+        let omitted = response.records.remove(remove).id;
+        response
+            .paragraphs
+            .retain(|paragraph| !paragraph.evidence.contains(&omitted));
+        response.omitted_count += 1;
+        response.stop = StopReason::Budget;
+        response.advice.clear();
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -672,6 +682,7 @@ impl Gathering {
 
     fn retain(&mut self, dispatch: &Dispatch, body: Value, role: EvidenceRole) -> Result<bool> {
         let bytes = serde_json::to_vec(&body)?;
+        let initial = self.output.candidate_count == 0;
         self.output.candidate_count += 1;
         if self
             .output
@@ -681,6 +692,10 @@ impl Gathering {
             .is_none_or(|count| count > self.request.budget.max_bytes / 2)
             || self.output.records.len() >= self.request.budget.candidates
         {
+            ensure!(
+                !initial,
+                "Arbiter mandatory initial canonical search exceeds original retention budget"
+            );
             self.output.omitted_count += 1;
             self.output.stop = StopReason::Budget;
             return Ok(false);

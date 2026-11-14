@@ -5,7 +5,7 @@
 //! policy stays with the service wrappers that call these functions.
 use super::endpoint as local_ipc;
 use airk_core::service::{ControlMethod, ControlRequest, ControlResponse, PROTOCOL_VERSION};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::{path::Path, time::Duration};
 
 pub async fn registry_busy_retry<F, Fut>(mut request: F) -> Result<ControlResponse>
@@ -52,25 +52,53 @@ pub async fn request_once(
     } else {
         Duration::from_secs(5)
     };
+    let original_deadline = match &method {
+        ControlMethod::ArbiterNextRead { request } => {
+            // Sample Tokio first so clock conversion can only shorten the
+            // original same-host absolute expiry, never add sampling time.
+            let sampled_at = tokio::time::Instant::now();
+            let remaining = arbiter_remaining(
+                request.read_attempt,
+                request.remaining_ms,
+                host_read_clock(),
+                airk_process::monotonic::now_ns()?,
+            )?;
+            Some(
+                sampled_at
+                    .checked_add(remaining)
+                    .context("Arbiter native deadline overflow")?,
+            )
+        }
+        _ => None,
+    };
     let response_budget = method.response_frame_budget();
     let request_budget = method.request_frame_budget();
     let address = local_ipc::endpoint(root, "control")?;
-    let mut stream =
-        tokio::time::timeout(Duration::from_secs(5), local_ipc::connect(&address)).await??;
-    local_ipc::write_message_limited(
+    let connect = local_ipc::connect(&address);
+    let mut stream = if let Some(deadline) = original_deadline {
+        tokio::time::timeout_at(
+            deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)),
+            connect,
+        )
+        .await
+        .context("Arbiter native connect deadline exceeded")??
+    } else {
+        tokio::time::timeout(Duration::from_secs(5), connect).await??
+    };
+    let request = ControlRequest {
+        protocol: PROTOCOL_VERSION,
+        expected_instance,
+        method,
+    };
+    let response = exchange_once(
         &mut stream,
-        &ControlRequest {
-            protocol: PROTOCOL_VERSION,
-            expected_instance,
-            method,
-        },
-        Duration::from_secs(5),
+        &request,
         request_budget,
+        response_budget,
+        response_deadline,
+        original_deadline,
     )
     .await?;
-    let response = local_ipc::read_message_limited(&mut stream, response_deadline, response_budget)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("service disconnected before control response"))?;
     if let ControlResponse::Health { observation } = &response {
         ensure!(
             observation.protocol == PROTOCOL_VERSION
@@ -81,3 +109,96 @@ pub async fn request_once(
     }
     Ok(response)
 }
+
+fn host_read_clock() -> airk_core::read_attempt::ReadClock {
+    if cfg!(windows) {
+        airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+    } else {
+        airk_core::read_attempt::ReadClock::UnixMonotonic
+    }
+}
+
+fn arbiter_remaining(
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    remaining_ms: u64,
+    clock: airk_core::read_attempt::ReadClock,
+    now_ns: u64,
+) -> Result<Duration> {
+    ensure!(
+        (1..=30_000).contains(&remaining_ms),
+        "invalid Arbiter remaining budget"
+    );
+    let remaining = attempt
+        .context("native Arbiter attempt budget required")?
+        .remaining_at(clock, now_ns)?
+        .min(Duration::from_millis(remaining_ms))
+        .min(Duration::from_secs(30));
+    ensure!(
+        !remaining.is_zero(),
+        "Arbiter original deadline exhausted before native send"
+    );
+    Ok(remaining)
+}
+
+async fn exchange_once<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    stream: &mut S,
+    request: &ControlRequest,
+    request_budget: usize,
+    response_budget: usize,
+    response_deadline: Duration,
+    original_deadline: Option<tokio::time::Instant>,
+) -> Result<ControlResponse> {
+    let exchange = async {
+        if let Some(deadline) = original_deadline {
+            // Encoding is synchronous. Recheck after it and before the first
+            // write so crossing expiry while encoding cannot send a request.
+            let mut frame = Vec::new();
+            crate::frame::write_frame_limited(&mut frame, request, request_budget)?;
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "Arbiter original deadline exhausted before native send"
+            );
+            use tokio::io::AsyncWriteExt;
+            tokio::time::timeout_at(
+                deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)),
+                async {
+                    stream.write_all(&frame).await?;
+                    stream.flush().await
+                },
+            )
+            .await
+            .context("Arbiter native write deadline exceeded")??;
+        } else {
+            local_ipc::write_message_limited(
+                stream,
+                request,
+                Duration::from_secs(5),
+                request_budget,
+            )
+            .await?;
+        }
+        let read_budget = if let Some(deadline) = original_deadline {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "Arbiter original deadline exhausted before native response"
+            );
+            remaining
+        } else {
+            response_deadline
+        };
+        local_ipc::read_message_limited(stream, read_budget, response_budget)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("service disconnected before control response"))
+    };
+    if let Some(deadline) = original_deadline {
+        tokio::time::timeout_at(deadline, exchange)
+            .await
+            .context("Arbiter original deadline exhausted in native exchange")?
+    } else {
+        exchange.await
+    }
+}
+
+#[cfg(test)]
+mod tests;

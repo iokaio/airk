@@ -134,3 +134,19 @@ are equivalent evidence; an unsettled owner alone grants none. This grants no
 current-image/C10, mutation, process or cleanup authority. R10 requires this
 proof and exact raw digest before copying full runtime inventory. Missing proof
 preserves legacy artifacts and reports original/manual removal guidance.
+
+## Optional native next-read original deadline (2026-11-14)
+
+`ArbiterNextRead` is sent once. Its I1 exchange requires the existing typed
+same-host `ReadAttemptBudget`: schema, clock and bounds validate before connect.
+The adapter intersects its absolute remaining time with `remaining_ms` and the
+existing 30-second optional ceiling, sampling Tokio before the native clock so
+conversion cannot add time. One retained absolute Tokio deadline covers connect,
+encoding, write and response; connect/write retain their five-second ceilings.
+After encoding and before the first write, expired work refuses without sending.
+The response may arrive after five seconds only within that original deadline;
+no fresh 30-second response window or retry is created. Other control methods,
+including ToolsCall's 135-second response window, keep their existing deadlines.
+Tests use the actual framed duplex exchange, observed request barriers and paused
+Tokio time to prove delayed response acceptance, original-deadline refusal and
+one request without replay. They do not qualify an OS endpoint or model outcome.
