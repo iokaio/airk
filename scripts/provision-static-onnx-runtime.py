@@ -583,6 +583,13 @@ def run_unix_owned(argv, cwd, output, timeout, environment):
 
 
 def run_windows_owned(argv, cwd, output, timeout, environment):
+    """Drain actual owned members within one five-second cleanup deadline.
+
+    Leader exit alone is not job settlement. Retain native member handles for
+    event waits, then require fresh empty PID and accounting observations. A
+    forced or unobserved cleanup remains a failed qualification; emergency
+    finally cleanup never upgrades that result.
+    """
     from ctypes import wintypes as w
     import msvcrt
 
@@ -620,6 +627,8 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
         "CreateProcessW": ([w.LPCWSTR, w.LPWSTR, ctypes.c_void_p, ctypes.c_void_p, w.BOOL, w.DWORD, ctypes.c_void_p, w.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p], w.BOOL),
         "WaitForSingleObject": ([w.HANDLE, w.DWORD], w.DWORD),
         "GetExitCodeProcess": ([w.HANDLE, ctypes.POINTER(w.DWORD)], w.BOOL),
+        "OpenProcess": ([w.DWORD, w.BOOL, w.DWORD], w.HANDLE),
+        "IsProcessInJob": ([w.HANDLE, w.HANDLE, ctypes.POINTER(w.BOOL)], w.BOOL),
         "ResumeThread": ([w.HANDLE], w.DWORD),
         "InitializeProcThreadAttributeList": ([ctypes.c_void_p, w.DWORD, w.DWORD, ctypes.POINTER(ctypes.c_size_t)], w.BOOL),
         "UpdateProcThreadAttribute": ([ctypes.c_void_p, w.DWORD, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p], w.BOOL),
@@ -636,6 +645,7 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
     info = ProcessInfo()
     assigned = resumed = False
     attributes_initialized = False
+    emergency_members = []
     try:
         limits = ExtendedLimits()
         limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -687,35 +697,127 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
                 break
         code = w.DWORD()
         checked(api.GetExitCodeProcess(info.process, ctypes.byref(code)))
+        # A signaled leader can leave a console host finishing natural shutdown.
+        # Observe every actual job member under the SAME five-second cleanup
+        # deadline; names/images never exempt a member from the empty-job proof.
+        cleanup_end = time.monotonic() + 5
         accounting = JobAccounting()
-        checked(api.QueryInformationJobObject(job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None))
-        forced = accounting.active != 0
+
+        def job_members(deadline=None):
+            deadline = cleanup_end if deadline is None else deadline
+            capacity = 16
+            while True:
+                class Members(ctypes.Structure):
+                    _fields_ = [("assigned", w.DWORD), ("listed", w.DWORD),
+                                ("pids", ctypes.c_size_t * capacity)]
+                members = Members()
+                observed = api.QueryInformationJobObject(job, 3, ctypes.byref(members), ctypes.sizeof(members), None)
+                if observed:
+                    if members.listed > capacity:
+                        raise ValueError("Owned job PID census was truncated")
+                    return [int(members.pids[index]) for index in range(members.listed)]
+                if ctypes.get_last_error() != 234:  # ERROR_MORE_DATA: grow, never truncate.
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if time.monotonic() >= deadline:
+                    raise ValueError("Owned job PID census exceeded cleanup deadline")
+                capacity = max(capacity * 2, int(members.assigned))
+
+        def observe_job():
+            members = job_members()
+            checked(api.QueryInformationJobObject(job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None))
+            return members, int(accounting.active)
+
+        def retain_owned_members(members):
+            retained = []
+            try:
+                for pid in members:
+                    handle = api.OpenProcess(0x100000 | 0x1000, False, pid)
+                    if not handle:
+                        if ctypes.get_last_error() == 87:
+                            continue  # Exited before open; recensus the job.
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    belongs = w.BOOL()
+                    try:
+                        checked(api.IsProcessInJob(handle, job, ctypes.byref(belongs)))
+                    except BaseException:
+                        api.CloseHandle(handle)
+                        raise
+                    if belongs.value:
+                        retained.append(handle)
+                    else:
+                        api.CloseHandle(handle)  # A reused foreign PID is never waited on.
+                return retained
+            except BaseException:
+                for handle in retained:
+                    api.CloseHandle(handle)
+                raise
+
+        forced = timed_out or oversized
         if forced:
             checked(api.TerminateJobObject(job, 77))
-        cleanup_end = time.monotonic() + 5
         while True:
-            checked(api.QueryInformationJobObject(job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None))
-            if accounting.active == 0:
+            members, active = observe_job()
+            if not members and active == 0:
+                settled = True
                 break
             if time.monotonic() >= cleanup_end:
-                raise ValueError("Owned static-build descendants did not settle; retain all evidence")
-            time.sleep(0.05)
+                if not forced:
+                    # Retain actual handles BEFORE forcing: immediate accounting
+                    # can disappear before inherited log handles finish closing.
+                    emergency_members.extend(retain_owned_members(members))
+                    checked(api.TerminateJobObject(job, 77))
+                    forced = True
+                # No fresh grace period after forcing. An immediate fresh proof
+                # can establish settlement; otherwise retain an explicit refusal.
+                members, active = observe_job()
+                settled = not members and active == 0
+                break
+            handles = retain_owned_members(members)
+            try:
+                for handle in handles:
+                    remaining = cleanup_end - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    milliseconds = max(1, int(remaining * 1000))
+                    observed = api.WaitForSingleObject(handle, milliseconds)
+                    if observed not in (0, 258):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if observed == 258:
+                        break
+            finally:
+                for handle in handles:
+                    api.CloseHandle(handle)
         checked(api.GetExitCodeProcess(info.process, ctypes.byref(code)))
-        return {"exit_code": int(code.value), "timed_out": timed_out, "log_oversized": oversized,
-                "owned_descendants_settled": True, "owned_job_forced_termination": forced,
-                "parent_assigned_to_job": False, "child_assigned_before_resume": True}
+        result = {"exit_code": int(code.value), "timed_out": timed_out, "log_oversized": oversized,
+                  "owned_descendants_settled": settled, "owned_job_forced_termination": forced,
+                  "owned_job_final_active_processes": active, "owned_job_final_member_pids": members,
+                  "parent_assigned_to_job": False, "child_assigned_before_resume": True}
+        if not settled:
+            result["cleanup_refusal"] = "Owned job did not settle within the original five-second cleanup deadline"
+        return result
     finally:
-        if info.process:
-            if assigned:
-                api.TerminateJobObject(job, 77)
-            elif not resumed:
-                api.TerminateProcess(info.process, 77)
-            api.WaitForSingleObject(info.process, 5000)
-        if attributes_initialized:
-            api.DeleteProcThreadAttributeList(buffer)
-        for handle in (info.thread, info.process, job):
-            if handle:
-                api.CloseHandle(handle)
+        # Emergency cleanup has its original single five-second deadline, shared
+        # by ALL retained handles. It never upgrades the qualification result.
+        emergency_end = time.monotonic() + 5
+        try:
+            if info.process:
+                if assigned:
+                    if "retain_owned_members" in locals():
+                        emergency_members.extend(retain_owned_members(job_members(emergency_end)))
+                    api.TerminateJobObject(job, 77)
+                elif not resumed:
+                    api.TerminateProcess(info.process, 77)
+                for handle in (info.process, *emergency_members):
+                    remaining = max(0, emergency_end - time.monotonic())
+                    observed = api.WaitForSingleObject(handle, int(remaining * 1000))
+                    if observed != 0:
+                        raise ValueError("Emergency owned process exit was not observed; retain all evidence")
+        finally:
+            if attributes_initialized:
+                api.DeleteProcThreadAttributeList(buffer)
+            for handle in (*emergency_members, info.thread, info.process, job):
+                if handle:
+                    api.CloseHandle(handle)
 
 
 def host_target():
@@ -727,7 +829,10 @@ def host_target():
 
 
 def successful(result):
-    return result["exit_code"] == 0 and not result["timed_out"] and not result["log_oversized"] and result["owned_descendants_settled"]
+    return (result["exit_code"] == 0 and not result["timed_out"] and not result["log_oversized"]
+            and result["owned_descendants_settled"]
+            and not result.get("owned_job_forced_termination", False)
+            and "cleanup_refusal" not in result)
 
 
 def program_path(value, name):

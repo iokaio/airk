@@ -302,7 +302,9 @@ class StaticOrtPolicyTests(unittest.TestCase):
     def test_failed_or_unsettled_stage_cannot_qualify(self):
         valid = {"exit_code": 0, "timed_out": False, "log_oversized": False, "owned_descendants_settled": True}
         self.assertTrue(MODULE.successful(valid))
-        for key, value in (("exit_code", 1), ("timed_out", True), ("log_oversized", True), ("owned_descendants_settled", False)):
+        for key, value in (("exit_code", 1), ("timed_out", True), ("log_oversized", True),
+                           ("owned_descendants_settled", False), ("owned_job_forced_termination", True),
+                           ("cleanup_refusal", "not observed within cleanup deadline"), ("cleanup_refusal", "")):
             self.assertFalse(MODULE.successful({**valid, key: value}))
 
 
@@ -360,6 +362,48 @@ class OwnedStaticBuildProcessTests(unittest.TestCase):
             if os.name == "nt":
                 self.assertFalse(result["parent_assigned_to_job"])
                 self.assertTrue(result["child_assigned_before_resume"])
+
+    @unittest.skipUnless(os.name == "nt", "Actual Windows Job/console lifecycle")
+    def test_normal_exit_and_waited_observer_drain_actual_members_without_forcing(self):
+        scripts = ["print('normal owned child complete')",
+                   "import subprocess; subprocess.run(['pwsh','-NoProfile','-NonInteractive','-Command',"
+                   "\"Write-Output 'synthetic observer'\"],capture_output=True,check=True);"
+                   "print('waited observer complete')"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for index, script in enumerate(scripts):
+                with self.subTest(index=index):
+                    result = MODULE.run_owned([sys.executable, "-I", "-B", "-c", script],
+                                              root, root / f"normal-{index}.log", 10)
+                    self.assertEqual(result["exit_code"], 0)
+                    self.assertFalse(result["timed_out"])
+                    self.assertFalse(result["owned_job_forced_termination"])
+                    self.assertTrue(result["owned_descendants_settled"])
+                    self.assertEqual(result["owned_job_final_active_processes"], 0)
+                    self.assertEqual(result["owned_job_final_member_pids"], [])
+                    self.assertNotIn("cleanup_refusal", result)
+                    self.assertTrue(MODULE.successful(result))
+
+    @unittest.skipUnless(os.name == "nt", "Actual Windows Job/event-blocked orphan")
+    def test_normal_leader_exit_cannot_qualify_a_forced_event_blocked_descendant(self):
+        script = ("import subprocess,sys; child=subprocess.Popen([sys.executable,'-I','-B','-c',"
+                  "\"import threading;print('ready',flush=True);threading.Event().wait()\"],stdout=subprocess.PIPE);"
+                  "assert child.stdout.readline().strip()==b'ready';print('leader completed',flush=True)")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            result = MODULE.run_owned([sys.executable, "-I", "-B", "-c", script], root, root / "orphan.log", 10)
+            self.assertEqual(result["exit_code"], 0)
+            self.assertFalse(result["timed_out"])
+            self.assertTrue(result["owned_job_forced_termination"])
+            self.assertFalse(MODULE.successful(result))
+            # Immediate actual zero after forcing is distinct from unobserved
+            # settlement. Either outcome retains the failed forced qualification.
+            if result["owned_descendants_settled"]:
+                self.assertEqual(result["owned_job_final_active_processes"], 0)
+                self.assertEqual(result["owned_job_final_member_pids"], [])
+                self.assertNotIn("cleanup_refusal", result)
+            else:
+                self.assertIn("cleanup_refusal", result)
 
     def test_real_owned_descendant_and_timeout_are_settled_without_process_sweeps(self):
         with tempfile.TemporaryDirectory() as directory:

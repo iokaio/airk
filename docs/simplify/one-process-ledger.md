@@ -3424,3 +3424,35 @@ Receipts: `receipts/native-context-r5/`, persistent isolated target, incremental
 enabled. R4's missing `anyhow::Context` import diagnosis is retained separately.
 Current allocated context carriers still explicitly refuse the old /1 composer;
 joint /2 execution and actual fresh matched-pair transport proof remain pending.
+
+### 2026-11-14 — opaque fresh QASPER alignment, cleanup not qualified
+
+The independently reviewed R4 adapter mechanically aligned the fixed 14-family,
+46-question publisher TEST population without exposing gold to the observer.
+It found 38 eligible questions, retained one unanswerable and seven incomplete
+original-alternative refusals, and selected the fixed SHA-first 34 without refill.
+The private sealed payload SHA256 is
+`ca05ba670ce71f504f79d4974c38ee133ed81c2ba86ba8ea60f2e3517b8a932a`.
+All 109 source seals remained unchanged. No model scoring or training ran.
+
+The child exited zero in 1.399s, but its owned observer reported forced job
+cleanup before confirming all descendants settled. The observer therefore
+failed its cleanup criterion; this is not a clean lifetime qualification pass.
+Receipts: `models/qasper-fresh-final-execution-r4.{json,log}`. A synthetic
+owned-process diagnosis is separate from the sealed corpus; do not rerun
+alignment to hide cleanup evidence. R3's earlier source-root refusal remains
+retained: generated-name replacement had changed a protected input directory
+to a nonexistent name. R4 explicitly checks all seven real protected roots.
+Alignment eligibility does not establish retrieval quality or final qualification.
+
+Synthetic owned-process diagnosis reproduced a live console-host descendant
+after normal Python exit. Future Windows ownership checks now wait on actual
+retained member handles under the existing five-second cleanup deadline and
+require fresh empty PID/accounting observations. Forced/refused cleanup cannot
+qualify. Emergency cleanup observes actual descendant exits under its existing
+separate five-second bound and cannot upgrade the earlier result. No image
+ignore list, sleeps or added grace period was introduced. Eight focused tests
+pass in 6.734s, including normal Python/PowerShell, an actual blocked orphan,
+timeout and qualifier refusals. Receipt:
+`receipts/owned-job-event-drain-after-r2/receipt.json`. The earlier 7/8 run and
+its observed log-handle cleanup race remain retained; QASPER R4 was not rerun.
