@@ -19,6 +19,9 @@ use std::path::PathBuf;
 
 mod classify;
 mod edit;
+// Contract-first: no production archive reader or writer is enabled yet.
+#[cfg(test)]
+mod edit_record;
 mod io;
 mod jsonc;
 mod locations;

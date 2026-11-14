@@ -33,6 +33,14 @@ extension, scripts and users (split plan §4.2; draft in
 
 ## Invariants
 
+- Extension consumers observe every session child retirement/replacement as a
+  single `session_lost` boundary. Subscription and Assistance acknowledgment
+  callbacks are fenced to that generation; late old-child callbacks cannot
+  suppress a replacement subscription or acknowledge its sequence numbers.
+- Ordinary Workbench project reads use the active W4 window authority before
+  the project fallback. Explicit named and reviewed session selections retain
+  precedence. Client, status and late-result identity include effective implicit
+  window authority and admission state; stored turn/session formats stay unchanged.
 - Contract values change only with a reviewed fixture change. Expectations in
   the fixtures are written independently of this code.
 - Window-plane frames (`scope_select`, `scope_release`, `assistance_ack`,
@@ -73,6 +81,10 @@ extension, scripts and users (split plan §4.2; draft in
   selectors; a row too large for those limits is refused, never reduced.
 
 ## Fixtures
+
+Private agent-edit retention records have a separate
+[config contract](../agents/config/CONTRACT.md). Its contract-first Rust types
+and fixtures do not alter I2, enable a writer or advertise a capability.
 
 `fixtures/wire/airkctl_session_frames.json`, `fixtures/split/i2/exit_codes.json`,
 `fixtures/split/i2/error_lines.json`, `fixtures/split/i2/version.json`.
