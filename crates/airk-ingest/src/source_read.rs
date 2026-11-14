@@ -7,6 +7,29 @@ use std::{
     path::{Component, Path},
 };
 
+#[derive(Debug)]
+struct PrivateArchive;
+impl std::fmt::Display for PrivateArchive {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("private retained agent-edit input is excluded")
+    }
+}
+impl std::error::Error for PrivateArchive {}
+
+/// Observe names only, never substitute a resolved spelling for authorized
+/// no-follow traversal. Repeat after opening/pinning directories, before bytes.
+fn require_nonarchive(path: &Path) -> Result<()> {
+    let check = |path: &Path| -> Result<()> {
+        ensure!(
+            !airk_core::source_policy::retained_agent_edit_path(&path.to_string_lossy()),
+            PrivateArchive
+        );
+        Ok(())
+    };
+    check(path)?;
+    check(&path.canonicalize()?)
+}
+
 /// Read only a `.git` marker at the selected root or one direct child, using
 /// protected no-follow traversal. At most 4097 bytes are returned; the extra byte
 /// reports truncation and must never be parsed as a complete gitdir reference.
@@ -62,7 +85,9 @@ pub fn verify_saved_source(
     }
     let mut bytes_read = 0;
     let attempt = (|| -> Result<SourceCheck> {
+        require_nonarchive(&root.join(relative))?;
         let mut held = open(root, relative)?;
+        require_nonarchive(&root.join(relative))?;
         let before = held.file.metadata()?;
         ensure!(before.is_file(), "source is not a regular file");
         let original_identity = identity(&held.file)?;
@@ -204,6 +229,13 @@ pub fn verify_saved_source(
         })
     })();
     attempt.unwrap_or_else(|error| {
+        if error.is::<PrivateArchive>() {
+            return SourceCheck::unchecked(
+                State::OutOfScope,
+                bytes_read,
+                "private_archive_excluded",
+            );
+        }
         let state = error
             .chain()
             .find_map(|cause| cause.downcast_ref::<std::io::Error>())
@@ -229,6 +261,7 @@ pub fn capture_input(
 ) -> Result<(std::path::PathBuf, Vec<u8>)> {
     ensure!(path.is_absolute(), "administrative input must be absolute");
     authorize(path)?;
+    require_nonarchive(path)?;
     let canonical = path.canonicalize()?;
     authorize(&canonical)?;
     let bytes = read_protected_path(&canonical, limit, require_single_link)?;
@@ -243,6 +276,7 @@ pub fn read_protected_path(
     require_single_link: bool,
 ) -> Result<Vec<u8>> {
     ensure!(path.is_absolute(), "protected input must be absolute");
+    require_nonarchive(path)?;
     let parent = path.parent().context("input has no parent")?;
     let bytes = read_with_alias_policy(
         parent,
@@ -305,6 +339,7 @@ fn read_with_alias_policy(
         "invalid source path"
     );
     let mut held = open(root, relative)?;
+    require_nonarchive(path)?;
     let before = held.file.metadata()?;
     ensure!(before.is_file(), "source is not a regular file");
     if require_single_link {

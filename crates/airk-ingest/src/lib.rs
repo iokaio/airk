@@ -851,6 +851,7 @@ fn scan_observed_profiled_controlled(
     let registry = adapters::registry::AdapterRegistry::baseline();
     policy.validate(&registry)?;
     let root = root.canonicalize().context("resolve workspace root")?;
+    source_scope::require_source_root(&root)?;
     ensure!(
         root.to_string_lossy() == previous.root,
         "workspace root identity changed; collection binding must be preserved"
@@ -877,6 +878,7 @@ fn scan_observed_profiled_controlled(
         sources.push((format!("@{alias}/"), source));
     }
     for (prefix, source) in &sources {
+        source_scope::require_source_root(source)?;
         observations::verify_root(source, &mut observation.usage, limits.discovery_entries)?;
         observation.roots.insert(
             prefix.trim_start_matches('@').trim_end_matches('/').into(),
@@ -1454,6 +1456,7 @@ fn discovery_selected_with_controls(
     // Walk exempts its root from filter_entry and reads that root's ignore
     // controls before yielding it. Qualify it before the first call to next.
     let initial = (|| -> Result<bool> {
+        source_scope::require_source_root(root)?;
         let Some(policy) = &policy else {
             return Ok(true);
         };
@@ -1519,7 +1522,12 @@ fn discovery_selected_with_controls(
     } else {
         source_scope::builder(root)
     };
-    let mut walk = base
+    let blocked = root_blocked
+        || failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some();
+    let walk_builder = base
         .sort_by_file_path(move |left, right| {
             let rank = |path: &Path| {
                 priority::agent_path_priority(
@@ -1627,8 +1635,8 @@ fn discovery_selected_with_controls(
                                 !restricted && !credentials.excluded(relative, directory)
                             }
                         }))
-        })
-        .build();
+        });
+    let mut walk = (!blocked).then(|| walk_builder.build());
     let mut stopped = root_blocked;
     let mut first = true;
     std::iter::from_fn(move || {
@@ -1646,7 +1654,7 @@ fn discovery_selected_with_controls(
                 return Some(Err(error));
             }
         }
-        let next = walk.next();
+        let next = walk.as_mut()?.next();
         if let Some(error) = failure
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1676,6 +1684,7 @@ pub fn read_selected_source_with_policy(
 ) -> Result<Vec<u8>> {
     semantic::validate_path(relative)?;
     let root = root.canonicalize()?;
+    source_scope::require_source_root(&root)?;
     if let Some(policy) = policy {
         let native_root = root.to_str().context("non-UTF-8 policy root")?;
         ensure!(

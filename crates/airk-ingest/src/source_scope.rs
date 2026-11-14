@@ -7,6 +7,28 @@ use ignore::{
 };
 use std::path::{Component, Path};
 
+/// Refuse reserved roots before loading their ignore controls or source bytes.
+pub(crate) fn require_source_root(root: &Path) -> Result<()> {
+    ensure!(
+        !reserved_root(root)?,
+        "AIRK-private source root is excluded"
+    );
+    Ok(())
+}
+
+fn reserved_root(root: &Path) -> Result<bool> {
+    let reserved = |path: &Path| -> Result<bool> {
+        Ok(airk_core::source_policy::source_root_is_reserved(
+            path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 source root"))?,
+        ))
+    };
+    if reserved(root)? {
+        return Ok(true);
+    }
+    reserved(&root.canonicalize()?)
+}
+
 /// Common credential files skipped by default. Unlike the hard exclusions,
 /// an explicit negation such as `!.npmrc` in `.airkignore` re-includes one.
 /// This is a convenience default, not secret detection.
@@ -87,6 +109,11 @@ impl SelectedSourcePolicy {
     }
 
     pub fn allows(&mut self, logical: &str) -> Result<bool> {
+        match &self.matcher {
+            SourceMatcher::Blocked(_) => return Ok(false),
+            SourceMatcher::Unavailable(_) => anyhow::bail!("source root boundary unavailable"),
+            _ => (),
+        }
         ensure!(
             !logical.is_empty()
                 && logical.len() <= 4096
@@ -155,14 +182,24 @@ impl DirectoryIgnore {
 }
 
 enum SourceMatcher {
+    Blocked(std::path::PathBuf),
+    Unavailable(std::path::PathBuf),
     Ordinary(IncrementalIgnore),
     Protected(Box<crate::policy_ignore::ProtectedIgnore>),
 }
 impl SourceMatcher {
     fn ordinary(root: &Path) -> Self {
+        match reserved_root(root) {
+            Ok(true) => return Self::Blocked(root.into()),
+            Err(_) => return Self::Unavailable(root.into()),
+            Ok(false) => (),
+        }
         Self::Ordinary(builder(root).build_matchers().remove(0))
     }
     fn new(root: &Path, policy: Option<&airk_core::source_policy::SourcePolicy>) -> Result<Self> {
+        if reserved_root(root)? {
+            return Ok(Self::Blocked(root.into()));
+        }
         Ok(
             match policy.filter(|policy| crate::permanent_policy::restricts(policy)) {
                 Some(policy) => Self::Protected(Box::new(
@@ -174,6 +211,7 @@ impl SourceMatcher {
     }
     fn root(&self) -> &Path {
         match self {
+            Self::Blocked(root) | Self::Unavailable(root) => root,
             Self::Ordinary(matcher) => matcher.root(),
             Self::Protected(matcher) => matcher.root(),
         }
@@ -181,6 +219,8 @@ impl SourceMatcher {
     fn decision(&mut self, path: &Path, directory: bool) -> Result<crate::policy_ignore::Decision> {
         use crate::policy_ignore::Decision;
         match self {
+            Self::Blocked(_) => Ok(Decision::Ignore),
+            Self::Unavailable(_) => anyhow::bail!("source root boundary unavailable"),
             Self::Protected(matcher) => matcher.decision(path, directory),
             Self::Ordinary(matcher) => {
                 let (matched, error) = matcher.matched_with_errors(path, directory);
@@ -209,6 +249,9 @@ pub(crate) struct CredentialDefaults {
 impl CredentialDefaults {
     pub(crate) fn new(root: &Path) -> Self {
         let mut value = Self::guarded(root);
+        if reserved_root(root).unwrap_or(true) {
+            return value;
+        }
         value.user = Some(builder(root).build_matchers().remove(0));
         value
     }

@@ -136,6 +136,7 @@ pub fn scan_roots_with_source_policy(
         ..limits
     };
     let root = root.canonicalize().context("resolve workspace root")?;
+    crate::source_scope::require_source_root(&root)?;
     ensure!(
         root.to_string_lossy() == previous.root,
         "workspace root identity changed; collection binding must be preserved"
@@ -155,6 +156,7 @@ pub fn scan_roots_with_source_policy(
     );
     'sources: for (prefix, source_root) in sources {
         (options.checkpoint)()?;
+        crate::source_scope::require_source_root(&source_root)?;
         ensure!(
             source_root.canonicalize()? == source_root && source_root.is_dir(),
             "source root identity changed during inventory"
