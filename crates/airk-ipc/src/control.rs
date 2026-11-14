@@ -53,6 +53,20 @@ pub async fn request_once(
         Duration::from_secs(5)
     };
     let original_deadline = match &method {
+        ControlMethod::ArbiterContextAction { request } => {
+            let sampled_at = tokio::time::Instant::now();
+            let remaining = arbiter_remaining(
+                Some(request.read_attempt),
+                request.remaining_ms,
+                host_read_clock(),
+                airk_process::monotonic::now_ns()?,
+            )?;
+            Some(
+                sampled_at
+                    .checked_add(remaining)
+                    .context("Joint Arbiter native deadline overflow")?,
+            )
+        }
         ControlMethod::ArbiterNextRead { request } => {
             // Sample Tokio first so clock conversion can only shorten the
             // original same-host absolute expiry, never add sampling time.
@@ -69,6 +83,22 @@ pub async fn request_once(
                     .context("Arbiter native deadline overflow")?,
             )
         }
+        ControlMethod::ToolsCall {
+            read_attempt: Some(attempt),
+            ..
+        } => {
+            let sampled_at = tokio::time::Instant::now();
+            let remaining = read_remaining(
+                *attempt,
+                host_read_clock(),
+                airk_process::monotonic::now_ns()?,
+            )?;
+            Some(
+                sampled_at
+                    .checked_add(remaining)
+                    .context("Original native read deadline overflow")?,
+            )
+        }
         _ => None,
     };
     let response_budget = method.response_frame_budget();
@@ -81,7 +111,7 @@ pub async fn request_once(
             connect,
         )
         .await
-        .context("Arbiter native connect deadline exceeded")??
+        .context("Original native read connect deadline exceeded")??
     } else {
         tokio::time::timeout(Duration::from_secs(5), connect).await??
     };
@@ -118,6 +148,19 @@ fn host_read_clock() -> airk_core::read_attempt::ReadClock {
     }
 }
 
+fn read_remaining(
+    attempt: airk_core::read_attempt::ReadAttemptBudget,
+    clock: airk_core::read_attempt::ReadClock,
+    now_ns: u64,
+) -> Result<Duration> {
+    let remaining = attempt.remaining_at(clock, now_ns)?;
+    ensure!(
+        !remaining.is_zero(),
+        "Original native read deadline exhausted before send"
+    );
+    Ok(remaining)
+}
+
 fn arbiter_remaining(
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     remaining_ms: u64,
@@ -135,7 +178,7 @@ fn arbiter_remaining(
         .min(Duration::from_secs(30));
     ensure!(
         !remaining.is_zero(),
-        "Arbiter original deadline exhausted before native send"
+        "Original native read deadline exhausted before send"
     );
     Ok(remaining)
 }
@@ -156,7 +199,7 @@ async fn exchange_once<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
             crate::frame::write_frame_limited(&mut frame, request, request_budget)?;
             ensure!(
                 tokio::time::Instant::now() < deadline,
-                "Arbiter original deadline exhausted before native send"
+                "Original native read deadline exhausted before send"
             );
             use tokio::io::AsyncWriteExt;
             tokio::time::timeout_at(
@@ -167,7 +210,7 @@ async fn exchange_once<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
                 },
             )
             .await
-            .context("Arbiter native write deadline exceeded")??;
+            .context("Original native read write deadline exceeded")??;
         } else {
             local_ipc::write_message_limited(
                 stream,
@@ -181,7 +224,7 @@ async fn exchange_once<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             ensure!(
                 !remaining.is_zero(),
-                "Arbiter original deadline exhausted before native response"
+                "Original native read deadline exhausted before response"
             );
             remaining
         } else {
@@ -194,7 +237,7 @@ async fn exchange_once<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     if let Some(deadline) = original_deadline {
         tokio::time::timeout_at(deadline, exchange)
             .await
-            .context("Arbiter original deadline exhausted in native exchange")?
+            .context("Original native read deadline exhausted in exchange")?
     } else {
         exchange.await
     }

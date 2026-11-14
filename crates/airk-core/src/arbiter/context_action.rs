@@ -8,6 +8,27 @@ pub const ADVICE_SCHEMA_V2: &str = "airk.arbiter.advice/2";
 pub const ACTION_ROSTER_SCHEMA: &str = "airk.arbiter.context-action-roster/1";
 pub const MAX_ACTION_CARDS: usize = 8;
 pub const MAX_ASSESSMENTS: usize = 3;
+pub mod calibration;
+
+/// Normal dependency edge for the native compiler's NEW task policy. Core
+/// hashes its own structural/acceptance sources; no cross-crate source mounts.
+pub fn semantic_policy_digest() -> Result<Sha256Digest> {
+    fn source(bytes: &[u8]) -> Result<Sha256Digest> {
+        let canonical = std::str::from_utf8(bytes)?.replace("\r\n", "\n");
+        ensure!(!canonical.contains('\r'), "lone CR in joint Core semantics");
+        Ok(crate::identity::framed_digest(
+            b"airk.arbiter.context-action-core-source-lf/1",
+            &[canonical.as_bytes()],
+        ))
+    }
+    Ok(crate::identity::framed_digest(
+        b"airk.arbiter.context-action-core-semantics/1",
+        &[
+            source(include_bytes!("context_action.rs"))?.as_bytes(),
+            source(include_bytes!("context_action/calibration.rs"))?.as_bytes(),
+        ],
+    ))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +63,7 @@ pub enum ContextAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextReason {
+    AdditionalEvidenceMayHelp,
     RetainedEvidenceCoversQuestion,
     MissingDefinition,
     MissingConstraint,
@@ -233,7 +255,8 @@ impl ContextActionCard {
                 ensure!(
                     matches!(
                         (self.gap, self.reason),
-                        (Gap::Definition, ContextReason::MissingDefinition)
+                        (Gap::Unsupported, ContextReason::AdditionalEvidenceMayHelp)
+                            | (Gap::Definition, ContextReason::MissingDefinition)
                             | (Gap::Constraint, ContextReason::MissingConstraint)
                             | (Gap::Example, ContextReason::MissingExample)
                             | (Gap::Test, ContextReason::MissingTest)
@@ -352,6 +375,7 @@ pub enum AssessmentUnavailable {
 pub enum AssessmentApplicability {
     Current,
     HistoricalAfterRead,
+    HistoricalAfterConfigurationChange,
     BasisOmitted,
 }
 
@@ -366,9 +390,14 @@ pub struct ContextActionAdvice {
     pub compiler: Sha256Digest,
     pub calibration: Sha256Digest,
     pub policy: Sha256Digest,
+    pub task_policy: Sha256Digest,
     pub scope: ScopeBinding,
     pub input_digest: Sha256Digest,
     pub evidence: Vec<Sha256Digest>,
+    pub reserved_input_tokens: usize,
+    #[serde(deserialize_with = "required_nullable")]
+    #[schemars(required, schema_with = "nullable_tokens_schema")]
+    pub observed_input_tokens: Option<usize>,
     pub work: Work,
     pub outcome: Outcome,
 }
@@ -379,13 +408,25 @@ impl ContextActionAdvice {
                 && self.task == Task::ContextAction
                 && self.runtime == RUNTIME
                 && self.scope.configuration_revision > 0
+                && (1..=2048).contains(&self.reserved_input_tokens)
+                && self.work.input_tokens == self.observed_input_tokens.unwrap_or(0)
+                && self.work.calls == 0
+                && self.work.rounds == 0
+                && self.work.fanout == 0
+                && self.work.candidates == 0
+                && self.work.bytes == 0
                 && self.evidence.len() <= 64
                 && self.evidence.iter().collect::<BTreeSet<_>>().len() == self.evidence.len(),
             "invalid joint advice binding"
         );
         match &self.outcome {
             Outcome::Accepted { decision } => ensure!(
-                matches!(decision, Decision::ContextAction(_)),
+                matches!(decision, Decision::ContextAction(_))
+                    && self
+                        .observed_input_tokens
+                        .is_some_and(|tokens| tokens > 0 && tokens <= self.reserved_input_tokens)
+                    && self.work.compile_us.is_some()
+                    && self.work.inference_us.is_some(),
                 "joint advice decision mismatch"
             ),
             Outcome::Abstained { reason }
@@ -414,6 +455,9 @@ pub enum AssessmentResult {
         reason: AssessmentUnavailable,
         work: Work,
         work_unknown: bool,
+        #[serde(deserialize_with = "required_nullable")]
+        #[schemars(required, schema_with = "nullable_advice_schema")]
+        advice: Option<ContextActionAdvice>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -472,6 +516,34 @@ pub struct ContextResponseV2 {
     pub applications: Vec<IndexApplication>,
 }
 impl ContextResponseV2 {
+    /// Typed accounting view of this exact native schema inside the canonical
+    /// read envelope. Callers retain the ORIGINAL complete value for delivery.
+    pub fn from_canonical(value: &serde_json::Value, budget: &Budget) -> Result<Self> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("joint packet is not an object"))?;
+        let schema = schemars::schema_for!(ContextResponseV2);
+        let properties = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("joint native schema lacks properties"))?;
+        let fields: serde_json::Map<String, serde_json::Value> = object
+            .iter()
+            .filter(|(key, _)| properties.contains_key(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let typed: Self = serde_json::from_value(serde_json::Value::Object(fields))?;
+        typed.validate(budget)?;
+        if let Some(publication) = object.get("publication") {
+            let publication: crate::evidence::RevisionEnvelope =
+                serde_json::from_value(publication.clone())?;
+            ensure!(
+                publication == typed.assessment.scope.publication,
+                "joint outer publication mismatch"
+            );
+        }
+        Ok(typed)
+    }
     pub fn validate(&self, budget: &Budget) -> Result<()> {
         ContextRequestV2 {
             schema: REQUEST_SCHEMA_V2.into(),
@@ -510,6 +582,12 @@ impl ContextResponseV2 {
         let mut tokens = 0usize;
         let mut timings = [None; 4];
         let mut unknown = false;
+        let mut task_policy = None;
+        let failed_token_overrun = self.stop == PartitionTermination::Budget
+            && matches!(self.assessment.coverage, PartitionCoverage::Unassessed { .. })
+            && self.assessment_history.last().is_some_and(|event| matches!(&event.result,
+                AssessmentResult::Unavailable { reason: AssessmentUnavailable::TokenBudget | AssessmentUnavailable::Unavailable,
+                    advice: Some(advice), .. } if advice.observed_input_tokens.is_some()));
         for (position, event) in self.assessment_history.iter().enumerate() {
             ensure!(
                 !unknown
@@ -532,6 +610,7 @@ impl ContextResponseV2 {
                 AssessmentResult::Selected { card, advice } => {
                     card.validate(&event.basis)?;
                     advice.validate()?;
+                    pin_task_policy(&mut task_policy, advice.task_policy)?;
                     ensure!(
                         &advice.scope == scope
                             && matches!(advice.outcome, Outcome::Accepted {
@@ -539,22 +618,65 @@ impl ContextResponseV2 {
                         "joint selected card/advice mismatch"
                     );
                     validate_advice_basis(advice, &event.basis)?;
+                    ensure!(
+                        advice.reserved_input_tokens <= budget.input_tokens.saturating_sub(tokens),
+                        "joint reservation exceeds original remaining tokens"
+                    );
+                    unknown |= advice.observed_input_tokens.is_none();
                     &advice.work
                 }
                 AssessmentResult::Abstained { advice } => {
                     advice.validate()?;
+                    pin_task_policy(&mut task_policy, advice.task_policy)?;
                     ensure!(
                         &advice.scope == scope
                             && matches!(advice.outcome, Outcome::Abstained { .. }),
                         "joint abstention/advice mismatch"
                     );
                     validate_advice_basis(advice, &event.basis)?;
+                    ensure!(
+                        advice.reserved_input_tokens <= budget.input_tokens.saturating_sub(tokens),
+                        "joint reservation exceeds original remaining tokens"
+                    );
+                    unknown |= advice.observed_input_tokens.is_none();
                     &advice.work
                 }
                 AssessmentResult::Unavailable {
-                    work, work_unknown, ..
+                    reason,
+                    work,
+                    work_unknown,
+                    advice,
                 } => {
-                    unknown = *work_unknown;
+                    if let Some(advice) = advice {
+                        advice.validate()?;
+                        pin_task_policy(&mut task_policy, advice.task_policy)?;
+                        ensure!(
+                            &advice.scope == scope
+                                && &advice.work == work
+                                && !matches!(
+                                    advice.outcome,
+                                    Outcome::Accepted { .. } | Outcome::Abstained { .. }
+                                )
+                                && advice.reserved_input_tokens
+                                    <= budget.input_tokens.saturating_sub(tokens)
+                                && (advice.observed_input_tokens.is_some() || *work_unknown),
+                            "joint unavailable reply/binding/uncertainty mismatch"
+                        );
+                        validate_advice_basis(advice, &event.basis)?;
+                    } else if !work_unknown {
+                        ensure!(
+                            matches!(
+                                reason,
+                                AssessmentUnavailable::Disabled
+                                    | AssessmentUnavailable::NotEnrolled
+                                    | AssessmentUnavailable::TaskUnsupported
+                                    | AssessmentUnavailable::NoEvidence
+                                    | AssessmentUnavailable::TokenBudget
+                            ) && work == &Work::default(),
+                            "lost submitted reply cannot become known zero work"
+                        );
+                    }
+                    unknown |= *work_unknown;
                     work
                 }
             };
@@ -569,7 +691,7 @@ impl ContextResponseV2 {
                     && work.fanout == 0
                     && work.candidates == 0
                     && work.bytes == 0
-                    && work.input_tokens <= budget.input_tokens,
+                    && (work.input_tokens <= budget.input_tokens || failed_token_overrun),
                 "joint scorer work contains canonical work or exceeds token budget"
             );
             for (total, measured) in timings.iter_mut().zip([
@@ -587,6 +709,11 @@ impl ContextResponseV2 {
                     );
                 }
             }
+            ensure!(
+                tokens <= budget.input_tokens
+                    || (failed_token_overrun && position + 1 == self.assessment_history.len()),
+                "joint measured token violation cannot permit later assessment"
+            );
         }
         ensure!(
             tokens <= self.work.input_tokens,
@@ -672,8 +799,28 @@ impl ContextResponseV2 {
         }
         for application in &self.applications {
             application.validate()?;
+            let observed = &application.scope;
+            let historical_configuration = observed.installation == scope.installation
+                && observed.catalog == scope.catalog
+                && observed.index_id == scope.index_id
+                && observed.authorization == scope.authorization
+                && observed.publication == scope.publication
+                && matches!(
+                    self.assessment.coverage,
+                    PartitionCoverage::Unassessed { .. }
+                )
+                && self
+                    .assessment_history
+                    .iter()
+                    .all(|event| event.applicability != AssessmentApplicability::Current)
+                && !matches!(
+                    self.stop,
+                    PartitionTermination::Covered
+                        | PartitionTermination::ClarificationRequired
+                        | PartitionTermination::NoJustifiedRead
+                );
             ensure!(
-                &application.scope == scope,
+                observed == scope || historical_configuration,
                 "joint application scope mismatch"
             );
         }
@@ -681,7 +828,7 @@ impl ContextResponseV2 {
             self.work.calls <= budget.calls
                 && self.work.rounds <= budget.rounds
                 && self.work.fanout <= budget.fanout
-                && self.work.input_tokens <= budget.input_tokens
+                && (self.work.input_tokens <= budget.input_tokens || failed_token_overrun)
                 && self.work.candidates <= budget.candidates
                 && self.work.bytes <= budget.max_bytes,
             "joint original work budget exceeded"
@@ -706,6 +853,45 @@ fn validate_advice_basis(advice: &ContextActionAdvice, basis: &AssessmentBasis) 
         "joint advice evidence differs from presented basis"
     );
     Ok(())
+}
+fn pin_task_policy(current: &mut Option<Sha256Digest>, observed: Sha256Digest) -> Result<()> {
+    ensure!(
+        current.is_none_or(|expected| expected == observed),
+        "joint history task policy changed"
+    );
+    *current = Some(observed);
+    Ok(())
+}
+/// A synthetic known-zero preflight note is not a native NN receipt. Unknown
+/// submission keeps its slot even without an observed reply or positive count.
+pub fn has_native_receipt(event: &AssessmentEvent) -> bool {
+    !matches!(
+        &event.result,
+        AssessmentResult::Unavailable {
+            advice: None,
+            work_unknown: false,
+            ..
+        }
+    )
+}
+
+/// Serde normally treats an absent Option as None. Current native contracts
+/// instead require the field to be present, with explicit null when unknown.
+pub(crate) fn required_nullable<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+fn nullable_tokens_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<usize>>()
+}
+fn nullable_advice_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<ContextActionAdvice>>()
 }
 
 #[cfg(test)]

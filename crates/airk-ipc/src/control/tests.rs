@@ -159,3 +159,72 @@ async fn arbiter_expired_after_held_connect_refuses_before_writing_any_request()
     assert!(received.is_none());
     Ok(())
 }
+
+#[test]
+fn tools_call_remaining_keeps_long_queries_and_never_refreshes_short_parents() -> Result<()> {
+    for seconds in [2u64, 90] {
+        let mut original = attempt();
+        original.expires_monotonic_ns = seconds * 1_000_000_000;
+        original.remaining_ns = original.expires_monotonic_ns;
+        assert_eq!(
+            read_remaining(original, ReadClock::UnixMonotonic, 1_000_000_000)?,
+            Duration::from_secs(seconds - 1)
+        );
+        assert!(
+            read_remaining(original, ReadClock::UnixMonotonic, seconds * 1_000_000_000).is_err()
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn tools_call_frame_retains_original_parent_until_response_and_sends_once() -> Result<()> {
+    let (mut client, mut peer) = tokio::io::duplex(4096);
+    let mut original = attempt();
+    original.expires_monotonic_ns = 2_000_000_000;
+    original.remaining_ns = 2_000_000_000;
+    let expected = original;
+    let request = ControlRequest {
+        protocol: PROTOCOL_VERSION,
+        expected_instance: None,
+        method: ControlMethod::ToolsCall {
+            tool: "airk_answer".into(),
+            arguments: serde_json::Map::new(),
+            selection: airk_core::service::ToolSelection::Unselected,
+            response_mode: airk_core::service::ToolResponseMode::Full,
+            usage_client: airk_core::usage::ClientFamily::Cli,
+            read_attempt: Some(original),
+        },
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let task = tokio::spawn(async move {
+        exchange_once(
+            &mut client,
+            &request,
+            65536,
+            65536,
+            Duration::from_secs(135),
+            Some(deadline),
+        )
+        .await
+    });
+    let received: ControlRequest = local_ipc::read_message(&mut peer, Duration::from_secs(1))
+        .await?
+        .unwrap();
+    let ControlMethod::ToolsCall {
+        read_attempt: Some(observed),
+        ..
+    } = received.method
+    else {
+        anyhow::bail!("missing original parent")
+    };
+    assert_eq!(observed.request_id, expected.request_id);
+    assert_eq!(observed.expires_monotonic_ns, expected.expires_monotonic_ns);
+    assert_eq!(observed.remaining_ns, expected.remaining_ns);
+    tokio::time::advance(Duration::from_secs(3)).await;
+    assert!(task.await?.is_err());
+    let duplicate: Option<ControlRequest> =
+        local_ipc::read_message(&mut peer, Duration::from_secs(1)).await?;
+    assert!(duplicate.is_none());
+    Ok(())
+}

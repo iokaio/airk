@@ -632,7 +632,7 @@ pub struct ScopeBinding {
     pub configuration_revision: u64,
     pub publication: RevisionEnvelope,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Budget {
     pub calls: usize,
@@ -762,7 +762,7 @@ pub enum Outcome {
     Unavailable { reason: String },
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Work {
     pub calls: usize,

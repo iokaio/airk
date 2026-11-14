@@ -7,6 +7,22 @@ group G1 as the `airk-cli` module `ipc` and extracted as a crate in group G6,
 
 ## Purpose
 
+Combined ContextAction delivery extends private native validation with bounded
+expected ScopeBinding/profile facts and an optional ORIGINAL read budget.
+Nonempty facts require that budget; no fresh-ID/clock fallback exists. Metadata
+relays refuse this private variant. The local receipt and later actual outer
+write retain native custody: receipt validation alone cannot authorize a later
+stale M3/Admin/HTTP chunk. Each actual poll repeats policy/source checks. A revoked
+partial exchange closes without fallback or replay.
+
+The private `ArbiterContextAction` callback uses the same original-attempt
+deadline conversion as `ArbiterNextRead`, with a REQUIRED original budget.
+Supervisor preserves its request ID, clock and absolute expiry while only
+shortening remaining time; it never mints a replacement assessment attempt.
+Connection, write and response waits all consume that earliest deadline, with
+one send and no retry/replay. Metadata relays and generic public control refuse
+this native-only method; bounded frame admission does not grant source authority.
+
 The same-user local transport between `airk` and its clients:
 
 - `endpoint`: owner-only control roots and endpoints (Windows named pipes,

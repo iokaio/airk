@@ -174,6 +174,9 @@ pub enum ControlMethod {
     ArbiterNextRead {
         request: Box<NativeNextReadRequest>,
     },
+    ArbiterContextAction {
+        request: Box<crate::native_context_action::NativeContextActionRequest>,
+    },
     PrepareUpgradeCheckpoint {
         operation_id: Incarnation,
         candidate_execution_sha256: Sha256Digest,
@@ -211,6 +214,10 @@ pub enum ControlMethod {
         query_selection: crate::combined_reads::QuerySelection,
         scope_identity: Sha256Digest,
         result_digest: Sha256Digest,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        context_bindings: Vec<crate::combined_context::ContextDeliveryBinding>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_attempt: Option<crate::read_attempt::ReadAttemptBudget>,
     },
     /// Native administrative read. Runtime consumes its worker credential;
     /// this route never returns a reusable evidence connection.
@@ -775,7 +782,10 @@ impl ControlMethod {
         // The console never receives an evidence bearer credential. Evidence
         // brokerage remains on the dedicated scoped read transports.
         match method {
-            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } => {
+            Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
+                return Some("console_private_setup_forbidden");
+            }
+            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } => {
                 return Some("console_private_setup_forbidden");
             }
             Self::Connect { .. } | Self::ConnectScoped { .. } => {
@@ -1252,7 +1262,9 @@ impl ControlMethod {
     /// drops a larger request unanswered, as it drops any oversize frame.
     pub fn request_frame_budget(&self) -> usize {
         match self {
-            Self::Arbiter { .. } | Self::ArbiterNextRead { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
+            Self::Arbiter { .. }
+            | Self::ArbiterNextRead { .. }
+            | Self::ArbiterContextAction { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             Self::AdminNativeCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             // JSON escaping can grow the 16 KiB input; M3's budget covers it.
             Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
@@ -1357,6 +1369,10 @@ pub enum ControlResponse {
     },
     ArbiterAdvice {
         advice: Option<Box<crate::arbiter::Advice>>,
+    },
+    ArbiterContextActionAdvice {
+        #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+        advice: Option<Box<crate::arbiter::context_action::ContextActionAdvice>>,
     },
     UpgradeCheckpoint {
         observation: Box<crate::service_checkpoint::UpgradeCheckpointObservation>,

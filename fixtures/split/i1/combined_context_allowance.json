@@ -1,5 +1,12 @@
 {
   "schema": "airk.split-fixture.combined-context/1",
+  "known_violation": {
+    "observed":{"calls":1,"input_tokens":2300,"candidates":1,"bytes":1024},
+    "ordinals":[1],
+    "expected_known_tokens":2300,
+    "unchanged_parent_tokens":2048,
+    "undercap_tokens":100
+  },
   "ordinary_query_bytes": "{\"frontend\":null,\"tool\":\"airk_status\",\"arguments\":{},\"native\":null,\"status_receipt\":{}}",
   "allowance": {
     "schema":"airk.context-partition-allowance/1",

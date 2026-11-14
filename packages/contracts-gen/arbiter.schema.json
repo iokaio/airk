@@ -63,6 +63,7 @@
       "enum": [
         "current",
         "historical_after_read",
+        "historical_after_configuration_change",
         "basis_omitted"
       ],
       "type": "string"
@@ -193,6 +194,16 @@
         {
           "additionalProperties": false,
           "properties": {
+            "advice": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ContextActionAdvice"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "reason": {
               "$ref": "#/$defs/AssessmentUnavailable"
             },
@@ -211,7 +222,8 @@
             "status",
             "reason",
             "work",
-            "work_unknown"
+            "work_unknown",
+            "advice"
           ],
           "type": "object"
         }
@@ -578,6 +590,14 @@
         "input_digest": {
           "$ref": "#/$defs/Sha256Digest"
         },
+        "observed_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "outcome": {
           "$ref": "#/$defs/Outcome"
         },
@@ -586,6 +606,11 @@
         },
         "profile": {
           "$ref": "#/$defs/Sha256Digest"
+        },
+        "reserved_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         },
         "runtime": {
           "type": "string"
@@ -599,6 +624,9 @@
         "task": {
           "$ref": "#/$defs/Task"
         },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
         "work": {
           "$ref": "#/$defs/Work"
         }
@@ -611,9 +639,12 @@
         "compiler",
         "calibration",
         "policy",
+        "task_policy",
         "scope",
         "input_digest",
         "evidence",
+        "reserved_input_tokens",
+        "observed_input_tokens",
         "work",
         "outcome"
       ],
@@ -649,6 +680,15 @@
         "assessments"
       ],
       "type": "object"
+    },
+    "ContextActionClass": {
+      "enum": [
+        "read",
+        "sufficient",
+        "clarify",
+        "no_justified_read"
+      ],
+      "type": "string"
     },
     "ContextActionRoster": {
       "additionalProperties": false,
@@ -688,6 +728,7 @@
     },
     "ContextReason": {
       "enum": [
+        "additional_evidence_may_help",
         "retained_evidence_covers_question",
         "missing_definition",
         "missing_constraint",
@@ -1242,6 +1283,109 @@
     "IndexId": {
       "pattern": "^idx_[0-9a-f]{32}$",
       "type": "string"
+    },
+    "JointAssetBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/AssetRole"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "role",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "JointCalibration": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JointAssetBinding"
+          },
+          "type": "object"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/JointRule"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "score_abi": {
+          "$ref": "#/$defs/ScoreAbi"
+        },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema",
+        "model",
+        "compiler",
+        "task_policy",
+        "score_abi",
+        "assets",
+        "rules"
+      ],
+      "type": "object"
+    },
+    "JointRule": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ContextActionClass"
+        },
+        "allowed_gaps": {
+          "items": {
+            "$ref": "#/$defs/Gap"
+          },
+          "type": "array"
+        },
+        "allowed_reasons": {
+          "items": {
+            "$ref": "#/$defs/ContextReason"
+          },
+          "type": "array"
+        },
+        "allowed_relevance": {
+          "items": {
+            "$ref": "#/$defs/RelevanceHypothesis"
+          },
+          "type": "array"
+        },
+        "allowed_roles": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRole"
+          },
+          "type": "array"
+        },
+        "minimum_raw_margin": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "action",
+        "allowed_gaps",
+        "allowed_reasons",
+        "allowed_roles",
+        "allowed_relevance",
+        "minimum_raw_margin"
+      ],
+      "type": "object"
     },
     "ManagementRequest": {
       "oneOf": [
@@ -2112,7 +2256,8 @@
     "Status",
     "ContextRequestV2",
     "ContextResponseV2",
-    "ContextActionRoster"
+    "ContextActionRoster",
+    "JointCalibration"
   ],
   "title": "AIRK Arbiter Core contract"
 }

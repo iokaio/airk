@@ -61,3 +61,11 @@ A nonpositive floored remainder uses the existing not-sent deadline refusal,
 never max(1,...) to grant extra time. This changes the compiled SDK scientific
 input: require a new protocol freeze and retain prior failed development calls,
 including the unknown ninth Kev call, under their original identities.
+
+Canonical Answer admission intersects an existing original allowance with the
+validated Answer request ceiling before selection, setup or member work. The
+MCP owner parses its existing AnswerArgs and Core ContextRequest validator;
+consumers do not mirror JSON fields. Sampling later may only narrow that same
+context. Non-Answer reads retain their supported original ceiling. Invalid
+arguments keep the canonical handler's existing error projection; early budget
+admission does not invent a second malformed-argument envelope.

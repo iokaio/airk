@@ -264,6 +264,70 @@ impl ReferenceInventory {
         let Some(object) = value.as_object() else {
             return;
         };
+        if read_projection
+            && object.get("schema").and_then(Value::as_str)
+                == Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
+        {
+            let Some(records) = object.get("records").and_then(Value::as_array) else {
+                self.complete = false;
+                return;
+            };
+            if records.len() > 32 {
+                self.complete = false;
+            }
+            let mut ids = std::collections::BTreeSet::new();
+            let mut partition = None;
+            for (index, raw) in records.iter().take(32).enumerate() {
+                let Ok(record) =
+                    serde_json::from_value::<crate::arbiter::EvidenceRecord>(raw.clone())
+                else {
+                    self.complete = false;
+                    continue;
+                };
+                let scope = &record.scope;
+                let publication = &scope.publication;
+                if !ids.insert(record.id)
+                    || partition.as_ref().is_some_and(|prior| prior != scope)
+                    || self
+                        .member_index
+                        .is_some_and(|member| member != scope.index_id)
+                    || publication.collection.is_empty()
+                    || publication.collection.len() > 128
+                    || publication.incarnation != publication.token.incarnation
+                    || publication.generation != publication.token.generation
+                    || publication.revision != publication.token.revision
+                    || inherited.is_some_and(|prior| prior != publication.token)
+                    || record
+                        .canonical_result
+                        .get("publication")
+                        .is_some_and(|raw| {
+                            !matches!(
+                                serde_json::from_value::<crate::evidence::RevisionEnvelope>(raw.clone()),
+                                Ok(actual) if actual == *publication
+                            )
+                        })
+                {
+                    self.complete = false;
+                    continue;
+                }
+                partition = Some(scope.clone());
+                // Only this closed native record owns a canonical result. Neither
+                // request arguments nor role/gap prose are evidence locators.
+                self.visit(
+                    &record.canonical_result,
+                    &format!("{pointer}/records/{index}/canonical_result"),
+                    Some(publication.token),
+                    historical,
+                    depth + 1,
+                    true,
+                );
+                if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
+                    self.complete = false;
+                    break;
+                }
+            }
+            return;
+        }
         if object.get("schema").and_then(Value::as_str) == Some("airk.combined-read/1") {
             self.contains_combined = true;
             let Some(members) = object.get("members").and_then(Value::as_array) else {
@@ -717,6 +781,81 @@ mod tests {
         );
         let source_text = json!({"facts":[{"statement":origin,"attributes":{"origin":origin}}]});
         assert!(!ReferenceInventory::collect(&source_text).contains_combined);
+    }
+
+    #[test]
+    fn joint_context_inventory_follows_only_native_records_with_exact_scope_publication() {
+        use crate::{arbiter::*, evidence::RevisionEnvelope, identity::Incarnation};
+        let token = RevisionToken {
+            incarnation: Incarnation::from_bytes([7; 16]),
+            generation: 3,
+            revision: Sha256Digest::from_bytes([8; 32]),
+        };
+        let scope = ScopeBinding {
+            installation: Sha256Digest::from_bytes([1; 32]),
+            catalog: Incarnation::from_bytes([2; 16]),
+            index_id: IndexId::from_identity(Incarnation::from_bytes([3; 16])),
+            authorization: Sha256Digest::from_bytes([4; 32]),
+            configuration_revision: 1,
+            publication: RevisionEnvelope::new("fixture".into(), token),
+        };
+        let record = EvidenceRecord {
+            id: Sha256Digest::from_bytes([9; 32]),
+            scope: scope.clone(),
+            operation: NativeRead::Search,
+            arguments: std::collections::BTreeMap::from([(
+                "path".into(),
+                json!("never-read-arguments.rs"),
+            )]),
+            role: EvidenceRole::Unknown,
+            canonical_result: json!({"publication":scope.publication,"hits":[{"citation":{
+                "path":"public/a.rs","content_hash":"a".repeat(64)}}]}),
+        };
+        let packet = json!({"schema":context_action::CONTEXT_SCHEMA_V2,"records":[record],
+            "paragraphs":[{"text":"source prose","path":"never-read-prose.rs","content_hash":"b".repeat(64)}]});
+        let inventory = ReferenceInventory::collect(&packet);
+        assert!(inventory.complete && !inventory.contains_combined);
+        assert_eq!(inventory.references.len(), 1);
+        assert_eq!(inventory.references[0].path.as_deref(), Some("public/a.rs"));
+        assert_eq!(inventory.references[0].publication, Some(token));
+        assert_eq!(
+            inventory.references[0].pointer,
+            "/records/0/canonical_result/hits/0/citation"
+        );
+        assert!(packet.pointer(&inventory.references[0].pointer).is_some());
+        let combined = json!({"schema":"airk.combined-read/1","members":[{
+            "index_id":scope.index_id,"result":packet}],
+            "publication_vector":{"members":[{"index_id":scope.index_id,"publication":scope.publication}]}});
+        let inventory = ReferenceInventory::collect(&combined);
+        assert!(inventory.complete && inventory.contains_combined);
+        assert_eq!(inventory.references.len(), 1);
+        assert_eq!(inventory.references[0].index_id, Some(scope.index_id));
+        assert_eq!(inventory.references[0].publication, Some(token));
+        assert!(combined.pointer(&inventory.references[0].pointer).is_some());
+        let mut foreign = packet.clone();
+        foreign["records"][0]["canonical_result"]["publication"]["generation"] = json!(4);
+        assert!(!ReferenceInventory::collect(&foreign).complete);
+        let mut duplicate = packet.clone();
+        duplicate["records"]
+            .as_array_mut()
+            .unwrap()
+            .push(packet["records"][0].clone());
+        assert!(!ReferenceInventory::collect(&duplicate).complete);
+        let mut malformed = packet.clone();
+        malformed["records"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("scope");
+        assert!(!ReferenceInventory::collect(&malformed).complete);
+        let mut wrong_member = combined.clone();
+        wrong_member["members"][0]["index_id"] =
+            json!(IndexId::from_identity(Incarnation::from_bytes([22; 16])));
+        assert!(!ReferenceInventory::collect(&wrong_member).complete);
+        assert!(
+            ReferenceInventory::collect(&json!({"facts":[{"statement":packet.to_string()}]}))
+                .references
+                .is_empty()
+        );
     }
 
     #[test]

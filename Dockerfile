@@ -61,6 +61,8 @@ COPY third_party/licenses ./third_party/licenses
 # Exact external test inputs are reviewed in scripts/container-inputs.json.
 COPY fixtures/split/arbiter/public_answer_cases.json ./fixtures/split/arbiter/public_answer_cases.json
 COPY fixtures/split/arbiter/context_action_cases.json ./fixtures/split/arbiter/context_action_cases.json
+COPY fixtures/split/arbiter/native_context_action_cases.json ./fixtures/split/arbiter/native_context_action_cases.json
+COPY fixtures/split/arbiter/combined_answer_cases.json ./fixtures/split/arbiter/combined_answer_cases.json
 COPY packages/admin/src/arbiter.tsx ./packages/admin/src/arbiter.tsx
 COPY packages/admin/src/preparedActions.tsx ./packages/admin/src/preparedActions.tsx
 COPY packages/admin/src/preparedMutations.ts ./packages/admin/src/preparedMutations.ts

@@ -1540,8 +1540,39 @@ Promise<Reply>; subscribe(listener): Unsubscribe; capabilities: Capabilities }`.
 (window via I2 W4; admin via its session grant). UI hides a control whose
 capability is absent; it never branches on the shell name.
 
-**Workbench answer source locator (A7, 2026-11-14).** The local webview action
-`openAnswerCitation { turn, record, hit }` carries only a retained turn ID,
+**Workbench answer source locator (A7, 2026-11-14).** Current structured rendering and source navigation consume the Core-owned
+`ContextResponseV2` (`airk.arbiter.context/2`) and request `/2`; no previous-version
+decoder is retained for compatibility. Native local coverage/termination and all
+assessment-history entries are displayed with current/historical/basis-omitted
+applicability, exact source-unit references, whole-card role/relevance hypotheses,
+action/gap/reason and complete provenance. Reserved input tokens and nullable observed input tokens are displayed separately;
+null is unknown actual use, never zero. Measured zero phase times remain distinct
+from unobserved timings. Unavailable events keep an actual native advice reply
+when present, including its complete provenance and work; a null reply never
+invents reservation/observation counts or a learned judgment.
+Native task-policy identity is displayed separately from profile policy; neither
+is substituted for the other. Configuration-change history is labeled historical,
+not basis-omitted or current. The generic additional-read gap stays explicitly
+unclassified, not a fabricated Definition/Constraint need or terminal sufficiency.
+Unavailable/unknown work stays explicit;
+no local assessment becomes a claim about another authorized partition. Full raw
+copies/exports retain all current fields and native records.
+
+Actual WindowScope and explicit Open Answer calls retain the full
+`airk.combined-read/1` wrapper and every member's unmodified Core `/2` packet.
+Structured display visits every member, including failed/exhausted/unqueried
+outcomes, and shows each local assessment/history/work/task policy separately.
+The outer publication vector and whole-selection accounting remain available;
+no first-member projection or flattened identity replaces the original result.
+Full copies and exports retain that complete outer object. Source locators use
+an optional original member position as well as record/hit. A combined locator
+requires the exact unique member index, full JSON-semantic equality of every
+record scope with the packet assessment scope (all fields retained; object key
+order ignored), and the outer publication-vector head before existing per-source validation; missing,
+foreign or ambiguous member associations cannot grant an editor effect.
+
+The local webview action
+`openAnswerCitation { turn, record, hit, member? }` carries only a retained turn ID,
 exact native record digest and bounded zero-based native hit index. The host
 resolves it against the immutable complete answer, using the existing native
 saved-source reference pointer, source ID, origin index, Project attribution,
@@ -1876,3 +1907,47 @@ successful same-run part-upload job/interval bind these original bytes. The
 existing 2 GiB assembly ZIP boundary remains; models travel as separately
 bounded artifacts. Final publication reuses the qualified original assembly
 and original part artifacts without rebuilding or resigning them.
+
+
+### U95 comparison retirement: current service/CLI behavior survives
+
+User steering, 14 November: previous-version compatibility is not required;
+when an index upgrade is impossible, replacement is acceptable. This does not
+relax current authority, budgets, recovery or result completeness.
+
+| Retired comparison | Preserved historical evidence | Surviving current proof |
+|---|---|---|
+| `airkctl_combined_reads_print_what_airk_printed` replay of pre-split CLI outputs, including U107/U108 legacy-only field stripping | `fixtures/split/parity/airkctl_combined_reads_print_what_airk_printed.json`, SHA-256 `8a0f5dc94fb99c425c50aca104b4640e05be71b7b6f1bae88aa8662928dc7d2b`, remains untouched history. No recapture/remask. | `airkctl_combined_reads_match_current_native_handlers` retains all twelve command/input/scope cases and the three refusal expectations, comparing actual current CLI outputs with complete current canonical service responses. The actual service full catalog equals the native owner; raw CLI text/JSON retain every definition including `answer`, before observation normalization. |
+
+An independent literal thirty-name roster requires `answer` exactly once.
+`current_catalog_rejects_changed_or_unknown_definitions` rejects altered Answer
+schema/description/annotations, changed retained-tool schema, missing/duplicate
+or unknown names and added text. No tool or schema field is projected away for
+historical compatibility. Read comparisons retain the existing authenticated
+logical-reconstruction and documented observation-time treatment; they do not
+use U95's blanket hexadecimal renaming. The fixture remains a dated record,
+not current expected behavior. Other historical test/fixture retirements require
+their own surviving-owner disposition; this row changes only the named test.
+
+
+**Current CLI observation normalization (strict follow-up).** The current-only
+comparison does not call the historical recursive `stable` or U95 comparison.
+The default is exact equality, including unknown nested fields and stable
+content/model/publication/revision identities. Only the first MCP text duplicate
+is decoded, and it must equal the complete structured native body; other text,
+including JSON-looking source excerpts, stays literal.
+
+| Owned context | Explicit observation treatment |
+|---|---|
+| Actual native primitive `/request_id`, including exact `/members/N/result` roots of `airk.combined-read/1` | Validate the observed Incarnation and register only `/request_id` with the strict normalizer. Never search descendants. |
+| Typed Core PublicationVector or `airk.saved-source-verification/1` receipt | Validate the typed object and ordered unsigned `/observed_from_unix_ms`–`/observed_to_unix_ms` interval. Normalize exactly those two roots; retain unknown fields or refuse an unsupported typed shape. |
+| Typed FreshnessObservation at exact member `/freshness` | Normalize only its unsigned `/observed_unix_ms`. State, watermarks, source job, last-success/index times and all other fields stay exact. |
+| `airk.combined-read/1` member header | Normalize only unsigned `/members/N/elapsed_ms`. Allocation semantic deadlines/counts/bytes remain exact; the raw body's existing aggregate 30,000ms ceiling is a bound, not permission to erase deadlines. |
+| Exact Status case's native cache observer | Only the complete observed-time/cache-age/cached trio is eligible: unsigned observation/age, boolean flag, age below the owner's five-second lifetime. Normalize these exact member-result roots; no `future.cached` or nested timing is eligible. |
+| Existing typed member saved-source verification limits | The existing admitted-member/source/byte/deadline validation precedes normalization of the two documented remaining verification timing allowances. Configured budgets and every other receipt field remain visible. |
+| Authenticated combined encoding | Verify the complete raw delivery digest and native codec before materialization. Restore delivery metadata that the logical codec detaches, retaining unknown wrapper fields; only its validated digest of the independently dated raw body receives an observation-derivative marker. Known dictionaries expand losslessly; unknown codecs refuse. Scope, service, namespace and catalog revision stay exact. |
+
+Negative controls change nested `future.request_id`, `future.cached`,
+`future.elapsed_ms`, stable digests/publication/revision and unknown interval
+children. Crossed/non-numeric intervals refuse. A field name alone never
+registers transport observation authority.

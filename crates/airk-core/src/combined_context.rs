@@ -22,6 +22,14 @@ pub struct Resources {
     pub bytes: usize,
 }
 impl Resources {
+    pub fn from_packet(packet: &crate::arbiter::context_action::ContextResponseV2) -> Result<Self> {
+        Ok(Self {
+            calls: packet.work.calls,
+            input_tokens: packet.work.input_tokens,
+            candidates: packet.candidate_count.max(packet.work.candidates),
+            bytes: packet.work.bytes.max(serde_json::to_vec(packet)?.len()),
+        })
+    }
     pub fn checked_add(&self, other: &Self) -> Result<Self> {
         Ok(Self {
             calls: self.calls.checked_add(other.calls).ok_or_else(overflow)?,
@@ -50,6 +58,17 @@ impl Resources {
             bytes: budget.max_bytes,
         }
     }
+}
+
+pub fn known_budget_failure(packet: &crate::arbiter::context_action::ContextResponseV2) -> bool {
+    use crate::arbiter::context_action::{
+        AssessmentResult, PartitionCoverage, PartitionTermination,
+    };
+    packet.stop==PartitionTermination::Budget
+        && matches!(packet.assessment.coverage,PartitionCoverage::Unassessed {..})
+        && packet.assessment_history.last().is_some_and(|event|
+            matches!(&event.result,AssessmentResult::Unavailable {advice:Some(advice),work_unknown:false,..}
+                if advice.observed_input_tokens.is_some()))
 }
 fn overflow() -> anyhow::Error {
     anyhow::anyhow!("combined context accounting overflow")
@@ -124,6 +143,7 @@ pub enum UnqueriedReason {
     Deadline,
     Canceled,
     RequiredMemberFailure,
+    AccountingViolation,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -134,6 +154,13 @@ pub enum PartitionOutcome {
     },
     Known {
         used: Resources,
+        assessment_ordinals: Vec<u8>,
+        read_depth: usize,
+        peak_fanout: usize,
+    },
+    /// Truthfully observed failed work, never permission to enlarge a lease.
+    KnownViolation {
+        observed: Resources,
         assessment_ordinals: Vec<u8>,
         read_depth: usize,
         peak_fanout: usize,
@@ -157,7 +184,76 @@ pub enum Termination {
     Deadline,
     Canceled,
     Partial,
+    AccountingViolation,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextDeliveryBinding {
+    pub scope: crate::arbiter::ScopeBinding,
+    #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+    pub profile: Option<Sha256Digest>,
+}
+impl ContextDeliveryBinding {
+    pub fn from_packet(
+        packet: &crate::arbiter::context_action::ContextResponseV2,
+    ) -> Result<Option<Self>> {
+        use crate::arbiter::context_action::AssessmentResult;
+        let actual = packet.assessment_history.iter().any(has_native_receipt);
+        if !actual {
+            ensure!(
+                packet.work.input_tokens == 0,
+                "model work has no native receipt"
+            );
+            return Ok(None);
+        }
+        ensure!(
+            packet.assessment.scope.configuration_revision > 0,
+            "model receipt has no native policy revision"
+        );
+        let mut profiles = BTreeSet::new();
+        for event in &packet.assessment_history {
+            match &event.result {
+                AssessmentResult::Selected { advice, .. }
+                | AssessmentResult::Abstained { advice } => {
+                    profiles.insert(Some(advice.profile));
+                }
+                AssessmentResult::Unavailable {
+                    advice: Some(advice),
+                    ..
+                } => {
+                    profiles.insert(Some(advice.profile));
+                }
+                AssessmentResult::Unavailable { advice: None, .. } => {}
+            }
+        }
+        for application in &packet.applications {
+            ensure!(
+                application.scope == packet.assessment.scope,
+                "foreign model application binding"
+            );
+            profiles.insert(application.profile);
+        }
+        ensure!(
+            profiles.len() == 1,
+            "inconsistent native model profile observations"
+        );
+        let profile = profiles.into_iter().next().unwrap();
+        if profile.is_none() {
+            use crate::arbiter::context_action::AssessmentUnavailable;
+            ensure!(packet.work.input_tokens==0 && packet.assessment_history.iter().all(|event|
+                matches!(&event.result,AssessmentResult::Unavailable {reason:AssessmentUnavailable::Disabled
+                    |AssessmentUnavailable::NotEnrolled|AssessmentUnavailable::TaskUnsupported|AssessmentUnavailable::NoEvidence,
+                    work,work_unknown:false,..} if work.input_tokens==0)),
+                "absent profile is not a known no-model observation");
+        }
+        Ok(Some(Self {
+            scope: packet.assessment.scope.clone(),
+            profile,
+        }))
+    }
+}
+pub use crate::arbiter::context_action::has_native_receipt;
 
 /// Optional addition to the existing combined wrapper; member bodies stay full.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,6 +267,7 @@ pub struct CombinedContextSummary {
     pub known_used: Resources,
     pub unknown_held: Resources,
     pub termination: Termination,
+    pub delivery_bindings: Vec<ContextDeliveryBinding>,
 }
 impl CombinedContextSummary {
     pub fn validate(&self, expected_members: &[IndexId]) -> Result<()> {
@@ -192,7 +289,21 @@ impl CombinedContextSummary {
         let mut last_ordinal = 0;
         let mut charged_ordinals = BTreeSet::new();
         let mut complete = true;
+        let mut violation = false;
         for report in &self.members {
+            ensure!(
+                !violation
+                    || matches!(
+                        (&report.allowance, &report.outcome),
+                        (
+                            None,
+                            PartitionOutcome::Unqueried {
+                                reason: UnqueriedReason::AccountingViolation
+                            }
+                        )
+                    ),
+                "work dispatched after known accounting violation"
+            );
             match (&report.allowance, &report.outcome) {
                 (None, PartitionOutcome::Unqueried { .. }) => {
                     complete = false;
@@ -247,6 +358,38 @@ impl CombinedContextSummary {
                             held = held.checked_add(&allowance.resources)?;
                             complete = false;
                         }
+                        PartitionOutcome::KnownViolation {
+                            observed,
+                            assessment_ordinals,
+                            read_depth,
+                            peak_fanout,
+                        } => {
+                            ensure!(
+                                !observed.fits(&allowance.resources),
+                                "known violation has no observed overrun"
+                            );
+                            ensure!(
+                                assessment_ordinals.is_empty() || observed.input_tokens > 0,
+                                "known violation has uncharged assessment"
+                            );
+                            ensure!(
+                                *read_depth <= self.budget.rounds
+                                    && *peak_fanout <= self.budget.fanout,
+                                "invalid failed context depth or fanout"
+                            );
+                            for ordinal in assessment_ordinals {
+                                ensure!(
+                                    *ordinal > last_ordinal
+                                        && allowance.assessment_ordinals.contains(ordinal)
+                                        && charged_ordinals.insert(*ordinal),
+                                    "foreign failed assessment ordinal"
+                                );
+                                last_ordinal = *ordinal;
+                            }
+                            known = known.checked_add(observed)?;
+                            violation = true;
+                            complete = false;
+                        }
                         PartitionOutcome::Unqueried { .. } => {
                             anyhow::bail!("unqueried member retains dispatched allocation")
                         }
@@ -258,17 +401,211 @@ impl CombinedContextSummary {
         ensure!(
             known == self.known_used
                 && held == self.unknown_held
-                && known
+                && (known
                     .checked_add(&held)?
-                    .fits(&Resources::budget(&self.budget)),
+                    .fits(&Resources::budget(&self.budget))
+                    || violation),
             "combined context accounting mismatch"
+        );
+        ensure!(
+            (self.termination == Termination::AccountingViolation) == violation,
+            "known accounting violation requires explicit failed terminal"
         );
         ensure!(
             self.termination != Termination::Complete || complete,
             "incomplete partition roster cannot claim completion"
         );
+        let mut bound = BTreeSet::new();
+        for binding in &self.delivery_bindings {
+            ensure!(
+                expected_members.contains(&binding.scope.index_id)
+                    && bound.insert(binding.scope.index_id)
+                    && binding.scope.configuration_revision > 0,
+                "invalid context delivery policy binding"
+            );
+        }
         Ok(())
     }
+}
+
+/// Exact native model-output custody facts, not a scan of arbitrary payloads.
+/// Transport owners unwrap their own envelope before calling this function.
+pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<ContextDeliveryBinding>> {
+    use serde_json::Value;
+    let body = value
+        .get("structuredContent")
+        .filter(|body| body.is_object())
+        .unwrap_or(value);
+    if body.get("schema").and_then(Value::as_str)
+        == Some(crate::combined_reads::COMBINED_READ_SCHEMA)
+    {
+        let rows = body["members"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("combined members missing"))?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            ids.push(serde_json::from_value::<IndexId>(row["index_id"].clone())?);
+        }
+        let has_packets = rows.iter().any(|row| packet_body(&row["result"]).is_some());
+        let Some(raw) = body.get("context").filter(|value| !value.is_null()) else {
+            ensure!(!has_packets, "combined context summary missing");
+            return Ok(Vec::new());
+        };
+        let summary: CombinedContextSummary = serde_json::from_value(raw.clone())?;
+        summary.validate(&ids)?;
+        let mut actual = Vec::new();
+        let mut used_ordinals = BTreeSet::new();
+        for report in &summary.members {
+            let full = crate::combined_reads::shared_values::materialize_combined_member_result(
+                body,
+                report.index_id,
+            )?;
+            if let Some(packet) = packet_body(&full) {
+                let allowance = report
+                    .allowance
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("packet without native allocation"))?;
+                let mut budget = summary.budget.clone();
+                budget.calls = allowance.resources.calls;
+                budget.candidates = allowance.resources.candidates;
+                budget.input_tokens = allowance.resources.input_tokens.max(1);
+                budget.max_bytes = allowance.resources.bytes;
+                let typed = crate::arbiter::context_action::ContextResponseV2::from_canonical(
+                    packet, &budget,
+                )?;
+                ensure!(
+                    typed.assessment.scope.index_id == report.index_id,
+                    "foreign delivery packet index"
+                );
+                for event in typed
+                    .assessment_history
+                    .iter()
+                    .filter(|event| has_native_receipt(event))
+                {
+                    ensure!(
+                        allowance.assessment_ordinals.contains(&event.ordinal)
+                            && used_ordinals.insert(event.ordinal),
+                        "unallocated or repeated actual native assessment ordinal"
+                    );
+                }
+                match &report.outcome {
+                    PartitionOutcome::KnownViolation {
+                        observed,
+                        assessment_ordinals,
+                        ..
+                    } => ensure!(
+                        known_budget_failure(&typed)
+                            && Resources::from_packet(&typed)? == *observed
+                            && *assessment_ordinals == packet_charged_ordinals(&typed),
+                        "accounting violation lacks exact failed native observation"
+                    ),
+                    PartitionOutcome::Known {
+                        used,
+                        assessment_ordinals,
+                        ..
+                    } => ensure!(
+                        Resources::from_packet(&typed)? == *used
+                            && !typed.assessment_history.iter().any(|event| matches!(
+                                &event.result,
+                                crate::arbiter::context_action::AssessmentResult::Unavailable {
+                                    work_unknown: true,
+                                    ..
+                                }
+                            ))
+                            && *assessment_ordinals == packet_charged_ordinals(&typed),
+                        "known context observation mismatch"
+                    ),
+                    _ => {}
+                }
+                if let Some(binding) = ContextDeliveryBinding::from_packet(&typed)? {
+                    actual.push(binding);
+                }
+            } else {
+                ensure!(
+                    !matches!(
+                        &report.outcome,
+                        PartitionOutcome::Known { .. } | PartitionOutcome::KnownViolation { .. }
+                    ),
+                    "known context work has no complete native packet"
+                );
+            }
+        }
+        ensure!(
+            actual == summary.delivery_bindings,
+            "combined model delivery binding roster mismatch"
+        );
+        return Ok(actual);
+    }
+    if let Some(packet) = packet_body(body) {
+        let typed = crate::arbiter::context_action::ContextResponseV2::from_canonical(
+            packet,
+            &Budget {
+                calls: 12,
+                rounds: 4,
+                fanout: 12,
+                input_tokens: 2048,
+                candidates: 64,
+                max_bytes: 524288,
+                deadline_ms: 30000,
+            },
+        )?;
+        return Ok(ContextDeliveryBinding::from_packet(&typed)?
+            .into_iter()
+            .collect());
+    }
+    if let Some(content) = body
+        .get("content")
+        .and_then(Value::as_array)
+        .filter(|items| items.len() == 1)
+        && let Some(text) = content[0].get("text").and_then(Value::as_str)
+    {
+        let parsed = serde_json::from_str::<Value>(text);
+        if let Ok(parsed) = parsed
+            && matches!(
+                parsed.get("schema").and_then(Value::as_str),
+                Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
+                    | Some(crate::combined_reads::COMBINED_READ_SCHEMA)
+            )
+        {
+            return context_delivery_bindings(&parsed);
+        }
+    }
+    Ok(Vec::new())
+}
+fn packet_charged_ordinals(packet: &crate::arbiter::context_action::ContextResponseV2) -> Vec<u8> {
+    use crate::arbiter::context_action::AssessmentResult;
+    packet
+        .assessment_history
+        .iter()
+        .filter_map(|event| {
+            let tokens = match &event.result {
+                AssessmentResult::Selected { advice, .. }
+                | AssessmentResult::Abstained { advice } => advice.work.input_tokens,
+                AssessmentResult::Unavailable { work, .. } => work.input_tokens,
+            };
+            (tokens > 0).then_some(event.ordinal)
+        })
+        .collect()
+}
+fn packet_body(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    let body = value
+        .get("structuredContent")
+        .filter(|body| body.is_object())
+        .unwrap_or(value);
+    if body.get("schema").and_then(serde_json::Value::as_str)
+        == Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
+    {
+        return Some(body);
+    }
+    if body.get("error").is_some_and(|error| !error.is_null()) {
+        let evidence = body.get("evidence")?;
+        if evidence.get("schema").and_then(serde_json::Value::as_str)
+            == Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
+        {
+            return Some(evidence);
+        }
+    }
+    None
 }
 fn same_budget(a: &Budget, b: &Budget) -> bool {
     a.calls == b.calls

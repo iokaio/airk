@@ -22,6 +22,9 @@ It does not inherit `ContextNextRead` qualification, policy/calibration, prompt 
 resource evidence. Old Advice cannot admit the new decision: joint advice uses
 `airk.arbiter.advice/2` with complete native profile/compiler/calibration/policy,
 scope/input/evidence/work bindings. Contract presence grants no execution authority.
+The new native task policy binds LF-canonical retrieval task/roster-construction
+source plus Core joint validation/calibration semantics via an owning digest
+function. No cross-crate source mount or old NextRead policy rewrite is used.
 
 One assessment is ONE joint scoring invocation over at most EIGHT TOTAL cards,
 including reads and terminals. A card is a native-generated Read(choice),
@@ -56,7 +59,14 @@ coverage, empty gaps, a useful-read score or budget exhaustion. Clarify requires
 qualified ambiguity/conflict semantics; an unanswerable label is not that proof.
 NoJustifiedRead is forbidden while ANY remaining verified choice is omitted from
 the scored roster, and speaks only about that current recipe. Read requires the
-exact frozen verified choice and matching missing-need reason. Role/relevance are
+exact frozen verified choice and matching missing-need reason. Joint-only generic
+Read permits precisely Gap::Unsupported + AdditionalEvidenceMayHelp: semantic
+need remains UNCLASSIFIED, not NoUsefulRead/NoJustifiedRead/Sufficient. It does
+not change the separate ContextGap task or invent Definition/Constraint labels.
+Where typed need/role proof is absent the finite constructor uses this pair with
+Unknown/Uncertain source hypotheses; semantic alternatives require their own
+annotation/qualification. No additional option, scoring pass or budget is added.
+Role/relevance are
 whole-card hypotheses, not source facts; roles may have legitimate alternatives
 or overlap, so training labels cannot fabricate exclusive human truth.
 
@@ -80,6 +90,24 @@ not execution capabilities embedded in this pure public contract.
 
 Nested assessment Work describes SCORING only: input_tokens and measured phase
 timings are additive across distinct ordinals and must remain in aggregate Work.
+Advice/2 REQUIRES reserved_input_tokens and observed_input_tokens (nullable).
+It also REQUIRES task_policy, the exact new constructor/roster/task-policy digest;
+policy retains its separate existing meaning as the authenticated Profile policy
+asset SHA. Service checks task_policy against the selected profile's task_policies
+AND frozen roster before queueing; Kernel checks returned task_policy against the
+actual immutable roster. A single history cannot silently change task policy.
+Work.input_tokens equals observed.unwrap_or(0), a known lower bound; None means
+UNKNOWN, never measured zero. Accepted requires observedSome>0, known compile and
+inference timing and actual use<=reservation<=original remaining tokens. Unknown
+work retains its actual native reservation and prevents later learned assessment
+or reuse. A compiled receipt alone does not release held capacity while actual FFI
+completion is unknown. Known completion may reconcile exact tokens; the ordinal
+remains used forever in the original attempt. Failure keeps truthful observations.
+An observed token violation may be retained exactly ONLY in an explicit Budget
+response with unassessed coverage and a final Unavailable(TokenBudget/Unavailable)
+actual advice. It cannot permit another assessment, a successful learned terminal
+or reservation reuse. This reports a violation; it neither widens execution
+budgets nor caps/hides the actual observation to make it fit.
 Known timings cannot disappear into None or overflow. A successful learned terminal
 cannot retain over-deadline timing. Failed/expired/unknown work may actually overrun;
 retain that measurement without a success/coverage claim, deadline extension or
@@ -108,8 +136,41 @@ removing its source support.
 
 ### Local and combined Answer ownership
 
-Actual singleton path: MCP `airk_answer` -> `execute_verification_aware` ->
-`Kernel::answer_with_reader` -> one local ContextResponse. The new local /2
+Internal history may retain actual application cfg2 beside original record/advice
+cfg1 ONLY with identical installation/catalog/index/authorization/publication,
+unassessed coverage, no Current event or successful learned terminal. The cause
+is HistoricalAfterConfigurationChange, never a fabricated read or rewritten
+revision. This is NOT public-delivery permission: disablement/withdrawal still
+revokes delivery immediately. Recheck owning application after native wait,
+before actuation and at final delivery; stale Read/Covered/role projections never
+actuate or deliver. An answer carrying any actual NN receipt across a revoked
+outer cut returns a content-free nonretryable/nonreplayable stale refusal,
+retaining known native work privately. Ordinary primitive/pre-NN-disabled reads
+remain available. Missing/unavailable work is never relabeled measured zero.
+
+The closed private I1 follow-up uses Core `native_context_action::NativeContextActionRequest`:
+the REQUIRED actual ReadAttemptBudget AND actual public parent Budget, installed worker/ScopedReadRef, scope,
+question, full records, complete captured verified ReadChoices, frozen roster,
+global ordinal, optional captured private
+PartitionAllowance and remaining tokens/ms. No missing-attempt fallback exists.
+The complete parent budget is pinned even for a singleton: remaining NN tokens,
+assessment ordinal and remaining_ms cannot exceed its original input_tokens,
+min(3,rounds) or deadline_ms. A present partition's complete parent Budget must
+equal the request's captured parent Budget; no512-token/one-round request may
+reset to default2048/three later. Native service ledger pins that exact budget
+across every partition/worker of the actual original attempt.
+The service compares worker/authority to its actual installed lease, checks the
+original clock/expiry and configuration/publication, and reserves actual attempt
+plus ordinal exactly once BEFORE queueing. The optional partition is native-only;
+its selection was validated by the existing whole-selection owner, not minted by
+this local decoder. Unknown work keeps the one-use reservation; no retry or later
+ordinal may reclaim it. A decoder structural pass cannot create a grant or claim
+that the question/roster was scored. The closed response is ContextActionAdvice/2;
+public generic control/CLI routes never expose this hook. Consumers follow this
+recorded shape after review and native semantic cases.
+
+Actual singleton path: MCP `airk_answer` -> `execute_verified_response` ->
+`Kernel::answer_with_reader_v2` -> one local ContextResponse. The new local /2
 response retains complete records, arguments, paragraphs, gaps, work, omissions
 and applications, plus local assessment/history/termination. It cannot assert
 whole-scope coverage for other authorized partitions.
@@ -142,6 +203,21 @@ omitted choices stay explicit. Unknown member effects/work never become zero wor
 or permission to replay the query.
 
 ### Foundation and qualification boundary
+
+The approved follow-up calibration asset is
+`airk.arbiter.context-action.calibration/1`, owned by `context_action::calibration`.
+It binds exact ModelChoice, compiler, NEW task policy, complete ScoreAbi, and the
+complete explicit asset-name -> role/SHA map for Model, ExternalWeights and
+Tokenizer. The selected authenticated profile binds the calibration's raw SHA;
+the asset cannot bind its own hash or profile manifest circularly. Missing/changed
+weights/tokenizer/name/role/ABI/policy refuse before scoring. Up to32 closed rules
+admit a WHOLE action/gap/reason/ALL role/relevance combination with a finite,
+nonnegative raw top-runner margin. Evaluate every frozen offered card once; only
+the unique GLOBAL top may be accepted. Ties, unsupported top or insufficient margin
+abstain; never pick a lower supported card, remove scored unsupported cards and
+renormalize, assert probabilities or inherit old task thresholds. Any native
+planner filtering precedes roster freeze and discloses omitted legal choices;
+NoJustifiedRead cannot dismiss them. No thresholds/classes are invented here.
 
 Land reviewed Core types, schema and independent Rust-emitted semantic cases
 before service/compiler/Kernel/frontend consumers. This substep does not activate
@@ -345,7 +421,7 @@ ScopeBinding.configuration_revision=0 explicitly means unobserved optional confi
 
 ## Canonical neighboring context expansion (2026-11-14)
 
-NativeRead appends Context, retaining all existing serialized variants. Legal expansion is the canonical context handler at a verified hit's indexed start line, before=0, after=32, max_bytes=4096 (or the smaller original allocation). The owning context operation clamps at indexed EOF and preserves source-location fences. No guessed EOF, hidden file-info read or weakened strict read_file range validation is introduced. The planned target range is an upper bound; EvidenceRecord retains actual canonical arguments/result and returned span, including truncation/coverage. Distinct ranked hits remain distinct choices; exact duplicate targets deduplicate. Publication/source/deadline checks remain unchanged.
+NativeRead appends Context, retaining all existing serialized variants. Legal expansion is the canonical context handler at a verified hit's indexed start line, before=0, after=32, max_bytes=4096 (or the smaller original allocation). When the exact original question bytes occur in the returned hit text, expansion instead anchors at the first occurrence's returned UTF-8 newline offset, only if that line remains within the verified citation span; otherwise the indexed start line remains the fallback. This preserves a late literal match in a full-chunk hit without an external source read, generated query or wider budget. The owning context operation clamps at indexed EOF and preserves source-location fences. No guessed EOF, hidden file-info read or weakened strict read_file range validation is introduced. The planned target range is an upper bound; EvidenceRecord retains actual canonical arguments/result and returned span, including truncation/coverage. Distinct ranked hits remain distinct choices; exact duplicate targets deduplicate. Publication/source/deadline checks remain unchanged.
 
 Task policy source identity uses framed domain airk.arbiter.native-task-source-lf/1 and LF-canonical Rust constructor bytes: replace CRLF byte pairs with LF only; reject lone CR. No other code, string or whitespace normalization is permitted. This prequalification decision replaces raw checkout-byte hashing; no qualified profile existed to reidentify. Actual compiled input digests remain exact byte/token identities.
 
@@ -455,3 +531,14 @@ T2048/B1/N8, one-warmup/twenty-sample/rank19, 30s, 24-GiB and quality floors.
 Only new profile IDs/policy/manifest bytes bind CPU24; CPU8/16 identities and
 failures remain unchanged. No retry, extra warmups, discarded samples, automatic
 fallback or qualification transfer applies.
+
+Current Answer/2 advertises and consumes the same explicit saved-source
+verification controls as other evidence operations, including report/require/off
+and their bounded source/byte/deadline settings. The Core ReferenceInventory
+visits only typed EvidenceRecord canonical_result values under the exact
+ContextResponseV2 schema. Each record keeps its exact ScopeBinding publication;
+duplicate record IDs, mixed partition scopes, malformed/mismatched publication
+envelopes and foreign combined-member index bindings mark the inventory
+incomplete. Existing combined-read member traversal reuses this owner recursively.
+Request arguments, assessment/paragraph prose and arbitrary JSON fields are not
+locators. No source-free verification claim substitutes for retained records.

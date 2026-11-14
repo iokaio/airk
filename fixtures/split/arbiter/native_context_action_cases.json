@@ -1,0 +1,763 @@
+{
+  "cases": [
+    {
+      "accepted": true,
+      "authority": {
+        "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+        "grant_id": "grt_15151515151515151515151515151515",
+        "grant_revision": 1,
+        "index_id": "idx_03030303030303030303030303030303",
+        "lease_generation": 1,
+        "schema": 1
+      },
+      "clock": "unix_monotonic",
+      "input": {
+        "authority": {
+          "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+          "grant_id": "grt_15151515151515151515151515151515",
+          "grant_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "lease_generation": 1,
+          "schema": 1
+        },
+        "choices": [],
+        "ordinal": 1,
+        "parent_budget": {
+          "calls": 8,
+          "candidates": 32,
+          "deadline_ms": 30000,
+          "fanout": 8,
+          "input_tokens": 2048,
+          "max_bytes": 262144,
+          "rounds": 3
+        },
+        "partition": null,
+        "question": "Where is café defined?",
+        "read_attempt": {
+          "clock": "unix_monotonic",
+          "expires_monotonic_ns": 30000000100,
+          "remaining_ns": 30000000000,
+          "request_id": "16161616161616161616161616161616",
+          "schema": 1
+        },
+        "records": [
+          {
+            "arguments": {
+              "query": "café definition"
+            },
+            "canonical_result": {
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": [
+                {
+                  "citation": {
+                    "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                    "end_line": 1,
+                    "location": {
+                      "Lines": {
+                        "end": 1,
+                        "start": 1
+                      }
+                    },
+                    "path": "source.rs",
+                    "start_line": 1
+                  },
+                  "text": "fn café() {}",
+                  "truncated": false
+                }
+              ]
+            },
+            "id": "0808080808080808080808080808080808080808080808080808080808080808",
+            "operation": "search",
+            "role": "unknown",
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_03030303030303030303030303030303",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "05050505050505050505050505050505",
+                "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+                "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+              }
+            }
+          }
+        ],
+        "remaining_input_tokens": 2048,
+        "remaining_ms": 30000,
+        "roster": {
+          "basis": {
+            "read_choices_available": 0,
+            "read_choices_omitted": 0,
+            "read_choices_scored": [],
+            "source_units_available": 1,
+            "source_units_omitted": 0,
+            "source_units_partial": 0,
+            "source_units_presented": [
+              {
+                "kind": "hit",
+                "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                "result_pointer": "/hits/0",
+                "utf8_end": 13,
+                "utf8_start": 0
+              }
+            ]
+          },
+          "cards": [
+            {
+              "action": {
+                "kind": "sufficient"
+              },
+              "assessments": [
+                {
+                  "evidence": {
+                    "kind": "hit",
+                    "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                    "result_pointer": "/hits/0",
+                    "utf8_end": 13,
+                    "utf8_start": 0
+                  },
+                  "relevance": "useful",
+                  "role": "definition"
+                }
+              ],
+              "gap": "sufficient",
+              "id": "0909090909090909090909090909090909090909090909090909090909090909",
+              "reason": "retained_evidence_covers_question"
+            }
+          ],
+          "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "policy": "1111111111111111111111111111111111111111111111111111111111111111",
+          "schema": "airk.arbiter.context-action-roster/1",
+          "scope": {
+            "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+            "catalog": "02020202020202020202020202020202",
+            "configuration_revision": 1,
+            "index_id": "idx_03030303030303030303030303030303",
+            "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+            "publication": {
+              "collection": "fixture",
+              "generation": 1,
+              "incarnation": "05050505050505050505050505050505",
+              "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+              "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+            }
+          }
+        },
+        "scope": {
+          "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "05050505050505050505050505050505",
+            "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+            "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+          }
+        },
+        "worker": {
+          "fencing_generation": 1,
+          "project": "1919191919191919191919191919191919191919191919191919191919191919",
+          "service": "17171717171717171717171717171717",
+          "worker": "18181818181818181818181818181818"
+        }
+      },
+      "name": "captured_native_request",
+      "now_ns": 100,
+      "worker": {
+        "fencing_generation": 1,
+        "project": "1919191919191919191919191919191919191919191919191919191919191919",
+        "service": "17171717171717171717171717171717",
+        "worker": "18181818181818181818181818181818"
+      }
+    },
+    {
+      "accepted": false,
+      "authority": {
+        "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+        "grant_id": "grt_15151515151515151515151515151515",
+        "grant_revision": 1,
+        "index_id": "idx_03030303030303030303030303030303",
+        "lease_generation": 1,
+        "schema": 1
+      },
+      "clock": "unix_monotonic",
+      "input": {
+        "authority": {
+          "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+          "grant_id": "grt_15151515151515151515151515151515",
+          "grant_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "lease_generation": 1,
+          "schema": 1
+        },
+        "choices": [],
+        "ordinal": 1,
+        "parent_budget": {
+          "calls": 8,
+          "candidates": 32,
+          "deadline_ms": 30000,
+          "fanout": 8,
+          "input_tokens": 2048,
+          "max_bytes": 262144,
+          "rounds": 3
+        },
+        "partition": null,
+        "question": "Where is café defined?",
+        "read_attempt": {
+          "clock": "unix_monotonic",
+          "expires_monotonic_ns": 30000000100,
+          "remaining_ns": 30000000000,
+          "request_id": "16161616161616161616161616161616",
+          "schema": 1
+        },
+        "records": [
+          {
+            "arguments": {
+              "query": "café definition"
+            },
+            "canonical_result": {
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": [
+                {
+                  "citation": {
+                    "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                    "end_line": 1,
+                    "location": {
+                      "Lines": {
+                        "end": 1,
+                        "start": 1
+                      }
+                    },
+                    "path": "source.rs",
+                    "start_line": 1
+                  },
+                  "text": "fn café() {}",
+                  "truncated": false
+                }
+              ]
+            },
+            "id": "0808080808080808080808080808080808080808080808080808080808080808",
+            "operation": "search",
+            "role": "unknown",
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_03030303030303030303030303030303",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "05050505050505050505050505050505",
+                "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+                "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+              }
+            }
+          }
+        ],
+        "remaining_input_tokens": 2048,
+        "remaining_ms": 30000,
+        "roster": {
+          "basis": {
+            "read_choices_available": 0,
+            "read_choices_omitted": 0,
+            "read_choices_scored": [],
+            "source_units_available": 1,
+            "source_units_omitted": 0,
+            "source_units_partial": 0,
+            "source_units_presented": [
+              {
+                "kind": "hit",
+                "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                "result_pointer": "/hits/0",
+                "utf8_end": 13,
+                "utf8_start": 0
+              }
+            ]
+          },
+          "cards": [
+            {
+              "action": {
+                "kind": "sufficient"
+              },
+              "assessments": [
+                {
+                  "evidence": {
+                    "kind": "hit",
+                    "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                    "result_pointer": "/hits/0",
+                    "utf8_end": 13,
+                    "utf8_start": 0
+                  },
+                  "relevance": "useful",
+                  "role": "definition"
+                }
+              ],
+              "gap": "sufficient",
+              "id": "0909090909090909090909090909090909090909090909090909090909090909",
+              "reason": "retained_evidence_covers_question"
+            }
+          ],
+          "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "policy": "1111111111111111111111111111111111111111111111111111111111111111",
+          "schema": "airk.arbiter.context-action-roster/1",
+          "scope": {
+            "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+            "catalog": "02020202020202020202020202020202",
+            "configuration_revision": 1,
+            "index_id": "idx_03030303030303030303030303030303",
+            "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+            "publication": {
+              "collection": "fixture",
+              "generation": 1,
+              "incarnation": "05050505050505050505050505050505",
+              "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+              "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+            }
+          }
+        },
+        "scope": {
+          "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "05050505050505050505050505050505",
+            "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+            "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+          }
+        },
+        "worker": {
+          "fencing_generation": 1,
+          "project": "1919191919191919191919191919191919191919191919191919191919191919",
+          "service": "17171717171717171717171717171717",
+          "worker": "63636363636363636363636363636363"
+        }
+      },
+      "name": "foreign_worker",
+      "now_ns": 100,
+      "worker": {
+        "fencing_generation": 1,
+        "project": "1919191919191919191919191919191919191919191919191919191919191919",
+        "service": "17171717171717171717171717171717",
+        "worker": "18181818181818181818181818181818"
+      }
+    },
+    {
+      "accepted": false,
+      "authority": {
+        "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+        "grant_id": "grt_15151515151515151515151515151515",
+        "grant_revision": 1,
+        "index_id": "idx_03030303030303030303030303030303",
+        "lease_generation": 1,
+        "schema": 1
+      },
+      "clock": "unix_monotonic",
+      "input": {
+        "authority": {
+          "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+          "grant_id": "grt_15151515151515151515151515151515",
+          "grant_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "lease_generation": 1,
+          "schema": 1
+        },
+        "choices": [],
+        "ordinal": 1,
+        "parent_budget": {
+          "calls": 8,
+          "candidates": 32,
+          "deadline_ms": 30000,
+          "fanout": 8,
+          "input_tokens": 2048,
+          "max_bytes": 262144,
+          "rounds": 3
+        },
+        "partition": null,
+        "question": "Where is café defined?",
+        "read_attempt": {
+          "clock": "unix_monotonic",
+          "expires_monotonic_ns": 99,
+          "remaining_ns": 30000000000,
+          "request_id": "16161616161616161616161616161616",
+          "schema": 1
+        },
+        "records": [
+          {
+            "arguments": {
+              "query": "café definition"
+            },
+            "canonical_result": {
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": [
+                {
+                  "citation": {
+                    "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                    "end_line": 1,
+                    "location": {
+                      "Lines": {
+                        "end": 1,
+                        "start": 1
+                      }
+                    },
+                    "path": "source.rs",
+                    "start_line": 1
+                  },
+                  "text": "fn café() {}",
+                  "truncated": false
+                }
+              ]
+            },
+            "id": "0808080808080808080808080808080808080808080808080808080808080808",
+            "operation": "search",
+            "role": "unknown",
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_03030303030303030303030303030303",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "05050505050505050505050505050505",
+                "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+                "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+              }
+            }
+          }
+        ],
+        "remaining_input_tokens": 2048,
+        "remaining_ms": 30000,
+        "roster": {
+          "basis": {
+            "read_choices_available": 0,
+            "read_choices_omitted": 0,
+            "read_choices_scored": [],
+            "source_units_available": 1,
+            "source_units_omitted": 0,
+            "source_units_partial": 0,
+            "source_units_presented": [
+              {
+                "kind": "hit",
+                "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                "result_pointer": "/hits/0",
+                "utf8_end": 13,
+                "utf8_start": 0
+              }
+            ]
+          },
+          "cards": [
+            {
+              "action": {
+                "kind": "sufficient"
+              },
+              "assessments": [
+                {
+                  "evidence": {
+                    "kind": "hit",
+                    "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                    "result_pointer": "/hits/0",
+                    "utf8_end": 13,
+                    "utf8_start": 0
+                  },
+                  "relevance": "useful",
+                  "role": "definition"
+                }
+              ],
+              "gap": "sufficient",
+              "id": "0909090909090909090909090909090909090909090909090909090909090909",
+              "reason": "retained_evidence_covers_question"
+            }
+          ],
+          "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "policy": "1111111111111111111111111111111111111111111111111111111111111111",
+          "schema": "airk.arbiter.context-action-roster/1",
+          "scope": {
+            "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+            "catalog": "02020202020202020202020202020202",
+            "configuration_revision": 1,
+            "index_id": "idx_03030303030303030303030303030303",
+            "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+            "publication": {
+              "collection": "fixture",
+              "generation": 1,
+              "incarnation": "05050505050505050505050505050505",
+              "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+              "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+            }
+          }
+        },
+        "scope": {
+          "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "05050505050505050505050505050505",
+            "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+            "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+          }
+        },
+        "worker": {
+          "fencing_generation": 1,
+          "project": "1919191919191919191919191919191919191919191919191919191919191919",
+          "service": "17171717171717171717171717171717",
+          "worker": "18181818181818181818181818181818"
+        }
+      },
+      "name": "original_attempt_expired",
+      "now_ns": 100,
+      "worker": {
+        "fencing_generation": 1,
+        "project": "1919191919191919191919191919191919191919191919191919191919191919",
+        "service": "17171717171717171717171717171717",
+        "worker": "18181818181818181818181818181818"
+      }
+    },
+    {
+      "accepted": false,
+      "authority": {
+        "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+        "grant_id": "grt_15151515151515151515151515151515",
+        "grant_revision": 1,
+        "index_id": "idx_03030303030303030303030303030303",
+        "lease_generation": 1,
+        "schema": 1
+      },
+      "clock": "unix_monotonic",
+      "input": {
+        "authority": {
+          "fingerprint": "0404040404040404040404040404040404040404040404040404040404040404",
+          "grant_id": "grt_15151515151515151515151515151515",
+          "grant_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "lease_generation": 1,
+          "schema": 1
+        },
+        "choices": [],
+        "ordinal": 1,
+        "parent_budget": {
+          "calls": 8,
+          "candidates": 32,
+          "deadline_ms": 30000,
+          "fanout": 8,
+          "input_tokens": 2048,
+          "max_bytes": 262144,
+          "rounds": 3
+        },
+        "partition": null,
+        "question": "Where is café defined?",
+        "read_attempt": {
+          "clock": "unix_monotonic",
+          "expires_monotonic_ns": 30000000100,
+          "remaining_ns": 30000000000,
+          "request_id": "16161616161616161616161616161616",
+          "schema": 1
+        },
+        "records": [
+          {
+            "arguments": {
+              "query": "café definition"
+            },
+            "canonical_result": {
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": [
+                {
+                  "citation": {
+                    "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                    "end_line": 1,
+                    "location": {
+                      "Lines": {
+                        "end": 1,
+                        "start": 1
+                      }
+                    },
+                    "path": "source.rs",
+                    "start_line": 1
+                  },
+                  "text": "fn café() {}",
+                  "truncated": false
+                }
+              ]
+            },
+            "id": "0808080808080808080808080808080808080808080808080808080808080808",
+            "operation": "search",
+            "role": "unknown",
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_03030303030303030303030303030303",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "05050505050505050505050505050505",
+                "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+                "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+              }
+            }
+          },
+          {
+            "arguments": {
+              "query": "café definition"
+            },
+            "canonical_result": {
+              "contradictory": true,
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": [
+                {
+                  "citation": {
+                    "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                    "end_line": 1,
+                    "location": {
+                      "Lines": {
+                        "end": 1,
+                        "start": 1
+                      }
+                    },
+                    "path": "source.rs",
+                    "start_line": 1
+                  },
+                  "text": "fn café() {}",
+                  "truncated": false
+                }
+              ]
+            },
+            "id": "0808080808080808080808080808080808080808080808080808080808080808",
+            "operation": "search",
+            "role": "unknown",
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_03030303030303030303030303030303",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "05050505050505050505050505050505",
+                "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+                "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+              }
+            }
+          }
+        ],
+        "remaining_input_tokens": 2048,
+        "remaining_ms": 30000,
+        "roster": {
+          "basis": {
+            "read_choices_available": 0,
+            "read_choices_omitted": 0,
+            "read_choices_scored": [],
+            "source_units_available": 1,
+            "source_units_omitted": 0,
+            "source_units_partial": 0,
+            "source_units_presented": [
+              {
+                "kind": "hit",
+                "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                "result_pointer": "/hits/0",
+                "utf8_end": 13,
+                "utf8_start": 0
+              }
+            ]
+          },
+          "cards": [
+            {
+              "action": {
+                "kind": "sufficient"
+              },
+              "assessments": [
+                {
+                  "evidence": {
+                    "kind": "hit",
+                    "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                    "result_pointer": "/hits/0",
+                    "utf8_end": 13,
+                    "utf8_start": 0
+                  },
+                  "relevance": "useful",
+                  "role": "definition"
+                }
+              ],
+              "gap": "sufficient",
+              "id": "0909090909090909090909090909090909090909090909090909090909090909",
+              "reason": "retained_evidence_covers_question"
+            }
+          ],
+          "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "policy": "1111111111111111111111111111111111111111111111111111111111111111",
+          "schema": "airk.arbiter.context-action-roster/1",
+          "scope": {
+            "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+            "catalog": "02020202020202020202020202020202",
+            "configuration_revision": 1,
+            "index_id": "idx_03030303030303030303030303030303",
+            "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+            "publication": {
+              "collection": "fixture",
+              "generation": 1,
+              "incarnation": "05050505050505050505050505050505",
+              "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+              "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+            }
+          }
+        },
+        "scope": {
+          "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_03030303030303030303030303030303",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "05050505050505050505050505050505",
+            "revision": "0606060606060606060606060606060606060606060606060606060606060606",
+            "token": "airk-r1:05050505050505050505050505050505:1:0606060606060606060606060606060606060606060606060606060606060606"
+          }
+        },
+        "worker": {
+          "fencing_generation": 1,
+          "project": "1919191919191919191919191919191919191919191919191919191919191919",
+          "service": "17171717171717171717171717171717",
+          "worker": "18181818181818181818181818181818"
+        }
+      },
+      "name": "contradictory_same_record_id",
+      "now_ns": 100,
+      "worker": {
+        "fencing_generation": 1,
+        "project": "1919191919191919191919191919191919191919191919191919191919191919",
+        "service": "17171717171717171717171717171717",
+        "worker": "18181818181818181818181818181818"
+      }
+    }
+  ],
+  "schema": "airk.native-context-action.cases/1"
+}

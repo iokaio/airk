@@ -85,11 +85,16 @@ fn advice() -> ContextActionAdvice {
         compiler: digest(11),
         calibration: digest(12),
         policy: digest(13),
+        task_policy: digest(17),
         scope: scope(),
         input_digest: digest(14),
         evidence: vec![digest(8)],
+        reserved_input_tokens: 100,
+        observed_input_tokens: Some(100),
         work: Work {
             input_tokens: 100,
+            compile_us: Some(0),
+            inference_us: Some(0),
             ..Work::default()
         },
         outcome: Outcome::Accepted {
@@ -113,6 +118,8 @@ fn response() -> ContextResponseV2 {
         work: Work {
             calls: 1,
             input_tokens: 100,
+            compile_us: Some(0),
+            inference_us: Some(0),
             ..Work::default()
         },
         candidate_count: 1,
@@ -162,9 +169,38 @@ fn overrun_deadline() -> ContextResponseV2 {
     value.work.queue_us = work.queue_us;
     value.assessment_history[0].result = AssessmentResult::Unavailable {
         reason: AssessmentUnavailable::Deadline,
+        advice: Some(ContextActionAdvice {
+            outcome: Outcome::Unavailable {
+                reason: "Native work finished after its deadline.".into(),
+            },
+            work: work.clone(),
+            ..advice()
+        }),
         work,
         work_unknown: false,
     };
+    value
+}
+fn overrun_token_budget() -> ContextResponseV2 {
+    let mut value = overrun_deadline();
+    value.stop = PartitionTermination::Budget;
+    value.assessment.termination = value.stop;
+    value.work.input_tokens = 2050;
+    let AssessmentResult::Unavailable {
+        reason,
+        work,
+        advice,
+        ..
+    } = &mut value.assessment_history[0].result
+    else {
+        unreachable!()
+    };
+    *reason = AssessmentUnavailable::TokenBudget;
+    work.input_tokens = 2050;
+    let advice = advice.as_mut().unwrap();
+    advice.work.input_tokens = 2050;
+    advice.observed_input_tokens = Some(2050);
+    advice.reserved_input_tokens = 2048;
     value
 }
 
@@ -300,6 +336,19 @@ fn eight_total_frozen_cards_do_not_grant_unknown_choices_or_dismiss_omissions() 
 
 #[test]
 fn whole_card_reason_role_relevance_and_gap_must_agree() -> Result<()> {
+    let mut generic_basis = basis();
+    generic_basis.read_choices_available = 1;
+    generic_basis.read_choices_scored = vec![digest(55)];
+    let mut generic = sufficient();
+    generic.action = ContextAction::Read { choice: digest(55) };
+    generic.gap = Gap::Unsupported;
+    generic.reason = ContextReason::AdditionalEvidenceMayHelp;
+    generic.validate(&generic_basis)?;
+    generic.gap = Gap::Definition;
+    assert!(generic.validate(&generic_basis).is_err());
+    generic.gap = Gap::Unsupported;
+    generic.reason = ContextReason::MissingDefinition;
+    assert!(generic.validate(&generic_basis).is_err());
     sufficient().validate(&basis())?;
     let mut card = sufficient();
     card.gap = Gap::Definition;
@@ -334,6 +383,35 @@ fn whole_card_reason_role_relevance_and_gap_must_agree() -> Result<()> {
 
 #[test]
 fn exact_unit_history_and_partition_prevent_stale_or_packed_sufficiency() -> Result<()> {
+    let mut historical = response();
+    historical.stop = PartitionTermination::NoProgress;
+    historical.assessment.termination = historical.stop;
+    historical.assessment.coverage = PartitionCoverage::Unassessed {
+        reason: AssessmentUnavailable::Unavailable,
+    };
+    historical.gaps = vec![Gap::Unsupported];
+    historical.assessment_history[0].applicability =
+        AssessmentApplicability::HistoricalAfterConfigurationChange;
+    let mut current_scope = historical.assessment.scope.clone();
+    current_scope.configuration_revision = 2;
+    historical.applications = vec![IndexApplication {
+        scope: current_scope,
+        profile: None,
+        availability: Availability::Disabled,
+        reason: "Current policy is disabled; old work is an internal historical observation."
+            .into(),
+    }];
+    historical.validate(&Budget::default())?; // representation is NOT permission to deliver revoked NN data
+    assert_eq!(historical.records[0].scope.configuration_revision, 1);
+    assert_eq!(historical.applications[0].scope.configuration_revision, 2);
+    let mut foreign = historical.clone();
+    foreign.applications[0].scope.authorization = digest(99);
+    assert!(foreign.validate(&Budget::default()).is_err());
+    foreign = historical.clone();
+    foreign.applications[0].scope.publication.revision = digest(99);
+    assert!(foreign.validate(&Budget::default()).is_err());
+    historical.assessment_history[0].applicability = AssessmentApplicability::Current;
+    assert!(historical.validate(&Budget::default()).is_err());
     response().validate(&Budget::default())?;
     for applicability in [
         AssessmentApplicability::HistoricalAfterRead,
@@ -366,9 +444,10 @@ fn ordinals_are_sparse_global_subsets_not_a_one_assessment_cap_or_budget_reset()
     read_card.reason = ContextReason::MissingDefinition;
     for later_result in [
         AssessmentResult::Unavailable {
-            reason: AssessmentUnavailable::Unavailable,
+            reason: AssessmentUnavailable::TaskUnsupported,
             work: Work::default(),
             work_unknown: false,
+            advice: None,
         },
         AssessmentResult::Abstained {
             advice: ContextActionAdvice {
@@ -442,6 +521,7 @@ fn unknown_postdispatch_work_blocks_later_optional_decisions_and_never_becomes_c
             ..Work::default()
         },
         work_unknown: true,
+        advice: None,
     };
     value.validate(&Budget::default())?;
     let mut later = response().assessment_history.remove(0);
@@ -454,7 +534,80 @@ fn unknown_postdispatch_work_blocks_later_optional_decisions_and_never_becomes_c
 
 #[test]
 fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_values() -> Result<()> {
+    let mut empty = advice();
+    empty.observed_input_tokens = None;
+    empty.work.input_tokens = 0;
+    assert!(empty.validate().is_err());
+    empty.observed_input_tokens = Some(0);
+    assert!(empty.validate().is_err());
+    empty.outcome = Outcome::Unavailable {
+        reason: "Actual cost remains unknown.".into(),
+    };
+    empty.observed_input_tokens = None;
+    empty.validate()?;
+    let mut required = serde_json::to_value(&empty)?;
+    assert!(required["observed_input_tokens"].is_null());
+    serde_json::from_value::<ContextActionAdvice>(required.clone())?.validate()?;
+    required
+        .as_object_mut()
+        .unwrap()
+        .remove("observed_input_tokens");
+    assert!(serde_json::from_value::<ContextActionAdvice>(required).is_err());
+    let unavailable = AssessmentResult::Unavailable {
+        reason: AssessmentUnavailable::TaskUnsupported,
+        work: Work::default(),
+        work_unknown: false,
+        advice: None,
+    };
+    let mut required = serde_json::to_value(unavailable)?;
+    assert!(required.get("advice").is_some_and(Value::is_null));
+    serde_json::from_value::<AssessmentResult>(required.clone())?;
+    required.as_object_mut().unwrap().remove("advice");
+    assert!(serde_json::from_value::<AssessmentResult>(required).is_err());
+    let schema = serde_json::to_value(schemars::schema_for!(ContextActionAdvice))?;
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("observed_input_tokens"))
+    );
+    let nullable = &schema["properties"]["observed_input_tokens"];
+    assert!(
+        nullable["type"]
+            .as_array()
+            .is_some_and(|types| types.contains(&json!("null")))
+            || nullable["anyOf"]
+                .as_array()
+                .is_some_and(|types| types.iter().any(|kind| kind["type"] == "null"))
+    );
+    let schema = serde_json::to_value(schemars::schema_for!(AssessmentResult))?;
+    let unavailable = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["properties"]["status"]["const"] == "unavailable")
+        .unwrap();
+    assert!(
+        unavailable["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("advice"))
+    );
+    assert!(
+        unavailable["properties"]["advice"]["anyOf"]
+            .as_array()
+            .is_some_and(|types| types.iter().any(|kind| kind["type"] == "null"))
+    );
+    let mut fabricated = empty.clone();
+    fabricated.work.input_tokens = 1;
+    assert!(fabricated.validate().is_err());
     let mut legacy = advice();
+    let mut required_policy = serde_json::to_value(&legacy)?;
+    required_policy
+        .as_object_mut()
+        .unwrap()
+        .remove("task_policy");
+    assert!(serde_json::from_value::<ContextActionAdvice>(required_policy).is_err());
     legacy.task = Task::ContextNextRead;
     assert!(legacy.validate().is_err());
     legacy = advice();
@@ -463,6 +616,14 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
     };
     assert!(legacy.validate().is_err());
     let original = response();
+    let mut full = serde_json::to_value(&original)?;
+    full["transport_future"] = json!({"complete":[1,2,3]});
+    full["publication"] = serde_json::to_value(&original.assessment.scope.publication)?;
+    let before = full.clone();
+    ContextResponseV2::from_canonical(&full, &Budget::default())?;
+    assert_eq!(full, before);
+    full["publication"]["generation"] = json!(99);
+    assert!(ContextResponseV2::from_canonical(&full, &Budget::default()).is_err());
     let decoded: ContextResponseV2 = serde_json::from_slice(&serde_json::to_vec(&original)?)?;
     decoded.validate(&Budget::default())?;
     assert_eq!(
@@ -529,16 +690,32 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
     let mut overflow = failed;
     let mut later = overflow.assessment_history[0].clone();
     later.ordinal = 2;
-    let AssessmentResult::Unavailable { work, .. } = &mut overflow.assessment_history[0].result
+    let AssessmentResult::Unavailable { work, advice, .. } =
+        &mut overflow.assessment_history[0].result
     else {
         unreachable!()
     };
     work.queue_us = Some(u64::MAX);
+    advice.as_mut().unwrap().work.queue_us = Some(u64::MAX);
     overflow.assessment_history[0].applicability = AssessmentApplicability::HistoricalAfterRead;
     overflow.assessment_history.push(later);
     overflow.work.input_tokens = 200;
     overflow.work.queue_us = Some(u64::MAX);
     assert!(overflow.validate(&Budget::default()).is_err());
+    let violation = overrun_token_budget();
+    violation.validate(&Budget::default())?;
+    assert_eq!(violation.work.input_tokens, 2050);
+    let mut false_success = violation.clone();
+    false_success.stop = PartitionTermination::Covered;
+    false_success.assessment.termination = false_success.stop;
+    false_success.gaps = vec![Gap::Sufficient];
+    assert!(false_success.validate(&Budget::default()).is_err());
+    let mut later = violation.clone();
+    let mut event = response().assessment_history.remove(0);
+    event.ordinal = 2;
+    later.assessment_history.push(event);
+    later.work.input_tokens = 2150;
+    assert!(later.validate(&Budget::default()).is_err());
     Ok(())
 }
 
@@ -579,6 +756,41 @@ fn emit_context_action_semantic_cases() -> Result<()> {
     };
     advice.work.queue_us = input.work.queue_us;
     add("overrun_cannot_be_covered", input, false)?;
+    add(
+        "failed_token_measurement_retained",
+        overrun_token_budget(),
+        true,
+    )?;
+    let mut generic = response();
+    generic.stop = PartitionTermination::NoProgress;
+    generic.assessment.termination = generic.stop;
+    generic.gaps = vec![Gap::Unsupported];
+    generic.assessment_history[0].basis.read_choices_available = 1;
+    generic.assessment_history[0].basis.read_choices_scored = vec![digest(55)];
+    let AssessmentResult::Selected { card, .. } = &mut generic.assessment_history[0].result else {
+        unreachable!()
+    };
+    card.action = ContextAction::Read { choice: digest(55) };
+    card.gap = Gap::Unsupported;
+    card.reason = ContextReason::AdditionalEvidenceMayHelp;
+    for unit in &mut card.assessments {
+        unit.role = EvidenceRole::Unknown;
+        unit.relevance = RelevanceHypothesis::Uncertain;
+    }
+    add(
+        "generic_read_leaves_need_unclassified",
+        generic.clone(),
+        true,
+    )?;
+    let AssessmentResult::Selected { card, .. } = &mut generic.assessment_history[0].result else {
+        unreachable!()
+    };
+    card.gap = Gap::Definition;
+    add(
+        "generic_read_reason_cannot_claim_definition",
+        generic,
+        false,
+    )?;
     let actual = json!({"schema":"airk.arbiter.context-action.cases/1","cases":cases});
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/split/arbiter/context_action_cases.json");

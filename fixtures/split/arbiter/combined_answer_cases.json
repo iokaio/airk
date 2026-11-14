@@ -1,0 +1,2368 @@
+{
+  "cases": [
+    {
+      "name": "two_complete_members",
+      "native_member_results": [
+        {
+          "applications": [],
+          "assessment": {
+            "coverage": {
+              "ordinal": 1,
+              "status": "assessed"
+            },
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_01010101010101010101010101010101",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+              }
+            },
+            "termination": "covered"
+          },
+          "assessment_history": [
+            {
+              "applicability": "current",
+              "basis": {
+                "read_choices_available": 0,
+                "read_choices_omitted": 0,
+                "read_choices_scored": [],
+                "source_units_available": 1,
+                "source_units_omitted": 0,
+                "source_units_partial": 0,
+                "source_units_presented": [
+                  {
+                    "kind": "hit",
+                    "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                    "result_pointer": "/hits/0",
+                    "utf8_end": 13,
+                    "utf8_start": 0
+                  }
+                ]
+              },
+              "ordinal": 1,
+              "partition": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_01010101010101010101010101010101",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                }
+              },
+              "result": {
+                "advice": {
+                  "calibration": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                  "compiler": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+                  "evidence": [
+                    "0808080808080808080808080808080808080808080808080808080808080808"
+                  ],
+                  "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+                  "observed_input_tokens": 100,
+                  "outcome": {
+                    "decision": {
+                      "kind": "context_action",
+                      "value": "0909090909090909090909090909090909090909090909090909090909090909"
+                    },
+                    "status": "accepted"
+                  },
+                  "policy": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                  "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+                  "reserved_input_tokens": 100,
+                  "runtime": "onnxruntime-cpu/1.30.0",
+                  "schema": "airk.arbiter.advice/2",
+                  "scope": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  },
+                  "task": "airk.context_action.v1",
+                  "task_policy": "1111111111111111111111111111111111111111111111111111111111111111",
+                  "work": {
+                    "bytes": 0,
+                    "calls": 0,
+                    "candidates": 0,
+                    "compile_us": 0,
+                    "fanout": 0,
+                    "inference_us": 0,
+                    "input_tokens": 100,
+                    "policy_us": null,
+                    "queue_us": null,
+                    "rounds": 0
+                  }
+                },
+                "card": {
+                  "action": {
+                    "kind": "sufficient"
+                  },
+                  "assessments": [
+                    {
+                      "evidence": {
+                        "kind": "hit",
+                        "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                        "result_pointer": "/hits/0",
+                        "utf8_end": 13,
+                        "utf8_start": 0
+                      },
+                      "relevance": "useful",
+                      "role": "definition"
+                    }
+                  ],
+                  "gap": "sufficient",
+                  "id": "0909090909090909090909090909090909090909090909090909090909090909",
+                  "reason": "retained_evidence_covers_question"
+                },
+                "status": "selected"
+              }
+            }
+          ],
+          "candidate_count": 1,
+          "future_public_data": {
+            "kept": [
+              1,
+              "exact"
+            ],
+            "nothing_dropped": true
+          },
+          "gaps": [
+            "sufficient"
+          ],
+          "omitted_count": 0,
+          "packet_schema": "airk.arbiter.packet/1",
+          "paragraphs": [
+            {
+              "evidence": [
+                "0808080808080808080808080808080808080808080808080808080808080808"
+              ],
+              "interpretation": false,
+              "text": "fn café() {}"
+            }
+          ],
+          "question": "Where is café defined?",
+          "records": [
+            {
+              "arguments": {
+                "query": "café definition"
+              },
+              "canonical_result": {
+                "future_native_field": {
+                  "retained": true
+                },
+                "hits": [
+                  {
+                    "citation": {
+                      "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                      "end_line": 1,
+                      "location": {
+                        "Lines": {
+                          "end": 1,
+                          "start": 1
+                        }
+                      },
+                      "path": "api/member-1.rs",
+                      "start_line": 1
+                    },
+                    "text": "fn café() {}",
+                    "truncated": false
+                  }
+                ]
+              },
+              "id": "0808080808080808080808080808080808080808080808080808080808080808",
+              "operation": "search",
+              "role": "unknown",
+              "scope": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_01010101010101010101010101010101",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                }
+              }
+            }
+          ],
+          "schema": "airk.arbiter.context/2",
+          "stop": "covered",
+          "work": {
+            "bytes": 0,
+            "calls": 1,
+            "candidates": 0,
+            "compile_us": 0,
+            "fanout": 0,
+            "inference_us": 0,
+            "input_tokens": 100,
+            "policy_us": null,
+            "queue_us": null,
+            "rounds": 0
+          }
+        },
+        {
+          "applications": [],
+          "assessment": {
+            "coverage": {
+              "ordinal": 3,
+              "status": "assessed"
+            },
+            "scope": {
+              "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_02020202020202020202020202020202",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 2,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "termination": "covered"
+          },
+          "assessment_history": [
+            {
+              "applicability": "current",
+              "basis": {
+                "read_choices_available": 0,
+                "read_choices_omitted": 0,
+                "read_choices_scored": [],
+                "source_units_available": 1,
+                "source_units_omitted": 0,
+                "source_units_partial": 0,
+                "source_units_presented": [
+                  {
+                    "kind": "hit",
+                    "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                    "result_pointer": "/hits/0",
+                    "utf8_end": 13,
+                    "utf8_start": 0
+                  }
+                ]
+              },
+              "ordinal": 3,
+              "partition": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_02020202020202020202020202020202",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 2,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                  "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              },
+              "result": {
+                "advice": {
+                  "calibration": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                  "compiler": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+                  "evidence": [
+                    "0808080808080808080808080808080808080808080808080808080808080808"
+                  ],
+                  "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+                  "observed_input_tokens": 100,
+                  "outcome": {
+                    "decision": {
+                      "kind": "context_action",
+                      "value": "0909090909090909090909090909090909090909090909090909090909090909"
+                    },
+                    "status": "accepted"
+                  },
+                  "policy": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                  "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+                  "reserved_input_tokens": 100,
+                  "runtime": "onnxruntime-cpu/1.30.0",
+                  "schema": "airk.arbiter.advice/2",
+                  "scope": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_02020202020202020202020202020202",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 2,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                      "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                    }
+                  },
+                  "task": "airk.context_action.v1",
+                  "task_policy": "1111111111111111111111111111111111111111111111111111111111111111",
+                  "work": {
+                    "bytes": 0,
+                    "calls": 0,
+                    "candidates": 0,
+                    "compile_us": 0,
+                    "fanout": 0,
+                    "inference_us": 0,
+                    "input_tokens": 100,
+                    "policy_us": null,
+                    "queue_us": null,
+                    "rounds": 0
+                  }
+                },
+                "card": {
+                  "action": {
+                    "kind": "sufficient"
+                  },
+                  "assessments": [
+                    {
+                      "evidence": {
+                        "kind": "hit",
+                        "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                        "result_pointer": "/hits/0",
+                        "utf8_end": 13,
+                        "utf8_start": 0
+                      },
+                      "relevance": "useful",
+                      "role": "definition"
+                    }
+                  ],
+                  "gap": "sufficient",
+                  "id": "0909090909090909090909090909090909090909090909090909090909090909",
+                  "reason": "retained_evidence_covers_question"
+                },
+                "status": "selected"
+              }
+            }
+          ],
+          "candidate_count": 1,
+          "future_public_data": {
+            "kept": [
+              1,
+              "exact"
+            ],
+            "nothing_dropped": true
+          },
+          "gaps": [
+            "sufficient"
+          ],
+          "omitted_count": 0,
+          "packet_schema": "airk.arbiter.packet/1",
+          "paragraphs": [
+            {
+              "evidence": [
+                "0808080808080808080808080808080808080808080808080808080808080808"
+              ],
+              "interpretation": false,
+              "text": "fn café() {}"
+            }
+          ],
+          "question": "Where is café defined?",
+          "records": [
+            {
+              "arguments": {
+                "query": "café definition"
+              },
+              "canonical_result": {
+                "future_native_field": {
+                  "retained": true
+                },
+                "hits": [
+                  {
+                    "citation": {
+                      "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                      "end_line": 1,
+                      "location": {
+                        "Lines": {
+                          "end": 1,
+                          "start": 1
+                        }
+                      },
+                      "path": "api/member-2.rs",
+                      "start_line": 1
+                    },
+                    "text": "fn café() {}",
+                    "truncated": false
+                  }
+                ]
+              },
+              "id": "0808080808080808080808080808080808080808080808080808080808080808",
+              "operation": "search",
+              "role": "unknown",
+              "scope": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_02020202020202020202020202020202",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 2,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                  "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              }
+            }
+          ],
+          "schema": "airk.arbiter.context/2",
+          "stop": "covered",
+          "work": {
+            "bytes": 0,
+            "calls": 1,
+            "candidates": 0,
+            "compile_us": 0,
+            "fanout": 0,
+            "inference_us": 0,
+            "input_tokens": 100,
+            "policy_us": null,
+            "queue_us": null,
+            "rounds": 0
+          }
+        }
+      ],
+      "output": {
+        "context": {
+          "attempt": "09090909090909090909090909090909",
+          "budget": {
+            "calls": 8,
+            "candidates": 32,
+            "deadline_ms": 30000,
+            "fanout": 8,
+            "input_tokens": 2048,
+            "max_bytes": 262144,
+            "rounds": 3
+          },
+          "delivery_bindings": [
+            {
+              "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "scope": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_01010101010101010101010101010101",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                }
+              }
+            },
+            {
+              "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "scope": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_02020202020202020202020202020202",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 2,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                  "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              }
+            }
+          ],
+          "known_used": {
+            "bytes": 10560,
+            "calls": 2,
+            "candidates": 2,
+            "input_tokens": 200
+          },
+          "members": [
+            {
+              "allowance": {
+                "assessment_ordinals": [
+                  1,
+                  2
+                ],
+                "attempt": "09090909090909090909090909090909",
+                "index_id": "idx_01010101010101010101010101010101",
+                "parent_budget": {
+                  "calls": 8,
+                  "candidates": 32,
+                  "deadline_ms": 30000,
+                  "fanout": 8,
+                  "input_tokens": 2048,
+                  "max_bytes": 262144,
+                  "rounds": 3
+                },
+                "resources": {
+                  "bytes": 131072,
+                  "calls": 4,
+                  "candidates": 16,
+                  "input_tokens": 1024
+                },
+                "schema": "airk.context-partition-allowance/1",
+                "selection": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "index_id": "idx_01010101010101010101010101010101",
+              "outcome": {
+                "assessment_ordinals": [
+                  1
+                ],
+                "peak_fanout": 0,
+                "read_depth": 0,
+                "state": "known",
+                "used": {
+                  "bytes": 5280,
+                  "calls": 1,
+                  "candidates": 1,
+                  "input_tokens": 100
+                }
+              }
+            },
+            {
+              "allowance": {
+                "assessment_ordinals": [
+                  3
+                ],
+                "attempt": "09090909090909090909090909090909",
+                "index_id": "idx_02020202020202020202020202020202",
+                "parent_budget": {
+                  "calls": 8,
+                  "candidates": 32,
+                  "deadline_ms": 30000,
+                  "fanout": 8,
+                  "input_tokens": 2048,
+                  "max_bytes": 262144,
+                  "rounds": 3
+                },
+                "resources": {
+                  "bytes": 131072,
+                  "calls": 4,
+                  "candidates": 16,
+                  "input_tokens": 1024
+                },
+                "schema": "airk.context-partition-allowance/1",
+                "selection": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "index_id": "idx_02020202020202020202020202020202",
+              "outcome": {
+                "assessment_ordinals": [
+                  3
+                ],
+                "peak_fanout": 0,
+                "read_depth": 0,
+                "state": "known",
+                "used": {
+                  "bytes": 5280,
+                  "calls": 1,
+                  "candidates": 1,
+                  "input_tokens": 100
+                }
+              }
+            }
+          ],
+          "schema": "airk.combined-context/1",
+          "selection": "0707070707070707070707070707070707070707070707070707070707070707",
+          "termination": "complete",
+          "unknown_held": {
+            "bytes": 0,
+            "calls": 0,
+            "candidates": 0,
+            "input_tokens": 0
+          }
+        },
+        "members": [
+          {
+            "allocation": {
+              "deadline_ms": 30000,
+              "index_id": "idx_01010101010101010101010101010101",
+              "limit": 1,
+              "max_bytes": 131072,
+              "verification_deadline_ms": 1000,
+              "verification_max_bytes": 8192,
+              "verification_max_sources": 4
+            },
+            "elapsed_ms": 1,
+            "index_id": "idx_01010101010101010101010101010101",
+            "is_error": false,
+            "outcome": "complete",
+            "result": {
+              "applications": [],
+              "assessment": {
+                "coverage": {
+                  "ordinal": 1,
+                  "status": "assessed"
+                },
+                "scope": {
+                  "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "catalog": "02020202020202020202020202020202",
+                  "configuration_revision": 1,
+                  "index_id": "idx_01010101010101010101010101010101",
+                  "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "publication": {
+                    "collection": "fixture",
+                    "generation": 1,
+                    "incarnation": "01010101010101010101010101010101",
+                    "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                  }
+                },
+                "termination": "covered"
+              },
+              "assessment_history": [
+                {
+                  "applicability": "current",
+                  "basis": {
+                    "read_choices_available": 0,
+                    "read_choices_omitted": 0,
+                    "read_choices_scored": [],
+                    "source_units_available": 1,
+                    "source_units_omitted": 0,
+                    "source_units_partial": 0,
+                    "source_units_presented": [
+                      {
+                        "kind": "hit",
+                        "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                        "result_pointer": "/hits/0",
+                        "utf8_end": 13,
+                        "utf8_start": 0
+                      }
+                    ]
+                  },
+                  "ordinal": 1,
+                  "partition": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  },
+                  "result": {
+                    "advice": {
+                      "calibration": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                      "compiler": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+                      "evidence": [
+                        "0808080808080808080808080808080808080808080808080808080808080808"
+                      ],
+                      "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+                      "observed_input_tokens": 100,
+                      "outcome": {
+                        "decision": {
+                          "kind": "context_action",
+                          "value": "0909090909090909090909090909090909090909090909090909090909090909"
+                        },
+                        "status": "accepted"
+                      },
+                      "policy": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                      "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+                      "reserved_input_tokens": 100,
+                      "runtime": "onnxruntime-cpu/1.30.0",
+                      "schema": "airk.arbiter.advice/2",
+                      "scope": {
+                        "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                        "catalog": "02020202020202020202020202020202",
+                        "configuration_revision": 1,
+                        "index_id": "idx_01010101010101010101010101010101",
+                        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                        "publication": {
+                          "collection": "fixture",
+                          "generation": 1,
+                          "incarnation": "01010101010101010101010101010101",
+                          "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                          "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                        }
+                      },
+                      "task": "airk.context_action.v1",
+                      "task_policy": "1111111111111111111111111111111111111111111111111111111111111111",
+                      "work": {
+                        "bytes": 0,
+                        "calls": 0,
+                        "candidates": 0,
+                        "compile_us": 0,
+                        "fanout": 0,
+                        "inference_us": 0,
+                        "input_tokens": 100,
+                        "policy_us": null,
+                        "queue_us": null,
+                        "rounds": 0
+                      }
+                    },
+                    "card": {
+                      "action": {
+                        "kind": "sufficient"
+                      },
+                      "assessments": [
+                        {
+                          "evidence": {
+                            "kind": "hit",
+                            "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                            "result_pointer": "/hits/0",
+                            "utf8_end": 13,
+                            "utf8_start": 0
+                          },
+                          "relevance": "useful",
+                          "role": "definition"
+                        }
+                      ],
+                      "gap": "sufficient",
+                      "id": "0909090909090909090909090909090909090909090909090909090909090909",
+                      "reason": "retained_evidence_covers_question"
+                    },
+                    "status": "selected"
+                  }
+                }
+              ],
+              "candidate_count": 1,
+              "future_public_data": {
+                "kept": [
+                  1,
+                  "exact"
+                ],
+                "nothing_dropped": true
+              },
+              "gaps": [
+                "sufficient"
+              ],
+              "omitted_count": 0,
+              "packet_schema": "airk.arbiter.packet/1",
+              "paragraphs": [
+                {
+                  "evidence": [
+                    "0808080808080808080808080808080808080808080808080808080808080808"
+                  ],
+                  "interpretation": false,
+                  "text": "fn café() {}"
+                }
+              ],
+              "question": "Where is café defined?",
+              "records": [
+                {
+                  "arguments": {
+                    "query": "café definition"
+                  },
+                  "canonical_result": {
+                    "future_native_field": {
+                      "retained": true
+                    },
+                    "hits": [
+                      {
+                        "citation": {
+                          "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                          "end_line": 1,
+                          "location": {
+                            "Lines": {
+                              "end": 1,
+                              "start": 1
+                            }
+                          },
+                          "path": "api/member-1.rs",
+                          "start_line": 1
+                        },
+                        "text": "fn café() {}",
+                        "truncated": false
+                      }
+                    ]
+                  },
+                  "id": "0808080808080808080808080808080808080808080808080808080808080808",
+                  "operation": "search",
+                  "role": "unknown",
+                  "scope": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  }
+                }
+              ],
+              "schema": "airk.arbiter.context/2",
+              "stop": "covered",
+              "work": {
+                "bytes": 0,
+                "calls": 1,
+                "candidates": 0,
+                "compile_us": 0,
+                "fanout": 0,
+                "inference_us": 0,
+                "input_tokens": 100,
+                "policy_us": null,
+                "queue_us": null,
+                "rounds": 0
+              }
+            }
+          },
+          {
+            "allocation": {
+              "deadline_ms": 30000,
+              "index_id": "idx_02020202020202020202020202020202",
+              "limit": 1,
+              "max_bytes": 131072,
+              "verification_deadline_ms": 1000,
+              "verification_max_bytes": 8192,
+              "verification_max_sources": 4
+            },
+            "elapsed_ms": 1,
+            "index_id": "idx_02020202020202020202020202020202",
+            "is_error": false,
+            "outcome": "complete",
+            "result": {
+              "applications": [],
+              "assessment": {
+                "coverage": {
+                  "ordinal": 3,
+                  "status": "assessed"
+                },
+                "scope": {
+                  "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "catalog": "02020202020202020202020202020202",
+                  "configuration_revision": 1,
+                  "index_id": "idx_02020202020202020202020202020202",
+                  "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "publication": {
+                    "collection": "fixture",
+                    "generation": 2,
+                    "incarnation": "01010101010101010101010101010101",
+                    "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                    "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                  }
+                },
+                "termination": "covered"
+              },
+              "assessment_history": [
+                {
+                  "applicability": "current",
+                  "basis": {
+                    "read_choices_available": 0,
+                    "read_choices_omitted": 0,
+                    "read_choices_scored": [],
+                    "source_units_available": 1,
+                    "source_units_omitted": 0,
+                    "source_units_partial": 0,
+                    "source_units_presented": [
+                      {
+                        "kind": "hit",
+                        "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                        "result_pointer": "/hits/0",
+                        "utf8_end": 13,
+                        "utf8_start": 0
+                      }
+                    ]
+                  },
+                  "ordinal": 3,
+                  "partition": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_02020202020202020202020202020202",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 2,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                      "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                    }
+                  },
+                  "result": {
+                    "advice": {
+                      "calibration": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                      "compiler": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+                      "evidence": [
+                        "0808080808080808080808080808080808080808080808080808080808080808"
+                      ],
+                      "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+                      "observed_input_tokens": 100,
+                      "outcome": {
+                        "decision": {
+                          "kind": "context_action",
+                          "value": "0909090909090909090909090909090909090909090909090909090909090909"
+                        },
+                        "status": "accepted"
+                      },
+                      "policy": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                      "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+                      "reserved_input_tokens": 100,
+                      "runtime": "onnxruntime-cpu/1.30.0",
+                      "schema": "airk.arbiter.advice/2",
+                      "scope": {
+                        "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                        "catalog": "02020202020202020202020202020202",
+                        "configuration_revision": 1,
+                        "index_id": "idx_02020202020202020202020202020202",
+                        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                        "publication": {
+                          "collection": "fixture",
+                          "generation": 2,
+                          "incarnation": "01010101010101010101010101010101",
+                          "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                          "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                        }
+                      },
+                      "task": "airk.context_action.v1",
+                      "task_policy": "1111111111111111111111111111111111111111111111111111111111111111",
+                      "work": {
+                        "bytes": 0,
+                        "calls": 0,
+                        "candidates": 0,
+                        "compile_us": 0,
+                        "fanout": 0,
+                        "inference_us": 0,
+                        "input_tokens": 100,
+                        "policy_us": null,
+                        "queue_us": null,
+                        "rounds": 0
+                      }
+                    },
+                    "card": {
+                      "action": {
+                        "kind": "sufficient"
+                      },
+                      "assessments": [
+                        {
+                          "evidence": {
+                            "kind": "hit",
+                            "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                            "result_pointer": "/hits/0",
+                            "utf8_end": 13,
+                            "utf8_start": 0
+                          },
+                          "relevance": "useful",
+                          "role": "definition"
+                        }
+                      ],
+                      "gap": "sufficient",
+                      "id": "0909090909090909090909090909090909090909090909090909090909090909",
+                      "reason": "retained_evidence_covers_question"
+                    },
+                    "status": "selected"
+                  }
+                }
+              ],
+              "candidate_count": 1,
+              "future_public_data": {
+                "kept": [
+                  1,
+                  "exact"
+                ],
+                "nothing_dropped": true
+              },
+              "gaps": [
+                "sufficient"
+              ],
+              "omitted_count": 0,
+              "packet_schema": "airk.arbiter.packet/1",
+              "paragraphs": [
+                {
+                  "evidence": [
+                    "0808080808080808080808080808080808080808080808080808080808080808"
+                  ],
+                  "interpretation": false,
+                  "text": "fn café() {}"
+                }
+              ],
+              "question": "Where is café defined?",
+              "records": [
+                {
+                  "arguments": {
+                    "query": "café definition"
+                  },
+                  "canonical_result": {
+                    "future_native_field": {
+                      "retained": true
+                    },
+                    "hits": [
+                      {
+                        "citation": {
+                          "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                          "end_line": 1,
+                          "location": {
+                            "Lines": {
+                              "end": 1,
+                              "start": 1
+                            }
+                          },
+                          "path": "api/member-2.rs",
+                          "start_line": 1
+                        },
+                        "text": "fn café() {}",
+                        "truncated": false
+                      }
+                    ]
+                  },
+                  "id": "0808080808080808080808080808080808080808080808080808080808080808",
+                  "operation": "search",
+                  "role": "unknown",
+                  "scope": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_02020202020202020202020202020202",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 2,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                      "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                    }
+                  }
+                }
+              ],
+              "schema": "airk.arbiter.context/2",
+              "stop": "covered",
+              "work": {
+                "bytes": 0,
+                "calls": 1,
+                "candidates": 0,
+                "compile_us": 0,
+                "fanout": 0,
+                "inference_us": 0,
+                "input_tokens": 100,
+                "policy_us": null,
+                "queue_us": null,
+                "rounds": 0
+              }
+            }
+          }
+        ],
+        "partial": false,
+        "publication_vector": {
+          "authority": "0707070707070707070707070707070707070707070707070707070707070707",
+          "members": [
+            {
+              "index_id": "idx_01010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+              }
+            },
+            {
+              "index_id": "idx_02020202020202020202020202020202",
+              "publication": {
+                "collection": "fixture",
+                "generation": 2,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          ],
+          "observed_from_unix_ms": 10,
+          "observed_to_unix_ms": 20
+        },
+        "rank_policy": "airk.rank-fusion.rrf-equal/1",
+        "ranking": [
+          {
+            "index_id": "idx_01010101010101010101010101010101",
+            "local_rank": 0,
+            "origin": {
+              "index_id": "idx_01010101010101010101010101010101",
+              "project_ids": [
+                "prj_01010101010101010101010101010101"
+              ],
+              "publication_ref": {
+                "member": 0
+              },
+              "source_relative_path": "api/member-1.rs",
+              "source_root_id": "src_01010101010101010101010101010101"
+            },
+            "rank_contribution": 0.01639344262295082,
+            "result_pointer": "/members/0/result/records/0/canonical_result/hits/0"
+          },
+          {
+            "index_id": "idx_02020202020202020202020202020202",
+            "local_rank": 0,
+            "origin": {
+              "index_id": "idx_02020202020202020202020202020202",
+              "project_ids": [
+                "prj_01010101010101010101010101010101"
+              ],
+              "publication_ref": {
+                "member": 1
+              },
+              "source_relative_path": "api/member-2.rs",
+              "source_root_id": "src_01010101010101010101010101010101"
+            },
+            "rank_contribution": 0.01639344262295082,
+            "result_pointer": "/members/1/result/records/0/canonical_result/hits/0"
+          }
+        ],
+        "schema": "airk.combined-read/1",
+        "selection": {
+          "grant_id": "grt_01010101010101010101010101010101",
+          "grant_revision": 1,
+          "identity": "450c43a7b36ece0619b3c8945913952c1472ba5b122a0e5c23687700edc95686",
+          "index_ids": [
+            "idx_01010101010101010101010101010101",
+            "idx_02020202020202020202020202020202"
+          ],
+          "member_availability": "report",
+          "project_ids": [
+            "prj_01010101010101010101010101010101",
+            "prj_02020202020202020202020202020202"
+          ]
+        },
+        "truncated": false
+      },
+      "request": {
+        "authority": "0707070707070707070707070707070707070707070707070707070707070707",
+        "budgets": {
+          "deadline_ms": 2000,
+          "limit": 100,
+          "max_bytes": 65536,
+          "verification_deadline_ms": 2000,
+          "verification_max_bytes": 16384,
+          "verification_max_sources": 8
+        },
+        "observed_from_unix_ms": 10,
+        "observed_to_unix_ms": 20,
+        "selection": {
+          "grant_id": "grt_01010101010101010101010101010101",
+          "grant_revision": 1,
+          "member_availability": "report",
+          "members": [
+            {
+              "index_id": "idx_01010101010101010101010101010101",
+              "memberships": [
+                {
+                  "membership": {
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "project_id": "prj_01010101010101010101010101010101",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "api",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                },
+                {
+                  "membership": {
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "project_id": "prj_02020202020202020202020202020202",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "impl",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                }
+              ],
+              "scope": [
+                {
+                  "kind": "subtree",
+                  "path": "api",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                },
+                {
+                  "kind": "subtree",
+                  "path": "impl",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                }
+              ]
+            },
+            {
+              "index_id": "idx_02020202020202020202020202020202",
+              "memberships": [
+                {
+                  "membership": {
+                    "index_id": "idx_02020202020202020202020202020202",
+                    "project_id": "prj_01010101010101010101010101010101",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "api",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                }
+              ],
+              "scope": [
+                {
+                  "kind": "subtree",
+                  "path": "api",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                }
+              ]
+            }
+          ],
+          "project_ids": [
+            "prj_01010101010101010101010101010101",
+            "prj_02020202020202020202020202020202"
+          ]
+        }
+      }
+    },
+    {
+      "name": "complete_and_failed_member",
+      "native_failure": {
+        "content": [
+          {
+            "text": "native member unavailable",
+            "type": "text"
+          }
+        ],
+        "isError": true,
+        "structuredContent": {
+          "error": {
+            "code": "helper_unavailable",
+            "custom_nested_detail": [
+              1,
+              2,
+              3
+            ],
+            "retry": {
+              "fresh_brokerage_required": true,
+              "query_replay_safe": false
+            }
+          },
+          "publication": {
+            "collection": "fixture",
+            "generation": 2,
+            "incarnation": "01010101010101010101010101010101",
+            "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+            "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      },
+      "output": {
+        "context": {
+          "attempt": "09090909090909090909090909090909",
+          "budget": {
+            "calls": 8,
+            "candidates": 32,
+            "deadline_ms": 30000,
+            "fanout": 8,
+            "input_tokens": 2048,
+            "max_bytes": 262144,
+            "rounds": 3
+          },
+          "delivery_bindings": [
+            {
+              "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "scope": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_01010101010101010101010101010101",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                }
+              }
+            }
+          ],
+          "known_used": {
+            "bytes": 5280,
+            "calls": 1,
+            "candidates": 1,
+            "input_tokens": 100
+          },
+          "members": [
+            {
+              "allowance": {
+                "assessment_ordinals": [
+                  1,
+                  2
+                ],
+                "attempt": "09090909090909090909090909090909",
+                "index_id": "idx_01010101010101010101010101010101",
+                "parent_budget": {
+                  "calls": 8,
+                  "candidates": 32,
+                  "deadline_ms": 30000,
+                  "fanout": 8,
+                  "input_tokens": 2048,
+                  "max_bytes": 262144,
+                  "rounds": 3
+                },
+                "resources": {
+                  "bytes": 131072,
+                  "calls": 4,
+                  "candidates": 16,
+                  "input_tokens": 1024
+                },
+                "schema": "airk.context-partition-allowance/1",
+                "selection": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "index_id": "idx_01010101010101010101010101010101",
+              "outcome": {
+                "assessment_ordinals": [
+                  1
+                ],
+                "peak_fanout": 0,
+                "read_depth": 0,
+                "state": "known",
+                "used": {
+                  "bytes": 5280,
+                  "calls": 1,
+                  "candidates": 1,
+                  "input_tokens": 100
+                }
+              }
+            },
+            {
+              "allowance": {
+                "assessment_ordinals": [
+                  3
+                ],
+                "attempt": "09090909090909090909090909090909",
+                "index_id": "idx_02020202020202020202020202020202",
+                "parent_budget": {
+                  "calls": 8,
+                  "candidates": 32,
+                  "deadline_ms": 30000,
+                  "fanout": 8,
+                  "input_tokens": 2048,
+                  "max_bytes": 262144,
+                  "rounds": 3
+                },
+                "resources": {
+                  "bytes": 131072,
+                  "calls": 4,
+                  "candidates": 16,
+                  "input_tokens": 1024
+                },
+                "schema": "airk.context-partition-allowance/1",
+                "selection": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "index_id": "idx_02020202020202020202020202020202",
+              "outcome": {
+                "state": "unknown"
+              }
+            }
+          ],
+          "schema": "airk.combined-context/1",
+          "selection": "0707070707070707070707070707070707070707070707070707070707070707",
+          "termination": "partial",
+          "unknown_held": {
+            "bytes": 131072,
+            "calls": 4,
+            "candidates": 16,
+            "input_tokens": 1024
+          }
+        },
+        "members": [
+          {
+            "allocation": {
+              "deadline_ms": 30000,
+              "index_id": "idx_01010101010101010101010101010101",
+              "limit": 1,
+              "max_bytes": 131072,
+              "verification_deadline_ms": 1000,
+              "verification_max_bytes": 8192,
+              "verification_max_sources": 4
+            },
+            "elapsed_ms": 1,
+            "index_id": "idx_01010101010101010101010101010101",
+            "is_error": false,
+            "outcome": "complete",
+            "result": {
+              "applications": [],
+              "assessment": {
+                "coverage": {
+                  "ordinal": 1,
+                  "status": "assessed"
+                },
+                "scope": {
+                  "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "catalog": "02020202020202020202020202020202",
+                  "configuration_revision": 1,
+                  "index_id": "idx_01010101010101010101010101010101",
+                  "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "publication": {
+                    "collection": "fixture",
+                    "generation": 1,
+                    "incarnation": "01010101010101010101010101010101",
+                    "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                  }
+                },
+                "termination": "covered"
+              },
+              "assessment_history": [
+                {
+                  "applicability": "current",
+                  "basis": {
+                    "read_choices_available": 0,
+                    "read_choices_omitted": 0,
+                    "read_choices_scored": [],
+                    "source_units_available": 1,
+                    "source_units_omitted": 0,
+                    "source_units_partial": 0,
+                    "source_units_presented": [
+                      {
+                        "kind": "hit",
+                        "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                        "result_pointer": "/hits/0",
+                        "utf8_end": 13,
+                        "utf8_start": 0
+                      }
+                    ]
+                  },
+                  "ordinal": 1,
+                  "partition": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  },
+                  "result": {
+                    "advice": {
+                      "calibration": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                      "compiler": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+                      "evidence": [
+                        "0808080808080808080808080808080808080808080808080808080808080808"
+                      ],
+                      "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+                      "observed_input_tokens": 100,
+                      "outcome": {
+                        "decision": {
+                          "kind": "context_action",
+                          "value": "0909090909090909090909090909090909090909090909090909090909090909"
+                        },
+                        "status": "accepted"
+                      },
+                      "policy": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                      "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+                      "reserved_input_tokens": 100,
+                      "runtime": "onnxruntime-cpu/1.30.0",
+                      "schema": "airk.arbiter.advice/2",
+                      "scope": {
+                        "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                        "catalog": "02020202020202020202020202020202",
+                        "configuration_revision": 1,
+                        "index_id": "idx_01010101010101010101010101010101",
+                        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                        "publication": {
+                          "collection": "fixture",
+                          "generation": 1,
+                          "incarnation": "01010101010101010101010101010101",
+                          "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                          "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                        }
+                      },
+                      "task": "airk.context_action.v1",
+                      "task_policy": "1111111111111111111111111111111111111111111111111111111111111111",
+                      "work": {
+                        "bytes": 0,
+                        "calls": 0,
+                        "candidates": 0,
+                        "compile_us": 0,
+                        "fanout": 0,
+                        "inference_us": 0,
+                        "input_tokens": 100,
+                        "policy_us": null,
+                        "queue_us": null,
+                        "rounds": 0
+                      }
+                    },
+                    "card": {
+                      "action": {
+                        "kind": "sufficient"
+                      },
+                      "assessments": [
+                        {
+                          "evidence": {
+                            "kind": "hit",
+                            "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                            "result_pointer": "/hits/0",
+                            "utf8_end": 13,
+                            "utf8_start": 0
+                          },
+                          "relevance": "useful",
+                          "role": "definition"
+                        }
+                      ],
+                      "gap": "sufficient",
+                      "id": "0909090909090909090909090909090909090909090909090909090909090909",
+                      "reason": "retained_evidence_covers_question"
+                    },
+                    "status": "selected"
+                  }
+                }
+              ],
+              "candidate_count": 1,
+              "future_public_data": {
+                "kept": [
+                  1,
+                  "exact"
+                ],
+                "nothing_dropped": true
+              },
+              "gaps": [
+                "sufficient"
+              ],
+              "omitted_count": 0,
+              "packet_schema": "airk.arbiter.packet/1",
+              "paragraphs": [
+                {
+                  "evidence": [
+                    "0808080808080808080808080808080808080808080808080808080808080808"
+                  ],
+                  "interpretation": false,
+                  "text": "fn café() {}"
+                }
+              ],
+              "question": "Where is café defined?",
+              "records": [
+                {
+                  "arguments": {
+                    "query": "café definition"
+                  },
+                  "canonical_result": {
+                    "future_native_field": {
+                      "retained": true
+                    },
+                    "hits": [
+                      {
+                        "citation": {
+                          "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                          "end_line": 1,
+                          "location": {
+                            "Lines": {
+                              "end": 1,
+                              "start": 1
+                            }
+                          },
+                          "path": "api/member-1.rs",
+                          "start_line": 1
+                        },
+                        "text": "fn café() {}",
+                        "truncated": false
+                      }
+                    ]
+                  },
+                  "id": "0808080808080808080808080808080808080808080808080808080808080808",
+                  "operation": "search",
+                  "role": "unknown",
+                  "scope": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  }
+                }
+              ],
+              "schema": "airk.arbiter.context/2",
+              "stop": "covered",
+              "work": {
+                "bytes": 0,
+                "calls": 1,
+                "candidates": 0,
+                "compile_us": 0,
+                "fanout": 0,
+                "inference_us": 0,
+                "input_tokens": 100,
+                "policy_us": null,
+                "queue_us": null,
+                "rounds": 0
+              }
+            }
+          },
+          {
+            "allocation": {
+              "deadline_ms": 30000,
+              "index_id": "idx_02020202020202020202020202020202",
+              "limit": 1,
+              "max_bytes": 131072,
+              "verification_deadline_ms": 1000,
+              "verification_max_bytes": 8192,
+              "verification_max_sources": 4
+            },
+            "elapsed_ms": 1,
+            "index_id": "idx_02020202020202020202020202020202",
+            "is_error": true,
+            "outcome": "failed",
+            "result": {
+              "content": [
+                {
+                  "text": "native member unavailable",
+                  "type": "text"
+                }
+              ],
+              "isError": true,
+              "structuredContent": {
+                "error": {
+                  "code": "helper_unavailable",
+                  "custom_nested_detail": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "retry": {
+                    "fresh_brokerage_required": true,
+                    "query_replay_safe": false
+                  }
+                },
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 2,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                  "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              }
+            }
+          }
+        ],
+        "partial": true,
+        "publication_vector": {
+          "authority": "0707070707070707070707070707070707070707070707070707070707070707",
+          "members": [
+            {
+              "index_id": "idx_01010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+              }
+            },
+            {
+              "index_id": "idx_02020202020202020202020202020202",
+              "publication": {
+                "collection": "fixture",
+                "generation": 2,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0202020202020202020202020202020202020202020202020202020202020202",
+                "token": "airk-r1:01010101010101010101010101010101:2:0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          ],
+          "observed_from_unix_ms": 10,
+          "observed_to_unix_ms": 20
+        },
+        "rank_policy": "airk.rank-fusion.rrf-equal/1",
+        "ranking": [
+          {
+            "index_id": "idx_01010101010101010101010101010101",
+            "local_rank": 0,
+            "origin": {
+              "index_id": "idx_01010101010101010101010101010101",
+              "project_ids": [
+                "prj_01010101010101010101010101010101"
+              ],
+              "publication_ref": {
+                "member": 0
+              },
+              "source_relative_path": "api/member-1.rs",
+              "source_root_id": "src_01010101010101010101010101010101"
+            },
+            "rank_contribution": 0.01639344262295082,
+            "result_pointer": "/members/0/result/records/0/canonical_result/hits/0"
+          }
+        ],
+        "schema": "airk.combined-read/1",
+        "selection": {
+          "grant_id": "grt_01010101010101010101010101010101",
+          "grant_revision": 1,
+          "identity": "450c43a7b36ece0619b3c8945913952c1472ba5b122a0e5c23687700edc95686",
+          "index_ids": [
+            "idx_01010101010101010101010101010101",
+            "idx_02020202020202020202020202020202"
+          ],
+          "member_availability": "report",
+          "project_ids": [
+            "prj_01010101010101010101010101010101",
+            "prj_02020202020202020202020202020202"
+          ]
+        },
+        "truncated": false
+      },
+      "request": {
+        "authority": "0707070707070707070707070707070707070707070707070707070707070707",
+        "budgets": {
+          "deadline_ms": 2000,
+          "limit": 100,
+          "max_bytes": 65536,
+          "verification_deadline_ms": 2000,
+          "verification_max_bytes": 16384,
+          "verification_max_sources": 8
+        },
+        "observed_from_unix_ms": 10,
+        "observed_to_unix_ms": 20,
+        "selection": {
+          "grant_id": "grt_01010101010101010101010101010101",
+          "grant_revision": 1,
+          "member_availability": "report",
+          "members": [
+            {
+              "index_id": "idx_01010101010101010101010101010101",
+              "memberships": [
+                {
+                  "membership": {
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "project_id": "prj_01010101010101010101010101010101",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "api",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                },
+                {
+                  "membership": {
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "project_id": "prj_02020202020202020202020202020202",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "impl",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                }
+              ],
+              "scope": [
+                {
+                  "kind": "subtree",
+                  "path": "api",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                },
+                {
+                  "kind": "subtree",
+                  "path": "impl",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                }
+              ]
+            },
+            {
+              "index_id": "idx_02020202020202020202020202020202",
+              "memberships": [
+                {
+                  "membership": {
+                    "index_id": "idx_02020202020202020202020202020202",
+                    "project_id": "prj_01010101010101010101010101010101",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "api",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                }
+              ],
+              "scope": [
+                {
+                  "kind": "subtree",
+                  "path": "api",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                }
+              ]
+            }
+          ],
+          "project_ids": [
+            "prj_01010101010101010101010101010101",
+            "prj_02020202020202020202020202020202"
+          ]
+        }
+      }
+    },
+    {
+      "name": "complete_and_unqueried_member",
+      "output": {
+        "context": {
+          "attempt": "09090909090909090909090909090909",
+          "budget": {
+            "calls": 8,
+            "candidates": 32,
+            "deadline_ms": 30000,
+            "fanout": 8,
+            "input_tokens": 2048,
+            "max_bytes": 262144,
+            "rounds": 3
+          },
+          "delivery_bindings": [
+            {
+              "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+              "scope": {
+                "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_01010101010101010101010101010101",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "01010101010101010101010101010101",
+                  "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                }
+              }
+            }
+          ],
+          "known_used": {
+            "bytes": 5280,
+            "calls": 1,
+            "candidates": 1,
+            "input_tokens": 100
+          },
+          "members": [
+            {
+              "allowance": {
+                "assessment_ordinals": [
+                  1,
+                  2
+                ],
+                "attempt": "09090909090909090909090909090909",
+                "index_id": "idx_01010101010101010101010101010101",
+                "parent_budget": {
+                  "calls": 8,
+                  "candidates": 32,
+                  "deadline_ms": 30000,
+                  "fanout": 8,
+                  "input_tokens": 2048,
+                  "max_bytes": 262144,
+                  "rounds": 3
+                },
+                "resources": {
+                  "bytes": 131072,
+                  "calls": 4,
+                  "candidates": 16,
+                  "input_tokens": 1024
+                },
+                "schema": "airk.context-partition-allowance/1",
+                "selection": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "index_id": "idx_01010101010101010101010101010101",
+              "outcome": {
+                "assessment_ordinals": [
+                  1
+                ],
+                "peak_fanout": 0,
+                "read_depth": 0,
+                "state": "known",
+                "used": {
+                  "bytes": 5280,
+                  "calls": 1,
+                  "candidates": 1,
+                  "input_tokens": 100
+                }
+              }
+            },
+            {
+              "allowance": null,
+              "index_id": "idx_02020202020202020202020202020202",
+              "outcome": {
+                "reason": "budget",
+                "state": "unqueried"
+              }
+            }
+          ],
+          "schema": "airk.combined-context/1",
+          "selection": "0707070707070707070707070707070707070707070707070707070707070707",
+          "termination": "budget",
+          "unknown_held": {
+            "bytes": 0,
+            "calls": 0,
+            "candidates": 0,
+            "input_tokens": 0
+          }
+        },
+        "members": [
+          {
+            "allocation": {
+              "deadline_ms": 30000,
+              "index_id": "idx_01010101010101010101010101010101",
+              "limit": 1,
+              "max_bytes": 131072,
+              "verification_deadline_ms": 1000,
+              "verification_max_bytes": 8192,
+              "verification_max_sources": 4
+            },
+            "elapsed_ms": 1,
+            "index_id": "idx_01010101010101010101010101010101",
+            "is_error": false,
+            "outcome": "complete",
+            "result": {
+              "applications": [],
+              "assessment": {
+                "coverage": {
+                  "ordinal": 1,
+                  "status": "assessed"
+                },
+                "scope": {
+                  "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "catalog": "02020202020202020202020202020202",
+                  "configuration_revision": 1,
+                  "index_id": "idx_01010101010101010101010101010101",
+                  "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                  "publication": {
+                    "collection": "fixture",
+                    "generation": 1,
+                    "incarnation": "01010101010101010101010101010101",
+                    "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                  }
+                },
+                "termination": "covered"
+              },
+              "assessment_history": [
+                {
+                  "applicability": "current",
+                  "basis": {
+                    "read_choices_available": 0,
+                    "read_choices_omitted": 0,
+                    "read_choices_scored": [],
+                    "source_units_available": 1,
+                    "source_units_omitted": 0,
+                    "source_units_partial": 0,
+                    "source_units_presented": [
+                      {
+                        "kind": "hit",
+                        "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                        "result_pointer": "/hits/0",
+                        "utf8_end": 13,
+                        "utf8_start": 0
+                      }
+                    ]
+                  },
+                  "ordinal": 1,
+                  "partition": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  },
+                  "result": {
+                    "advice": {
+                      "calibration": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                      "compiler": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+                      "evidence": [
+                        "0808080808080808080808080808080808080808080808080808080808080808"
+                      ],
+                      "input_digest": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+                      "observed_input_tokens": 100,
+                      "outcome": {
+                        "decision": {
+                          "kind": "context_action",
+                          "value": "0909090909090909090909090909090909090909090909090909090909090909"
+                        },
+                        "status": "accepted"
+                      },
+                      "policy": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                      "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+                      "reserved_input_tokens": 100,
+                      "runtime": "onnxruntime-cpu/1.30.0",
+                      "schema": "airk.arbiter.advice/2",
+                      "scope": {
+                        "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                        "catalog": "02020202020202020202020202020202",
+                        "configuration_revision": 1,
+                        "index_id": "idx_01010101010101010101010101010101",
+                        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                        "publication": {
+                          "collection": "fixture",
+                          "generation": 1,
+                          "incarnation": "01010101010101010101010101010101",
+                          "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                          "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                        }
+                      },
+                      "task": "airk.context_action.v1",
+                      "task_policy": "1111111111111111111111111111111111111111111111111111111111111111",
+                      "work": {
+                        "bytes": 0,
+                        "calls": 0,
+                        "candidates": 0,
+                        "compile_us": 0,
+                        "fanout": 0,
+                        "inference_us": 0,
+                        "input_tokens": 100,
+                        "policy_us": null,
+                        "queue_us": null,
+                        "rounds": 0
+                      }
+                    },
+                    "card": {
+                      "action": {
+                        "kind": "sufficient"
+                      },
+                      "assessments": [
+                        {
+                          "evidence": {
+                            "kind": "hit",
+                            "record": "0808080808080808080808080808080808080808080808080808080808080808",
+                            "result_pointer": "/hits/0",
+                            "utf8_end": 13,
+                            "utf8_start": 0
+                          },
+                          "relevance": "useful",
+                          "role": "definition"
+                        }
+                      ],
+                      "gap": "sufficient",
+                      "id": "0909090909090909090909090909090909090909090909090909090909090909",
+                      "reason": "retained_evidence_covers_question"
+                    },
+                    "status": "selected"
+                  }
+                }
+              ],
+              "candidate_count": 1,
+              "future_public_data": {
+                "kept": [
+                  1,
+                  "exact"
+                ],
+                "nothing_dropped": true
+              },
+              "gaps": [
+                "sufficient"
+              ],
+              "omitted_count": 0,
+              "packet_schema": "airk.arbiter.packet/1",
+              "paragraphs": [
+                {
+                  "evidence": [
+                    "0808080808080808080808080808080808080808080808080808080808080808"
+                  ],
+                  "interpretation": false,
+                  "text": "fn café() {}"
+                }
+              ],
+              "question": "Where is café defined?",
+              "records": [
+                {
+                  "arguments": {
+                    "query": "café definition"
+                  },
+                  "canonical_result": {
+                    "future_native_field": {
+                      "retained": true
+                    },
+                    "hits": [
+                      {
+                        "citation": {
+                          "content_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+                          "end_line": 1,
+                          "location": {
+                            "Lines": {
+                              "end": 1,
+                              "start": 1
+                            }
+                          },
+                          "path": "api/member-1.rs",
+                          "start_line": 1
+                        },
+                        "text": "fn café() {}",
+                        "truncated": false
+                      }
+                    ]
+                  },
+                  "id": "0808080808080808080808080808080808080808080808080808080808080808",
+                  "operation": "search",
+                  "role": "unknown",
+                  "scope": {
+                    "authorization": "0404040404040404040404040404040404040404040404040404040404040404",
+                    "catalog": "02020202020202020202020202020202",
+                    "configuration_revision": 1,
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                    "publication": {
+                      "collection": "fixture",
+                      "generation": 1,
+                      "incarnation": "01010101010101010101010101010101",
+                      "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                      "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+                    }
+                  }
+                }
+              ],
+              "schema": "airk.arbiter.context/2",
+              "stop": "covered",
+              "work": {
+                "bytes": 0,
+                "calls": 1,
+                "candidates": 0,
+                "compile_us": 0,
+                "fanout": 0,
+                "inference_us": 0,
+                "input_tokens": 100,
+                "policy_us": null,
+                "queue_us": null,
+                "rounds": 0
+              }
+            }
+          },
+          {
+            "allocation": {
+              "deadline_ms": 1000,
+              "index_id": "idx_02020202020202020202020202020202",
+              "limit": 0,
+              "max_bytes": 0,
+              "verification_deadline_ms": 1000,
+              "verification_max_bytes": 8192,
+              "verification_max_sources": 4
+            },
+            "cutoff": "shared_budget_exhausted",
+            "index_id": "idx_02020202020202020202020202020202",
+            "is_error": false,
+            "outcome": "unqueried",
+            "result": null
+          }
+        ],
+        "partial": true,
+        "publication_vector": {
+          "authority": "0707070707070707070707070707070707070707070707070707070707070707",
+          "members": [
+            {
+              "index_id": "idx_01010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "01010101010101010101010101010101",
+                "revision": "0101010101010101010101010101010101010101010101010101010101010101",
+                "token": "airk-r1:01010101010101010101010101010101:1:0101010101010101010101010101010101010101010101010101010101010101"
+              }
+            },
+            {
+              "index_id": "idx_02020202020202020202020202020202",
+              "publication": null
+            }
+          ],
+          "observed_from_unix_ms": 10,
+          "observed_to_unix_ms": 20
+        },
+        "rank_policy": "airk.rank-fusion.rrf-equal/1",
+        "ranking": [
+          {
+            "index_id": "idx_01010101010101010101010101010101",
+            "local_rank": 0,
+            "origin": {
+              "index_id": "idx_01010101010101010101010101010101",
+              "project_ids": [
+                "prj_01010101010101010101010101010101"
+              ],
+              "publication_ref": {
+                "member": 0
+              },
+              "source_relative_path": "api/member-1.rs",
+              "source_root_id": "src_01010101010101010101010101010101"
+            },
+            "rank_contribution": 0.01639344262295082,
+            "result_pointer": "/members/0/result/records/0/canonical_result/hits/0"
+          }
+        ],
+        "schema": "airk.combined-read/1",
+        "selection": {
+          "grant_id": "grt_01010101010101010101010101010101",
+          "grant_revision": 1,
+          "identity": "450c43a7b36ece0619b3c8945913952c1472ba5b122a0e5c23687700edc95686",
+          "index_ids": [
+            "idx_01010101010101010101010101010101",
+            "idx_02020202020202020202020202020202"
+          ],
+          "member_availability": "report",
+          "project_ids": [
+            "prj_01010101010101010101010101010101",
+            "prj_02020202020202020202020202020202"
+          ]
+        },
+        "truncated": true
+      },
+      "request": {
+        "authority": "0707070707070707070707070707070707070707070707070707070707070707",
+        "budgets": {
+          "deadline_ms": 2000,
+          "limit": 100,
+          "max_bytes": 65536,
+          "verification_deadline_ms": 2000,
+          "verification_max_bytes": 16384,
+          "verification_max_sources": 8
+        },
+        "observed_from_unix_ms": 10,
+        "observed_to_unix_ms": 20,
+        "selection": {
+          "grant_id": "grt_01010101010101010101010101010101",
+          "grant_revision": 1,
+          "member_availability": "report",
+          "members": [
+            {
+              "index_id": "idx_01010101010101010101010101010101",
+              "memberships": [
+                {
+                  "membership": {
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "project_id": "prj_01010101010101010101010101010101",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "api",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                },
+                {
+                  "membership": {
+                    "index_id": "idx_01010101010101010101010101010101",
+                    "project_id": "prj_02020202020202020202020202020202",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "impl",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                }
+              ],
+              "scope": [
+                {
+                  "kind": "subtree",
+                  "path": "api",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                },
+                {
+                  "kind": "subtree",
+                  "path": "impl",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                }
+              ]
+            },
+            {
+              "index_id": "idx_02020202020202020202020202020202",
+              "memberships": [
+                {
+                  "membership": {
+                    "index_id": "idx_02020202020202020202020202020202",
+                    "project_id": "prj_01010101010101010101010101010101",
+                    "revision": 1,
+                    "scope": [
+                      {
+                        "kind": "subtree",
+                        "path": "api",
+                        "source_root_id": "src_01010101010101010101010101010101"
+                      }
+                    ]
+                  },
+                  "policy_digest": null,
+                  "policy_epoch": 0,
+                  "source_revision": 1
+                }
+              ],
+              "scope": [
+                {
+                  "kind": "subtree",
+                  "path": "api",
+                  "source_root_id": "src_01010101010101010101010101010101"
+                }
+              ]
+            }
+          ],
+          "project_ids": [
+            "prj_01010101010101010101010101010101",
+            "prj_02020202020202020202020202020202"
+          ]
+        }
+      }
+    }
+  ],
+  "schema": "airk.arbiter.combined-context.cases/1"
+}

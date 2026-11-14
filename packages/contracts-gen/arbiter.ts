@@ -18,7 +18,7 @@ export type Advice = {
     work: Work;
 };
 
-export type AssessmentApplicability = "current" | "historical_after_read" | "basis_omitted";
+export type AssessmentApplicability = "current" | "historical_after_read" | "historical_after_configuration_change" | "basis_omitted";
 
 export type AssessmentBasis = {
     read_choices_available: number;
@@ -46,6 +46,7 @@ export type AssessmentResult = {
     advice: ContextActionAdvice;
     status: "abstained";
 } | {
+    advice: ContextActionAdvice | null;
     reason: AssessmentUnavailable;
     status: "unavailable";
     work: Work;
@@ -132,13 +133,16 @@ export type ContextActionAdvice = {
     compiler: Sha256Digest;
     evidence: Array<Sha256Digest>;
     input_digest: Sha256Digest;
+    observed_input_tokens: number | null;
     outcome: Outcome;
     policy: Sha256Digest;
     profile: Sha256Digest;
+    reserved_input_tokens: number;
     runtime: string;
     schema: string;
     scope: ScopeBinding;
     task: Task;
+    task_policy: Sha256Digest;
     work: Work;
 };
 
@@ -149,6 +153,8 @@ export type ContextActionCard = {
     id: Sha256Digest;
     reason: ContextReason;
 };
+
+export type ContextActionClass = "read" | "sufficient" | "clarify" | "no_justified_read";
 
 /**
  * Frozen native alternatives, not an arbitrary model-supplied operation list.
@@ -162,7 +168,7 @@ export type ContextActionRoster = {
     scope: ScopeBinding;
 };
 
-export type ContextReason = "retained_evidence_covers_question" | "missing_definition" | "missing_constraint" | "missing_example" | "missing_test" | "missing_counterevidence" | "conflicting_evidence" | "ambiguous_question" | "no_verified_useful_read";
+export type ContextReason = "additional_evidence_may_help" | "retained_evidence_covers_question" | "missing_definition" | "missing_constraint" | "missing_example" | "missing_test" | "missing_counterevidence" | "conflicting_evidence" | "ambiguous_question" | "no_verified_useful_read";
 
 export type ContextRequest = {
     budget: Budget;
@@ -286,6 +292,30 @@ export type IndexApplication = {
 };
 
 export type IndexId = string;
+
+export type JointAssetBinding = {
+    role: AssetRole;
+    sha256: Sha256Digest;
+};
+
+export type JointCalibration = {
+    assets: Record<string, JointAssetBinding>;
+    compiler: Sha256Digest;
+    model: ModelChoice;
+    rules: Array<JointRule>;
+    schema: string;
+    score_abi: ScoreAbi;
+    task_policy: Sha256Digest;
+};
+
+export type JointRule = {
+    action: ContextActionClass;
+    allowed_gaps: Array<Gap>;
+    allowed_reasons: Array<ContextReason>;
+    allowed_relevance: Array<RelevanceHypothesis>;
+    allowed_roles: Array<EvidenceRole>;
+    minimum_raw_margin: number;
+};
 
 export type ManagementRequest = {
     operation: "status";
