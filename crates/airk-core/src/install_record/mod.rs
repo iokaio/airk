@@ -11,6 +11,8 @@ use crate::identity::{Incarnation, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod setup_recovery;
+
 pub const POINTER_SCHEMA: &str = "airk-install-pointer/1";
 pub const RECORD_SCHEMA: &str = "airk-install-record/1";
 pub const SETUP_OPERATION_SCHEMA: &str = "airk-setup-operation/1";
