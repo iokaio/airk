@@ -5,6 +5,7 @@ pub mod cert_trust;
 pub mod child_job;
 pub mod client_owner;
 pub mod detached;
+pub mod directory;
 pub mod monotonic;
 pub mod private_stdio;
 pub mod signature;
