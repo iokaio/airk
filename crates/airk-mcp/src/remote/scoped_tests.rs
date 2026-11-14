@@ -11,12 +11,18 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct Selected {
     selection: ScopedConnectRequest,
+    selected_scope: Option<ScopedScope>,
     calls: AtomicUsize,
     failed: AtomicBool,
 }
 impl RemoteTools for Selected {
     fn scoped_selection(&self) -> Option<&ScopedConnectRequest> {
-        Some(&self.selection)
+        self.selected_scope.is_none().then_some(&self.selection)
+    }
+    fn scoped_scope(&self) -> Option<ScopedScope> {
+        self.selected_scope
+            .clone()
+            .or_else(|| Some(ScopedScope::Catalog(self.selection.clone())))
     }
     fn call(&self, _: String, _: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
         Box::pin(async move {
@@ -24,8 +30,8 @@ impl RemoteTools for Selected {
             if self.failed.load(Ordering::SeqCst) {
                 anyhow::bail!("private/transport/path");
             }
-            Ok(scoped_setup_failure(
-                &self.selection,
+            Ok(scoped_scope_setup_failure(
+                &self.scoped_scope().unwrap(),
                 "grant_revoked",
                 false,
                 Some(json!({"failure":{"code":"grant_revoked","retry":{"complete":true}}})),
@@ -36,6 +42,14 @@ impl RemoteTools for Selected {
 #[tokio::test]
 async fn actual_remote_bridge_selected_help_preserves_full_native_refusal_and_transport_uncertainty()
 -> anyhow::Result<()> {
+    selected_bridge_case(false).await
+}
+#[tokio::test]
+async fn actual_remote_bridge_selection_help_preserves_full_native_refusal_and_transport_uncertainty()
+-> anyhow::Result<()> {
+    selected_bridge_case(true).await
+}
+async fn selected_bridge_case(in_memory: bool) -> anyhow::Result<()> {
     let selection = ScopedConnectRequest {
         schema: 1,
         context_key: Sha256Digest::from_bytes([1; 32]),
@@ -49,6 +63,15 @@ async fn actual_remote_bridge_selected_help_preserves_full_native_refusal_and_tr
         ))],
     };
     let selected = Arc::new(Selected {
+        selected_scope: in_memory.then(|| ScopedScope::Selection {
+            window_scope_selection: airk_core::service::WindowScopeSelection {
+                namespace: selection.namespace,
+                expected_catalog_revision: selection.expected_catalog_revision,
+                index_ids: vec![selection.index_id],
+                project_ids: selection.project_ids.clone(),
+            },
+            scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
+        }),
         selection,
         calls: AtomicUsize::new(0),
         failed: AtomicBool::new(false),
@@ -81,6 +104,22 @@ async fn actual_remote_bridge_selected_help_preserves_full_native_refusal_and_tr
     );
     assert_eq!(body["error"]["query_submitted"], false);
     assert_eq!(body["requested_scope"]["confirmed"], false);
+    if in_memory {
+        assert_eq!(
+            body["requested_scope"]["selection"]["scope_identity"],
+            "5c".repeat(32)
+        );
+        assert!(
+            body["requested_scope"]["selection"]
+                .get("window_scope_selection")
+                .is_some()
+        );
+        assert!(
+            body["requested_scope"]["selection"]
+                .get("grant_id")
+                .is_none()
+        );
+    }
     assert!(body.get("scope_observation").is_none() && body.get("publication").is_none());
     selected.failed.store(true, Ordering::SeqCst);
     let reply = call_observed(selected.as_ref(), "airk_status".into(), Default::default()).await?;
@@ -88,6 +127,13 @@ async fn actual_remote_bridge_selected_help_preserves_full_native_refusal_and_tr
     let body = &reply["structuredContent"];
     assert_eq!(body["error"]["query_submitted"], Value::Null);
     assert_eq!(body["error"]["query_replay_safe"], false);
+    assert_eq!(body["error"]["code"], "scoped_observation_unavailable");
+    if in_memory {
+        assert_eq!(
+            body["requested_scope"]["selection"]["scope_identity"],
+            "5c".repeat(32)
+        );
+    }
     assert!(!body.to_string().contains("private/transport"));
     client.close().await?;
     server.close().await?;

@@ -177,3 +177,13 @@ dated observations and derived headroom are normalized for equality. Requested
 verification budgets, evidence, counts, hashes, publication and origin identities
 remain exact. A native verifier refusal never acknowledges undelivered observations
 in the direct client's status receipt.
+
+Single-index catalog-grant and in-memory Window/Admin backends expose their
+selector source through the same scoped routing hook. Its public descriptor
+contains selector projections, never a nonce, lease or service instance; live
+native admission still owns authority. Unified routing, per-call wrappers and
+HTTP capacity decoration preserve both sources. Component regressions retain
+one complete canonical handler observation through those adapters and the SDK
+bridge, including help/status/diagnostics/parse success, refusal, setup and
+observation failures. They do not substitute for the required running-service,
+CLI/session, HTTPS MCP or installed Workbench parity campaigns.

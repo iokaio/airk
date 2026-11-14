@@ -188,6 +188,12 @@ impl RemoteTools for CapacityBackend {
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         self.backend.scoped_selection()
     }
+    fn scoped_scope(&self) -> Option<airk_mcp::remote::ScopedScope> {
+        self.backend.scoped_scope()
+    }
+    fn combined_scope(&self) -> Option<airk_mcp::remote::CombinedScope> {
+        self.backend.combined_scope()
+    }
     fn query_concurrency(&self) -> usize {
         (self.reader)()
     }
@@ -406,3 +412,5 @@ impl RemoteTools for LazyBackend {
 
 #[cfg(test)]
 mod legacy_binding_tests;
+#[cfg(test)]
+mod scope_tests;

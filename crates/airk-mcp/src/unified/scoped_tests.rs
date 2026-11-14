@@ -18,6 +18,7 @@ struct Native {
     calls: AtomicUsize,
     retained: std::sync::Mutex<Option<Value>>,
     contexts: std::sync::Mutex<Vec<crate::read_attempt::ReadAttemptContext>>,
+    selected_scope: Option<crate::remote::ScopedScope>,
 }
 impl RemoteTools for Native {
     fn call_with_read_context(
@@ -31,7 +32,12 @@ impl RemoteTools for Native {
         self.call(tool, args)
     }
     fn scoped_selection(&self) -> Option<&ScopedConnectRequest> {
-        Some(&self.selection)
+        self.selected_scope.is_none().then_some(&self.selection)
+    }
+    fn scoped_scope(&self) -> Option<crate::remote::ScopedScope> {
+        self.selected_scope
+            .clone()
+            .or_else(|| Some(crate::remote::ScopedScope::Catalog(self.selection.clone())))
     }
     // Deliberately keep default local_help=true: a selected transport must still
     // reach the native handler rather than the bridge's static help shortcut.
@@ -51,8 +57,8 @@ impl RemoteTools for Native {
                 2 => anyhow::bail!("private/path/must-not-leak"),
                 3 => std::future::pending::<()>().await,
                 4 => {
-                    return Ok(crate::remote::scoped_setup_failure(
-                        &self.selection,
+                    return Ok(crate::remote::scoped_scope_setup_failure(
+                        &self.scoped_scope().unwrap(),
                         "grant_revoked",
                         false,
                         Some(json!({"failure":{"code":"grant_revoked","extra":{"complete":true}}})),
@@ -93,6 +99,11 @@ impl ExplorerTools for Ui {
     }
 }
 fn fixture() -> Result<(tempfile::TempDir, Unified, Arc<Native>, Arc<Ui>)> {
+    fixture_for(None)
+}
+fn fixture_for(
+    owner: Option<airk_core::scoped_reads::SelectionOwnerKind>,
+) -> Result<(tempfile::TempDir, Unified, Arc<Native>, Arc<Ui>)> {
     let dir = tempfile::tempdir()?;
     let root = dir.path().join("source");
     std::fs::create_dir(&root)?;
@@ -152,13 +163,59 @@ fn fixture() -> Result<(tempfile::TempDir, Unified, Arc<Native>, Arc<Ui>)> {
         index_id: index,
         project_ids: vec![project],
     };
+    let (read_kernel, selected_scope) = match owner {
+        None => (kernel.with_scoped_reads(authority)?, None),
+        Some(owner) => {
+            let scope_identity = Sha256Digest::from_bytes([0x5c; 32]);
+            let read_kernel =
+                kernel.with_selection_reads(airk_kernel::scoped_reads::SelectionReadAuthority {
+                    schema: 1,
+                    backing,
+                    index_id: index,
+                    project_ids: vec![project],
+                    selection: airk_core::scoped_reads::SelectionScopeRef {
+                        owner,
+                        grant_nonce: Incarnation::from_bytes([0x91; 16]),
+                        service_instance: Incarnation::from_bytes([0xe1; 16]),
+                        scope_identity,
+                        catalog_revision: CatalogRevision::INITIAL,
+                    },
+                    atoms: vec![(
+                        project,
+                        ScopeAtom {
+                            source_root_id: source,
+                            kind: PathScope::Subtree,
+                            path: String::new(),
+                        },
+                    )],
+                    sources: authority.sources,
+                    membership_revisions: vec![(project, CatalogRevision::INITIAL)],
+                    source_revision: CatalogRevision::INITIAL,
+                    policy_epoch: 0,
+                    policy_digest: None,
+                })?;
+            (
+                read_kernel,
+                Some(crate::remote::ScopedScope::Selection {
+                    window_scope_selection: airk_core::service::WindowScopeSelection {
+                        namespace: selection.namespace,
+                        expected_catalog_revision: selection.expected_catalog_revision,
+                        index_ids: vec![index],
+                        project_ids: vec![project],
+                    },
+                    scope_identity,
+                }),
+            )
+        }
+    };
     let native = Arc::new(Native {
-        kernel: kernel.with_scoped_reads(authority)?,
+        kernel: read_kernel,
         selection,
         mode: AtomicU8::new(0),
         calls: AtomicUsize::new(0),
         retained: std::sync::Mutex::new(None),
         contexts: std::sync::Mutex::new(Vec::new()),
+        selected_scope,
     });
     let ui = Arc::new(Ui::default());
     let unified = Unified::new(
@@ -177,6 +234,133 @@ async fn call(unified: &Unified, name: &str, args: Value) -> Result<Value> {
     unified
         .call(name.into(), args.as_object().unwrap().clone())
         .await
+}
+
+#[tokio::test]
+async fn selection_native_window_and_admin_routes_keep_complete_handler_results() -> Result<()> {
+    use airk_core::scoped_reads::SelectionOwnerKind;
+    for owner in [SelectionOwnerKind::Window, SelectionOwnerKind::Admin] {
+        let (_dir, unified, native, ui) = fixture_for(Some(owner))?;
+        for (name, native_name, args) in [
+            (
+                "help",
+                "airk_help",
+                json!({"tool":"airk_search","response_mode":"full"}),
+            ),
+            (
+                "airk_help",
+                "airk_help",
+                json!({"tool":"airk_search","response_mode":"full"}),
+            ),
+            ("status", "airk_status", json!({"response_mode":"full"})),
+            (
+                "airk_status",
+                "airk_status",
+                json!({"response_mode":"full"}),
+            ),
+            (
+                "diagnostics",
+                "airk_diagnostics",
+                json!({"response_mode":"full"}),
+            ),
+            (
+                "airk_diagnostics",
+                "airk_diagnostics",
+                json!({"response_mode":"full"}),
+            ),
+            (
+                "parse",
+                "airk_parse",
+                json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"steps":[{"id":"scope","tool":"status","args":{}}]}}),
+            ),
+            (
+                "airk_parse",
+                "airk_parse",
+                json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"steps":[{"id":"scope","tool":"status","args":{}}]}}),
+            ),
+        ] {
+            let expected = native
+                .call(native_name.into(), args.as_object().unwrap().clone())
+                .await?;
+            assert_ne!(expected["isError"], true, "{name}: {expected}");
+            // Preserve one actual native observation, including its clocks and
+            // publication, rather than normalizing two independently run reads.
+            *native.retained.lock().unwrap() = Some(expected.clone());
+            let actual = call(&unified, name, args).await?;
+            *native.retained.lock().unwrap() = None;
+            assert_eq!(actual, expected, "{owner:?} {name}");
+            let detail = body(&actual).unwrap();
+            assert!(detail.get("explorer").is_none());
+            let text = actual.to_string();
+            assert!(!text.contains(&"91".repeat(16)) && !text.contains(&"e1".repeat(16)));
+        }
+        assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn selection_native_window_and_admin_failures_keep_selector_and_submission_uncertainty()
+-> Result<()> {
+    use airk_core::scoped_reads::SelectionOwnerKind;
+    for owner in [SelectionOwnerKind::Window, SelectionOwnerKind::Admin] {
+        let (_dir, unified, native, ui) = fixture_for(Some(owner))?;
+        for (mode, code, submitted) in [
+            (1, "scoped_status_prepare_unavailable", json!(false)),
+            (5, "scoped_status_prepare_timeout", json!(false)),
+            (2, "scoped_status_unavailable", Value::Null),
+            (3, "scoped_status_timeout", Value::Null),
+        ] {
+            native.mode.store(mode, Ordering::SeqCst);
+            let actual = call(&unified, "status", json!({})).await?;
+            let detail = body(&actual).unwrap();
+            assert_eq!(actual["isError"], true);
+            assert_eq!(detail["error"]["code"], code);
+            assert_eq!(detail["error"]["query_submitted"], submitted);
+            assert_eq!(
+                detail["requested_scope"]["selection"]["scope_identity"],
+                "5c".repeat(32)
+            );
+            assert!(
+                detail["requested_scope"]["selection"]
+                    .get("window_scope_selection")
+                    .is_some()
+            );
+            assert!(
+                detail["requested_scope"]["selection"]
+                    .get("grant_id")
+                    .is_none()
+            );
+            assert!(!detail.to_string().contains("private/path"));
+        }
+        for name in ["help", "airk_help", "diagnostics", "parse"] {
+            native.mode.store(2, Ordering::SeqCst);
+            let before = native.calls.load(Ordering::SeqCst);
+            let args = if name.ends_with("help") {
+                json!({"tool":"search"})
+            } else {
+                json!({})
+            };
+            let actual = call(&unified, name, args).await?;
+            let detail = body(&actual).unwrap();
+            assert_eq!(
+                detail["error"]["code"], "scoped_observation_unavailable",
+                "{name}"
+            );
+            assert_eq!(detail["error"]["query_submitted"], Value::Null);
+            assert_eq!(detail["error"]["query_replay_safe"], false);
+            assert_eq!(native.calls.load(Ordering::SeqCst), before + 1);
+        }
+        native.mode.store(6, Ordering::SeqCst);
+        let error = native
+            .call("airk_status".into(), Map::new())
+            .await
+            .unwrap_err();
+        let expected = serde_json::to_value(crate::response::typed_error_result(&error).unwrap())?;
+        assert_eq!(call(&unified, "status", json!({})).await?, expected);
+        assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    }
+    Ok(())
 }
 #[tokio::test]
 async fn selected_native_help_and_status_keep_actual_handler_scope_without_ui_enrichment()

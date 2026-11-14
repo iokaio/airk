@@ -733,6 +733,9 @@ impl RemoteTools for Native {
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         self.backend.scoped_selection()
     }
+    fn scoped_scope(&self) -> Option<airk_mcp::remote::ScopedScope> {
+        self.backend.scoped_scope()
+    }
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
         self.backend.combined_selection()
     }

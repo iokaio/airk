@@ -77,20 +77,15 @@ fn selection_setup_rejection(
     session: &SelectionSession,
     error: &anyhow::Error,
 ) -> serde_json::Value {
-    let retryable = setup_retryable(error);
-    let mut body = serde_json::json!({
-        "error": {"code": "scoped_connection_unavailable", "retryable": retryable,
-            "query_submitted": false},
-        "requested_scope": {"confirmed": false, "selection": {
-            "window_scope_selection": session.window_selection,
-            "scope_identity": session.scope_identity}},
-    });
-    if retryable {
-        body["error"]["retry_after_ms"] = 100.into();
-        body["error"]["fresh_brokerage_required"] = true.into();
-    }
-    serde_json::json!({"content": [{"type": "text", "text": body.to_string()}],
-        "structuredContent": body, "isError": true})
+    airk_mcp::remote::scoped_scope_setup_failure(
+        &airk_mcp::remote::ScopedScope::Selection {
+            window_scope_selection: session.window_selection.clone(),
+            scope_identity: session.scope_identity,
+        },
+        "scoped_connection_unavailable",
+        setup_retryable(error),
+        None,
+    )
 }
 
 fn setup_retryable(error: &anyhow::Error) -> bool {
@@ -885,6 +880,21 @@ impl airk_mcp::remote::RemoteTools for Backend {
     }
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         self.catalog_session.as_ref()
+    }
+    fn scoped_scope(&self) -> Option<airk_mcp::remote::ScopedScope> {
+        match (&self.catalog_session, &self.selection_session) {
+            (Some(selection), None) => {
+                Some(airk_mcp::remote::ScopedScope::Catalog(selection.clone()))
+            }
+            (None, Some(session)) => Some(airk_mcp::remote::ScopedScope::Selection {
+                window_scope_selection: session.window_selection.clone(),
+                scope_identity: session.scope_identity,
+            }),
+            (None, None) => None,
+            (Some(_), Some(_)) => {
+                unreachable!("catalog and selection sessions are mutually exclusive")
+            }
+        }
     }
     fn query_concurrency(&self) -> usize {
         airk_host::service_resource_policy::query_concurrency(&self.root)
@@ -1693,7 +1703,85 @@ mod tests {
 #[cfg(test)]
 mod selection_session_tests {
     use super::*;
+    use airk_mcp::remote::RemoteTools as _;
     use serde_json::json;
+
+    async fn selection_unified_setup_case(tool: &str) -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let selection = serde_json::from_value(json!({
+            "namespace": "0a".repeat(16), "expected_catalog_revision": 12,
+            "index_ids": ["idx_01010101010101010101010101010101"],
+            "project_ids": ["prj_02020202020202020202020202020202"],
+        }))?;
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let project = "44".repeat(32).parse()?;
+        let backend = selection_tools(
+            root.path().into(),
+            project,
+            SelectionSession {
+                window_selection: selection,
+                scope_identity: airk_core::identity::Sha256Digest::from_bytes([0x5c; 32]),
+                index_id: "idx_01010101010101010101010101010101".parse()?,
+                connect: Arc::new(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Box::pin(async { anyhow::bail!("private nonce and source path must not leak") })
+                }),
+            },
+        )?;
+        let arguments = if tool.ends_with("help") {
+            json!({"tool":"airk_search"})
+        } else {
+            json!({})
+        };
+        let expected = backend
+            .call(tool.into(), arguments.as_object().unwrap().clone())
+            .await?;
+        assert_eq!(expected["isError"], true, "{expected}");
+        let requested = expected["structuredContent"]["requested_scope"]["selection"].clone();
+        assert_eq!(requested["scope_identity"], "5c".repeat(32));
+        assert!(requested.get("window_scope_selection").is_some());
+        let unified = airk_mcp::unified::Unified::new(
+            vec![airk_mcp::unified::Project {
+                binding: project.to_string(),
+                name: "selected".into(),
+                collection: "fixture".into(),
+                backend,
+            }],
+            Some(project.to_string()),
+            None,
+        )?;
+        let actual = unified
+            .call(tool.into(), arguments.as_object().unwrap().clone())
+            .await?;
+        assert_eq!(
+            actual, expected,
+            "single-index selection must preserve the complete native result for {tool}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "one connector invocation per native call; no static help or replay"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn selection_unified_help_preserves_native_setup_refusal() -> Result<()> {
+        selection_unified_setup_case("airk_help").await
+    }
+    #[tokio::test]
+    async fn selection_unified_status_preserves_native_setup_refusal() -> Result<()> {
+        selection_unified_setup_case("airk_status").await
+    }
+    #[tokio::test]
+    async fn selection_unified_diagnostics_preserves_native_setup_refusal() -> Result<()> {
+        selection_unified_setup_case("airk_diagnostics").await
+    }
+    #[tokio::test]
+    async fn selection_unified_parse_preserves_native_setup_refusal() -> Result<()> {
+        selection_unified_setup_case("airk_parse").await
+    }
 
     /// N3 and §3.2 step 5: a refused selection connect echoes the window
     /// selection and its scope identity only. The error's text (which could

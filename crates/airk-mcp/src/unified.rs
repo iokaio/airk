@@ -441,7 +441,7 @@ impl Unified {
             }
             let mut native_args = args.clone();
             if let Ok(project) = self.select(&mut native_args)
-                && let Some(selection) = project.backend.scoped_selection()
+                && let Some(selection) = project.backend.scoped_scope()
             {
                 return match project.backend.call("airk_help".into(), native_args).await {
                     Ok(result) => result,
@@ -449,8 +449,8 @@ impl Unified {
                         Some(reply) => {
                             serde_json::to_value(reply).expect("typed native help refusal")
                         }
-                        None => crate::remote::scoped_observation_failure(
-                            selection,
+                        None => crate::remote::scoped_scope_observation_failure(
+                            &selection,
                             "scoped_observation_unavailable",
                             true,
                         ),
@@ -760,7 +760,7 @@ impl RemoteTools for Unified {
                 if native.name == "airk_help" {
                     let mut native_args = args.clone();
                     if let Ok(project) = self.select(&mut native_args)
-                        && let Some(selection) = project.backend.scoped_selection()
+                        && let Some(selection) = project.backend.scoped_scope()
                     {
                         return Ok(
                             match project
@@ -772,8 +772,8 @@ impl RemoteTools for Unified {
                                 Err(error) => match crate::response::typed_error_result(&error) {
                                     Some(reply) => serde_json::to_value(reply)
                                         .expect("typed native help refusal"),
-                                    None => crate::remote::scoped_observation_failure(
-                                        selection,
+                                    None => crate::remote::scoped_scope_observation_failure(
+                                        &selection,
                                         "scoped_observation_unavailable",
                                         true,
                                     ),
@@ -789,7 +789,7 @@ impl RemoteTools for Unified {
                     Ok(p) => p,
                     Err(error) => return Ok(error),
                 };
-                if let Some(selection) = project.backend.scoped_selection() {
+                if let Some(selection) = project.backend.scoped_scope() {
                     if native.name == "airk_status" {
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(10),
@@ -802,8 +802,8 @@ impl RemoteTools for Unified {
                                 if let Some(reply) = crate::response::typed_error_result(&error) {
                                     return Ok(serde_json::to_value(reply)?);
                                 }
-                                return Ok(crate::remote::scoped_setup_failure(
-                                    selection,
+                                return Ok(crate::remote::scoped_scope_setup_failure(
+                                    &selection,
                                     if error.is::<crate::remote::PreparationExpired>() {
                                         "scoped_status_prepare_timeout"
                                     } else {
@@ -814,8 +814,8 @@ impl RemoteTools for Unified {
                                 ));
                             }
                             Err(_) => {
-                                return Ok(crate::remote::scoped_setup_failure(
-                                    selection,
+                                return Ok(crate::remote::scoped_scope_setup_failure(
+                                    &selection,
                                     "scoped_status_prepare_timeout",
                                     true,
                                     None,
@@ -835,14 +835,14 @@ impl RemoteTools for Unified {
                                         serde_json::to_value(reply).expect("typed read receipt")
                                     })
                                     .unwrap_or_else(|| {
-                                        crate::remote::scoped_observation_failure(
-                                            selection,
+                                        crate::remote::scoped_scope_observation_failure(
+                                            &selection,
                                             "scoped_status_unavailable",
                                             true,
                                         )
                                     }),
-                                Err(_) => crate::remote::scoped_observation_failure(
-                                    selection,
+                                Err(_) => crate::remote::scoped_scope_observation_failure(
+                                    &selection,
                                     "scoped_status_timeout",
                                     true,
                                 ),
@@ -859,8 +859,8 @@ impl RemoteTools for Unified {
                                     serde_json::to_value(reply).expect("typed read receipt")
                                 })
                                 .unwrap_or_else(|| {
-                                    crate::remote::scoped_observation_failure(
-                                        selection,
+                                    crate::remote::scoped_scope_observation_failure(
+                                        &selection,
                                         "scoped_observation_unavailable",
                                         true,
                                     )

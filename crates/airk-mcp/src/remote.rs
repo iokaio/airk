@@ -56,6 +56,30 @@ impl CombinedScope {
     }
 }
 
+/// Public selector projection for one native index session. This descriptor is
+/// not authority: it never carries a selection nonce, lease or service instance.
+#[derive(Clone, Debug)]
+pub enum ScopedScope {
+    Catalog(airk_core::service::ScopedConnectRequest),
+    Selection {
+        window_scope_selection: airk_core::service::WindowScopeSelection,
+        scope_identity: airk_core::identity::Sha256Digest,
+    },
+}
+impl ScopedScope {
+    fn requested(&self) -> serde_json::Value {
+        match self {
+            Self::Catalog(selection) => serde_json::json!(selection),
+            Self::Selection {
+                window_scope_selection,
+                scope_identity,
+            } => serde_json::json!({
+                "window_scope_selection": window_scope_selection, "scope_identity": scope_identity,
+            }),
+        }
+    }
+}
+
 pub trait RemoteTools: Send + Sync + 'static {
     /// Frozen explicit selection only; live grant admission remains native.
     fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
@@ -70,6 +94,11 @@ pub trait RemoteTools: Send + Sync + 'static {
     /// Requested native selector only; this is not installed read authority.
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         None
+    }
+    /// Both catalog and in-memory selection sessions use canonical scoped
+    /// handling. Wrappers must forward this alongside `scoped_selection`.
+    fn scoped_scope(&self) -> Option<ScopedScope> {
+        self.scoped_selection().cloned().map(ScopedScope::Catalog)
     }
     fn query_concurrency(&self) -> usize {
         airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY
@@ -131,8 +160,22 @@ pub fn scoped_setup_failure(
     retryable: bool,
     native_control_response: Option<serde_json::Value>,
 ) -> serde_json::Value {
+    scoped_scope_setup_failure(
+        &ScopedScope::Catalog(selection.clone()),
+        code,
+        retryable,
+        native_control_response,
+    )
+}
+
+pub fn scoped_scope_setup_failure(
+    scope: &ScopedScope,
+    code: &str,
+    retryable: bool,
+    native_control_response: Option<serde_json::Value>,
+) -> serde_json::Value {
     let mut body = serde_json::json!({"error":{"code":code,"retryable":retryable,"query_submitted":false},
-        "requested_scope":{"confirmed":false,"selection":selection}});
+        "requested_scope":{"confirmed":false,"selection":scope.requested()}});
     if let Some(response) = native_control_response {
         body["error"]["native_control_response"] = response;
     }
@@ -149,8 +192,16 @@ pub fn scoped_observation_failure(
     code: &str,
     retryable: bool,
 ) -> serde_json::Value {
+    scoped_scope_observation_failure(&ScopedScope::Catalog(selection.clone()), code, retryable)
+}
+
+pub fn scoped_scope_observation_failure(
+    scope: &ScopedScope,
+    code: &str,
+    retryable: bool,
+) -> serde_json::Value {
     let mut body = serde_json::json!({"error":{"code":code,"retryable":retryable,"query_submitted":null},
-        "requested_scope":{"confirmed":false,"selection":selection}});
+        "requested_scope":{"confirmed":false,"selection":scope.requested()}});
     body["error"]["fresh_brokerage_required"] = true.into();
     body["error"]["query_replay_safe"] = false.into();
     scoped_failure_envelope(body)
@@ -552,7 +603,7 @@ impl ReadSession {
         self.backend.client(client);
         let local_help = name == "airk_help"
             && self.backend.local_help()
-            && self.backend.scoped_selection().is_none()
+            && self.backend.scoped_scope().is_none()
             && self.backend.combined_scope().is_none();
         if !local_help && self.backend.uses_response_mode(&name) {
             arguments.entry("response_mode").or_insert_with(|| {
@@ -760,8 +811,8 @@ async fn call_at_capacity(
                     .expect("recognized native read failure"),
             ));
         }
-        Err(_) if backend.scoped_selection().is_some() => scoped_observation_failure(
-            backend.scoped_selection().expect("checked scoped selector"),
+        Err(_) if backend.scoped_scope().is_some() => scoped_scope_observation_failure(
+            &backend.scoped_scope().expect("checked scoped selector"),
             "scoped_observation_unavailable",
             true,
         ),
