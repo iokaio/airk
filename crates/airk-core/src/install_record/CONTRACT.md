@@ -251,3 +251,13 @@ tests before platform/artifact qualification.
 ```console
 cargo test -p airk-core --lib install_record
 ```
+
+
+The unchanged private InnoHandoff shape may be written at the native published
+candidate frontier before login/start, only by the exact original Active owner
+with live roots, complete current C7/C10/inventory and finalized EXE/DAT proof.
+Inno6.7.1 finalizes both files before ssPostInstall (retained producer evidence).
+This pending receipt grants no uninstall/adoption authority: R10 additionally
+requires authenticated settled original inventory history and successful closed
+main receipt. Normal/current startup requires actual matching EXE/DAT custody;
+the outer final --seal-inno remains a completed-original revalidation after PATH.

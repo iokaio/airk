@@ -85,6 +85,7 @@ pub enum UsageOperation {
     Relationships,
     Coverage,
     Parse,
+    Answer,
 }
 
 impl UsageOperation {
@@ -101,6 +102,7 @@ impl UsageOperation {
                 | Self::Context
                 | Self::CodeFacts
                 | Self::Relationships
+                | Self::Answer
         )
     }
 }

@@ -1,0 +1,157 @@
+{
+  "model": "arbiter-small-intern-08b",
+  "profile_id": "download-fixture",
+  "manifest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "runtime": "onnxruntime-cpu/1.30.0",
+  "compiler": "1111111111111111111111111111111111111111111111111111111111111111",
+  "calibration": "1111111111111111111111111111111111111111111111111111111111111111",
+  "policy": "1111111111111111111111111111111111111111111111111111111111111111",
+  "qualification": "1111111111111111111111111111111111111111111111111111111111111111",
+  "tasks": [
+    "airk.context_next_read.v1"
+  ],
+  "abi": {
+    "readout": "decision_symbol",
+    "inputs": [
+      {
+        "name": "input_ids",
+        "element": "int64",
+        "axes": [
+          "tokens"
+        ]
+      }
+    ],
+    "output": {
+      "name": "scores",
+      "element": "float32",
+      "axes": [
+        "options"
+      ]
+    }
+  },
+  "max_tokens": 128,
+  "max_candidates": 8,
+  "memory_reservation_bytes": 1048576,
+  "peak_disk_bytes": 1073741825,
+  "assets": [
+    {
+      "name": "model.bin",
+      "role": "model",
+      "bytes": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "tokenizer.bin",
+      "role": "tokenizer",
+      "bytes": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "compiler.bin",
+      "role": "compiler",
+      "bytes": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "calibration.bin",
+      "role": "calibration",
+      "bytes": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "notice.bin",
+      "role": "notice",
+      "bytes": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "fixture.bin",
+      "role": "fixture",
+      "bytes": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "weights.data",
+      "role": "external_weights",
+      "bytes": 1073741825,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "downloads": [
+    {
+      "asset_name": "model.bin",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/model.bin",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "asset_name": "tokenizer.bin",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/tokenizer.bin",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "asset_name": "compiler.bin",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/compiler.bin",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "asset_name": "calibration.bin",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/calibration.bin",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "asset_name": "notice.bin",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/notice.bin",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "asset_name": "fixture.bin",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/fixture.bin",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "asset_name": "weights.data",
+      "parts": [
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/weights.data.part01",
+          "bytes": 1073741824,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/weights.data.part02",
+          "bytes": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    }
+  ]
+}

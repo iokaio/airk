@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 pub mod agent_connection;
 pub mod agent_scope;
+pub mod native_admin;
 pub mod binding;
 pub mod catalog_fences;
 pub mod catalog_host;
@@ -450,6 +451,7 @@ pub trait EmbeddingProvider: Send + Sync {
     fn embed(&self, text: &[String]) -> anyhow::Result<Vec<Vec<f32>>>;
 }
 
+pub mod arbiter;
 pub mod folder_browse;
 pub mod service_console;
 pub mod service_lifecycle;

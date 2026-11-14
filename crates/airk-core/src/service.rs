@@ -4,11 +4,30 @@ use crate::identity::{Incarnation, Sha256Digest};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
+pub use crate::native_admin::AdminLaunchSecret;
+
 pub use crate::service_records::{
     JobKind, JobOutcome, JobRecord, JobState, MAX_PROJECT_REGISTRATION_BYTES,
     MaintenanceObservation, ProjectBinding, ProjectRegistration, RegisteredProject, RequestKey,
     WorkerIdentity,
 };
+
+/// I1 native adapter input. Scope metadata is inert until the service validates
+/// the exact installed worker lease carried alongside it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeNextReadRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_attempt: Option<crate::read_attempt::ReadAttemptBudget>,
+    pub worker: crate::service_records::WorkerIdentity,
+    pub authority: ScopedReadRef,
+    pub scope: crate::arbiter::ScopeBinding,
+    pub question: String,
+    pub records: Vec<crate::arbiter::EvidenceRecord>,
+    pub choices: Vec<crate::arbiter::ReadChoice>,
+    pub remaining_ms: u64,
+    pub remaining_input_tokens: usize,
+}
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 65_536;
@@ -121,6 +140,40 @@ pub struct CombinedDeliveryReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
+    /// Private native client custody, never carried by metadata relays or HTTP.
+    AdminNativeOpen {
+        deadline_ns: u64,
+    },
+    AdminNativeCall {
+        session: crate::native_admin::NativeAdminSessionSecret,
+        request_id: Incarnation,
+        operation: String,
+        body: Box<serde_json::value::RawValue>,
+        deadline_ns: u64,
+    },
+    AdminNativeRead {
+        session: crate::native_admin::NativeAdminSessionSecret,
+        request_id: Incarnation,
+        offset: u64,
+    },
+    AdminNativeCancel {
+        session: crate::native_admin::NativeAdminSessionSecret,
+        request_id: Incarnation,
+    },
+    AdminNativeClose {
+        session: crate::native_admin::NativeAdminSessionSecret,
+    },
+    Arbiter {
+        request: crate::arbiter::ManagementRequest,
+    },
+    ArbiterApplication {
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: crate::evidence::RevisionEnvelope,
+    },
+    ArbiterNextRead {
+        request: Box<NativeNextReadRequest>,
+    },
     PrepareUpgradeCheckpoint {
         operation_id: Incarnation,
         candidate_execution_sha256: Sha256Digest,
@@ -718,10 +771,18 @@ impl ControlMethod {
         // The console never receives an evidence bearer credential. Evidence
         // brokerage remains on the dedicated scoped read transports.
         match method {
+            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } => {
+                return Some("console_private_setup_forbidden");
+            }
             Self::Connect { .. } | Self::ConnectScoped { .. } => {
                 return Some("console_brokerage_forbidden");
             }
-            Self::PrepareUpgradeCheckpoint { .. }
+            Self::AdminNativeOpen { .. }
+            | Self::AdminNativeCall { .. }
+            | Self::AdminNativeRead { .. }
+            | Self::AdminNativeCancel { .. }
+            | Self::AdminNativeClose { .. }
+            | Self::PrepareUpgradeCheckpoint { .. }
             | Self::ObserveUpgradeCheckpoint { .. }
             | Self::UpgradeRecoveryProbe { .. }
             | Self::ReleaseUpgradeAdmission { .. }
@@ -1169,6 +1230,10 @@ impl ControlMethod {
     /// service writer and the client reader apply it.
     pub fn response_frame_budget(&self) -> usize {
         match self {
+            Self::Arbiter { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
+            Self::AdminNativeCall { .. } | Self::AdminNativeRead { .. } => {
+                crate::native_admin::CHUNK_FRAME_BYTES
+            }
             Self::ToolsCatalog { .. } => MAX_TOOLS_CATALOG_RESPONSE_BYTES,
             Self::ToolsCall { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
             Self::UsageDocument { .. } => MAX_USAGE_DOCUMENT_RESPONSE_BYTES,
@@ -1183,6 +1248,8 @@ impl ControlMethod {
     /// drops a larger request unanswered, as it drops any oversize frame.
     pub fn request_frame_budget(&self) -> usize {
         match self {
+            Self::Arbiter { .. } | Self::ArbiterNextRead { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
+            Self::AdminNativeCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             // JSON escaping can grow the 16 KiB input; M3's budget covers it.
             Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             Self::ExplorerOffline { .. } => MAX_EXPLORER_OFFLINE_REQUEST_BYTES,
@@ -1269,6 +1336,24 @@ pub enum PolicyStatusBasis {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    AdminNativeOpened {
+        session: crate::native_admin::NativeAdminSessionSecret,
+        service_instance: Incarnation,
+    },
+    AdminNativeChunk {
+        chunk: crate::native_admin::NativeAdminChunk,
+    },
+    AdminNativeCancelled {},
+    AdminNativeClosed {},
+    Arbiter {
+        observation: Box<crate::arbiter::Status>,
+    },
+    ArbiterApplication {
+        application: Box<crate::arbiter::IndexApplication>,
+    },
+    ArbiterAdvice {
+        advice: Option<Box<crate::arbiter::Advice>>,
+    },
     UpgradeCheckpoint {
         observation: Box<crate::service_checkpoint::UpgradeCheckpointObservation>,
     },
@@ -1799,46 +1884,36 @@ pub enum ControlResponse {
     },
 }
 
-/// An A1 launch code (contracts §2.7): 32 random bytes as unpadded
-/// base64url (43 characters, canonical final character). `Debug` never shows
-/// it; the service stores only its SHA-256.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct AdminLaunchSecret(String);
-
-impl AdminLaunchSecret {
-    pub fn as_str(&self) -> &str {
-        &self.0
+impl ControlResponse {
+    /// Private transport values must never become metadata, error-line native
+    /// payloads, public envelopes or editor frames, even on an unexpected reply.
+    pub fn carries_private_transport_secret(&self) -> bool {
+        matches!(
+            self,
+            Self::Connection { .. }
+                | Self::WindowOpened { .. }
+                | Self::AdminLaunchCode { .. }
+                | Self::AdminNativeOpened { .. }
+                | Self::AdminNativeChunk { .. }
+                | Self::AdminNativeCancelled { .. }
+                | Self::AdminNativeClosed { .. }
+        )
     }
-}
 
-impl TryFrom<String> for AdminLaunchSecret {
-    type Error = String;
-    fn try_from(value: String) -> std::result::Result<Self, String> {
-        let bytes = value.as_bytes();
-        // 43 characters carry 258 bits; the final two must be zero.
-        if bytes.len() == 43
-            && bytes
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-' || *byte == b'_')
-            && b"AEIMQUYcgkosw048".contains(&bytes[42])
-        {
-            Ok(Self(value))
+    /// A typed projection, never a recursive field-name filter. Normal opaque
+    /// native results and documentary schema names are preserved unchanged.
+    pub fn public_metadata(self) -> Self {
+        if matches!(self, Self::Connection { .. }) {
+            Self::Failure {
+                code: "console_brokerage_forbidden".into(),
+            }
+        } else if self.carries_private_transport_secret() {
+            Self::Failure {
+                code: "console_private_response_forbidden".into(),
+            }
         } else {
-            Err("invalid admin launch code".into())
+            self
         }
-    }
-}
-
-impl From<AdminLaunchSecret> for String {
-    fn from(code: AdminLaunchSecret) -> String {
-        code.0
-    }
-}
-
-impl std::fmt::Debug for AdminLaunchSecret {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("AdminLaunchSecret(<redacted>)")
     }
 }
 
