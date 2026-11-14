@@ -39,7 +39,7 @@ trusted digest. The native release allowlist pins each complete manifest,
 asset length/hash/role, approved source, license/notice, compiler, calibration,
 policy, task and qualification identity. Initially unqualified profiles remain
 visible but unavailable; acquisition alone does not add them to the allowlist.
-Profiles describe exactly the two smaller and two larger choices in plan ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§9.1.
+Profiles describe exactly the two smaller and two larger choices in plan section 9.1.
 Downloads contain data only, never code, DLLs, scripts or custom operators.
 
 ## Advice and bounded gathering
@@ -240,9 +240,12 @@ emits `airk.arbiter.empirical-next-read/1` containing only aggregate counts and
 evidence hashes, and omits raw human question IDs, source text and per-episode
 labels. Its rule is unique finite argmax with exact ties abstaining; it makes no
 probability, sufficiency, authorization or final qualification claim. Original
-assets are linked into a fresh private flat closure and every byte is verified
-against its original length/hash; original profile/weight/fixture bytes remain
-unchanged. Product catalog/qualification/download gates remain separate.
+assets are streamed into fresh, exclusively-created single-linked files in a
+private flat closure. Source length/hash and independent destination identity
+are checked, then the actual strict OpenedDirectory consumer handle verifies
+every destination byte. Existing output is never overwritten. Original source
+aliases/profile/weight/fixture bytes remain unchanged; no reader alias guard is
+weakened. Historical hardlinked R1 fixture outputs remain failed artifact history. Product catalog/qualification/download gates remain separate.
 
 
 A resident session owns one qualified maximum-peak resource charge. Serialized

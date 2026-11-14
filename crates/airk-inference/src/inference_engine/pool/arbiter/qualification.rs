@@ -429,9 +429,8 @@ struct EmpiricalNextReadCalibration {
     counts: std::collections::BTreeMap<String, u64>,
     limitation: &'static str,
 }
-fn exact_asset_file(path: &std::path::Path, asset: &Asset) -> Result<()> {
+fn exact_asset_file(mut file: std::fs::File, asset: &Asset) -> Result<()> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
     ensure!(
         file.metadata()?.is_file() && file.metadata()?.len() == asset.bytes,
         "materialized asset length differs"
@@ -454,6 +453,56 @@ fn exact_asset_file(path: &std::path::Path, asset: &Asset) -> Result<()> {
         total == asset.bytes && Sha256Digest::from_bytes(digest.finalize().into()) == asset.sha256,
         "materialized asset bytes differ from original pin"
     );
+    Ok(())
+}
+/// Produce independent, exclusively-created regular files for the strict
+/// service-side OpenedDirectory reader. Source aliases are read-only inputs,
+/// never copied as links into the new authenticated closure.
+fn copy_verified_asset(
+    source: &std::path::Path,
+    directory: &airk_process::directory::OpenedDirectory,
+    asset: &Asset,
+) -> Result<()> {
+    use std::io::{Read, Write};
+    let mut input = std::fs::File::open(source)?;
+    ensure!(
+        input.metadata()?.is_file() && input.metadata()?.len() == asset.bytes,
+        "source asset length differs"
+    );
+    let mut destination = directory.create_file(std::ffi::OsStr::new(&asset.name))?;
+    ensure!(
+        airk_process::directory::identity(&input)?
+            != airk_process::directory::identity(&destination)?,
+        "materialized asset must have independent file identity"
+    );
+    let mut buffer = vec![0u8; 256 * 1024];
+    let mut digest = Sha256::new();
+    let mut total = 0u64;
+    loop {
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total = total
+            .checked_add(count as u64)
+            .context("asset byte count overflow")?;
+        ensure!(total <= asset.bytes, "source asset grew while copying");
+        digest.update(&buffer[..count]);
+        destination.write_all(&buffer[..count])?;
+    }
+    ensure!(
+        total == asset.bytes && Sha256Digest::from_bytes(digest.finalize().into()) == asset.sha256,
+        "source asset bytes differ from original pin"
+    );
+    destination.sync_all()?;
+    drop(destination);
+    // Authenticate the exact strict-consumer handle, including its native
+    // single-link/no-redirection guard, rather than merely reopening by path.
+    exact_asset_file(
+        directory.open_file(std::ffi::OsStr::new(&asset.name))?,
+        asset,
+    )?;
+    directory.sync_all()?;
     Ok(())
 }
 fn private_evaluation_identity(profile: &Profile) -> Result<Sha256Digest> {
@@ -624,10 +673,9 @@ fn materialize_private_next_read_profiles_from_actual_native_empirical_evidence(
         profile
             .assets
             .retain(|asset| asset.role != airk_core::arbiter::AssetRole::Calibration);
+        let directory = airk_process::directory::OpenedDirectory::open(&root.canonicalize()?)?;
         for asset in &profile.assets {
-            let target = root.join(&asset.name);
-            std::fs::hard_link(input.assets.join(&asset.name), &target)?;
-            exact_asset_file(&target, asset)?;
+            copy_verified_asset(&input.assets.join(&asset.name), &directory, asset)?;
         }
         for (name, role, bytes, hash) in [
             (
@@ -864,5 +912,66 @@ fn retier_private_profiles(tier: usize) -> Result<()> {
             &json!({"schema":"airk.arbiter.private-retier/1","evaluation":true,"release_qualified":false,"source_inputs_sha256":input_hash,"profiles":lineage,"scope":"Native metadata emitter only; no model execution or qualification"}),
         )?,
     )?;
+    Ok(())
+}
+
+#[test]
+fn materialized_asset_copy_is_strictly_single_linked_independent_and_preserves_source_bytes()
+-> Result<()> {
+    use std::io::Read;
+    let fixture = tempfile::tempdir()?;
+    let source = fixture.path().join("source.bin");
+    let alias = fixture.path().join("source-alias.bin");
+    let content: Vec<u8> = (0..(256 * 1024 + 7))
+        .map(|index| (index % 251) as u8)
+        .collect();
+    std::fs::write(&source, &content)?;
+    std::fs::hard_link(&source, &alias)?;
+    let source_directory =
+        airk_process::directory::OpenedDirectory::open(&fixture.path().canonicalize()?)?;
+    assert!(
+        source_directory
+            .open_file(std::ffi::OsStr::new("source.bin"))
+            .is_err(),
+        "the strict consumer must continue to reject source aliases"
+    );
+    let destination = fixture.path().join("destination");
+    std::fs::create_dir(&destination)?;
+    let directory = airk_process::directory::OpenedDirectory::open(&destination.canonicalize()?)?;
+    let asset = Asset {
+        name: "asset.bin".into(),
+        role: airk_core::arbiter::AssetRole::Model,
+        bytes: content.len() as u64,
+        sha256: Sha256Digest::from_bytes(Sha256::digest(&content).into()),
+    };
+    copy_verified_asset(&source, &directory, &asset)?;
+    let mut accepted = directory.open_file(std::ffi::OsStr::new(&asset.name))?;
+    let source_file = std::fs::File::open(&source)?;
+    assert_ne!(
+        airk_process::directory::identity(&accepted)?,
+        airk_process::directory::identity(&source_file)?,
+        "copy must not reuse source file identity"
+    );
+    let mut actual = Vec::new();
+    accepted.read_to_end(&mut actual)?;
+    assert_eq!(actual, content);
+    assert!(
+        copy_verified_asset(&source, &directory, &asset).is_err(),
+        "existing output must never be overwritten"
+    );
+    drop(accepted);
+    drop(source_file);
+    std::fs::write(
+        destination.join(&asset.name),
+        b"independent destination edit",
+    )?;
+    assert_eq!(std::fs::read(&source)?, content);
+    assert_eq!(std::fs::read(&alias)?, content);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(std::fs::metadata(destination.join(&asset.name))?.nlink(), 1);
+        assert_eq!(std::fs::metadata(&source)?.nlink(), 2);
+    }
     Ok(())
 }
