@@ -2,6 +2,37 @@
 use super::*;
 use crate::{identity::Incarnation, index_catalog::PathScope};
 
+#[test]
+fn live_reserved_source_paths_match_independent_native_component_cases() {
+    for (path, root_reserved, retained_archive) in [
+        ("/home/u/.airk/agent-edits/v1/tx/prepared", true, true),
+        ("/home/u/.airk/agent-edits", true, true),
+        ("/home/u/.AIRK/AGENT-EDITS/v99/before", true, true),
+        ("/home/u/.airk", true, false),
+        ("/home/u/.airk/models/explicit.bin", true, false),
+        ("/home/u/.airk/agent-edits-other/x", true, false),
+        ("/home/u/.airk-neighbor/agent-edits/x", false, false),
+        ("/home/u/not.airk/agent-edits", false, false),
+        ("/home/u/.airk\\agent-edits/prepared", false, false),
+        (r"C:\Users\u\.airk\agent-edits\v1\tx\prepared", true, true),
+        (r"C:\Users\u\.AIRK/agent-edits/v2/tx/before", true, true),
+        (r"\\?\C:\Users\u\.airk\agent-edits\v1", true, true),
+        (r"\\?\UNC\host\share\.airk\agent-edits\v1", true, true),
+        (r"\\host\share\.airk-neighbor\agent-edits", false, false),
+    ] {
+        assert_eq!(
+            source_root_is_reserved(path),
+            root_reserved,
+            "source root: {path}"
+        );
+        assert_eq!(
+            retained_agent_edit_path(path),
+            retained_archive,
+            "protected input: {path}"
+        );
+    }
+}
+
 fn fixture() -> Result<SourcePolicy> {
     let fixtures: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

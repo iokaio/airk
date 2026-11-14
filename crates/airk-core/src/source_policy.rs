@@ -14,6 +14,37 @@ use std::collections::BTreeSet;
 pub const POLICY_SCHEMA: &str = "airk.source-policy/1";
 pub const MAX_POLICY_BYTES: usize = 1024 * 1024;
 
+/// Live source admission only. This is a lexical reservation predicate, not
+/// canonical/native identity proof and not a persisted-policy validation rule.
+pub fn source_root_is_reserved(path: &str) -> bool {
+    native_path_components(path).any(|part| part.eq_ignore_ascii_case(".airk"))
+}
+
+/// Retained agent-edit state is never an explicit extraction/verification input.
+/// All versions and unknown descendants are private; unrelated legacy `.airk`
+/// administrative assets retain their existing explicit admission semantics.
+pub fn retained_agent_edit_path(path: &str) -> bool {
+    let mut airk = false;
+    for part in native_path_components(path) {
+        if airk && part.eq_ignore_ascii_case("agent-edits") {
+            return true;
+        }
+        airk = part.eq_ignore_ascii_case(".airk");
+    }
+    false
+}
+
+fn native_path_components(path: &str) -> impl Iterator<Item = &str> {
+    let bytes = path.as_bytes();
+    let windows = path.starts_with("\\\\")
+        || bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\');
+    path.split(move |c| c == '/' || windows && c == '\\')
+        .filter(|part| !part.is_empty())
+}
+
 mod mutation;
 pub use mutation::{PolicyChange, PolicyChangePreview};
 
