@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,15 +36,32 @@ def graph():
 
 
 class StaticAggregateTests(unittest.TestCase):
+    def test_readonly_verifier_normalizes_its_owned_relative_destination_first(self):
+        original = Path('relative-owned')
+        resolved = Path('normalized-owned').absolute()
+        core = SimpleNamespace(owned_destination=Mock(return_value=resolved),
+                               read_json=Mock(side_effect=ValueError('stop after normalized read')))
+        with self.assertRaisesRegex(ValueError,'normalized read'):
+            MODULE.verify(original,'mac',{},core)
+        core.owned_destination.assert_called_once_with(original,'mac')
+        core.read_json.assert_called_once_with(resolved/'static-aggregate-receipt.json')
+
     def test_macos_uses_native_libtool_and_exact_filelist(self):
         base = Path("owned")
         fake = SimpleNamespace(TARGETS={"mac":("Darwin","aarch64")},child=lambda root,name:root/name)
         selected = {"inputs":[{"path":"b/Release/libonnxruntime_session.a"},{"path":"b/Release/model_package/libmodel_package.a"}]}
-        request = MODULE.invocation(base,"mac",{},selected,fake)
-        self.assertEqual(str(request["tool"]),str(Path("/usr/bin/libtool")))
+        original = {"receipt":{"toolchain":{"compiler":{"version_output":
+            "Apple clang version 21.0.0\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n"}}}}
+        request = MODULE.invocation(base,"mac",original,selected,fake)
+        self.assertEqual(str(request["tool"]),str(Path("/Library/Developer/CommandLineTools/usr/bin/libtool")))
         self.assertEqual(request["argv"][1:3],["-static","-o"])
         self.assertEqual(request["text"],"\n".join(str(base/row["path"]) for row in selected["inputs"])+"\n")
         self.assertEqual(request["argv"][-2:],["-filelist",str(base/"aggregate/inputs.filelist")])
+        for observed in ['Apple clang version 21.0.0', 'InstalledDir: relative/bin',
+                         'InstalledDir: /developer/../bin',
+                         'InstalledDir: /first/bin\nInstalledDir: /second/bin']:
+            original['receipt']['toolchain']['compiler']['version_output'] = observed
+            with self.assertRaises(ValueError):MODULE.invocation(base,'mac',original,selected,fake)
 
     def test_linux_uses_real_ar_mri_with_fixed_literal_shell_arguments(self):
         fake = SimpleNamespace(TARGETS={"linux":("Linux","x86_64")},child=lambda root,name:root/name)

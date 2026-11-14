@@ -7,7 +7,7 @@ libraries pretending obsolete Abseil components still exist.
 """
 import copy
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import time
 
@@ -119,7 +119,17 @@ def invocation(destination, target, result, selected, core):
         text = "\n".join('"' + path + '"' for path in paths) + "\n"
         argv = [str(tool), "/NOLOGO", "/OUT:" + str(destination / "aggregate/onnxruntime.lib"), "@" + str(response)]
     elif system == "Darwin":
-        tool = Path("/usr/bin/libtool")
+        # /usr/bin/libtool is Apple's multiply hard-linked dispatcher. Use the
+        # real developer tool adjacent to the selected compiler from the
+        # authenticated original build observation; retain strict file checks.
+        observed = result["receipt"]["toolchain"]["compiler"]["version_output"]
+        directories = re.findall(r"^InstalledDir: (.+)$", observed, re.MULTILINE)
+        if len(directories) != 1:
+            raise ValueError("Original Mac compiler has no unique selected developer directory")
+        directory = PurePosixPath(directories[0])
+        if not directory.is_absolute() or directory.name != "bin" or ".." in directory.parts:
+            raise ValueError("Original Mac compiler selected directory differs")
+        tool = Path(str(directory / "libtool"))
         response = destination / "aggregate/inputs.filelist"
         text = "\n".join(paths) + "\n"
         argv = [str(tool), "-static", "-o", str(destination / "aggregate/libonnxruntime.a"), "-filelist", str(response)]
@@ -139,6 +149,7 @@ def invocation(destination, target, result, selected, core):
 
 
 def verify(destination, target, result, core):
+    destination = core.owned_destination(destination, target)
     receipt = core.read_json(destination / RECEIPT)
     expected = plan(destination, target, result, core)
     if (receipt.get("plan") != expected or receipt.get("result") != "genuine_aggregate_not_yet_final_link_or_model_qualified"
