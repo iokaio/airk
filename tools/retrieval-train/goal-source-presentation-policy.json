@@ -1,0 +1,10 @@
+{
+  "schema": "airk.development-goal-source-presentation-policy/1",
+  "phase": "Before final scoring",
+  "answering_agent": "Newest actual external canonical-tool response first, preserving native record and ranked-hit order WITHIN each response; stable short citation IDs. The same4096input-token prefix budget applies to every arm, with exact UTF8 byte clipping and omitted/truncated records disclosed. Complete canonical receipts remain private and intact.",
+  "packet": "Keep the native packet's original initial-search/additional-read ordering. Do not reverse learned best-read-first ordering or native search ranking. Only source excerpts whose hashes/locations/exact bytes authenticate against the frozen licensed fixture are supplied.",
+  "critic_distinction": "The native next-read critic may separately prioritize latest INTERNAL read observations to know what has already been gathered. Its Rust-owned task policy is distinct from the downstream agent's external-response presentation policy.",
+  "read_followup": "READ rN only refers to an actually shown record. Use the existing canonical context read at its verified hit start line, before0/after32/max_bytes4096. The owning context handler clamps at indexed EOF, preserving strict read_file bounds and avoiding truncation before the requested hit. No unmetered file-info/source lookups choose the read. Search remains a legitimate alternative within the same residual budget.",
+  "grading": "Only actually shown source byte ranges and valid cited shown record IDs earn same-original-alternative support credit. Joining contiguous ranges of ONE original fact is allowed; gaps, uncited halves and alternative unions are not.",
+  "unchanged": "All frozen question IDs, human alternatives, answers, numeric floors, equal resource/read/model budgets and no-gold-feedback rules remain unchanged. No final model scores informed this implementation."
+}

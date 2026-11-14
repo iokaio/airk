@@ -1,0 +1,10 @@
+{
+  "schema": "airk.development-goal-critical-evidence-freeze/1",
+  "recorded_at_utc": "2026-11-14T09:11:45Z",
+  "authority": "Primary explicitly fixed this aggregate interpretation before any A6 final scores. Supplements historical goal/baseline freezes without introducing per-question zero-loss gates.",
+  "population": "All100 previously frozen goal questions. Strongest baseline selected only by baseline completion, then own completed-task mean turns, then deterministic tie break.",
+  "critical_evidence": "For each optional model, all-task mean best-SAME-original-alternative human-fact recall over ACTUALLY SHOWN byte ranges must be at least selected strongest baseline. The same all-task comparison separately applies to actually cited ranges. No alternative union, whole-file membership credit or per-question zero-loss gate.",
+  "citation_integrity": "Native packet/source/citation integrity remains absolute1.0; invalid native citations or source mismatch is infrastructure failure. Fixed external answering agent invalid record IDs already count as goal failure. Agent citation precision must be at least selected baseline, not a new absolute1.0 agent-accuracy gate.",
+  "denominators": "Agent citation precision = valid returned record-ID references divided by all generated final record-ID references, retaining duplicates in raw denominator. Report valid/invalid counts and zero-citation tasks. A zero-reference condition has undefined precision; report its comparison as not estimable, never manufacture perfect evidence or a numeric baseline precision.",
+  "reporting": "Report per-question shown/cited fact recall losses/gains, failures, original question categories/disagreements and source-cluster descriptive intervals. No final score tuning or threshold change."
+}

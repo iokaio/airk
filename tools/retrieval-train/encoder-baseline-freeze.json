@@ -1,0 +1,15 @@
+{
+  "schema": "airk.development-encoder-baseline-freeze/1",
+  "recorded_at_utc": "2026-11-14T06:26:38Z",
+  "authority": "Primary approved exact two-control interpretation before final model scores; original A1 floors strengthened, never relaxed",
+  "population": "Same frozen205final requests/corpus/chunking/current native pipeline, with separately indexed DBs and distinct explicit evaluation model identities",
+  "primary_unsigned_controls": [
+    {"name": "actual-shipped-original-u8-on-ort130-evaluation-only", "model_sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21", "source": "Exact preserved native v1 catalog/manifest/assets, no production v1 execution relaxation"},
+    {"name": "original-untrained-same-mixed-recipe-u8-evaluation-only", "model_sha256": "aef2f53597bff48f66da081bd688682e37e18225e49c2343803e918b5136377d", "source": "Exact publisher FP32 encoder, same six protected FFN outputs/FP32 embeddings/U8 per-channel recipe as trained candidate; no AIRK weight training"}
+  ],
+  "trained_unsigned_model_sha256": "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+  "gate_against_each_control": {"complete_original_alternative_recall_gain_min": 0.03, "mean_evidence_recall_regression_max": 0.02},
+  "unchanged_absolute_floors": {"top_k": 10, "mean_evidence_recall_min": 0.85, "complete_original_alternative_recall_min": 0.70, "citation_and_source_identity_precision_min": 1.0},
+  "additional_reporting": "Signed counterparts and original FP32 oracle/drift; dataset/task families and source-cluster descriptive intervals; baseline numerical admission failures explicitly disclosed, never promoted or waived. No weaker-control selection or final-set tuning.",
+  "status": "Evaluation controls/floors frozen, not final quality/native/platform qualification"
+}

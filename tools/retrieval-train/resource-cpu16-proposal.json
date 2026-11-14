@@ -1,0 +1,10 @@
+{
+  "schema": "airk.development-native-cpu-fit-declaration/1",
+  "authority": "Primary explicitly approved NEW large-model CPU16 tier after the actual CPU8 Intern4 campaign failed, before the first CPU16 diagnostic. Old CPU8 profiles/results remain unchanged.",
+  "scope": "Only arbiter-large-intern-4b and arbiter-large-kev-4b receive new distinct private candidate identities. Both smaller slots retain their existing CPU8 identities. Native Core owns profile/policy serialization and manifest derivation; no Python DTO or digest rewrite.",
+  "cpu_fit": {"minimum_physical_cores": 16, "intra_threads": 16, "inter_threads": 1, "sequential": true, "spinning": false},
+  "unchanged_floors": {"context_tokens": 2048, "batch": 1, "candidates": 8, "warmup_runs": 1, "measured_warm_runs": 20, "nearest_rank_p95_sample": 19, "maximum_p95_seconds": 30, "larger_peak_rss_gib": 24},
+  "unchanged_inputs": "Exact previously admitted weight8 graphs/data, full original trained readouts, tokenizer/compiler bytes and independently retained quantized raw-score fixtures. No regraph, retraining, precision change, truncated input or dynamic thread fallback.",
+  "no_transfer": "CPU8 Intern4 p95 34.777394 seconds failed the unchanged30-second floor. CPU16 starts unqualified and requires its own exact native numerical/resource/human-context/cancel/recovery/platform evidence; CPU8 failure is never overwritten. Small CPU8 passes do not transfer to large choices.",
+  "measurement_order": "Native-owned metadata materialization, cheap full-native2048 diagnostic after compile, then separately reported cold load/warmup/all20 actual native measurements if scheduled by primary. No competing model/GPU workload during resource campaign."
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "airk.development-native-cpu-fit-declaration/1",
+  "authority": "Primary explicitly approved NEW large-model CPU24 tier after actual CPU16 Intern4 failed, before any CPU24 measurement. User-authorized Cargo clean/recompile does not change original evidence identities.",
+  "scope": "Only the two required large model slots receive new distinct private candidate identities. Both smaller slots retain measured CPU8 profiles. Native Core owns exact serialization/policy/manifest derivation. No Python Core DTO or digest edits.",
+  "cpu_fit": {"minimum_physical_cores": 24, "intra_threads": 24, "inter_threads": 1, "sequential": true, "spinning": false},
+  "unchanged_floors": {"context_tokens": 2048, "batch": 1, "candidates": 8, "warmup_runs": 1, "measured_warm_runs": 20, "nearest_rank_p95_sample": 19, "maximum_p95_seconds": 30, "larger_peak_rss_gib": 24},
+  "unchanged_inputs": "Exact admitted weight8 graph/data/full trained readout/tokenizer/compiler/oracle bytes. No regraph, retraining, precision change, shortened input, extra warmups or dynamic thread fallback.",
+  "preserved_failures": "CPU8 Intern4 p95 34.777394s failed. Actual CPU16 full20 p95 30.576960s/max31.932897s failed; separately reported warmup32.721389s. Neither is overwritten, relabeled or retried unchanged. CPU24 begins unqualified with a new explicit identity and its own actual numerical/resource/quality/cancel/recovery evidence required.",
+  "measurement_order": "After Core/contract/fixture checks, native metadata-only16-to24 retier, separate full2048 three-observation diagnostic, then the unchanged full20 campaign only as scheduled. Three observations cannot qualify a p95. Root owns exclusive heavy CPU/GPU and Cargo schedule."
+}

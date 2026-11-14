@@ -1,0 +1,8 @@
+{
+  "schema": "airk.development-goal-baseline-selection-freeze/1",
+  "authority": "Primary explicitly froze this baseline-only selection before any A6 final scores, 2026-11-14. Supplements goal-evaluation-freeze.json without replacing historical gates.",
+  "selection": "Higher goal completion fraction; tie: fewer mean external model turns on each baseline's own completed tasks; exact tie: deterministic_packet. No optional model result enters selection.",
+  "primary_turn_gate": "At least 10 percent mean external turn reduction on optional-model AND selected-baseline common-success questions only. Empty common-success set cannot pass.",
+  "reporting": "Report both paired baseline comparisons, all-task failures and turns, categories, disagreements, and descriptive source-cluster intervals. The other baseline's turn comparison does not introduce a new acceptance gate.",
+  "unchanged": "Each optional completion at least .75 and no more than .02 below strongest baseline, full original support/citation gates and all source/resource/budget requirements. No final scores consumed by this clarification."
+}

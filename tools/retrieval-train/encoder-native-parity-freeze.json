@@ -1,0 +1,12 @@
+{
+  "schema": "airk.development-native-encoder-parity-freeze/1",
+  "authority": "Primary approved native SAME-graph vector tolerance before measurement; candidate-versus-FP32 gates remain separate and unchanged",
+  "phase": "Before first native six-family twelve-case run",
+  "native_same_graph_oracle": {"maximum_absolute_vector_component_error": 0.00001, "dimensions": 384, "finite": true, "unit_norm_required": true, "input_ids_and_masks_exact": true},
+  "trained_candidate_vs_fp32": {"cosine_minimum": 0.995, "l2_maximum": 0.1, "scope": "Applies to new trained candidate admission; original baseline numerical failures are explicitly reported and never promoted or waived"},
+  "cases": "Twelve developer cases per family: original ten texts/input arrays/vectors preserved exactly, plus independently authored masked64/128 cases. Actual32/64/128/256 bucket coverage; B1 calls, no B>1 tensor claim.",
+  "families": ["trained-v2-u8", "trained-v2-s8", "original-shipped-u8-ort130-evaluation", "original-shipped-s8-ort130-evaluation", "original-mixed-u8-ort130-evaluation", "original-mixed-s8-ort130-evaluation"],
+  "native_input_sha256": "3ead240726ebdba10577db6778bffbf5232eab10c50f2ae128d589e0a961ab81",
+  "isolation": "Private NativeInferenceOwner fixture only; exact independent asset/model-json/oracle hashes; distinct evaluation model identities and DBs. No production v1 runtime relaxation, public bypass flag or vector mixing.",
+  "status": "Numerical protocol only; does not replace205human quality, resource/recovery, platform or package qualification"
+}

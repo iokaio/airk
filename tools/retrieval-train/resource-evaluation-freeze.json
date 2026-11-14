@@ -1,0 +1,14 @@
+{
+  "schema": "airk.development-resource-evaluation-freeze/1",
+  "recorded_at_utc": "2026-11-14T05:32:57Z",
+  "authority": "Primary approved exact sampling before resource qualification; original A0 resource floors unchanged",
+  "population": "Each actual candidate native profile, B1/2048 input tokens/8 candidates/CPU1; complete authenticated asset-memory load and actual scoring path",
+  "warmup_runs": 1,
+  "measured_warm_runs": 20,
+  "p95": "Nearest rank: 19th ascending sample of20",
+  "p99_and_max": "20th sample; descriptive sample limit, not a tail guarantee",
+  "warm_p95_seconds_max": 30,
+  "report": "Retain all20 observations and separate warmup, load, hardware/clocks, input dimensions, peak RSS and actual authenticated-memory lifecycle. Report original failed development observations without treating one observation as a p95 result.",
+  "requirements": "Original smaller12GiB/larger24GiB peak RSS floors and actual OOM/cancel/recovery gates remain. No precision substitution, dynamic fallback or latency waiver.",
+  "status": "Sampling design only; no native resource pass"
+}

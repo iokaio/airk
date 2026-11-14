@@ -1,0 +1,15 @@
+{
+  "schema": "airk.development-explicit-cpu-fit-proposal/1",
+  "recorded_at_utc": "2026-11-14T05:37:49Z",
+  "authority": "Primary explicitly authorized this additional distinct hardware execution tier BEFORE any eight-core measurement under plan9.4; existing CPU1 tier remains separate/unqualified",
+  "execution_tier": "cpu8-physical-cores-v1",
+  "minimum_physical_cores": 8,
+  "intra_op_threads": 8,
+  "inter_op_threads": 1,
+  "execution": "sequential graph; no automatic thread/model/precision selection",
+  "development_windows_affinity": "Select one logical processor from each of eight actual physical-core masks returned by GetLogicalProcessorInformation; record actual masks/affinity. Refuse unverified or insufficient topology.",
+  "unchanged_floors": "B1/max2048tokens/8candidates;20measured warm runs after one reported warmup, nearest-rank p95<=30seconds; smaller12GiB/larger24GiB peakRSS; original context/answer/citation/quality/cancellation/OOM/recovery gates",
+  "admission": "Distinct complete profile identity and explicit selected execution profile; Core-owned CPU fit/thread/minimum-core contract and native resource admission must land before native qualification or promotion. CPU1 evidence does not qualify CPU8 and vice versa.",
+  "platforms": "Observed development host32physical/64logical. MacNeo6logical cannot satisfy this tier and remains unqualified unless a separate independently measured tier is reviewed.",
+  "status": "Additional development tier frozen before first measurement; no native CPU8 support or qualification claimed"
+}

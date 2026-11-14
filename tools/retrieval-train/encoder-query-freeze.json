@@ -1,0 +1,13 @@
+{
+  "schema": "airk.development-native-encoder-query-freeze/1",
+  "authority": "Primary approved identical route/budget before first final205 native model scores",
+  "phase": "Before final scoring",
+  "tool": "search",
+  "arguments": {"mode": "vector", "limit": 10, "full_chunks": true, "max_bytes": 32768},
+  "query": "Original frozen human question, unchanged across each separately indexed original-shipped/original-same-mixed/trained model identity",
+  "scope": "Original publisher paper for QASPER, obtained before answers/evidence; global full Hotpot collection. Same corpus revision, native chunking/vector/index/retrieval pipeline for all controls and trained candidates.",
+  "grade": "Authenticate actual returned source/citation hashes and original byte ranges; compute recall within SAME original human alternative. Contiguous ranges may jointly cover ONE original fact. Never whole-file membership or alternative unions. Retain source cuts, omitted counts and full literal native input/result receipts.",
+  "separate_gate": "Default hybrid remains the A6 whole-cascade comparison route; vector-only encoder attribution does not replace it.",
+  "floors": "All previously frozen absolute floors and BOTH paired-baseline gain/nonregression gates unchanged",
+  "status": "Query protocol only; no final quality/native/platform pass"
+}

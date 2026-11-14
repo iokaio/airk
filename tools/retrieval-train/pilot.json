@@ -1,0 +1,373 @@
+{
+  "schema": "airk.development-retrieval-corpus/1",
+  "revision": "f43511506b0bed6436f97aaf35482da8a331da1e",
+  "author": {
+    "agent": "/root/arbiter_preparation",
+    "kind": "Original agent/model-authored questions and expected evidence anchors. These are teacher/model labels, not human gold."
+  },
+  "review": {
+    "state": "Unadjudicated diagnostic. Independent agent source/metric review completed, but human adjudication has not occurred.",
+    "final_evaluation_eligible": false,
+    "training_eligible": false,
+    "evaluation_gold_eligible": false
+  },
+  "lineage": "Single-repository developmental pilot. Splits are fixed task groups, not repository-disjoint generalization evidence. No final holdout. Never promote as A0 final corpus.",
+  "sources": [
+    {
+      "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+      "sha256": "f8058b82ef52cccd587854fabb49efccb24e828ce31742f5effb94a6c426aa82",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "document"
+    },
+    {
+      "path": "crates/airk-ipc/CONTRACT.md",
+      "sha256": "d0d5b2803ce0bc8b43c1820b5c1e7a180c71daef42c1eafe168e4214f886e005",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "document"
+    },
+    {
+      "path": "crates/airk-retrieval/src/model_catalog.rs",
+      "sha256": "109c0b97ca8f2f51f810146bce585bd5ad44db5fd768c06db8b934387c304801",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "code"
+    },
+    {
+      "path": "crates/airk-retrieval/src/native_inference.rs",
+      "sha256": "fdd7f3cb611e2cd2ed88963861c03759f2926b96b23d0a025f3d4dbd8197c268",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "code"
+    },
+    {
+      "path": "crates/airk-retrieval/src/onnx.rs",
+      "sha256": "876d79baa3ae9a2bc25d0b45ed5676ef69412fb58d99f9fac3b8cae277470e9c",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "code"
+    },
+    {
+      "path": "crates/airkctl/src/contract/CONTRACT.md",
+      "sha256": "f6adf001908045489a383031d178705ae7618906f17841cadf2ee0a9793c0e28",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "document"
+    },
+    {
+      "path": "docs/architecture.md",
+      "sha256": "4fe1e3ebabb801092388638a9b0a08c85dc54bb0b4a813619210cab0982aff77",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "document"
+    },
+    {
+      "path": "docs/onnx-models.md",
+      "sha256": "1a7f935b258cdcaa5277dd57275b927968358eee45a7690eb07c01127833e8fc",
+      "license": "Apache-2.0",
+      "origin": "https://github.com/iokaio/airk",
+      "category": "document"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "limits",
+      "split": "train",
+      "question": "Who owns the shared maximum sizes and deadlines used by combined reads and source verification?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "leaf module for the read limits"
+        }
+      ]
+    },
+    {
+      "id": "large-verification",
+      "split": "train",
+      "question": "How many source files can one saved-byte verification inspect at most?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "`MAX_SOURCES`"
+        }
+      ]
+    },
+    {
+      "id": "verification-byte-cap",
+      "split": "train",
+      "question": "Where is the maximum total byte budget of a source verification documented?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "1,073,741,824"
+        }
+      ]
+    },
+    {
+      "id": "step-report-cap",
+      "split": "train",
+      "question": "What is the bound on the number of report entries in a Workbench execution?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "`MAX_STEP_REPORTS`"
+        }
+      ]
+    },
+    {
+      "id": "limits-compatibility",
+      "split": "train",
+      "question": "Were old verification limit import paths removed when the leaf module was extracted?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "re-exported"
+        }
+      ]
+    },
+    {
+      "id": "no-limits-io",
+      "split": "train",
+      "question": "Does the Core limit leaf perform filesystem operations or keep a clock?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "No statics, clock or I/O"
+        }
+      ]
+    },
+    {
+      "id": "limits-tests",
+      "split": "train",
+      "question": "Which focused command exercises the contract for shared verification limits?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "cargo test -p airk-core"
+        }
+      ]
+    },
+    {
+      "id": "limit-change",
+      "split": "train",
+      "question": "Is increasing one of the shared verification maxima merely a mechanical refactor?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-core/src/read_limits/CONTRACT.md",
+          "anchor": "behavior and contract change"
+        }
+      ]
+    },
+    {
+      "id": "exit-contract",
+      "split": "development",
+      "question": "Where are the numeric client process exit categories specified?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airkctl/src/contract/CONTRACT.md",
+          "anchor": "Exit classes"
+        }
+      ]
+    },
+    {
+      "id": "version-network",
+      "split": "development",
+      "question": "Does inspecting the client version require contacting the resident service?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airkctl/src/contract/CONTRACT.md",
+          "anchor": "never contacts the service"
+        }
+      ]
+    },
+    {
+      "id": "session-framing",
+      "split": "development",
+      "question": "What frame encoding and protocol version does the editor helper use?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airkctl/src/contract/CONTRACT.md",
+          "anchor": "Session protocol 2"
+        }
+      ]
+    },
+    {
+      "id": "session-secrets",
+      "split": "development",
+      "question": "May session frames include browser launch codes or private window grants?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airkctl/src/contract/CONTRACT.md",
+          "anchor": "No frame carries a token"
+        }
+      ]
+    },
+    {
+      "id": "scope-serialization",
+      "split": "development",
+      "question": "How are explicit scope mutations ordered against automatic reselection?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airkctl/src/contract/CONTRACT.md",
+          "anchor": "one session-local gate"
+        }
+      ]
+    },
+    {
+      "id": "scope-lock-order",
+      "split": "development",
+      "question": "What lock order is required when changing the current window selection?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airkctl/src/contract/CONTRACT.md",
+          "anchor": "mutation gate then short scope-state lock"
+        }
+      ]
+    },
+    {
+      "id": "transport-auth",
+      "split": "development",
+      "question": "At what point does local IPC authenticate peers relative to decoding requests?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-ipc/CONTRACT.md",
+          "anchor": "before deserializing"
+        }
+      ]
+    },
+    {
+      "id": "transport-layering",
+      "split": "development",
+      "question": "Can the local transport depend on registry, kernel or retrieval implementations?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-ipc/CONTRACT.md",
+          "anchor": "no registry, store, kernel or MCP"
+        }
+      ]
+    },
+    {
+      "id": "compute-thread",
+      "split": "calibration",
+      "question": "Can moving a model onto a different thread transfer permission to run inference?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-retrieval/src/native_inference.rs",
+          "anchor": "never transfers"
+        },
+        {
+          "role": "catalog boundary ownership",
+          "path": "docs/architecture.md",
+          "anchor": "airk-retrieval | Local ONNX"
+        }
+      ]
+    },
+    {
+      "id": "compute-lease",
+      "split": "calibration",
+      "question": "How long must the inference owner retain its real exclusive service lease?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-retrieval/src/native_inference.rs",
+          "anchor": "every synchronous FFI call"
+        }
+      ]
+    },
+    {
+      "id": "compute-nesting",
+      "split": "calibration",
+      "question": "Can the same thread enter a second inference compute scope before leaving the first?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-retrieval/src/native_inference.rs",
+          "anchor": "inference compute role already entered"
+        }
+      ]
+    },
+    {
+      "id": "model-count",
+      "split": "calibration",
+      "question": "Does the bundled embedding catalog accept an arbitrary number of model entries?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-retrieval/src/model_catalog.rs",
+          "anchor": "self.profiles.len() == 2"
+        },
+        {
+          "role": "public bundled profile contract",
+          "path": "docs/onnx-models.md",
+          "anchor": "Both exports use"
+        }
+      ]
+    },
+    {
+      "id": "model-weight-approval",
+      "split": "calibration",
+      "question": "Is a known precision label enough to permit different MiniLM weight bytes?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-retrieval/src/model_catalog.rs",
+          "anchor": "unapproved weight hash"
+        }
+      ]
+    },
+    {
+      "id": "tokenizer-family",
+      "split": "calibration",
+      "question": "May the current ONNX embedding adapter load a completely different tokenizer family?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "crates/airk-retrieval/src/onnx.rs",
+          "anchor": "ONNX adapter requires a BERT WordPiece tokenizer"
+        }
+      ]
+    },
+    {
+      "id": "model-choice-cpu",
+      "split": "calibration",
+      "question": "How is the signed or unsigned bundled MiniLM export chosen for an execution CPU?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "docs/onnx-models.md",
+          "anchor": "x64 with AVX-VNNI"
+        }
+      ]
+    },
+    {
+      "id": "architecture-no-cloud",
+      "split": "calibration",
+      "question": "Where is the local scope boundary against external databases and cloud providers described?",
+      "required_evidence": [
+        {
+          "role": "controlling definition or documented constraint",
+          "path": "docs/architecture.md",
+          "anchor": "external database or cloud provider"
+        }
+      ]
+    }
+  ]
+}
