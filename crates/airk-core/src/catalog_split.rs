@@ -16,6 +16,51 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const SPLIT_CONTRACT: u32 = 2;
+pub const GROUPED_SPLIT_CONTRACT: u32 = 4;
+#[cfg(test)]
+mod grouping_tests;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitGrouping {
+    pub mode: SplitGroupingMode,
+    pub project_id: QueryProjectId,
+    pub name: String,
+    pub original_scope: Vec<ScopeAtom>,
+    pub destination_scope: Vec<ScopeAtom>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SplitGroupingMode {
+    Create,
+    ExistingNamedSet {
+        definition_revision: CatalogRevision,
+        scope_revision: CatalogRevision,
+        original_membership_revision: CatalogRevision,
+    },
+}
+impl SplitGrouping {
+    pub fn project_id(operation: Incarnation) -> Result<QueryProjectId> {
+        Ok(QueryProjectId::from_identity(
+            framed_digest(b"airk/split-original-name-set/1", &[operation.as_bytes()]).to_string()
+                [..32]
+                .parse()?,
+        ))
+    }
+    pub fn whole_scope(policy: &SourcePolicy) -> Vec<ScopeAtom> {
+        let mut scope = policy
+            .roots
+            .iter()
+            .map(|root| ScopeAtom {
+                source_root_id: root.id,
+                kind: crate::index_catalog::PathScope::Subtree,
+                path: String::new(),
+            })
+            .collect::<Vec<_>>();
+        scope.sort();
+        scope
+    }
+}
 pub const MAX_SPLIT_JOBS: usize = 16;
 pub const MAX_SPLIT_PROJECTS: usize = 32;
 pub const MAX_SPLIT_SNAPSHOT_BYTES: usize = MAX_PAGE_BYTES - 2048;
@@ -77,6 +122,8 @@ impl SplitCapacityReview {
 #[serde(deny_unknown_fields)]
 pub struct SplitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grouping: Option<SplitGrouping>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extraction_policy: Option<crate::retention::SplitExtractionPolicyReference>,
     pub schema: u32,
     pub required_policy_contract: u32,
@@ -110,7 +157,9 @@ impl SplitRequest {
         ensure!(
             self.schema == 1
                 && self.required_policy_contract
-                    == if self.extraction_policy.is_some() {
+                    == if self.grouping.is_some() {
+                        GROUPED_SPLIT_CONTRACT
+                    } else if self.extraction_policy.is_some() {
                         3
                     } else {
                         SPLIT_CONTRACT
@@ -120,6 +169,20 @@ impl SplitRequest {
         self.original_registration.validate()?;
         self.destination_registration.validate()?;
         self.source_configuration.validate()?;
+        if let Some(grouping) = &self.grouping {
+            label(&grouping.name)?;
+            ensure!(
+                !matches!(grouping.mode, SplitGroupingMode::Create)
+                    || grouping.project_id == SplitGrouping::project_id(self.operation_id()?)?,
+                "split grouping identity differs"
+            );
+            atoms(&grouping.original_scope)?;
+            atoms(&grouping.destination_scope)?;
+            ensure!(
+                !grouping.original_scope.is_empty() && !grouping.destination_scope.is_empty(),
+                "split grouping requires both scopes"
+            );
+        }
         if let Some(reference) = &self.extraction_policy {
             reference.validate()?;
         }
@@ -151,6 +214,16 @@ impl SplitRequest {
             .collect::<BTreeSet<_>>();
         let mut projects = BTreeSet::new();
         for effect in &self.projects {
+            if self
+                .grouping
+                .as_ref()
+                .is_some_and(|grouping| grouping.project_id == effect.project_id)
+            {
+                ensure!(
+                    effect.retain_original && effect.destination_scope.is_none(),
+                    "automatic split grouping preserves original membership and owns destination addition"
+                );
+            }
             ensure!(
                 projects.insert(effect.project_id),
                 "duplicate split Project effect"
@@ -187,6 +260,13 @@ impl SplitRequest {
         self.validate()?;
         before.validate()?;
         plan.validate_against(before)?;
+        if let Some(grouping) = &self.grouping {
+            ensure!(
+                grouping.original_scope == SplitGrouping::whole_scope(&plan.remainder)
+                    && grouping.destination_scope == SplitGrouping::whole_scope(&plan.destination),
+                "split grouping must preserve both whole-index scopes"
+            );
+        }
         ensure!(
             before.index_id == self.original_index
                 && before.owner_binding == self.original_registration.binding
