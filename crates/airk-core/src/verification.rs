@@ -164,11 +164,42 @@ fn validate_member_projection(
         );
         return Ok(());
     }
-    ensure!(
-        verification["scope_identity"] == projection["scope_identity"]
-            && verification["scope_identity"].is_string(),
-        VerificationProjectionChanged
-    );
+    let combined_members = if projection["schema"] == crate::combined_reads::COMBINED_READ_SCHEMA {
+        let vector: crate::combined_reads::PublicationVector =
+            serde_json::from_value(projection["publication_vector"].clone())
+                .map_err(|_| VerificationProjectionChanged)?;
+        vector
+            .validate()
+            .map_err(|_| VerificationProjectionChanged)?;
+        let actual = projection["members"]
+            .as_array()
+            .ok_or(VerificationProjectionChanged)?;
+        let ids = actual
+            .iter()
+            .map(|member| serde_json::from_value::<IndexId>(member["index_id"].clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| VerificationProjectionChanged)?;
+        ensure!(
+            ids == vector
+                .members
+                .iter()
+                .map(|member| member.index_id)
+                .collect::<Vec<_>>(),
+            VerificationProjectionChanged
+        );
+        let authority: crate::identity::Sha256Digest =
+            serde_json::from_value(verification["scope_identity"].clone())
+                .map_err(|_| VerificationProjectionChanged)?;
+        ensure!(authority == vector.authority, VerificationProjectionChanged);
+        Some(ids)
+    } else {
+        ensure!(
+            verification["scope_identity"] == projection["scope_identity"]
+                && verification["scope_identity"].is_string(),
+            VerificationProjectionChanged
+        );
+        None
+    };
     let members = verification["members"]
         .as_array()
         .ok_or(VerificationProjectionChanged)?;
@@ -181,6 +212,12 @@ fn validate_member_projection(
         let index: IndexId = serde_json::from_value(member["index_id"].clone())
             .map_err(|_| VerificationProjectionChanged)?;
         ensure!(seen.insert(index), VerificationProjectionChanged);
+        ensure!(
+            combined_members
+                .as_ref()
+                .is_none_or(|members| members.contains(&index)),
+            VerificationProjectionChanged
+        );
         let result = member.get("result").ok_or(VerificationProjectionChanged)?;
         validate_projection_inner(result, depth + 1, visited)?;
         let body = result.get("structuredContent").unwrap_or(result);
@@ -350,6 +387,8 @@ fn canonical_result_container(pointer: &str) -> bool {
     true
 }
 
+#[cfg(test)]
+mod combined_projection_tests;
 mod inventory;
 pub use inventory::{ReferenceInventory, SavedSourceReference};
 
