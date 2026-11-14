@@ -46,6 +46,9 @@ def _load(name, filename):
 reads = _load("github_read", "github-read.py")
 # The C7 owner of the split threshold and the release catalog names.
 contract = _load("airk_split_receipts", "split_receipts.py")
+authority = _load("airk_release_authority", "release-authority.py")
+publication = _load("publication_contract", "publication-contract.py")
+optional = _load("optional_publication", "optional-publication.py")
 
 
 def checkout_version():
@@ -60,6 +63,16 @@ def split(version):
 def catalog_args(version):
     """Keyword arguments selecting `version`'s producer catalog; pre-split call shapes stay unchanged."""
     return dict(version=version) if split(version) else {}
+
+
+def nominated_branch(environment=None):
+    """Validate nomination; every consumer still authenticates actual origins."""
+    environment = os.environ if environment is None else environment
+    if environment.get("GITHUB_REF") != "refs/heads/" + authority.CAMPAIGN_BRANCH:
+        return "main"
+    reference = environment.get("GITHUB_WORKFLOW_REF", "")
+    workflow = reference.split("@", 1)[0].rsplit("/", 1)[-1]
+    return authority.manual_context(environment, workflow)["branch"]
 
 
 def producer_kinds(version):
@@ -77,14 +90,19 @@ def positive(value):
     return int(value)
 
 
-def verify_run(run, commit, workflow, events, success=True):
-    if (run.get("head_sha") != commit or run.get("head_branch") != "main"
+def verify_run(run, commit, workflow, events, success=True, *, branch="main"):
+    authority.branch_identity(branch, commit, commit if branch == authority.CAMPAIGN_BRANCH else None)
+    if (run.get("head_sha") != commit or run.get("head_branch") != branch
             or run.get("event") not in events or run.get("path") != f".github/workflows/{workflow}"
             or run.get("repository", {}).get("full_name") != REPOSITORY
             or run.get("head_repository", {}).get("full_name") != REPOSITORY
             or run.get("status") != "completed"
             or (success and run.get("conclusion") != "success")):
         raise ValueError("Candidate is not a successful trusted main workflow at the exact commit")
+    if branch == authority.CAMPAIGN_BRANCH:
+        owner = api(f"actions/workflows/{workflow}")
+        if run.get("event") != "workflow_dispatch" or run.get("workflow_id") != positive(owner.get("id")):
+            raise ValueError("Campaign producer differs from its reviewed manual workflow")
     positive(run["id"])
     positive(run["run_attempt"])
 
@@ -206,7 +224,21 @@ def promote(commit, tree, scratch, *, version=None):
     raise ValueError("No eligible PR candidate; main builds every target")
 
 
-def attest(run_id, commit, allow_manual=False, *, version=None):
+def attest(run_id, commit, allow_manual=False, *, version=None, branch="main"):
+    if branch == authority.CAMPAIGN_BRANCH:
+        if not allow_manual or not split(version):
+            raise ValueError("Campaign requires an explicit manual split CI producer")
+        run = authority.verify_campaign_ci(api, positive(run_id), commit)
+        attempt = positive(run["run_attempt"])
+        artifacts = run_artifacts(run_id)
+        if any(row.get("name", "").startswith("airk-promotion-") for row in artifacts):
+            raise ValueError("Campaign cannot reuse a PR promotion or subset")
+        selected = select_artifacts(artifacts, commit, run_id, attempt, kinds=("native",), universal=True,
+                                    origin_branch=branch)
+        return dict(schema="airk-ci-producer/3", repository=REPOSITORY, workflow_id=run["workflow_id"],
+                    commit=commit, qualified_commit=commit, source_branch=branch, run_id=str(run_id),
+                    attempt=str(attempt), event="workflow_dispatch", artifacts=selected)
+    authority.branch_identity(branch, commit)
     run = api(f"actions/runs/{positive(run_id)}")
     verify_run(run, commit, "ci.yml", ("push", "workflow_dispatch") if allow_manual else ("push",))
     workflow_id = ci_workflow(run)
@@ -269,11 +301,14 @@ def universal_artifact(record):
     return names[0]
 
 
-def resolve(commit, run_id=None, *, version=None):
+def resolve(commit, run_id=None, *, version=None, branch="main"):
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Expected full source commit")
     if run_id:
-        return attest(positive(run_id), commit, allow_manual=True, **catalog_args(version))
+        return attest(positive(run_id), commit, allow_manual=True, **catalog_args(version),
+                      **({"branch": branch} if branch != "main" else {}))
+    if branch != "main":
+        raise ValueError("Campaign release requires the explicit qualified manual CI run ID")
     pages = api(f"actions/workflows/ci.yml/runs?head_sha={commit}&event=push&status=success&per_page=100", True)
     runs = sorted((r for page in pages for r in page["workflow_runs"]), key=lambda r: r["id"], reverse=True)
     for run in runs:
@@ -286,11 +321,17 @@ def resolve(commit, run_id=None, *, version=None):
 
 def validate_record(record, commit, *, version=None):
     """Check a protected preflight record locally, without claiming live origin."""
-    if (record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2")
+    if (record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2", "airk-ci-producer/3")
             or record.get("repository") != REPOSITORY or record.get("commit") != commit
             or not re.fullmatch(r"[0-9a-f]{40}", commit)
             or record.get("event") not in ("push", "workflow_dispatch")):
         raise ValueError("Invalid pinned producer identity")
+    branch = authority.record_branch(record)
+    if branch != "main":
+        fields = {"schema", "repository", "workflow_id", "commit", "qualified_commit", "source_branch",
+                  "run_id", "attempt", "event", "artifacts"}
+        if set(record) != fields or not split(version):
+            raise ValueError("Invalid campaign producer fields or catalog")
     for key in ("run_id", "attempt", "workflow_id"):
         positive(record.get(key))
     artifacts = record.get("artifacts", {})
@@ -310,6 +351,8 @@ def validate_record(record, commit, *, version=None):
         name = f"{prefix}{source}-{positive(owner.get('run_id'))}-{positive(owner.get('attempt'))}"
         expected.add(name)
         artifact = artifacts.get(name, {})
+        if branch != "main" and set(artifact) != {"id", "digest"}:
+            raise ValueError("Campaign artifact fields differ from the reviewed identity")
         positive(artifact.get("id"))
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", "")):
             raise ValueError("Invalid pinned artifact digest")
@@ -326,10 +369,16 @@ def validate_record(record, commit, *, version=None):
 
 
 def verify_record(record, commit, *, version=None):
-    if record.get("commit") != commit or record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2"):
+    if record.get("commit") != commit or record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2", "airk-ci-producer/3"):
         raise ValueError("Producer record belongs to another commit/schema")
+    try:
+        branch = authority.record_branch(record)
+        if branch != "main":
+            validate_record(record, commit, **catalog_args(version))
+    except ValueError as error:
+        raise ValueError("Producer record belongs to another commit/schema") from error
     current = attest(record["run_id"], commit, allow_manual=record.get("event") == "workflow_dispatch",
-                     **catalog_args(version))
+                     **catalog_args(version), **({"branch": branch} if branch != "main" else {}))
     if current != record:
         raise ValueError("Producer run attempt or artifact identities changed after preflight")
 
@@ -382,13 +431,14 @@ def download_rehearsal(record, commit, destination):
         raise ValueError("Rehearsal changed during download")
 
 
-def assembled_bundle(commit, run_id, maximum_attempt):
+def assembled_bundle(commit, run_id, maximum_attempt, *, branch="main"):
     """Select the retained successful assembly, not the latest workflow attempt.
 
     Failed publication/site-only retries leave the exact earlier signed bundle
     authoritative. A newer assembly supersedes that selection and invalidates
     any preflight pinned to older bytes; never silently fall back past it.
     """
+    authority.branch_identity(branch, commit, commit if branch == authority.CAMPAIGN_BRANCH else None)
     pattern = re.compile(rf"airk-release-{re.escape(commit)}-{run_id}-([1-9][0-9]*)")
     artifacts = [(artifact, int(match.group(1))) for artifact in run_artifacts(run_id)
                  if (match := pattern.fullmatch(artifact.get("name", "")))
@@ -404,7 +454,7 @@ def assembled_bundle(commit, run_id, maximum_attempt):
     if (artifact.get("expired") is not False
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))
             or origin.get("id") != run_id or origin.get("head_sha") != commit
-            or origin.get("head_branch") != "main"):
+            or origin.get("head_branch") != branch):
         raise ValueError("Signed release artifact is expired or has different provenance")
     jobs = [job for page in api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", True)
             for job in page["jobs"]]
@@ -421,39 +471,119 @@ def assembled_bundle(commit, run_id, maximum_attempt):
     return artifact, attempt
 
 
-def attest_signed_release(run_id, commit):
+def attest_signed_release(run_id, commit, *, branch="main", optional_projection=None):
     """Pin the canonical signed assembly, never an unsigned Marketplace rebuild."""
     run_id = positive(run_id)
     run = api(f"actions/runs/{run_id}")
-    verify_run(run, commit, "github-release.yml", ("workflow_dispatch",))
+    verify_run(run, commit, "github-release.yml", ("workflow_dispatch",),
+               **({"branch": branch} if branch != "main" else {}))
     workflow = api("actions/workflows/github-release.yml")
     if run.get("id") != run_id or run.get("workflow_id") != workflow.get("id"):
         raise ValueError("Signed release workflow identity differs")
-    artifact, attempt = assembled_bundle(commit, run_id, positive(run["run_attempt"]))
-    return dict(schema="airk-signed-release-producer/1", repository=REPOSITORY, workflow_id=workflow["id"],
+    artifact, attempt = assembled_bundle(commit, run_id, positive(run["run_attempt"]),
+                                         **({"branch": branch} if branch != "main" else {}))
+    result = dict(schema="airk-signed-release-producer/1", repository=REPOSITORY, workflow_id=workflow["id"],
                 commit=commit, run_id=str(run_id), attempt=str(attempt), artifact_name=artifact["name"],
                 artifact=dict(id=positive(artifact["id"]), digest=artifact["digest"]))
+    if branch != "main":
+        result.update(schema="airk-signed-release-producer/2", source_branch=branch,
+                      qualified_commit=commit, event="workflow_dispatch")
+    if optional_projection is not None:
+        result.update(schema=optional.SIGNED, optional_models=optional_projection,
+                      parts=attest_optional_parts(run_id, attempt, commit, optional_projection, branch))
+        optional.validate_signed(result, optional_projection)
+    return result
 
 
-def download_signed_release(record, commit, destination, version, channel, *, tree=None, published_only=False):
-    if (record.get("schema") != "airk-signed-release-producer/1" or record.get("commit") != commit
+def attest_optional_parts(run_id, attempt, commit, owner, branch):
+    artifacts = run_artifacts(run_id)
+    jobs = [job for page in api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", True)
+            for job in page["jobs"]]
+    selected = {}
+    for name in owner["assets"]:
+        artifact_name = optional.part_input(name, commit, run_id)
+        matches = [row for row in artifacts if row.get("name") == artifact_name]
+        uploads = [row for row in jobs if row.get("name") == "optional-parts / " + name]
+        if len(matches) != 1 or len(uploads) != 1 or uploads[0].get("conclusion") != "success":
+            raise ValueError("Optional part lacks exactly one successful same-run upload job")
+        artifact, job = matches[0], uploads[0]
+        origin = artifact.get("workflow_run", {})
+        if (artifact.get("expired") is not False or origin.get("id") != run_id
+                or origin.get("head_sha") != commit or origin.get("head_branch") != branch
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))):
+            raise ValueError("Optional part artifact provenance differs")
+        try:
+            started, created, completed = (datetime.fromisoformat(value.replace("Z", "+00:00"))
+                for value in (job["started_at"], artifact["created_at"], job["completed_at"]))
+            if any(value.tzinfo is None for value in (started, created, completed)) or not started <= created <= completed:
+                raise ValueError("Optional part upload outside successful job interval")
+        except (KeyError, TypeError, AttributeError, ValueError) as error:
+            raise ValueError("Optional part is not bound to the successful assembly attempt") from error
+        selected[name] = dict(id=positive(artifact["id"]), digest=artifact["digest"], artifact_name=artifact_name)
+    return selected
+
+
+def download_signed_release(record, commit, destination, version, channel, *, tree=None, published_only=False, full_bundle=False):
+    if (record.get("schema") not in ("airk-signed-release-producer/1", "airk-signed-release-producer/2", optional.SIGNED) or record.get("commit") != commit
             or record.get("repository") != REPOSITORY):
         raise ValueError("Signed producer record belongs to another commit/schema")
+    branch = authority.record_branch(record)
+    origin = {"branch": branch} if branch != "main" else {}
+    owner = None
+    if record.get("schema") == optional.SIGNED:
+        owner = optional.projection("v" + version)
+        optional.validate_signed(record, owner)
+        origin["optional_projection"] = owner
+    if branch != "main" and owner is None:
+        fields = {"schema", "repository", "workflow_id", "commit", "run_id", "attempt", "artifact_name", "artifact",
+                  "event", "source_branch", "qualified_commit"}
+        if set(record) != fields or set(record.get("artifact", {})) != {"id", "digest"} or not split(version):
+            raise ValueError("Signed campaign producer has invalid fields or catalog")
+        for key in ("workflow_id", "run_id", "attempt"):
+            positive(record.get(key))
+        positive(record["artifact"]["id"])
+        if (record["artifact_name"] != f"airk-release-{commit}-{record['run_id']}-{record['attempt']}"
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", record["artifact"]["digest"])):
+            raise ValueError("Signed campaign artifact identity differs")
+    if full_bundle and published_only:
+        raise ValueError("Full signed-bundle export is distinct from published Marketplace staging")
     if destination.exists():
         raise ValueError("Signed release destination must be fresh")
-    if attest_signed_release(record["run_id"], commit) != record:
+    if attest_signed_release(record["run_id"], commit, **origin) != record:
         raise ValueError("Signed release attempt or artifact changed after preflight")
     with tempfile.TemporaryDirectory(prefix="airk-signed-release-") as temporary:
         bundle = Path(temporary) / "bundle"
         download(record["artifact"], bundle)
-        if attest_signed_release(record["run_id"], commit) != record:
+        if attest_signed_release(record["run_id"], commit, **origin) != record:
             raise ValueError("Signed release changed during download")
         spec = importlib.util.spec_from_file_location("signed_release", Path(__file__).with_name("github-release.py"))
         release = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(release)
-        release.stage_marketplace_bundle(bundle, destination, commit, version, channel,
-                                         record["run_id"], record["attempt"], tree=tree,
-                                         published_only=published_only)
+        if full_bundle:
+            document = release.verify_bundle(bundle, commit, version, release.identity(version), record["run_id"], record["attempt"])
+            if document["channel"] != channel or tree is not None and document.get("tree") != tree:
+                raise ValueError("Signed bundle version, channel or source tree differs")
+            if branch != "main" and authority.record_branch(document["producer"]) != branch:
+                raise ValueError("Signed campaign bundle substitutes another producer branch")
+            verify_record(document["producer"], commit, **catalog_args(version))
+            shutil.copytree(bundle, destination)
+            release.verify_bundle(destination, commit, version, release.identity(version), record["run_id"], record["attempt"])
+            if owner is not None:
+                for name, artifact in record["parts"].items():
+                    part_directory = Path(temporary) / ("part-" + str(artifact["id"]))
+                    download({key: artifact[key] for key in ("id", "digest")}, part_directory)
+                    if {path.name for path in part_directory.iterdir()} != {name}:
+                        raise ValueError("Optional signed part artifact roster differs")
+                    optional.verify_part(part_directory / name, owner["assets"][name])
+                    shutil.copyfile(part_directory / name, destination / name)
+                    optional.verify_part(destination / name, owner["assets"][name])
+                release.verify_bundle(destination, commit, version, release.identity(version), record["run_id"], record["attempt"])
+            if attest_signed_release(record["run_id"], commit, **origin) != record:
+                raise ValueError("Signed release changed before completed bundle handoff")
+        else:
+            release.stage_marketplace_bundle(bundle, destination, commit, version, channel,
+                                             record["run_id"], record["attempt"], tree=tree,
+                                             published_only=published_only)
 
 
 def unpack_artifact(archive, destination):
@@ -499,14 +629,19 @@ def release_input_names(commit, run_id, *, version=None):
         prefix = "airk" if target == "x86_64-unknown-linux-gnu" else "airk-signed"
         expected.update(f"{prefix}-{kind}-{target}-{commit}-{run_id}" for kind in kinds)
         expected.add(f"airk-source-{target}-{commit}-{run_id}")
+    if version is not None and publication.current(version, "stable"):
+        expected |= publication.portable_inputs(commit, run_id)
+    if version is not None and optional.current(version):
+        expected |= optional.part_inputs(optional.projection("v" + version), commit, run_id)
     return expected
 
 
-def release_inputs(commit, run_id, destination, *, version=None):
+def release_inputs(commit, run_id, destination, *, version=None, branch="main"):
     """Admit exact same-run signed outputs and small verified source receipts."""
     run_id = positive(run_id)
     run = api(f"actions/runs/{run_id}")
-    verify_run({**run, "status": "completed"}, commit, "github-release.yml", ("workflow_dispatch",), success=False)
+    verify_run({**run, "status": "completed"}, commit, "github-release.yml", ("workflow_dispatch",), success=False,
+               **({"branch": branch} if branch != "main" else {}))
     expected = release_input_names(commit, run_id, **catalog_args(version))
     selected = {}
     for artifact in run_artifacts(run_id):
@@ -516,7 +651,7 @@ def release_inputs(commit, run_id, destination, *, version=None):
         origin = artifact.get("workflow_run", {})
         if (name in selected or artifact.get("expired") is not False
                 or origin.get("id") != run_id or origin.get("head_sha") != commit
-                or origin.get("head_branch") != "main"
+                or origin.get("head_branch") != branch
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))):
             raise ValueError("Release inputs are duplicate, expired or from another origin")
         selected[name] = dict(id=positive(artifact["id"]), digest=artifact["digest"])
@@ -530,14 +665,15 @@ def release_inputs(commit, run_id, destination, *, version=None):
             raise ValueError("Source receipt artifact contains unexpected files")
 
 
-def release_bundle(commit, run_id, attempt, destination):
+def release_bundle(commit, run_id, attempt, destination, *, branch="main"):
     """A failed publish may reuse a successful assembly from this run's earlier attempt."""
     run_id, attempt = positive(run_id), positive(attempt)
     run = api(f"actions/runs/{run_id}")
     # The current attempt is running, so authenticate its origin separately.
     origin = {**run, "status": "completed"}
-    verify_run(origin, commit, "github-release.yml", ("workflow_dispatch",), success=False)
-    artifact, _ = assembled_bundle(commit, run_id, attempt)
+    verify_run(origin, commit, "github-release.yml", ("workflow_dispatch",), success=False,
+               **({"branch": branch} if branch != "main" else {}))
+    artifact, _ = assembled_bundle(commit, run_id, attempt, **({"branch": branch} if branch != "main" else {}))
     download(artifact, destination)
 
 
@@ -558,16 +694,25 @@ def verify_tag(tag, commit):
     if "sha256:" + hashlib.sha256(data).hexdigest() != receipts[0].get("digest"):
         raise ValueError("Release provenance digest differs")
     record = json.loads(data)
-    if record.get("commit") != commit or record.get("tag") != tag or record.get("schema") != "airk-github-release/1":
+    if record.get("commit") != commit or record.get("tag") != tag or record.get("schema") not in ("airk-github-release/1", publication.RELEASE, optional.RELEASE):
         raise ValueError("Release provenance belongs to another source/tag")
     version = record.get("package_version")
     if not isinstance(version, str) or tag.split("-", 1)[0] != f"v{version}":
         raise ValueError("Release provenance names another package version")
+    optional_owner = optional.projection(tag) if optional.current(version) else None
+    if optional_owner is not None:
+        optional.validate_release(record, optional_owner)
+    elif publication.current(version, record.get("channel")):
+        publication.validate_release(record)
+    elif record.get("schema") != "airk-github-release/1":
+        raise ValueError("Historical release provenance schema differs")
     verify_record(record["producer"], commit, **catalog_args(version))
     if split(version):
         # The reviewed split catalog: per-target pair packages (and installers) and one universal VSIX.
-        catalog = contract.catalog_names(version, record.get("channel"), commit, record["producer"],
+        catalog = publication.catalog_names(version, record.get("channel"), commit, record["producer"],
                                          dict(run_id=record.get("run_id")))[2]
+        if optional_owner is not None:
+            catalog |= set(optional_owner["assets"])
         if set(record["assets"]) != catalog:
             raise ValueError("Release provenance differs from the split release catalog")
     count = len(catalog) if split(version) else 16
@@ -604,12 +749,17 @@ def main():
     parser.add_argument("--run-id")
     parser.add_argument("--version")
     parser.add_argument("--channel", choices=("stable", "preview"), default="stable")
+    parser.add_argument("--full-bundle", action="store_true", help="Export the exact verified signed assembly for artifact qualification/publication")
     parser.add_argument("--published-only", action="store_true", help="Require exact matching published GitHub assets before Marketplace publication")
     args = parser.parse_args()
     commit = os.environ["GITHUB_SHA"]
+    branch = nominated_branch()
+    origin_args = {"branch": branch} if branch != "main" else {}
     # Every command runs on the exact commit's checkout; its version selects the catalog.
     catalog = catalog_args(checkout_version())
     if args.command == "promote":
+        if branch != "main":
+            raise ValueError("Campaign CI and release cannot use PR promotion")
         if args.output is None:
             parser.error("promote requires --output")
         if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != commit:
@@ -621,7 +771,10 @@ def main():
         (args.output / "promotion.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Promoted PR #{record['pull_request']} CI {record['producer']['run_id']} for main tree {tree}")
     elif args.command == "signed-release":
-        record = attest_signed_release(args.run_id, commit)
+        version = checkout_version()
+        if optional.current(version):
+            origin_args["optional_projection"] = optional.projection("v" + version)
+        record = attest_signed_release(args.run_id, commit, **origin_args)
         args.record.parent.mkdir(parents=True, exist_ok=True)
         args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Verified signed release {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
@@ -631,30 +784,39 @@ def main():
         if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != commit:
             raise ValueError("Signed release staging requires the exact main checkout")
         tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
-        download_signed_release(json.loads(args.record.read_text(encoding="utf-8")), commit,
-                                args.output, args.version, args.channel, tree=tree, published_only=args.published_only)
+        record = json.loads(args.record.read_text(encoding="utf-8"))
+        if branch != "main" and authority.record_branch(record) != branch:
+            raise ValueError("Campaign cannot substitute a main signed producer")
+        download_signed_release(record, commit,
+                                args.output, args.version, args.channel, tree=tree, published_only=args.published_only, full_bundle=args.full_bundle)
     elif args.command == "rehearsal":
+        if branch != "main":
+            raise ValueError("Campaign requires the canonical signed split assembly")
         record = attest_rehearsal(args.run_id, commit)
         args.record.parent.mkdir(parents=True, exist_ok=True)
         args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Verified rehearsal {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
     elif args.command == "rehearsal-download":
+        if branch != "main":
+            raise ValueError("Campaign requires the canonical signed split assembly")
         if args.output is None:
             parser.error("rehearsal-download requires --output")
         download_rehearsal(json.loads(args.record.read_text(encoding="utf-8")), commit, args.output)
     elif args.command == "tag":
         verify_tag(os.environ["GITHUB_REF_NAME"], commit)
     elif args.command == "resolve":
-        record = resolve(commit, os.environ.get("AIRK_CANDIDATE_RUN_ID"), **catalog)
+        record = resolve(commit, os.environ.get("AIRK_CANDIDATE_RUN_ID"), **catalog, **origin_args)
         args.record.parent.mkdir(parents=True, exist_ok=True)
         args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Verified producer {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
     elif args.command == "release-inputs":
-        release_inputs(commit, os.environ["GITHUB_RUN_ID"], args.output, **catalog)
+        release_inputs(commit, os.environ["GITHUB_RUN_ID"], args.output, **catalog, **origin_args)
     elif args.command == "bundle":
-        release_bundle(commit, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], args.output)
+        release_bundle(commit, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], args.output, **origin_args)
     else:
         record = json.loads(args.record.read_text(encoding="utf-8"))
+        if branch != "main" and authority.record_branch(record) != branch:
+            raise ValueError("Campaign cannot substitute a main producer")
         (validate_record if args.pinned else verify_record)(record, commit, **catalog)
         for name in download_names(record, args.kind, args.target, **catalog):
             download(record["artifacts"][name], args.output if args.target else args.output / name)

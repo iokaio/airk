@@ -16,6 +16,9 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
+import zipfile
+import stat
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "iokaio/airk"
@@ -35,6 +38,15 @@ _spec.loader.exec_module(standalone)
 _spec = importlib.util.spec_from_file_location("split_receipts", ROOT / "scripts/split_receipts.py")
 receipts = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(receipts)
+_spec = importlib.util.spec_from_file_location("airk_help_site", ROOT / "scripts/help-site.py")
+help_site = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(help_site)
+_spec = importlib.util.spec_from_file_location("publication_contract", ROOT / "scripts/publication-contract.py")
+publication = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(publication)
+_spec = importlib.util.spec_from_file_location("optional_publication", ROOT / "scripts/optional-publication.py")
+optional = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(optional)
 RECORD_FILES = {"release.json", "release-notes.md", "SHA256SUMS"}
 RECORD_BYTES = 1 << 20
 
@@ -106,7 +118,10 @@ def checked_assets(tag, assets):
 def split_metadata(release, tag, version, published, record):
     """The exact split catalog (split_receipts.release_assets), verified against release.json."""
     channel = "preview" if release["prerelease"] else "stable"
-    expected = receipts.release_assets(version, channel) | RECORD_FILES
+    expected = publication.release_assets(version, channel) | RECORD_FILES
+    owner = optional.projection(tag) if optional.current(version) else None
+    if owner is not None:
+        expected |= set(owner["assets"])
     assets = release["assets"]
     names = {asset["name"] for asset in assets}
     if names != expected or len(names) != len(assets):
@@ -118,11 +133,17 @@ def split_metadata(release, tag, version, published, record):
             raise ValueError(f"{tag}: release.json differs from its published digest")
         document = json.loads(record)
         published_assets = document.get("assets") if isinstance(document, dict) else None
-        if (not isinstance(document, dict) or document.get("schema") != "airk-github-release/1" or document.get("tag") != tag
+        if (not isinstance(document, dict) or document.get("schema") != (optional.RELEASE if owner is not None else publication.RELEASE if publication.current(version, channel) else "airk-github-release/1") or document.get("tag") != tag
                 or document.get("package_version") != version or document.get("channel") != channel
                 or not isinstance(published_assets, dict) or set(published_assets) != expected - RECORD_FILES
                 or any(by_name[name]["digest"] != "sha256:" + str(value) for name, value in published_assets.items())):
             raise ValueError(f"{tag}: published assets differ from the release build record")
+        if owner is not None:
+            optional.validate_release(document, owner)
+            if any(by_name[name]["size"] != asset["bytes"] for name, asset in owner["assets"].items()):
+                raise ValueError(f"{tag}: optional published part size differs from native pins")
+        elif publication.current(version, channel):
+            publication.validate_release(document)
         verified = True
     installers = {}
     if verified:
@@ -135,7 +156,9 @@ def split_metadata(release, tag, version, published, record):
     extension = {"url": by_name[vsix]["browser_download_url"],
                  "manifest": by_name[vsix + "-manifest.json"]["browser_download_url"]} if verified else None
     return {"tag": tag, "version": version, "published": published, "installers": installers,
-            "channel": channel, "split": True, "verified": verified, "extension": extension}
+            "channel": channel, "split": True, "verified": verified, "extension": extension,
+            "optional_models": {name: {"url": by_name[name]["browser_download_url"], "bytes": asset["bytes"], "sha256": asset["sha256"]}
+                                for name, asset in owner["assets"].items()} if owner is not None and verified else {}}
 
 
 def published_record(release):
@@ -238,6 +261,10 @@ def render_split(record):
             provenance = ''
         pair = (f'<a class="native-link" aria-label="Download {channel} AIRK Service and airkctl ZIP for {system} {architecture}" '
                 f'href="{base}/airk-{version}-{target}.zip">Service and airkctl ZIP</a>') if record["verified"] else ''
+        if record["verified"] and publication.current(version, channel):
+            pair = (f'<a class="native-link" href="{base}/{standalone.portable_artifact(version, target)}">Portable AIRK Service ZIP (manual included)</a>'
+                    f'<a class="native-link" href="{base}/{standalone.portable_manifest(version, target)}">Portable build record</a>'
+                    f'<a class="native-link" href="{base}/airk-{version}-{target}.zip">Developer native payload</a>')
         cards.append(f"""<article class="download-card">
             <span class="os-mark" aria-hidden="true">{mark}</span>
             <h4>{system}</h4><p>{architecture}</p>
@@ -255,6 +282,9 @@ def render_split(record):
         vsix = '<span class="button unavailable-download" aria-disabled="true">Extension not verified</span>'
     date = record["published"].date().isoformat()
     note = ("Preview builds are for early testing. " if channel == "preview" else "")
+    optional_links = ''.join(f'<li><a href="{escape(asset["url"], quote=True)}">{escape(name)}</a> · {asset["bytes"]:,} bytes · SHA-256 <code>{escape(asset["sha256"])}</code></li>'
+                             for name, asset in sorted(record.get("optional_models", {}).items()))
+    optional_section = ('<details><summary>Optional local model assets</summary><p>Choose and provision optional models in AIRK. Native compiled catalog pins validate every part and the complete model; these downloads do not activate a model.</p><ul>' + optional_links + '</ul></details>') if optional_links else ''
     return f"""<section class="release-block" aria-labelledby="{channel}-title">
         <div class="release-heading">
           <h3 id="{channel}-title"><span class="badge {channel}">{channel.capitalize()}</span> {tag}</h3>
@@ -268,6 +298,7 @@ def render_split(record):
             <p class="installer-signing">One universal VSIX with no native code; it connects to the AIRK Service from step 1.</p>
             {vsix}
           </article></div>
+        {optional_section}
         <div class="release-links">
           <a href="{GITHUB}/releases/tag/{tag}">Release notes ↗</a>
           <a href="{base}/SHA256SUMS">SHA-256 checksums ↓</a>
@@ -277,9 +308,82 @@ def render_split(record):
       </section>"""
 
 
-def build(catalog, output, fetch_record=None):
+def help_from_vsix(archive, asset, version):
+    """Read one fixed data entry; never extract code or arbitrary archive paths."""
+    size = archive.stat().st_size
+    if (archive.is_symlink() or not 0 < size <= 67_108_864 or size != asset["size"]
+            or "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest() != asset["digest"]):
+        raise ValueError("Published Help VSIX differs from its immutable release asset")
+    with zipfile.ZipFile(archive) as package:
+        infos = package.infolist(); names = [info.filename for info in infos]
+        if len(infos) > 4096 or len(names) != len(set(names)):
+            raise ValueError("Published Help VSIX has ambiguous entries")
+        if help_site.MANIFEST_ENTRY not in names:
+            if tuple(map(int, version.split('.'))) < (1, 8, 35):
+                return None
+            raise ValueError("Published product lacks its required shipping Help manifest")
+        info = package.getinfo(help_site.MANIFEST_ENTRY)
+        if (not 0 < info.file_size <= help_site.MAX_MANIFEST
+                or stat.S_ISLNK(info.external_attr >> 16) or info.is_dir()):
+            raise ValueError("Published Help manifest is invalid or oversized")
+        with package.open(info) as stream:
+            encoded = stream.read(help_site.MAX_MANIFEST + 1)
+        if len(encoded) != info.file_size:
+            raise ValueError("Published Help manifest length differs")
+        help_site.manifest_bytes(encoded, version)
+        return encoded
+
+
+def published_help(release, metadata):
+    """Acquire the release's verified universal VSIX, never current checkout topics."""
+    if not metadata.get("split") or not metadata.get("verified"):
+        return None
+    name = f"airk-{metadata['version']}.vsix"
+    asset = next(asset for asset in release["assets"] if asset["name"] == name)
+    if (type(asset.get("id")) is not int or asset["id"] <= 0
+            or type(asset.get("size")) is not int or not 0 < asset["size"] <= 67_108_864):
+        raise ValueError("Published Help VSIX asset is invalid or oversized")
+    with tempfile.TemporaryDirectory(prefix="airk-published-help-") as temporary:
+        archive = Path(temporary) / "published.vsix"
+        with archive.open("wb") as output:
+            subprocess.run(["gh", "api", "-H", "Accept: application/octet-stream",
+                            f"repos/{REPOSITORY}/releases/assets/{asset['id']}"],
+                           check=True, stdout=output, timeout=120)
+        return help_from_vsix(archive, asset, metadata['version'])
+
+
+def build_help(records, catalog, output, fetch_help):
+    selected = release = encoded = None
+    for candidate in sorted((record for record in records if record.get('verified')),
+                            key=lambda record: record['channel'] != 'stable'):
+        if fetch_help is None:
+            break
+        source = next(release for release in catalog if release.get('tag_name') == candidate['tag'] and release.get('draft') is False)
+        encoded = fetch_help(source, candidate)
+        if encoded is not None:
+            selected, release = candidate, source
+            break
+        if publication.current(candidate['version'], candidate['channel']):
+            raise ValueError('Current published product lacks its required Help manifest')
+    if encoded is not None:
+        receipt = help_site.build(encoded, output / 'help', selected['version'], selected['channel'])
+        receipt['release_tag'] = selected['tag']
+        asset = next((asset for asset in release.get('assets', []) if asset.get('name') == f"airk-{selected['version']}.vsix"), None)
+        if asset is not None:
+            receipt['published_vsix'] = {key: asset[key] for key in ('id', 'name', 'digest', 'size')}
+        (output / 'help/site-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
+        return
+    # Historical downloads remain available without inventing new product Help.
+    help_root = output / 'help'; (help_root / 'html.index').mkdir(parents=True)
+    page = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AIRK Help</title><h1>AIRK Help</h1><p>The published product does not yet contain the shared Help manifest. No unreleased checkout content is shown.</p><a href="/index.html">Published AIRK downloads</a></html>'
+    (help_root / 'index.html').write_text(page, encoding='utf-8')
+    (help_root / 'html.index/index.html').write_text(page, encoding='utf-8')
+
+
+def build(catalog, output, fetch_record=None, fetch_help=None):
     # Deliberate allowlist: never upload the checkout, release archives or local state.
-    rendered = render_downloads(select_releases(catalog, fetch_record))
+    records = select_releases(catalog, fetch_record)
+    rendered = render_downloads(records)
     template = (ROOT / "site/index.html").read_text(encoding="utf-8")
     marker = "<!-- RELEASE_DOWNLOADS -->"
     if template.count(marker) != 1:
@@ -294,6 +398,7 @@ def build(catalog, output, fetch_record=None):
         if source.is_symlink() or not source.is_file() or source.stat().st_size > 2_097_152:
             raise ValueError("Invalid or oversized product screenshot: " + name)
         shutil.copyfile(source, output / "images" / name)
+    build_help(records, catalog, output, fetch_help)
 
 
 
@@ -310,7 +415,7 @@ def main():
             check=True, text=True, capture_output=True, encoding="utf-8")
         catalog = [release for page in json.loads(result.stdout) for release in page]
     # A local catalog has no downloadable release.json: its split assets stay unverified.
-    build(catalog, args.output, None if args.catalog else published_record)
+    build(catalog, args.output, None if args.catalog else published_record, None if args.catalog else published_help)
     print(f"Built downloads page: {args.output}")
 
 

@@ -235,7 +235,7 @@ class DownloadSiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "site"
             site.build([release()], output)
-            self.assertEqual({p.name for p in output.iterdir()}, {"index.html", "style.css", "favicon.svg", "images"})
+            self.assertEqual({p.name for p in output.iterdir()}, {"index.html", "style.css", "favicon.svg", "images", "help"})
             html = (output / "index.html").read_text(encoding="utf-8")
             self.assertNotIn("<!-- RELEASE_DOWNLOADS -->", html)
             self.assertIn("https://airk.ioka.io/", html)

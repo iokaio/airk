@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Status and guidance per state (plan §8.1 "Status and guidance", §8.3). The
 //! retained commands only guide: Open AIRK Admin runs `airkctl admin open`,
-//! Start runs `airkctl service start`, Download and Installation instructions
-//! open the download page on user action, Check again re-runs discovery.
-//! Nothing here installs, repairs, updates or removes the service.
+//! Start runs `airkctl service start`; Install offers explicit automatic/manual/defer
+//! choices, Installation instructions opens the official page and Check again re-runs
+//! discovery. This pure module performs no setup effects.
 import type { AirkctlState } from '../index';
 import { describe } from '../features/explorerHost';
 
@@ -12,7 +12,7 @@ export type GuidanceAction = 'airk.openAdmin' | 'airk.serviceStart' | 'airk.down
 export const ACTION_LABELS: Readonly<Record<GuidanceAction, string>> = Object.freeze({
     'airk.openAdmin': 'Open AIRK Admin',
     'airk.serviceStart': 'Start',
-    'airk.downloadService': 'Download AIRK Service',
+    'airk.downloadService': 'Install AIRK Service',
     'airk.installationInstructions': 'Installation instructions',
     'airk.checkAgain': 'Check again',
     'airk.manageWorkspaceTrust': 'Manage Workspace Trust',

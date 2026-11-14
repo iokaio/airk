@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import io, tarfile, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch

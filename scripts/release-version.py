@@ -31,6 +31,9 @@ _spec.loader.exec_module(reads)
 _spec = importlib.util.spec_from_file_location("airk_split_receipts", ROOT / "scripts/split_receipts.py")
 receipts = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(receipts)
+_spec = importlib.util.spec_from_file_location("airk_release_authority", ROOT / "scripts/release-authority.py")
+authority = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(authority)
 
 
 def numeric(version):
@@ -333,11 +336,18 @@ def main():
     if not args.destination:
         parser.error("--destination is required for release operations")
     workflow = "extension-release.yml" if args.destination == "marketplace" else "github-release.yml"
-    if (os.environ.get("GITHUB_REPOSITORY") != REPOSITORY or os.environ.get("GITHUB_REF") != "refs/heads/main"
-            or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
-            or os.environ.get("GITHUB_WORKFLOW_REF") != f"{REPOSITORY}/.github/workflows/{workflow}@refs/heads/main"):
-        raise ValueError("Version planning requires the protected-main manual release workflow")
+    campaign = os.environ.get("GITHUB_REF") == "refs/heads/" + authority.CAMPAIGN_BRANCH
+    if campaign:
+        authority.manual_context(os.environ, workflow)
+        if args.command == "prepare-pr":
+            raise ValueError("Campaign version increments are local; PR creation is forbidden")
+    elif (os.environ.get("GITHUB_REPOSITORY") != REPOSITORY or os.environ.get("GITHUB_REF") != "refs/heads/main"
+          or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+          or os.environ.get("GITHUB_WORKFLOW_REF") != f"{REPOSITORY}/.github/workflows/{workflow}@refs/heads/main"):
+        raise ValueError("Version planning requires the protected-main or qualified campaign manual release workflow")
     version = source_version()
+    if campaign and not receipts.split_version(version):
+        raise ValueError("Campaign release requires the split product catalog")
     if os.environ.get("AIRK_VERSION", version) != version:
         raise ValueError("Requested version differs from the checked-in version")
     if args.command == "verify-published":
@@ -369,7 +379,10 @@ def main():
         if decision["action"] == "skip":
             summary.write("Already published in this destination; no duplicate upload.\n")
         elif decision["action"] == "bump":
-            summary.write(f"Next unused patch: **{decision['next_version']}**. Publication waits for a reviewed version PR and green main CI.\n")
+            if campaign:
+                summary.write(f"Next unused patch: **{decision['next_version']}**. Apply the synchronized increment locally once on feat/advanced-split, qualify that commit, and dispatch again. No PR or publication is created.\n")
+            else:
+                summary.write(f"Next unused patch: **{decision['next_version']}**. Publication waits for a reviewed version PR and green main CI.\n")
         if "pr" in decision:
             summary.write(f"\nVersion PR: {decision['pr']}\n")
     print(json.dumps(decision))

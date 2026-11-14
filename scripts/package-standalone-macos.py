@@ -26,8 +26,6 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {"aarch64-apple-darwin": "arm64", "x86_64-apple-darwin": "x86_64"}
-TEAM = "5PX7D99PXA"
-CERTIFICATE_SHA256 = "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1"
 
 
 def module(name, filename):
@@ -35,6 +33,11 @@ def module(name, filename):
     result = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(result)
     return result
+
+
+SIGNING_POLICY = module("standalone_macos_signing_policy", "sign-native.py").SIGNING_IDENTITY["macos"]
+TEAM = SIGNING_POLICY["team_id"]
+CERTIFICATE_SHA256 = SIGNING_POLICY["certificate_sha256"]
 
 
 def digest(path):
@@ -90,7 +93,7 @@ def split_installer_files(version, target, inventory_sha256, roster_sha256, airk
         raise ValueError("Installer requires the distributor's exact payload digests")
     values = {"VERSION": version, "ARCH": TARGETS[target], "INVENTORY_SHA256": inventory_sha256,
               "PAYLOAD_SUMS_SHA256": roster_sha256, "AIRK_SHA256": airk_sha256,
-              "PAYLOAD_FILE_COUNT": str(file_count)}
+              "PAYLOAD_FILE_COUNT": str(file_count), "TEAM_ID": TEAM}
     return {"Install AIRK.command": template("Install AIRK.command.in", presplit=False, **values),
             "README.txt": template("README.txt.in", presplit=False, VERSION=version, ARCH=TARGETS[target])}
 

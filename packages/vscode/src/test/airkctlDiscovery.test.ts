@@ -220,3 +220,21 @@ test('every plan §8.3 state is derived, and only verified states execute airkct
     assert.deepEqual(refused.kind === 'refused' && refused.error, (cases[6][1].status as { error: unknown }).error, 'the exact native error and retry details are kept');
     assert.deepEqual(cases.map(([, observed]) => executable(deriveState(observed))), [false, false, false, false, false, true, true, true]);
 });
+
+test('approved Portable I4 record retains literal canonical bytes and refuses unknown installers',()=>{
+    const portable=json('fixtures/split/i4/portable_cases.json') as {record:string;pointer:string;legacy_i4_sha256:string};
+    assert.equal(createHash('sha256').update(fs.readFileSync(path.join(repo,'fixtures/split/i4/i4_cases.json'))).digest('hex'),portable.legacy_i4_sha256);
+    const pointer=decodePointer(Buffer.from(portable.pointer,'utf8'));
+    const record=decodeRecord(Buffer.from(portable.record,'utf8'),pointer);
+    assert.equal(record.installed_by.installer,'portable');
+    assert.equal(canonical(record),portable.record);
+    const foreign={...record,installed_by:{...record.installed_by,installer:'unreviewed'}};
+    const foreignBytes=Buffer.from(canonical(foreign),'utf8');
+    assert.equal(outcome(()=>decodeRecord(foreignBytes,{...pointer,record_sha256:createHash('sha256').update(foreignBytes).digest('hex')})),'install_file_malformed');
+});
+test('Portable I4 native-emitted semantics agree with the existing strict decoder',{skip:!process.env.AIRK_PORTABLE_CASE_INPUT},()=>{
+    const native=JSON.parse(fs.readFileSync(process.env.AIRK_PORTABLE_CASE_INPUT!,'utf8')) as {record_text:string;pointer_text:string;record_accepted:boolean;installer:string};
+    assert.equal(native.record_accepted,true);assert.equal(native.installer,'portable');
+    const record=decodeRecord(Buffer.from(native.record_text,'utf8'),decodePointer(Buffer.from(native.pointer_text,'utf8')));
+    assert.equal(record.installed_by.installer,native.installer);assert.equal(canonical(record),native.record_text);
+});

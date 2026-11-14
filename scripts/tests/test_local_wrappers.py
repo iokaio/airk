@@ -246,8 +246,17 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
             @staticmethod
             def check(output, runner=None):
                 calls.append("admin")
+                output.write_text("{}")
+
+            @staticmethod
+            def block_from_inventory(inventory):
+                return {"inventory_sha256": "a" * 64}
 
         class Runtime:
+            @staticmethod
+            def source_identity():
+                return {"sha256": "b" * 64, "files": 1}
+
             @staticmethod
             def verify_static_inputs():
                 calls.append("static-ort")

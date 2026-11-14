@@ -72,6 +72,36 @@ class CampaignAuthorityTests(unittest.TestCase):
                 with self.subTest(job=required["name"], fault=fault), self.assertRaises(ValueError):
                     AUTHORITY.verify_campaign_ci(self.api(fixture, []), 123, COMMIT)
 
+    def test_actual_extended_native_step_success_is_required_on_every_target(self):
+        required = CASES["qualification_steps"]["required"]
+        self.assertIn("- name: " + required, (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+        selected = [index for index, job in enumerate(CASES["live"]["jobs"]) if job["name"].startswith("Native / ")]
+        self.assertEqual(len(selected), 4)
+        for index in selected:
+            for fault in CASES["qualification_steps"]["faults"]:
+                fixture = deepcopy(CASES["live"])
+                steps = fixture["jobs"][index]["steps"]
+                if fault == "missing":
+                    steps.clear()
+                elif fault == "duplicate":
+                    steps.append(deepcopy(steps[0]))
+                else:
+                    steps[0]["conclusion"] = fault
+                with self.subTest(target=fixture["jobs"][index]["name"], fault=fault), self.assertRaisesRegex(ValueError, "qualification_step"):
+                    AUTHORITY.verify_campaign_ci(self.api(fixture, []), 123, COMMIT)
+
+    def test_live_publisher_origin_cannot_be_replaced_by_claimed_environment_values(self):
+        def check(run):
+            def api(path):
+                if path == "actions/runs/789": return run
+                if path == "actions/workflows/github-release.yml": return CASES["publisher"]["workflow"]
+                raise AssertionError(path)
+            return AUTHORITY.verify_campaign_publisher(api, "789", "1", COMMIT)
+        self.assertEqual(check(CASES["publisher"]["run"]), CASES["publisher"]["run"])
+        for row in CASES["publisher"]["cases"]:
+            run = deepcopy(CASES["publisher"]["run"]); run[row["field"]] = row["value"]
+            with self.subTest(field=row["field"], value=row["value"]), self.assertRaises(ValueError): check(run)
+
     def test_old_main_records_stay_unchanged_and_campaign_records_are_explicitly_versioned(self):
         for schema in ("airk-ci-producer/1", "airk-ci-producer/2", "airk-signed-release-producer/1"):
             record = {"schema": schema, "commit": COMMIT, "retained": {"future": [1, 2]}}

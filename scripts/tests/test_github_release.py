@@ -122,7 +122,7 @@ def pair_files(target, signed=False, version=PAIR_VERSION):
         originals["notices/onnxruntime/ThirdPartyNotices.txt"] = b"fictional static notices"
         notices = {builder.packaged_static_notice_path(name): data for name, data in originals.items()}
         files.update(notices)
-        files[prefix + "inventory.json"] = json.dumps({"schema": 2, "ort_version": "1.22.1", "target": target,
+        files[prefix + "inventory.json"] = json.dumps({"schema": 2, "ort_version": lock["ort_version"], "target": target,
             "build_receipt_sha256": "e" * 64,
             "sources": {builder.packaged_static_notice_path(name): {"path": name, "bytes": len(data), "sha256": release.hashlib.sha256(data).hexdigest()} for name, data in originals.items()},
             "lock_sha256": builder.digest(builder.ROOT / "scripts/static-onnx-runtime-lock.json"),
@@ -298,7 +298,16 @@ def split_installer_payload(files, target, version, artifact, admin=None, layout
     return payload
 
 
-class ServicePairReleaseContracts(unittest.TestCase):
+class MainReleaseFixture(unittest.TestCase):
+    def setUp(self):
+        # These retained fixtures describe main producers. A manual campaign CI
+        # runner must not silently change the context of historical assertions.
+        environment = patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+
+class ServicePairReleaseContracts(MainReleaseFixture):
     def standalone_fixture(self, directory, target, version="1.8.14", make_pair=None, split_options=None):
         files, runtime, _ = (make_pair or pair_fixture)(directory / "native", target, target in release.SIGNED_TARGETS, version)
         output = directory / "installer"
@@ -713,7 +722,7 @@ def split_producer():
                 artifacts={name: dict(id=index + 1, digest="sha256:" + f"{index:x}" * 64) for index, name in enumerate(names)})
 
 
-class SplitReleaseContracts(unittest.TestCase):
+class SplitReleaseContracts(MainReleaseFixture):
     standalone_fixture = ServicePairReleaseContracts.standalone_fixture
     write_installer = ServicePairReleaseContracts.write_installer
 
@@ -937,7 +946,7 @@ class SplitReleaseContracts(unittest.TestCase):
             self.assertFalse((root / "legacy").exists())
 
 
-class GithubReleaseContracts(unittest.TestCase):
+class GithubReleaseContracts(MainReleaseFixture):
     def test_current_mac_candidate_requires_signed_executable_launcher_image(self):
         target = "aarch64-apple-darwin"
         builder = release.native.runtime_builder()

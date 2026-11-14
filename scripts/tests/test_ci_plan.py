@@ -83,6 +83,12 @@ class PlanTests(unittest.TestCase):
             with self.subTest(paths=paths):
                 self.assertTrue(all(plan.classify(paths, "pull_request").values()))
 
+    def test_shared_admin_contract_inputs_check_both_consumers_and_container(self):
+        for source in ("packages/vscode/src/adminUiContract.ts", "packages/vscode/src/uiPilotContract.ts", "packages/vscode/src/generated/i2.ts"):
+            with self.subTest(source=source):
+                self.assertEqual(plan.classify([source], "pull_request"),
+                                 dict(native=True, container=True, extension=True, contracts=True))
+
     def test_admin_bundle_inputs_rebuild_the_service_but_not_the_vsix(self):
         admin = dict(native=True, container=True, extension=False, contracts=True)
         for paths in (["packages/admin/src/main.tsx"], ["packages/admin/package-lock.json"],

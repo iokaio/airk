@@ -27,7 +27,7 @@ import sys
 INTERIM_SELECTOR = ("__airk_role", "setup-interim")
 
 TOOLS = {"airk_" + name for name in (
-    "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
+    "answer", "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
     "list_files", "outline", "parse", "query_scope", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
 
 
@@ -62,8 +62,8 @@ def owned_client_fixture():
     else:
         temporary.cleanup()
 
-# Plan execution can already have partial work; never replay a whole plan here.
-RETRYABLE_TOOLS = TOOLS - {"airk_parse"}
+# Plan/context gathering can already have partial work; never replay that finite execution here.
+RETRYABLE_TOOLS = TOOLS - {"airk_parse", "airk_answer"}
 
 # The public MCP catalog is distinct from the native CLI's compatible aliases.
 MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
@@ -980,8 +980,7 @@ class Fixture:
         return transport.enroll_native(self.service_run, self.install, self.control, selection, connection_id,
                                       client, deadline=deadline)
 
-    def http_mcp(self, name, lifecycle, client, *, workbench=False):
-        assert lifecycle in ("initialize", "disconnect", "reconnect")
+    def open_http(self, name, client):
         spec = importlib.util.spec_from_file_location("native_https_fixture", Path(__file__).with_name("http_fixture.py"))
         transport = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(transport)
@@ -997,7 +996,11 @@ class Fixture:
         expected = selected.copy()
         actual.pop("expected_catalog_revision"); expected.pop("expected_catalog_revision")
         assert actual == expected, "HTTP enrollment changed the immutable reviewed scope"
-        network = transport.McpClient(connection, self.control)
+        return transport.McpClient(connection, self.control)
+
+    def http_mcp(self, name, lifecycle, client, *, workbench=False):
+        assert lifecycle in ("initialize", "disconnect", "reconnect")
+        network = self.open_http(name, client)
         try:
             # Network clients negotiate their real HTTP protocol. Historical
             # stdio discovery/fallback/inline cases remain in the schema-1 path.
@@ -1305,9 +1308,119 @@ def automatic_orphan_recovery(fixture, root):
     return True
 
 
+
+def cold_first_status(fixture, admission, *, case_deadline=None):
+    """Four real HTTPS clients; no diagnostics, index job or model warmup."""
+    assert admission in ("sequential", "concurrent")
+    assert fixture.single_image and fixture.catalog_authority, "Cold clients require a reviewed HTTPS catalog runtime"
+    sessions, failures = [], []
+    deadline = None
+
+    def open_client(number):
+        network = fixture.open_http("cold", "cold-" + admission + "-" + str(number))
+        try:
+            network.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": {"name": "airk-cold-client", "version": "fixture"}}})
+            assert network.receive(1)["result"]["serverInfo"]["name"] == "airk"
+            network.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            return network
+        except BaseException:
+            network.close()
+            raise
+
+    def observe(network):
+        def read(until):
+            budget = remaining(until, 60)
+            network.connection.timeout = budget
+            if network.connection.sock is not None:
+                network.connection.sock.settimeout(budget)
+            network.send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                          "params": {"name": "status", "arguments": {}}})
+            return network.receive(2)["result"]
+        envelope, retries = read_envelope(read, deadline)
+        value = tool_value(envelope)
+        selected = fixture.scopes["cold"]
+        scope = value["scope_observation"]
+        assert "project" not in value and scope["qualifier"] == "selected_subset", value
+        assert scope["provenance"] == "user_reviewed_project_grant", scope
+        assert scope["grant"] == {"id": selected["grant_id"], "revision": selected["expected_grant_revision"]}, scope
+        assert [member["index_id"] for member in scope["members"]] == [selected["index_id"]], scope
+        assert sorted(item["project_id"] for member in scope["members"] for item in member["memberships"]) == sorted(selected["project_ids"]), scope
+        assert value["index_state"] in ("available", "unavailable"), value
+        if value["index_state"] == "available":
+            assert type(value["files"]) is int and value["files"] == 0 and value["publication"], value
+        else:
+            assert value["files"] is None and value["publication"] is None, value
+        return {"index_state": value["index_state"], "typed_replays": retries}
+
+    try:
+        if admission == "concurrent":
+            # Observe every open outcome so successful siblings are always closed.
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = [pool.submit(open_client, number) for number in range(4)]
+                for future in futures:
+                    try:
+                        sessions.append(future.result())
+                    except BaseException as error:
+                        failures.append(error)
+            if failures:
+                raise failures[0]
+        else:
+            for number in range(4):
+                sessions.append(open_client(number))
+        # Preserve the removed quick-status owner's 60-second observation budget,
+        # starting after admission; setup/enrollment has its own bounded commands.
+        deadline = min(time.monotonic() + 60, case_deadline if case_deadline is not None else float("inf"))
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            observations = list(pool.map(observe, sessions))
+        embedding = fixture.rpc("embedding_status", deadline=deadline)
+        assert embedding["status"] == "embedding_status" and embedding["loads"] == 0, embedding
+        fixture.assert_alive()
+        return {"admission": admission, "clients": 4, "observations": observations,
+                "diagnostic_warmup": False, "embedding_loads": 0}
+    finally:
+        active_error = sys.exc_info()[1]
+        cleanup_errors = []
+        for network in sessions:
+            try:
+                network.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if cleanup_errors:
+            if active_error is not None:
+                for error in cleanup_errors:
+                    active_error.add_note("Cold-client cleanup also failed: " + repr(error))
+            else:
+                raise cleanup_errors[0]
+
+
+def qualify_cold(runtime):
+    runtime = runtime_root(runtime)
+    results = []
+    for admission in ("sequential", "concurrent"):
+        # Preserve the removed Node test's whole-case 240-second limit.
+        case_deadline = time.monotonic() + 240
+        with owned_client_fixture() as temporary:
+            owner = Path(temporary)
+            root, data = owner / "source", owner / "data"
+            root.mkdir(); data.mkdir()
+            with Fixture(runtime, owner) as fixture:
+                fixture.register("cold", root, data)
+                remaining(case_deadline, 240)
+                result = cold_first_status(fixture, admission, case_deadline=case_deadline)
+                (owner / "cold-status.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                results.append(result)
+            remaining(case_deadline, 240)
+    return {"schema": 1, "runtime_manifest_sha256": file_sha256(runtime / "airk-install.json"),
+            "cold_first_status": results}
+
+
 def qualify(runtime, files, model):
     runtime = runtime_root(runtime)
     started = time.monotonic()
+    cold = (qualify_cold(runtime) if classify_runtime(runtime)["topology"] in ("single_image", "split_pair")
+            and classify_runtime(runtime)["authority"] == "catalog" else {"cold_first_status": None})
     with owned_client_fixture() as temporary:
         owner = Path(temporary)
         data = owner / "data"
@@ -1392,6 +1505,7 @@ def qualify(runtime, files, model):
                       "obsolete_request_automatically_published": automatic_healed,
                       "inference_worker_clean_exit": worker_clean_exit if not fixture.single_image else None,
                       "in_process_model_smoke": worker_clean_exit if fixture.single_image else None,
+                      "cold_first_status": cold["cold_first_status"],
                       "mcp_lifecycles": mcp_lifecycles,
                       "airkctl_session": session,
                       # start() proved the installed service bytes equal the runtime's image.
@@ -1412,11 +1526,13 @@ def main():
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--files", type=int, default=16)
     parser.add_argument("--model", action="store_true")
+    parser.add_argument("--cold-clients-only", action="store_true", help="Fresh sequential and concurrent four-client HTTPS first-status checks")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     if not 1 <= args.files <= 2048:
         parser.error("files must be 1..2048")
-    report = qualify(args.runtime_dir.resolve(strict=True), args.files, args.model)
+    runtime = args.runtime_dir.resolve(strict=True)
+    report = qualify_cold(runtime) if args.cold_clients_only else qualify(runtime, args.files, args.model)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

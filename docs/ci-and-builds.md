@@ -80,6 +80,28 @@ JSON as shell code or import arbitrary environment keys. Modern builds reject
 missing/mismatched static input receipts. Original compiled library reuse keeps
 its original build identity and does not become a fresh build observation.
 
+On Mac arm64, an explicit `--build-cmake-source` together with
+`--download-tools` builds the same pinned CMake 3.31.6 from its authenticated
+official source when the vendor executable cannot start. This separate owned
+tool build preserves the vendor bundle and signature evidence, uses bundled
+libraries and the selected local compiler/SDK, and never installs or changes
+platform trust. Its source, license, commands, effective library flags and
+output hash remain in the tool receipt. Static ORT 1.30 automatically aggregates
+the authenticated completed component archives before emitting its environment;
+`--verify` stays read-only and refuses a missing aggregate with the explicit
+`--aggregate-static` recovery command.
+
+The existing build-receipt field `static_link_closure_sha256` identifies the
+verified consumer-link inputs. Legacy ORT 1.22 retains its original split-library
+closure digest unchanged. For ORT 1.30 it hashes the genuine `static_aggregate`
+descriptor with the same canonical JSON digest scheme, including the authenticated
+aggregate receipt and its original input plan, command and output identity. The
+descriptor must match the exact on-disk receipt and its SHA-256. Missing, mixed
+legacy/aggregate or tampered identities refuse; no legacy library closure is
+invented. `verified_inputs_sha256` continues to bind the complete verified result.
+This is a consumer adaptation within the existing receipt shape, not a claim of
+final symbol-link or model qualification.
+
 The container uses a dedicated cached static-inference build stage. Production
 runtime contains no Python; the test/smoke target adds Python for actual HTTPS
 checks under `--network none`. Its public-copy input receipt is
@@ -255,7 +277,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Split products: admin bundle, service pair and universal VSIX (unreleased)
 
-This section describes source changes on the split branch (split plan §10.5); none of them has run in hosted CI yet, and no native build, signing or installer step has been run locally either. They apply from the split version `1.8.24` (`scripts/split_receipts.py` `SPLIT_VERSION`); earlier versions keep their pre-split decoders unchanged.
+This section describes implemented source adapters on the split branch (split plan §10.5). Final runtime, installer, platform and publication qualification is recorded in the campaign ledger; script fixture passes alone do not establish those outcomes. They apply from the split version `1.8.24` (`scripts/split_receipts.py` `SPLIT_VERSION`); earlier versions keep their pre-split decoders unchanged.
 
 - **Build order** (§10.5.3): contracts → admin bundle check/seal → native pair → native verification → service installer. The VSIX branches after the extension's own compilation and never waits for a native build. CI runs `python scripts/build-admin-assets.py` in `Native build / <target>` before any Cargo step; it runs `npm ci` and `npm run check` in `packages/admin`, verifies the committed bundle in `crates/airk-cli/admin-assets/` and writes the admin inventory (`artifacts/admin/admin-assets.json`). `build-service-runtime.py` reads that inventory (`--admin-inventory`) at split versions.
 - **Native pair**: the runtime builder compiles `airk` (`airk-cli`, `local-inference`) and lightweight `airkctl` (`-p airkctl`, no features) through one Cargo owner, proves `airkctl` carries no inference crate, checks both images' imports, writes pair metadata schema 3 and build receipt schema 2 (admin bundle and inventory digests, Node/npm, lock digest) and seals both images. `source_identity()` now also covers the admin/UI sources, locks and build scripts, so a frontend-only change rejects stale native reuse. `package-native.py` writes `airk-native-candidate/3` (both image digests, admin binding, no VSIX platform); `ci-runtime.py` seals and restores `airk-ci-runtime/2`. CI adds an `airkctl` dependency proof, Nextest run and (on hosts without workspace Clippy) Clippy.
@@ -263,11 +285,13 @@ This section describes source changes on the split branch (split plan §10.5); n
 - **Path selection**: `packages/admin/**` and `crates/airk-cli/admin-assets/**` select contracts, native and container checks but not the extension job; other new split inputs (`crates/airkctl`, `packages/contracts-gen`, `fixtures/split`, `installers`) stay on the fail-closed full plan.
 - **Release catalog** (§10.5.2, §10.5.4; script side only, not run in hosted CI): at split versions `ci-candidates.py` selects four `airk-native-<target>-…` pair candidates and one `airk-vsix-universal-<source>-<run>-<attempt>` from the producer run (a promoted main run adds only its macOS Intel pair to the PR run's three pairs and universal VSIX), checks the universal receipt's tree on promotion and authenticates the complete run/attempt, commit/tree and digest set; nine same-run release inputs replace twelve (`airk-vsix-universal-<commit>-<run>` plus a signed or promoted native package and a source receipt per target). A universal VSIX never stands in for a target's native evidence. `github-release.py` verifies `airk-native-candidate/3` (both images, admin and interface identity, C7 validators), writes split source records over the pair alone (`source-record`), assembles the pair ZIPs, native manifests, installers and one `airk-<version>.vsix` bound to the producer's tested universal VSIX, and stages only that VSIX for Marketplace. `release-version.py` and `publish.cjs` publish and read back one untargeted Marketplace package. `ci-candidates.py tag` checks the published assets against `split_receipts.catalog_names`. Earlier versions keep the platform-VSIX catalog unchanged.
 - **Native harnesses** (split plan 10.5.2 harness row): `airk` is service-only, so every native harness runs user commands on the pair's `airkctl` and keeps service starts, process-exit observations and the U93 interim `runtime …` operations (`airk __airk_role setup-interim …`) on `airk`. `ci-plan.py` `NATIVE_ROWS` names both images per target (`executable`, `airkctl`). `check-service-clients.py --runtime-dir` and `check-service-install.py --runtime` read both images from the pair's schema-3 metadata; the `--binary` harnesses also take `--airkctl`, which must be the pair's own image. The interim `runtime stage` decodes only schema-1/2 receipts, so the fixtures stage a copy of the pair's verified files under a schema-2 single-image receipt (`split_fixture_payload`, as the Rust reviewed fixture does); installing the real pair belongs to the setup role and the split installers. `check-service-clients.py` also runs an `airkctl session` (session/2) smoke: hello, a control health relay matched to the observed service instance, and a clean exit.
-- **Not yet done** (recorded as `TODO(split 10.5.2, …)` in the workflows): `verify-published-release.py`, `build-downloads.py` and pair signing (`sign-native.py`, `ci-windows-sign.py`, `ci-macos-sign.py`, both images; the Windows service installer) still implement the pre-split catalog, so the downloads workflow and a hosted signed split release are not ready; `release-version.py plan` reads a published split GitHub release through `build-downloads.py`. The four-cold-HTTPS-client first-status repetitions of the removed `nativeSmoke` extension test have no split owner yet.
+- **Current release adapters, qualification pending**: pair signing verifies both images; the runtime/container/local installer drivers share the sealed staged-runtime checks. Current releases use `publication-contract.py`: from 1.8.35, `airk-release-catalog/2` adds four same-run portable artifacts and eight portable ZIP/manifest assets, while the original C7 native ZIP roster remains unchanged. `airk-github-release/2` binds explicit official installer headless capabilities to its complete digest map. Historical `/1` formats retain their original decoders. Campaign publication accepts only the exact manually nominated `feat/advanced-split` source and a live authenticated full CI producer, including the actual extended-qualification step on all four targets; no PR or promotion subset substitutes for it.
+- **Cold-client regression owner**: `check-service-clients.py` runs fresh sequential and concurrent admission cases with four concurrent HTTPS first-status reads, exact reviewed scope, empty setup status and zero inference loads before its indexed fixture. Routine CI adds two cold-only passes; full qualification adds two full passes. `ci-local.ps1` runs these native owners, stops on its first failure and retains its completed summary. The removed extension test is not an execution owner.
+- **Published Help**: `build-downloads.py` extracts only `extension/out/help-manifest.json` from the digest-verified published universal VSIX. It never publishes newer checkout topics as released Help. The complete manifest supplies topic pages, full-content search and the complete CLI/schema reference, and is copied byte-for-byte with a generation receipt. `/help/html.index` is a directory route to an HTML index; `/help/index.html` is its byte-identical alias. `check-published-help.py` verifies the actual redirect, HTML MIME, exact manifest and every generated file against downloaded published bytes. Hosted checks and browser journeys remain separate from local renderer fixtures.
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.20 working-build record](releases/release-1.8.20.md) describes current candidate qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.9.0 candidate record](releases/release-1.9.0.md) describes current qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 30-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -277,7 +301,7 @@ Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<
 
 [The packager](../scripts/package-native.py) stages only these allowed inputs. It verifies every archive entry against the inventory, preserves Unix executable permissions, and runs the archived executable's version/help commands. It refuses an existing staging destination. Neither the repository tree nor `temp/`, index state, Cargo build directories or credentials are archived. GitHub retains build and test output in the run logs; failed jobs do not upload a successful candidate.
 
-The manifest is a build record, not a signature or a complete reproducible-build attestation. Current dependency notice gaps remain documented in [third-party notices](../THIRD_PARTY_NOTICES.md). Public release qualification, signing and installed-editor tests are separate from candidate construction. The same run also uploads `airk-vsix-<target>-<commit>-<run-id>-<attempt>` containing the platform VSIX, extension manifest and SHA256SUMS. The VSIX manifest binds the native archive, its receipt, the npm lock and all staged runtime payload hashes. The extension package includes the pinned MIT-licensed `jsonc-parser` runtime and its original license for configuration editing; build dependencies remain excluded. See [extension deployment](extension-deployment.md) and [Windows local builds](windows-local-build.md).
+The manifest is a build record, not a signature or a complete reproducible-build attestation. Current dependency notice gaps remain documented in [third-party notices](../THIRD_PARTY_NOTICES.md). Public release qualification, signing and installed-editor tests are separate from candidate construction. Before 1.8.24 the same run also uploaded per-target `airk-vsix-<target>-<commit>-<run-id>-<attempt>` artifacts. Current split CI uploads one `airk-vsix-universal-<commit>-<run-id>-<attempt>` with no native code; its manifest binds the compiled interface payload, npm lock and shared Help bytes. Per-target native candidates remain separate. The extension package includes the pinned MIT-licensed `jsonc-parser` runtime and its original license for configuration editing; build dependencies remain excluded. See [extension deployment](extension-deployment.md) and [Windows local builds](windows-local-build.md).
 
 To reproduce a candidate locally, first provision/verify the pinned model and static ORT inputs as described in [CONTRIBUTING](../CONTRIBUTING.md), and pass the verified five-variable child environment. The following runtime/package commands require those prerequisites and the target matching your Rust host:
 
@@ -441,3 +465,28 @@ Reports identify probe order and lexical/vector/hybrid mode and retain an opaque
 Expiration before submission is recorded as `budget_exhausted` with `submission=not_submitted`; an uncertain timeout after sending remains a transport failure and is never replayed. Cleanup retains fixed failed-stage labels and the owned-child reap outcome. A successful forced reap does not erase an earlier graceful-cleanup failure. The initial-index loop observes status and the accepted job, probes each kind until first usable, and then waits about 200 ms between turns; initial readiness times therefore include this measurement workload. A budgeted failure leaves later cohorts unmeasured and must not be reported as successful corpus qualification.
 
 These measurements use an owned explicitly selected service, not the installed launcher. Fresh processes do not imply cold filesystem caches. Installed-editor state, modified-source incremental work, sustained interruption and background-audit interference require separate evidence. Tests of the runner are not native or corpus qualification; record approved runtime smoke and actual campaign results in the [optimization execution ledger](history/optimizations.md).
+
+### Authenticated trained-model build inputs
+
+The trained MiniLM v2 catalog has build-only asset URLs. CI acquires the exact public model/tokenizer/license roster using `model-build-inputs.py acquire`, an official repository release-asset ID nominated by `model_inputs_asset_id` or `AIRK_MODEL_BUILD_INPUT_ASSET_ID`, and a contents-read GitHub credential. The API asset ID, uploaded state, size and SHA-256 are checked before extraction; every extracted file must also match the native-emitted model policy. The ZIP contains only the two catalog profile directories with `model.onnx`, `tokenizer.json` and `LICENSE`. Canonical `model.json` files are written by the existing provisioner. Training data, private qualification fixtures and parent receipts are excluded.
+
+Docker uses the same acquisition helper with a required BuildKit `github_token` secret and the nominated `AIRK_MODEL_INPUTS_ASSET_ID` build argument. Credentials are never image build arguments or copied inputs. A local Docker build therefore needs the authenticated official asset nomination and `--secret id=github_token,env=GH_TOKEN`. Staging that build-only asset is separate from publishing a product release.
+
+Campaign publication first rehearses the signed assembly with publication disabled, then qualifies that exact retained bundle. The final manual release nominates both the exact source SHA and its earlier `signed_run_id`; it downloads and verifies the original assembly and preserves its original release run, attempt and asset bytes. Fresh signing, packaging and assembly jobs are skipped in this publication path. Actual GitHub API run/workflow/artifact provenance and the complete four-target extended CI producer remain mandatory.
+
+
+The 1.9.0 optional-model publication path uses `optional-publication.py` and
+`optional-parts.py`. `AIRK_ARBITER_BUILD_INPUT_ASSETS` nominates official build
+asset IDs by exact native-pinned part basename; it supplies transport locations,
+not model authority. Each successful same-run matrix job uploads one original
+part of at most 1 GiB. The actual GitHub artifact ID/digest and upload interval
+are bound by `airk-signed-release-producer/3`. The original assembly remains
+under its existing 2 GiB ZIP boundary, while `release.json` and `SHA256SUMS`
+already bind the complete public part roster. Final publication restores every
+original part separately and rechecks the actual producer APIs before effects.
+
+Production preflight requires the native-emitted
+`fixtures/arbiter/publication_catalog.json` to match the actual compiled catalog
+bytes and final tag. That file is emitted only after all four native profiles
+qualify. Hypothetical `/3` fixtures test publication custody and refusal behavior;
+they never authorize model provisioning, publication or a qualification claim.

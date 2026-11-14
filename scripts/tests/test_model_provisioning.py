@@ -16,8 +16,8 @@ class ModelProvisioningTests(unittest.TestCase):
     def test_provisioning_uses_the_native_catalog_without_changing_the_pinned_manifest(self):
         profile = MODULE.PROFILE
         self.assertEqual(profile["id"], MODULE.CATALOG["default_profile"])
-        self.assertEqual(profile["precision"], "uint8")
-        self.assertEqual(MODULE.ASSETS["model.onnx"][1], 23_046_789)
+        self.assertEqual(profile["precision"], "mixed-u8")
+        self.assertEqual(MODULE.ASSETS["model.onnx"][1], 69_325_926)
         self.assertEqual(MODULE.ASSETS["model.onnx"][2], profile["manifest"]["model_sha256"])
         self.assertEqual(profile["manifest"]["dimensions"], 384)
 

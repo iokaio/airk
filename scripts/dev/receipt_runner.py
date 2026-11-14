@@ -176,7 +176,8 @@ def environment(args, out):
         env.update(static.load_environment_file(args.static_environment.resolve(strict=True)))
     private = (args.fixture_base or out / "native-fixtures").resolve()
     private.mkdir(parents=True, exist_ok=True)
-    env.update(TEMP=str(private), TMP=str(private), AIRK_PRIVATE_CENSUS_BASE=str(private))
+    env.update(TEMP=str(private), TMP=str(private), TMPDIR=str(private),
+               AIRK_PRIVATE_CENSUS_BASE=str(private))
     return env
 
 
@@ -238,7 +239,10 @@ def main(argv=None):
         shutil.copy2(timing, out / (args.name + "-cargo-timing.html"))
         receipt["cargo_timings"] = args.name + "-cargo-timing.html"
     junit = Path(env["CARGO_TARGET_DIR"]) / "nextest/ci/junit.xml"
-    if junit.exists() and junit.stat().st_mtime >= started_unix:
+    # A different Cargo owner can update the shared target while this command
+    # runs Python/Node checks. A fresh file alone is not this command's evidence.
+    if (any(NEXTEST_START.match(line) for line in log_text.splitlines())
+            and junit.exists() and junit.stat().st_mtime >= started_unix):
         shutil.copy2(junit, out / (args.name + "-junit.xml"))
         receipt["junit"] = {"path": args.name + "-junit.xml", "sha256": digest(junit)}
     (out / (args.name + "-runner.py")).write_bytes(runner_bytes)

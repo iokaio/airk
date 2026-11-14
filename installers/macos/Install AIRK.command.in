@@ -5,11 +5,14 @@
 # the Developer ID signature) before any native program runs, places
 # AIRK.app, notices/ and payload-inventory.json in the program folder and hands
 # every other step to the bundled airk's private setup role through one
-# airk-setup-operation/1 file. Login startup (SMAppService) is not implemented
-# in this build. When ~/.local/bin exists it adds one receipt-owned airkctl
+# airk-setup-operation/1 file. Interactive login startup uses SMAppService and
+# may require System Settings approval. When ~/.local/bin exists it adds one receipt-owned airkctl
 # link there; no shell startup file is edited.
 set -euo pipefail
 umask 077
+# Native images are verified; standard tools resolve only from OS-owned locations.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
 export LC_ALL=C
 
 version='@@VERSION@@'
@@ -17,31 +20,45 @@ inventory_sha256='@@INVENTORY_SHA256@@'
 roster_sha256='@@PAYLOAD_SUMS_SHA256@@'
 airk_sha256='@@AIRK_SHA256@@'
 file_count='@@PAYLOAD_FILE_COUNT@@'
-requirement='=anchor apple generic and certificate leaf[subject.OU] = "5PX7D99PXA" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+requirement='=anchor apple generic and certificate leaf[subject.OU] = "@@TEAM_ID@@" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
 airk_relative='AIRK.app/Contents/MacOS/airk'
 airkctl_relative='AIRK.app/Contents/MacOS/airkctl'
 
 fail() { printf 'AIRK installer: %s\n' "$*" >&2; exit 1; }
 
-program='' data='' state='' cache='' logs=''
-acknowledged=false unattended=false start=true
+program='' data='' state='' cache='' logs='' resume=''
+overrides=false
+acknowledged=false unattended=false start=true login=true
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --resume)
+            [ $# -ge 2 ] || fail "--resume needs the absolute original operation-request.json."
+            [ -z "$resume" ] || fail "--resume may be supplied only once."
+            resume=$2; shift 2; continue ;;
         --program-dir|--data-dir|--state-dir|--cache-dir|--logs-dir)
+            overrides=true
             [[ $# -ge 2 ]] || fail "$1 needs a folder."
             name=${1#--}; name=${name%-dir}; printf -v "$name" '%s' "$2"; shift 2 ;;
         --program-dir=*|--data-dir=*|--state-dir=*|--cache-dir=*|--logs-dir=*)
+            overrides=true
             name=${1%%=*}; name=${name#--}; name=${name%-dir}; printf -v "$name" '%s' "${1#*=}"; shift ;;
-        --acknowledge-reset) acknowledged=true; shift ;;
-        --yes) unattended=true; shift ;;
-        --no-start) start=false; shift ;;
+        --acknowledge-reset) overrides=true; acknowledged=true; shift ;;
+        --silent|--yes) unattended=true; shift ;;
+        --no-login-startup) overrides=true; login=false; shift ;;
+        --no-start) overrides=true; start=false; shift ;;
         -h|--help)
-            printf '%s\n' 'Options: --program-dir, --data-dir, --state-dir, --cache-dir, --logs-dir DIR;' \
-                '--acknowledge-reset (unattended, when earlier AIRK installations are found); --yes; --no-start.'
+            printf '%s\n' 'Options: --resume ORIGINAL-REQUEST (no overrides), --program-dir, --data-dir, --state-dir, --cache-dir, --logs-dir DIR;' \
+                '--acknowledge-reset (unattended, when earlier AIRK installations are found); --silent (or --yes); --no-login-startup; --no-start.'
             exit 0 ;;
         *) fail "unknown option $1 (see --help)." ;;
     esac
 done
+
+if [ -n "$resume" ]; then
+    [ "$overrides" = false ] || fail '--resume takes original options and locations; overrides are forbidden.'
+    case $resume in /?*) ;; *) fail '--resume requires an absolute original request path.' ;; esac
+    [ -f "$resume" ] && [ ! -L "$resume" ] || fail 'the original recovery request is missing or linked.'
+fi
 
 [[ "$(/usr/bin/uname -m)" == "@@ARCH@@" ]] || fail 'this installer is for @@ARCH@@ Macs. Download the installer for your Mac.'
 
@@ -65,6 +82,82 @@ count=$(/usr/bin/find payload -type f -print | /usr/bin/wc -l | /usr/bin/tr -d '
 # ---------- Locations (U39) ----------
 home=${HOME:-}
 [[ $home == /?* ]] || fail 'the home folder of this account could not be determined.'
+work=$(/usr/bin/mktemp -d "$home/.airk-setup-recovery.XXXXXXXXXX") || fail 'no temporary folder.'
+trap 'printf "AIRK setup recovery: %s\nOriginal request: %s\n" "$work" "${recovery_request:-${operation:-$resume}}" >&2' EXIT
+/bin/cp -R payload/AIRK.app "$work/AIRK.app"
+/usr/bin/codesign --verify --strict -R "$requirement" "$work/AIRK.app" || fail 'the retained setup bundle failed signature verification.'
+image="$work/$airk_relative"
+[[ "$(sum "$image")" == "$airk_sha256" ]] || fail 'the retained setup image changed.'
+
+# Native validates canonical original custody, admitted ownership and actual roots.
+# Its scalar output is data, never shell code; the wrapper does not decode I4.
+recovery_field() {
+    "$image" __airk_role setup --operation "$resume" --recovery-field "$1" 2>"$work/setup.err"
+}
+# Command substitution removes trailing LF; a success-only suffix preserves
+# the native scalar exactly, including any suffix already present in a root.
+recovery_location() {
+    case $1 in program|data|state|cache|logs) ;; *) return 64 ;; esac
+    recovery_scalar=$(recovery_field "$1" && printf '.') || return "$?"
+    case $1 in
+        program) program=${recovery_scalar%.} ;;
+        data) data=${recovery_scalar%.} ;;
+        state) state=${recovery_scalar%.} ;;
+        cache) cache=${recovery_scalar%.} ;;
+        logs) logs=${recovery_scalar%.} ;;
+    esac
+}
+
+lease_wrapper() {
+    held=$("$image" __airk_role setup --operation "$1" --recovery-field wrapper-lease-held 2>"$work/setup.err") || fail 'the original wrapper lease could not be reviewed.'
+    case $held in
+        true) return 0 ;;
+        false)
+            if [ "$unattended" = true ]; then
+                exec "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$installer_dir/Install AIRK.command" --wrapper-silent
+            fi
+            exec "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$installer_dir/Install AIRK.command" ;;
+        *) fail 'invalid native wrapper lease observation.' ;;
+    esac
+}
+placement_required=true completion_required=true
+if [ -n "$resume" ]; then
+    recovery_kind=$(recovery_field kind) || fail 'original operation kind was refused.'
+    recovery_requester=$(recovery_field requested-by) || fail 'original operation requester was refused.'
+    case $recovery_kind in
+        install|repair|upgrade) [ "$recovery_requester" = "dmg" ] || fail 'this request belongs to a different installer.' ;;
+        uninstall|purge) [ "$recovery_requester" = airkctl ] || fail 'removal belongs to a different native owner.' ;;
+        *) fail 'unsupported original operation kind.' ;;
+    esac
+    [ "$(recovery_field inventory-sha256)" = "$inventory_sha256" ] || fail 'resume requires the exact original installer payload.'
+    recovery_location program || fail 'original program custody was refused.'
+    recovery_location data || fail 'original data custody was refused.'
+    recovery_location state || fail 'original state custody was refused.'
+    recovery_location cache || fail 'original cache custody was refused.'
+    recovery_location logs || fail 'original logs custody was refused.'
+    case $recovery_kind in
+        uninstall|purge)
+            lease_wrapper "$resume"
+            completion_required=$(recovery_field completion-required) || fail 'original removal state could not be reconciled.'
+            case $completion_required in true|false) ;; *) fail 'invalid native removal observation.' ;; esac
+            if [ "$completion_required" = true ]; then
+                "$image" __airk_role setup --operation "$resume" >"$work/setup.out" 2>"$work/setup.err" || fail 'original removal did not complete; preserve the original request and recovery image.'
+                cat "$work/setup.out"
+            fi
+            printf '%s\n' 'Original native removal completed; retained diagnostics are preserved.'
+            exit 0 ;;
+    esac
+    placement_required=$(recovery_field placement-required) || fail 'original operation state could not be reconciled.'
+    case $placement_required in true|false) ;; *) fail 'invalid native recovery observation.' ;; esac
+    completion_required=$(recovery_field completion-required) || fail 'original native completion could not be reconciled.'
+    case $completion_required in true|false) ;; *) fail 'invalid native completion observation.' ;; esac
+    [ "$placement_required" = false ] || [ "$completion_required" = true ] || fail 'native placement/completion observation conflicts.'
+    if [ "$completion_required" = true ] && [ "$unattended" = true ]; then
+        [ "$(recovery_field trust)" = skip ] || fail 'the original request requires consent; resume interactively without --silent.'
+    fi
+    id=$(recovery_field operation-id) || fail 'original operation identity was refused.'
+fi
+
 support="$home/Library/Application Support/AIRK"
 d_program="$support/program"
 d_data="$support/data/indexes"
@@ -88,6 +181,8 @@ if [[ -f $pointer && ! -L $pointer ]]; then
 fi
 interactive=false
 if [[ $unattended == false && -t 0 ]]; then interactive=true; fi
+# No login registration or consent is implied by a headless install.
+[[ $interactive == true ]] || login=false
 ask() {
     local answer=''
     if [[ $interactive == true ]]; then read -r -p "$2 [$3]: " answer || answer=''; fi
@@ -102,15 +197,22 @@ for role in program data state cache logs; do
     value=${!role}
     while [[ $value != / && $value == */ ]]; do value=${value%/}; done
     [[ $value == /?* ]] || fail "the $role location must be an absolute folder: $value"
-    case $value in *[![:print:]]*|*\"*|*\\*) fail "the $role location must use printable ASCII without quotes or backslashes: $value" ;; esac
+    case $value in *[[:cntrl:]]*) fail "the $role location contains a control character: $value" ;; esac
     printf -v "$role" '%s' "$value"
 done
 
 # ---------- Setup operations (airk-setup-operation/1) ----------
-work=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/airk-install.XXXXXXXXXX") || fail 'no temporary folder.'
-trap '/bin/rm -rf "$work"' EXIT
+
+# Keep ordinary UTF-8 literal; native Core rejects malformed Unicode.
+# Controls were refused above. Escape the two remaining JSON metacharacters.
+json_path() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+j_program=$(json_path "$program")
+j_data=$(json_path "$data")
+j_state=$(json_path "$state")
+j_cache=$(json_path "$cache")
+j_logs=$(json_path "$logs")
 sequence=0
-write_operation() { # kind acknowledged trust start
+write_operation() { # kind acknowledged login trust start
     sequence=$((sequence + 1))
     folder="$work/operation-$sequence"
     /bin/mkdir -m 700 "$folder"
@@ -120,9 +222,11 @@ write_operation() { # kind acknowledged trust start
     [[ ${#id} -eq 32 ]] || fail 'could not create an operation identity.'
     created=$(( $(/bin/date +%s) * 1000 ))
     operation="$folder/operation.json"
-    printf '{"schema":"airk-setup-operation/1","operation_id":"%s","kind":"%s","created_unix_ms":%s,"expires_unix_ms":%s,"requested_by":"dmg","acknowledgements":{"predecessor_removal":%s,"index_reset":%s},"locations":{"program":"%s","data":"%s","state":"%s","cache":"%s","logs":"%s"},"payload_inventory_sha256":"%s","options":{"login_startup":true,"trust":"%s","start":%s,"delete_indexes":"keep"}}\n' \
+    printf '{"schema":"airk-setup-operation/1","operation_id":"%s","kind":"%s","created_unix_ms":%s,"expires_unix_ms":%s,"requested_by":"dmg","acknowledgements":{"predecessor_removal":%s,"index_reset":%s},"locations":{"program":"%s","data":"%s","state":"%s","cache":"%s","logs":"%s"},"payload_inventory_sha256":"%s","options":{"login_startup":%s,"trust":"%s","start":%s,"delete_indexes":"keep"}}\n' \
         "$id" "$1" "$created" "$((created + 600000))" "$2" "$2" \
-        "$program" "$data" "$state" "$cache" "$logs" "$inventory_sha256" "$3" "$4" > "$operation"
+        "$j_program" "$j_data" "$j_state" "$j_cache" "$j_logs" "$inventory_sha256" "$3" "$4" "$5" > "$operation"
+    /bin/cp "$operation" "$folder/operation-request.json"
+    recovery_request="$folder/operation-request.json"
 }
 run_setup() { # image [mode]
     "$1" __airk_role setup --operation "$operation" ${2:+"$2"} >"$work/setup.out" 2>"$work/setup.err"
@@ -130,13 +234,23 @@ run_setup() { # image [mode]
 setup_failure() {
     if [[ -s $folder/error.txt ]]; then /bin/cat "$folder/error.txt" >&2; else /bin/cat "$work/setup.err" >&2; fi
 }
-image="$installer_dir/payload/$airk_relative"
 
-write_operation install false skip false
+
+if [ -n "$resume" ]; then
+    operation=$resume
+    folder=$(dirname -- "$operation")
+    recovery_request="$folder/operation-request.json"
+    lease_wrapper "$operation"
+    if [ "$placement_required" = true ]; then
+        run_setup "$image" --prepare || { setup_failure; fail 'original setup could not resume preparation; nothing was placed.'; }
+    fi
+else
+write_operation install false false skip false
 run_setup "$image" --plan || { setup_failure; fail 'setup could not review this installation.'; }
 plan=$(/bin/cat "$folder/plan.json")
 /usr/bin/tr -d '\r' < "$folder/plan.txt"
 [[ $plan == *'"location_problems":[]'* ]] || fail 'choose other locations (see above).'
+[[ $plan == *'"blockers":[]'* ]] || fail 'resolve the native setup blockers before installation (see above).'
 needs_acknowledgement=false
 [[ $plan != *'"removed":true'* ]] || needs_acknowledgement=true
 printf 'AIRK Service %s will be installed in %s\n' "$version" "$program"
@@ -149,8 +263,13 @@ if [[ $needs_acknowledgement == true && $acknowledged == false ]]; then
 fi
 
 # Retirement and the drain run before any file is replaced (section 9.6).
-write_operation install "$acknowledged" ask "$start"
+trust=skip
+[[ $interactive == false ]] || trust=ask
+write_operation install "$acknowledged" "$login" "$trust" "$start"
+lease_wrapper "$operation"
 run_setup "$image" --prepare || { setup_failure; fail 'setup did not prepare the installation; nothing was placed.'; }
+
+fi
 
 # ---------- Place AIRK.app, notices/ and the inventory ----------
 # The bundle is replaced whole so no file of an earlier build stays inside its
@@ -159,28 +278,37 @@ run_setup "$image" --prepare || { setup_failure; fail 'setup did not prepare the
 place() { # every step checked: errexit does not apply inside a || list
     umask 022
     /bin/mkdir -p "$program" || return 1
-    /bin/rm -rf "$program/.AIRK.app.new" "$program/.AIRK.app.old" || return 1
-    /usr/bin/ditto payload/AIRK.app "$program/.AIRK.app.new" || return 1
-    if [[ -e $program/AIRK.app ]]; then /bin/mv "$program/AIRK.app" "$program/.AIRK.app.old" || return 1; fi
-    /bin/mv "$program/.AIRK.app.new" "$program/AIRK.app" || return 1
-    /bin/rm -rf "$program/.AIRK.app.old" || return 1
+    # A prior interrupted staging directory is retained, never adopted or deleted.
+    incoming=$(/usr/bin/mktemp -d "$program/.AIRK.app.XXXXXXXXXX") || return 1
+    /usr/bin/ditto payload/AIRK.app "$incoming" || return 1
+    if [[ -e $program/AIRK.app || -L $program/AIRK.app ]]; then
+        [[ ! -e $work/previous-AIRK.app && ! -L $work/previous-AIRK.app ]] || return 1
+        /bin/mv "$program/AIRK.app" "$work/previous-AIRK.app" || return 1
+    fi
+    /bin/mv "$incoming" "$program/AIRK.app" || return 1
     while read -r _ path; do
         relative=${path#payload/}
         [[ $relative == AIRK.app/* ]] && continue
         /bin/mkdir -p "$(/usr/bin/dirname "$program/$relative")" \
-            && /bin/cp "$path" "$program/$relative.airk-new" \
-            && /bin/chmod 644 "$program/$relative.airk-new" \
-            && /bin/mv -f "$program/$relative.airk-new" "$program/$relative" \
-            || { /bin/rm -f "$program/$relative.airk-new"; return 1; }
+            || return 1
+        temporary=$(/usr/bin/mktemp "$program/$relative.airk-new.XXXXXXXXXX") || return 1
+        /bin/cp "$path" "$temporary" && /bin/chmod 644 "$temporary" \
+            && /bin/mv -f "$temporary" "$program/$relative" \
+            || { /bin/rm -f "$temporary"; return 1; }
     done < payload.sha256
 }
-( place ) || fail "files could not be placed in $program; running Install AIRK.command again repairs the installation."
+if [ "$placement_required" = true ]; then
+( place ) || fail "files could not be placed in $program; preserve the reported recovery folder and check service status before recovery."
 [[ "$(sum "$program/$airk_relative")" == "$airk_sha256" ]] || fail 'the installed service image changed; its files were preserved.'
-if ! run_setup "$program/$airk_relative"; then
+fi
+if [ "$completion_required" = true ]; then
+if ! run_setup "$image"; then
     setup_failure
-    fail 'AIRK Service files are installed, but setup did not complete. Run "airkctl service status"; running Install AIRK.command again repairs the installation.'
+    fail 'AIRK Service files are installed, but setup did not complete. Run "airkctl service status"; preserve the reported recovery folder and check service status before recovery.'
 fi
 /bin/cat "$work/setup.out"
+
+fi
 
 # ---------- airkctl on PATH: one receipt-owned link, no shell startup edits ----------
 airkctl="$program/$airkctl_relative"
@@ -198,4 +326,4 @@ if [[ -d $home/.local/bin && ! -L $home/.local/bin ]]; then
 else
     printf 'airkctl is %s (add its folder to PATH yourself; no shell startup file was changed).\n' "$airkctl"
 fi
-printf 'AIRK Service %s is installed. It does not start at login in this build; start it with "airkctl service start".\n' "$version"
+printf 'AIRK Service %s is installed. Run "airkctl service status" to inspect startup; start it with "airkctl service start" when needed.\n' "$version"

@@ -30,7 +30,10 @@ native = module("native_package", "package-native.py")
 signer = module("native_signer", "sign-native.py")
 producers = module("ci_candidates", "ci-candidates.py")
 reads = module("github_read", "github-read.py")
+authority = module("release_authority", "release-authority.py")
 standalone = module("standalone_contract", "standalone-installer-contract.py")
+publication = module("publication_contract", "publication-contract.py")
+optional = module("optional_publication", "optional-publication.py")
 # The C7 owner of the split threshold, receipt validators and release catalog names.
 receipts = extension.package.receipts
 SIGNED_TARGETS = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"}
@@ -50,15 +53,20 @@ def identity(version):
 
 
 def context():
-    if (os.environ.get("GITHUB_REPOSITORY") != REPOSITORY
-            or os.environ.get("GITHUB_REF") != "refs/heads/main"
-            or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
-            or os.environ.get("GITHUB_WORKFLOW_REF") != WORKFLOW):
-        raise ValueError("Release requires the manual AIRK main-branch workflow")
+    campaign = os.environ.get("GITHUB_REF") == "refs/heads/" + authority.CAMPAIGN_BRANCH
+    if campaign:
+        authority.manual_context(os.environ, "github-release.yml")
+    elif (os.environ.get("GITHUB_REPOSITORY") != REPOSITORY
+          or os.environ.get("GITHUB_REF") != "refs/heads/main"
+          or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+          or os.environ.get("GITHUB_WORKFLOW_REF") != WORKFLOW):
+        raise ValueError("Release requires the manual AIRK main-branch or qualified campaign workflow")
     commit = os.environ["GITHUB_SHA"]
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Expected full source commit")
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    if campaign and not receipts.split_version(version):
+        raise ValueError("Campaign release requires the split product catalog")
     if json.loads((ROOT / "packages/vscode/package.json").read_text(encoding="utf-8"))["version"] != version:
         raise ValueError("Native and extension source versions differ")
     tag = identity(version)
@@ -66,6 +74,13 @@ def context():
         if not re.fullmatch(r"[1-9]\d*", os.environ[field]):
             raise ValueError("Invalid workflow run identity")
     return commit, version, tag
+
+
+def require_campaign_producer(producer):
+    if os.environ.get("GITHUB_REF") == "refs/heads/" + authority.CAMPAIGN_BRANCH:
+        authority.manual_context(os.environ, "github-release.yml")
+        if not isinstance(producer, dict) or authority.record_branch(producer) != authority.CAMPAIGN_BRANCH:
+            raise ValueError("Campaign requires its explicit full campaign producer")
 
 
 def candidate(directory):
@@ -288,6 +303,7 @@ def write_source_record(output, directory, producer, target, commit):
 
 def write_split_source_record(directory, output, producer, target, commit, version, *, tree=None):
     """Split versions: the source record binds the tested native pair alone (no VSIX is per target)."""
+    require_campaign_producer(producer)
     if not receipts.split_version(version):
         raise ValueError("Pre-split source records also bind the platform VSIX (promote-vsix.py source)")
     verify_native(directory, target, commit, version, False, tree=tree)
@@ -636,6 +652,7 @@ def universal_vsix(directory, producer, commit, version, channel, run_id, *, tre
 def assemble_split(directory, output, commit, version, tag, channel, run_id, attempt, producer, *, tree=None,
                    pinned=False, source_records=False):
     """Split catalog: per target the signed (Linux: promoted) pair and installer, one universal VSIX."""
+    require_campaign_producer(producer)
     if producer is None or not source_records:
         raise ValueError("Split releases require an authenticated producer and source receipts")
     (producers.validate_record if pinned else producers.verify_record)(producer, commit, version=version)
@@ -661,6 +678,12 @@ def assemble_split(directory, output, commit, version, tag, channel, run_id, att
             raise ValueError("Linux native package differs from the tested producer")
         selected.extend(((archive, archive.name),
                          (native_dir / "manifest.json", f"airk-{version}-{target}.native-manifest.json")))
+        if publication.current(version, channel):
+            portable_dir = directory / f"airk-portable-{target}-{commit}-{run_id}"
+            portable_owner = module("portable_package", "package-portable.py")
+            _, portable_zip = portable_owner.verify(portable_dir, receipt, digest(native_dir / "manifest.json"), channel=channel)
+            selected.extend(((portable_zip, portable_zip.name),
+                             (portable_dir / standalone.portable_manifest(version, target), standalone.portable_manifest(version, target))))
         if standalone.required(version, channel):
             installer_dir = directory / f"airk-installer-{target}-{commit}-{run_id}"
             _, installer = verify_installer(installer_dir, target, commit, version, receipt)
@@ -669,7 +692,7 @@ def assemble_split(directory, output, commit, version, tag, channel, run_id, att
     manifest, vsix = universal_vsix(directory, producer, commit, version, channel, run_id, tree=tree)
     selected.extend(((vsix, vsix.name), (manifest, f"airk-{version}.vsix-manifest.json")))
     if ({name for _, name in selected}
-            != receipts.catalog_names(version, channel, commit, producer, dict(run_id=str(run_id)))[2]):
+            != publication.catalog_names(version, channel, commit, producer, dict(run_id=str(run_id)))[2]):
         raise ValueError("Assembled assets differ from the split release catalog")
     output.mkdir(parents=True, exist_ok=False)
     for source, name in selected:
@@ -677,6 +700,20 @@ def assemble_split(directory, output, commit, version, tag, channel, run_id, att
     record = {"schema": "airk-github-release/1", "tag": tag, "package_version": version,
               "commit": commit, "tree": tree, "channel": channel, "run_id": str(run_id), "attempt": str(attempt),
               "assets": {name: digest(output / name) for _, name in selected}, "producer": producer}
+    if publication.current(version, channel):
+        record["schema"] = publication.RELEASE
+        record["installers"] = publication.installer_rows(version, channel)
+        publication.validate_release(record)
+    if optional.current(version):
+        owner = optional.projection(tag)
+        for name, asset in owner["assets"].items():
+            part_dir = directory / optional.part_input(name, commit, run_id)
+            if part_dir.is_symlink() or not part_dir.is_dir() or {path.name for path in part_dir.iterdir()} != {name}:
+                raise ValueError("Optional same-run part input roster differs")
+            optional.verify_part(part_dir / name, asset)
+        record.update(schema=optional.RELEASE, optional_models=owner)
+        record["assets"].update({name: asset["sha256"] for name, asset in owner["assets"].items()})
+        optional.validate_release(record, owner)
     (output / "release.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     notes = (f"AIRK {tag} ({channel})\n\n"
              "**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents "
@@ -700,7 +737,10 @@ def assemble_split(directory, output, commit, version, tag, channel, run_id, att
              "and dependency notices. This release does not publish to Visual Studio Marketplace.\n")
     notes += interface_previews(version, commit)
     (output / "release-notes.md").write_text(notes, encoding="utf-8")
-    checksums = "".join(f"{digest(path)}  {path.name}\n" for path in sorted(output.iterdir()))
+    sums = {path.name: digest(path) for path in output.iterdir()}
+    if record["schema"] == optional.RELEASE:
+        sums.update({name: asset["sha256"] for name, asset in owner["assets"].items()})
+    checksums = "".join(f"{value}  {name}\n" for name, value in sorted(sums.items()))
     (output / "SHA256SUMS").write_text(checksums, encoding="utf-8")
     return record
 
@@ -730,16 +770,22 @@ def require_unused_tag(tag):
 
 def verify_bundle(directory, commit, version, tag, run_id, attempt):
     record = extension.read_receipt(directory / "release.json")
-    if (record.get("schema") != "airk-github-release/1" or record.get("commit") != commit
+    optional_owner = optional.projection(tag) if optional.current(version) else None
+    expected_schema = optional.RELEASE if optional_owner is not None else publication.RELEASE if publication.current(version, record.get("channel")) else "airk-github-release/1"
+    if (record.get("schema") != expected_schema or record.get("commit") != commit
             or record.get("tag") != tag or record.get("package_version") != version
             or record.get("run_id") != str(run_id) or record.get("attempt") != str(attempt)
             or record.get("channel") not in ("preview", "stable")):
         raise ValueError("Release bundle belongs to another run or commit")
+    if optional_owner is not None:
+        optional.validate_release(record, optional_owner)
+    elif expected_schema == publication.RELEASE:
+        publication.validate_release(record)
     if receipts.split_version(version):
         # Pair packages (and installers) per target and one universal VSIX (C7 release catalog).
         if not isinstance(record.get("producer"), dict) or record.get("release_tooling_repair") is not None:
             raise ValueError("Split release bundle lacks its authenticated producer")
-        expected = set(receipts.catalog_names(version, record["channel"], commit, record["producer"],
+        expected = set(publication.catalog_names(version, record["channel"], commit, record["producer"],
                                               dict(run_id=str(run_id)))[2])
     else:
         expected = set()
@@ -749,23 +795,40 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
                              f"airk-{version}-{platform}.vsix-manifest.json"))
             if standalone.required(version, record["channel"]):
                 expected.update((standalone.artifact(version, target), standalone.manifest(version, target)))
+    if optional_owner is not None:
+        expected.update(optional_owner["assets"])
     if set(record["assets"]) != expected:
         raise ValueError("Release bundle asset set differs")
     expected.update(("release.json", "release-notes.md", "SHA256SUMS"))
-    if directory.is_symlink() or set(p.name for p in directory.iterdir()) != expected:
+    actual_names = set(p.name for p in directory.iterdir())
+    part_names = set(optional_owner["assets"]) if optional_owner is not None else set()
+    small_names = expected - part_names
+    if directory.is_symlink() or actual_names not in (expected, small_names):
         raise ValueError("Unexpected release bundle files")
+    parts_present = actual_names == expected
     if any(p.is_symlink() or not p.is_file() for p in directory.iterdir()):
         raise ValueError("Release bundle links rejected")
     for name, value in record["assets"].items():
-        if digest(directory / name) != value:
+        if name in part_names:
+            if parts_present:
+                optional.verify_part(directory / name, optional_owner["assets"][name])
+        elif digest(directory / name) != value:
             raise ValueError("Release bundle digest mismatch")
-    paths = sorted(p for p in directory.iterdir() if p.name != "SHA256SUMS")
-    if (directory / "SHA256SUMS").read_text(encoding="utf-8") != "".join(f"{digest(p)}  {p.name}\n" for p in paths):
+    sums = {p.name: digest(p) for p in directory.iterdir() if p.name != "SHA256SUMS"}
+    if optional_owner is not None:
+        sums.update({name: asset["sha256"] for name, asset in optional_owner["assets"].items()})
+    if (directory / "SHA256SUMS").read_text(encoding="utf-8") != "".join(f"{value}  {name}\n" for name, value in sorted(sums.items())):
         raise ValueError("Release bundle checksums differ")
     if standalone.required(version, record["channel"]):
         for target in native.TARGETS:
             runtime = extension.read_receipt(directory / f"airk-{version}-{target}.native-manifest.json")
             verify_installer(directory, target, commit, version, runtime, published=True)
+    if publication.current(version, record["channel"]):
+        portable_owner = module("portable_package", "package-portable.py")
+        for target in native.TARGETS:
+            manifest_path = directory / f"airk-{version}-{target}.native-manifest.json"
+            runtime = extension.read_receipt(manifest_path)
+            portable_owner.verify(directory, runtime, digest(manifest_path), published=True, channel=record["channel"])
     return record
 
 
@@ -796,6 +859,12 @@ def stage_marketplace_bundle(directory, output, commit, version, channel, run_id
         assets = published.get("assets", [])
         actual = {asset.get("name"): asset.get("digest") for asset in assets}
         expected = {path.name: "sha256:" + digest(path) for path in directory.iterdir()}
+        if record["schema"] == optional.RELEASE:
+            owner = optional.projection(identity(version))
+            expected.update({name: "sha256:" + asset["sha256"] for name, asset in owner["assets"].items()})
+            if any(asset.get("size") != owner["assets"][asset["name"]]["bytes"]
+                   for asset in assets if asset.get("name") in owner["assets"]):
+                raise ValueError("Published optional part size differs from native pins")
         if len(actual) != len(assets) or actual != expected:
             raise ValueError("Published GitHub assets differ from the selected signed producer")
     if output.exists():
@@ -857,22 +926,78 @@ def stage_universal(directory, output, record, commit, version, channel, run_id,
     return record
 
 
-def publish(directory, resume=False, source_commit=None):
+def qualified_signed_preflight(run_id):
     commit, version, tag = context()
-    # Only the hard-pinned repair adapter supplies this after validating both
-    # identities. Normal CLI publication still requires the exact current main.
+    if os.environ.get("GITHUB_REF") != "refs/heads/" + authority.CAMPAIGN_BRANCH or not publication.current(version, "stable"):
+        raise ValueError("Retained signed publication is only the current campaign path")
+    authority.verify_campaign_publisher(producers.api, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], commit)
+    if producers.positive(run_id) == producers.positive(os.environ["GITHUB_RUN_ID"]):
+        raise ValueError("Retained signed publication needs an earlier successful run")
+    origin = {"branch": authority.CAMPAIGN_BRANCH}
+    if optional.current(version):
+        origin["optional_projection"] = optional.projection(tag)
+    record = producers.attest_signed_release(run_id, commit, **origin)
+    return commit, version, tag, record
+
+
+def publish_qualified(signed_producer, expected_producer, channel, resume=False):
+    """Publish only an API-authenticated owned snapshot of the qualified assembly."""
+    if channel not in ("stable", "preview"):
+        raise ValueError("Retained publication requires its reviewed channel")
+    if not isinstance(signed_producer, dict) or not isinstance(expected_producer, dict):
+        raise ValueError("Retained publication requires both protected producer records")
+    commit, version, tag, observed = qualified_signed_preflight(signed_producer.get("run_id"))
+    if authority.canonical(observed) != authority.canonical(signed_producer):
+        raise ValueError("Qualified signed assembly identity changed")
+    producers.validate_record(expected_producer, commit, version=version)
+    require_campaign_producer(expected_producer)
+    tree = extension.package.source_tree(commit)
+    with tempfile.TemporaryDirectory(prefix="airk-qualified-publish-") as temporary:
+        snapshot = Path(temporary) / "bundle"
+        # The bytes come from the artifact whose digest the actual GitHub API
+        # authenticated. A caller's local directory/JSON never substitutes.
+        producers.download_signed_release(signed_producer, commit, snapshot, version, channel,
+                                         tree=tree, full_bundle=True)
+        record = verify_bundle(snapshot, commit, version, tag, signed_producer["run_id"], signed_producer["attempt"])
+        if authority.canonical(record.get("producer")) != authority.canonical(expected_producer):
+            raise ValueError("Qualified bundle does not contain the pinned complete CI producer")
+        require_campaign_producer(record["producer"])
+        producers.verify_record(record["producer"], commit, **producers.catalog_args(version))
+        authority.verify_campaign_publisher(producers.api, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], commit)
+        origin = {"branch": authority.CAMPAIGN_BRANCH}
+        if optional.current(version):
+            origin["optional_projection"] = optional.projection(tag)
+        final_signed = producers.attest_signed_release(signed_producer["run_id"], commit, **origin)
+        if authority.canonical(final_signed) != authority.canonical(signed_producer):
+            raise ValueError("Qualified signed assembly changed before publication")
+        return _publish_assets(snapshot, record, tag, commit, resume)
+
+
+def publish(directory, resume=False, source_commit=None, signed_producer=None, expected_producer=None, qualified_channel=None):
+    if signed_producer is not None:
+        if directory is not None or source_commit is not None:
+            raise ValueError("Qualified publication takes its bytes only from the authenticated signed artifact")
+        return publish_qualified(signed_producer, expected_producer, qualified_channel, resume)
+    commit, version, tag = context()
+    # Only the hard-pinned repair adapter supplies a distinct source identity.
     if source_commit is not None:
         commit = source_commit
+    if os.environ.get("GITHUB_REF") == "refs/heads/" + authority.CAMPAIGN_BRANCH:
+        raise ValueError("Campaign publication requires its previously qualified signed assembly")
     attempt = os.environ["GITHUB_RUN_ATTEMPT"]
     if resume:
         attempt = extension.read_receipt(directory / "release.json")["attempt"]
         if not 0 < producers.positive(attempt) <= producers.positive(os.environ["GITHUB_RUN_ATTEMPT"]):
             raise ValueError("Release bundle comes from a future attempt")
     record = verify_bundle(directory, commit, version, tag, os.environ["GITHUB_RUN_ID"], attempt)
+    require_campaign_producer(record.get("producer"))
     if source_commit is None and record.get("producer") is not None:
-        # Final live authentication catches a changed producer attempt/artifact
-        # after signing. Intermediate jobs use the pinned IDs and verify bytes.
         producers.verify_record(record["producer"], commit, **producers.catalog_args(version))
+    return _publish_assets(directory, record, tag, commit, resume)
+
+
+def _publish_assets(directory, record, tag, commit, resume):
+    """Upload/read back the caller's already verified owned bundle; no rebuilds."""
     assets = sorted(directory.iterdir())
     release_id = release_id_for_tag(tag) if resume else None
     expected = {p.name: "sha256:" + digest(p) for p in assets}
@@ -934,6 +1059,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--target", choices=native.TARGETS)
     parser.add_argument("--producer", type=Path)
+    parser.add_argument("--signed-run-id")
+    parser.add_argument("--signed-producer", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--pinned-producer", action="store_true")
     parser.add_argument("--source-records", action="store_true")
@@ -941,10 +1068,20 @@ def main():
     args = parser.parse_args()
     commit, version, tag = context()
     if args.command == "preflight":
-        require_unused_tag(tag)
+        if args.signed_run_id:
+            _, _, _, signed = qualified_signed_preflight(args.signed_run_id)
+            selected = ROOT / "artifacts/signed-producer.json"
+            selected.parent.mkdir(parents=True, exist_ok=True)
+            selected.write_text(json.dumps(signed, indent=2) + "\n", encoding="utf-8")
+        else:
+            require_unused_tag(tag)
         split = str(receipts.split_version(version)).lower()
+        owner = optional.projection(tag) if optional.current(version) else None
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-            output.write(f"version={version}\ntag={tag}\nsplit={split}\n")
+            output.write("optional_parts=" + json.dumps(sorted(owner["assets"]) if owner is not None else [], separators=(",", ":")) + "\n")
+            output.write(f"version={version}\ntag={tag}\nsplit={split}\nportable={str(publication.current(version, 'stable')).lower()}\n")
+            if args.signed_run_id:
+                output.write("action=publish-qualified\n")
         print(f"Release {tag}, package version {version}, source {commit}, split catalog {split}")
     elif args.command == "stage-signing":
         stage_signing(args.directory, args.target, commit, version, tree=extension.package.source_tree(commit))
@@ -960,7 +1097,15 @@ def main():
                  tree=extension.package.source_tree(commit), pinned=args.pinned_producer, source_records=args.source_records)
         print(f"Verified release assets: {args.output}")
     else:
-        publish(args.directory, resume=args.resume)
+        if args.signed_producer and not args.producer:
+            parser.error("Retained signed publication requires its protected CI producer record")
+        if args.signed_producer:
+            publish(args.directory, resume=args.resume,
+                    signed_producer=json.loads(args.signed_producer.read_text(encoding="utf-8")),
+                    expected_producer=json.loads(args.producer.read_text(encoding="utf-8")),
+                    qualified_channel=args.channel)
+        else:
+            publish(args.directory, resume=args.resume)
 
 
 if __name__ == "__main__":

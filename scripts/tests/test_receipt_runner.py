@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("receipt_runner", ROOT / "scripts" / "dev" / "receipt_runner.py")
@@ -57,6 +58,25 @@ class SelectedTests(unittest.TestCase):
 
 
 class Receipts(unittest.TestCase):
+    def test_child_tempfile_uses_owned_base_instead_of_inherited_tmpdir(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            foreign = base/'foreign'
+            foreign.mkdir()
+            private = base/'owned-fixtures'
+            args = RUNNER.parse(['--fixture-base',str(private),'--groups','',
+                                 'temp-choice',sys.executable,'-c','pass'])
+            with patch.dict(RUNNER.os.environ,{'TMPDIR':str(foreign)}):
+                environment = RUNNER.environment(args,base/'receipts')
+            child = ('import tempfile; from pathlib import Path; '
+                     'owner=tempfile.TemporaryDirectory(); '
+                     'print(Path(owner.name).resolve().parent); owner.cleanup()')
+            actual = subprocess.run([sys.executable,'-I','-B','-c',child],env=environment,
+                                    capture_output=True,text=True,check=True,timeout=15)
+            self.assertEqual(Path(actual.stdout.strip()),private)
+            for name in ('TEMP','TMP','TMPDIR'):
+                self.assertEqual(environment[name],str(private))
+
     def run_runner(self, out, *command, extra=()):
         argv = [sys.executable, str(ROOT / "scripts/dev/receipt_runner.py"), "--groups", "fixtures",
                 "--out", str(out), *extra, *command]
@@ -90,6 +110,30 @@ class Receipts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             done = self.run_runner(Path(temporary), "failing", sys.executable, "-c", "raise SystemExit(7)")
             self.assertEqual(done.returncode, 7)
+
+    def test_junit_requires_nextest_in_this_commands_log(self):
+        for name, summary, expected in (
+            ("python-report", "Ran 1 tests in 0.001s", False),
+            ("libtest-report", "running 1 test", False),
+            ("nextest-report", "Starting 1 test across 1 binary", True),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                out = Path(temporary)
+                target = out / "target"
+                junit = target / "nextest/ci/junit.xml"
+                # A concurrent Cargo owner can write a fresh report during an
+                # unrelated Python check. Freshness alone proves no provenance.
+                script = ("from pathlib import Path; import sys; "
+                          "p=Path(sys.argv[1]); p.parent.mkdir(parents=True); "
+                          "p.write_text('<testsuites/>'); print(sys.argv[2])")
+                done = self.run_runner(out, name, sys.executable, "-c", script, str(junit), summary,
+                                       extra=("--groups", "", "--target-dir", str(target)))
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                receipt = json.loads((out / (name + ".json")).read_text())
+                self.assertEqual("junit" in receipt, expected)
+                self.assertEqual((out / (name + "-junit.xml")).exists(), expected)
+                if expected:
+                    self.assertEqual(receipt["junit"]["sha256"], RUNNER.digest(junit))
 
 
 if __name__ == "__main__":

@@ -166,8 +166,25 @@ def verify_static_inputs():
             raise RuntimeError("Verified static ORT input identity exceeds its bound")
         return hashlib.sha256(encoded).hexdigest()
     closure = verified.get("static_link_closure")
-    if not isinstance(closure, dict) or closure.get("schema") != 1:
-        raise RuntimeError("Verified static ORT inputs lack the pinned consumer link closure")
+    aggregate = verified.get("static_aggregate")
+    if aggregate is not None:
+        if (closure is not None or verified.get("static_link_supplement") is not None
+                or verified.get("static_link_recovery") is not None):
+            raise RuntimeError("Verified static ORT inputs mix aggregate and legacy consumer identities")
+        receipt_file = Path(location).parent / "static-aggregate-receipt.json"
+        if (not isinstance(aggregate, dict) or set(aggregate) != {"path", "sha256", "receipt"}
+                or aggregate.get("path") != receipt_file.name
+                or receipt_file.is_symlink() or not receipt_file.is_file()
+                or receipt_file.stat().st_size > 65_536
+                or aggregate.get("sha256") != digest(receipt_file)
+                or canonical_digest(aggregate.get("receipt"), 65_536)
+                != canonical_digest(json.loads(receipt_file.read_bytes()), 65_536)):
+            raise RuntimeError("Verified static ORT aggregate receipt identity differs")
+        # The owner already verified the genuine archive and original source
+        # closure. Bind that exact descriptor, never a fictional split layout.
+        closure = aggregate
+    elif not isinstance(closure, dict) or closure.get("schema") != 1:
+        raise RuntimeError("Verified static ORT inputs lack a verified consumer link identity")
     supplement = verified.get("static_link_supplement")
     supplement_sha256 = None
     if supplement is not None:
@@ -205,6 +222,8 @@ def packaged_static_notice_path(source):
 
 
 def stage_static_notices(staging, inputs):
+    owner = load_script('provision-static-onnx-runtime')
+    owner.validate_lock()
     destination = Path(os.environ["ORT_LIB_LOCATION"]).parent
     receipt_file = destination / "build-receipt.json"
     if digest(receipt_file) != inputs["build_receipt_sha256"]:
@@ -225,7 +244,7 @@ def stage_static_notices(staging, inputs):
         shutil.copyfile(source, target)
         files[name] = row["sha256"]
         sources[name] = {"path":row["path"], "bytes":row["bytes"], "sha256":row["sha256"]}
-    metadata = {"schema": 2, "ort_version": "1.22.1", "target": inputs["target"],
+    metadata = {"schema": 2, "ort_version": owner.VERSION, "target": inputs["target"],
                 "build_receipt_sha256": inputs["build_receipt_sha256"],
                 "lock_sha256": digest(ROOT / "scripts/static-onnx-runtime-lock.json"), "files": files, "sources": sources}
     # Apply the same complete mapping/coverage contract before sealing as the
@@ -236,14 +255,16 @@ def stage_static_notices(staging, inputs):
 
 def static_notice_inventory(metadata, target, files):
     prefix = "notices/static-onnx-runtime/"
+    owner = load_script('provision-static-onnx-runtime')
+    owner.validate_lock()
     if (not isinstance(metadata, dict) or set(metadata) != {"schema", "ort_version", "target", "lock_sha256", "build_receipt_sha256", "files", "sources"}
-            or metadata.get("schema") != 2 or metadata.get("ort_version") != "1.22.1" or metadata.get("target") != target
+            or metadata.get("schema") != 2 or metadata.get("ort_version") != owner.VERSION or metadata.get("target") != target
             or metadata.get("lock_sha256") != digest(ROOT / "scripts/static-onnx-runtime-lock.json")
             or not isinstance(metadata.get("build_receipt_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", metadata["build_receipt_sha256"])
             or not isinstance(metadata.get("files"), dict) or not 1 <= len(metadata["files"]) <= 2048
             or not isinstance(metadata.get("sources"), dict) or set(metadata["sources"]) != set(metadata["files"])):
         raise ValueError("Static ORT notice identity or bound differs")
-    lock = json.loads((ROOT / "scripts/static-onnx-runtime-lock.json").read_text(encoding="utf-8"))
+    lock = owner.LOCK
     required = {"onnxruntime", *[row["name"] for row in lock["dependencies"]]}
     observed, source_paths = set(), set()
     for name, expected in metadata["files"].items():
@@ -323,11 +344,14 @@ def verify_cli_imports(executable, operating_system):
 
 
 def verify_model_smoke(staging, operating_system, version):
+    static_owner = load_script("provision-static-onnx-runtime")
+    static_owner.validate_lock()
+    expected_engine = "onnxruntime-cpu/" + static_owner.VERSION
     executable = service_executable(operating_system, version)
     report = json.loads(subprocess.check_output([str(staging / executable), "--verify-model-smoke"],
                                               text=True, encoding="utf-8", timeout=120))
     if (type(report.get("schema")) is not int or report["schema"] != 1 or report.get("source") != "embedded"
-            or report.get("engine") != "onnxruntime-cpu/1.22.1" or report.get("dimensions") != 384
+            or report.get("engine") != expected_engine or report.get("dimensions") != 384
             or report.get("repeat_equal") is not True
             or report.get("profile") not in load_script("int8-policy").APPROVED
             or not isinstance(report.get("legacy_identity"), str) or not re.fullmatch(r"[0-9a-f]{64}", report["legacy_identity"])
@@ -346,8 +370,53 @@ def digest(path):
 # bundle crates/airk-cli/admin-assets is already under "crates". No Node toolchain pin file
 # exists (the pin is the workflow node-version); receipts record the Node/npm actually used.
 FRONTEND_INPUTS = ("packages/admin", "packages/ui", "packages/contracts-gen",
+                   "packages/vscode/src/uiPilotContract.ts", "packages/vscode/src/adminUiContract.ts", "packages/vscode/src/generated/i2.ts",
                    "fixtures/split/i3/admin_operations.json", "scripts/build-admin-assets.py",
                    "scripts/split_receipts.py", "scripts/standalone-installer-contract.py")
+
+
+def compiled_literal_inputs(files, audit=None):
+    """Conservatively seal literal Rust data includes, including test includes.
+
+    Literal and manifest-relative forms name source bytes directly. Generated
+    OUT_DIR model data is owned by airk-host/build.rs and the qualified bundled
+    model catalog/provisioner; generated Admin data is owned by airk-https's
+    build script and FRONTEND_INPUTS. Those generator sources are already under
+    crates. Static ORT archives have the separate verified static input identity.
+    This is a bounded source inventory, not a Rust macro expansion engine.
+    """
+    string = r'"(?:[^"\\]|\\.)*"'
+    literal = re.compile(r'include_(?:str|bytes)!\s*\(\s*(' + string + r')\s*,?\s*\)')
+    manifest = re.compile(r'include_(?:str|bytes)!\s*\(\s*concat!\s*\(\s*env!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,((?:\s*' + string + r'\s*,?)+)\s*\)\s*,?\s*\)')
+    dependencies = set()
+    for name in files:
+        path = ROOT / os.fsdecode(name)
+        if path.suffix != ".rs" or not path.is_file() or not path.is_relative_to(ROOT / "crates"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if len(text.encode("utf-8")) > 4 * 1024 * 1024:
+            raise RuntimeError("Rust embed source inventory exceeds file bound")
+        crate = ROOT / "crates" / path.relative_to(ROOT / "crates").parts[0]
+        paths = [(path.parent, json.loads(match[1])) for match in literal.finditer(text)]
+        paths += [(crate, "".join(json.loads(value) for value in re.findall(string, match[1])).lstrip("/"))
+                  for match in manifest.finditer(text)]
+        for parent, value in paths:
+            selected = parent / value
+            resolved = selected.resolve()
+            if selected.is_symlink() or not resolved.is_relative_to(ROOT) or not selected.is_file():
+                raise RuntimeError("Compiled source input is missing or escapes the runtime workspace")
+            for ancestor in selected.parents:
+                if ancestor == ROOT:
+                    break
+                if ancestor.is_symlink():
+                    raise RuntimeError("Compiled source input is redirected")
+            dependencies.add(os.fsencode(resolved.relative_to(ROOT).as_posix()))
+            if audit is not None:
+                audit.append({"source": path.relative_to(ROOT).as_posix(),
+                              "input": resolved.relative_to(ROOT).as_posix(), "owner": "runtime source seal"})
+    if len(dependencies) > 16_384:
+        raise RuntimeError("Compiled source dependency inventory exceeds bound")
+    return dependencies
 
 
 def source_identity():
@@ -355,16 +424,21 @@ def source_identity():
         "git", "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z",
         "--cached", "--others", "--exclude-standard", "--", "Cargo.toml", "Cargo.lock",
         "rust-toolchain.toml", ".cargo", "crates", "scripts/build-service-runtime.py",
-        "scripts/provision-onnx-runtime.py", "scripts/provision-local-model.py", "scripts/int8-policy.py",
+        "scripts/provision-onnx-runtime.py", "scripts/provision-local-model.py", "scripts/model-build-inputs.py", "scripts/int8-policy.py",
         "scripts/provision-static-onnx-runtime.py", "scripts/static-onnx-runtime-lock.json",
         "scripts/provision-static-onnx-tools.py", "scripts/static-onnx-tools-lock.json",
+        "scripts/provision-static-cmake-source.py", "scripts/static-cmake-source-lock.json",
         "scripts/adopt-neo-static-onnx-runtime.py",
-        "scripts/static-onnx-link-closure.py",
+        "scripts/static-onnx-link-closure.py", "scripts/static-onnx-aggregate.py",
+        # airk-process::signature embeds this policy into both native images.
+        "scripts/signing-identity.json", "fixtures/models/model-policy.json",
         "scripts/macho-identity.py",
         "scripts/license-notices.py", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party",
         *FRONTEND_INPUTS], cwd=ROOT)
     result = hashlib.sha256()
-    files = sorted(set(name for name in names.split(b"\0") if name))
+    files = set(name for name in names.split(b"\0") if name)
+    files.update(compiled_literal_inputs(files))
+    files = sorted(files)
     for name in files:
         path = ROOT / os.fsdecode(name)
         if path.is_symlink() or not path.resolve().is_relative_to(ROOT):
@@ -563,7 +637,9 @@ def macos_bundle_files(version):
         label = "io.iokaio.airk.service." + channel
         files[f"AIRK.app/Contents/Library/LaunchAgents/{label}.plist"] = plistlib.dumps({
             "Label": label, "BundleProgram": "Contents/MacOS/airk",
-            "ProgramArguments": ["airk", "runtime", entry, "--channel", channel],
+            "ProgramArguments": (["airk", "__airk_role", "service-login-current"]
+                                 if tuple(map(int, version.split("."))) >= (1, 9, 0)
+                                 else ["airk", "runtime", entry, "--channel", channel]),
             "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False},
             "ThrottleInterval": 30, "ProcessType": "Background",
         }, sort_keys=True)
@@ -615,6 +691,80 @@ def sign_development_macos_bundle(staging):
     subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(staging / "AIRK.app")], check=True)
 
 
+def qualify_staged_runtime(staging, version, operating_system, architecture, profile,
+                           source, static_inputs, admin_inventory=None, admin_block=None,
+                           observe_source=None, development_macos_signing=False, before_seal=None):
+    """Qualify and seal the actual staged images, without invoking Cargo.
+
+    Every producer freezes inputs before compiling and passes those observations
+    here. Signing precedes this boundary, so metadata and import/model probes
+    describe the exact signed copies that packaging consumes. Containers supply
+    their bounded COPY-input observer instead of inventing Git provenance.
+    """
+    observe_source = source_identity if observe_source is None else observe_source
+    split = split_pair_version(version)
+    if split and (admin_inventory is None or admin_block is None):
+        raise RuntimeError("Split staging requires the checked Admin inventory")
+    # These are the producer's post-signing copies, before any probe can run.
+    # Metadata must describe exactly these bytes, not a replacement introduced
+    # between a successful probe and the later metadata/hash observation.
+    images = {name: digest(staging / name) for name in runtime_executables(operating_system, version)}
+    verify_embedded_models(staging, operating_system, version)
+    if observe_source() != source:
+        raise RuntimeError("Native source changed during the runtime build; staging was not published")
+    if development_macos_signing and operating_system == "macos":
+        sign_development_macos_bundle(staging)
+        # The canonical developer-Mac route signs here, before import/smoke
+        # probes; its final metadata intentionally identifies those signed bytes.
+        images = {name: digest(staging / name) for name in images}
+    imports = verify_static_imports(staging / service_executable(operating_system, version), operating_system)
+    cli_imports = (verify_cli_imports(staging / runtime_executables(operating_system, version)[1], operating_system)
+                   if split else None)
+    if verify_static_inputs() != static_inputs:
+        raise RuntimeError("Static ORT compiled inputs changed during the build")
+    stage_static_notices(staging, static_inputs)
+    if any(digest(staging / name) != expected for name, expected in images.items()):
+        raise RuntimeError("Staged runtime images changed during qualification")
+    if split:
+        manifest = write_pair_metadata(staging, version, operating_system, architecture, admin_block["inventory_sha256"])
+    else:
+        manifest = write_pair_metadata(staging, version, operating_system, architecture)
+    if any(digest(staging / name) != expected for name, expected in images.items()):
+        raise RuntimeError("Staged runtime images changed during metadata publication")
+    # Exercise the final executable receipt, not a receipt-less development
+    # directory. A runtime that cannot consume its own emitted metadata fails.
+    model_smoke = verify_model_smoke(staging, operating_system, version)
+    if observe_source() != source:
+        raise RuntimeError("Native source changed during the paired build; staging was not published")
+    rustc = subprocess.check_output(["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip()
+    if split:
+        if load_script("build-admin-assets").block_from_inventory(admin_inventory) != admin_block:
+            raise RuntimeError("Admin bundle changed during the build; staging was not published")
+        receipt = {"schema": 2, "source": source, "profile": profile, "runtime": manifest, "rustc": rustc,
+                   "static_ort": static_inputs, "static_imports": imports, "airkctl_static_imports": cli_imports,
+                   "embedded_model_smoke": model_smoke, "admin_assets": admin_block}
+        split_receipts().validate_build_receipt(receipt)
+    else:
+        receipt = {"schema": 1, "source": source, "profile": profile,
+                   "runtime": manifest, "rustc": rustc,
+                   "static_ort": static_inputs, "static_imports": imports, "embedded_model_smoke": model_smoke}
+    receipt_text = json.dumps(receipt, indent=2) + "\n"
+    if len(receipt_text.encode("utf-8")) > 16_384:
+        raise RuntimeError("Complete build receipt exceeds the native metadata bound")
+    (staging / "airk-build.json").write_text(receipt_text, encoding="utf-8")
+    if before_seal is not None:
+        before_seal(receipt)
+    seal_install_payload(staging, version, operating_system, architecture)
+    if observe_source() != source:
+        raise RuntimeError("Native source changed during offline payload staging")
+    if (verify_static_inputs() != static_inputs
+            or split and load_script("build-admin-assets").block_from_inventory(admin_inventory) != admin_block):
+        raise RuntimeError("Static ORT or Admin inputs changed during offline payload staging")
+    if any(digest(staging / name) != expected for name, expected in images.items()):
+        raise RuntimeError("Staged runtime images changed during offline payload staging")
+    return receipt
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
@@ -663,43 +813,9 @@ def main():
             raise RuntimeError("Unsupported host runtime pair target")
         if operating_system == "macos":
             arrange_macos_bundle(staging, version)
-        verify_embedded_models(staging, operating_system, version)
-        if source_identity() != source:
-            raise RuntimeError("Native source changed during the runtime build; staging was not published")
-        if operating_system == "macos":
-            sign_development_macos_bundle(staging)
-        imports = verify_static_imports(staging / service_executable(operating_system, version), operating_system)
-        cli_imports = (verify_cli_imports(staging / runtime_executables(operating_system, version)[1], operating_system)
-                       if split else None)
-        model_smoke = verify_model_smoke(staging, operating_system, version)
-        if verify_static_inputs() != static_inputs:
-            raise RuntimeError("Static ORT compiled inputs changed during the build")
-        stage_static_notices(staging, static_inputs)
-        if split:
-            manifest = write_pair_metadata(staging, version, operating_system, architecture, admin_block["inventory_sha256"])
-        else:
-            manifest = write_pair_metadata(staging, version, operating_system, architecture)
-        if source_identity() != source:
-            raise RuntimeError("Native source changed during the paired build; staging was not published")
-        rustc = subprocess.check_output(["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip()
-        if split:
-            if load_script("build-admin-assets").block_from_inventory(admin_inventory) != admin_block:
-                raise RuntimeError("Admin bundle changed during the build; staging was not published")
-            receipt = {"schema": 2, "source": source, "profile": args.profile, "runtime": manifest, "rustc": rustc,
-                       "static_ort": static_inputs, "static_imports": imports, "airkctl_static_imports": cli_imports,
-                       "embedded_model_smoke": model_smoke, "admin_assets": admin_block}
-            split_receipts().validate_build_receipt(receipt)
-        else:
-            receipt = {"schema": 1, "source": source, "profile": args.profile,
-                       "runtime": manifest, "rustc": rustc,
-                       "static_ort": static_inputs, "static_imports": imports, "embedded_model_smoke": model_smoke}
-        receipt_text = json.dumps(receipt, indent=2) + "\n"
-        if len(receipt_text.encode("utf-8")) > 16_384:
-            raise RuntimeError("Complete build receipt exceeds the native metadata bound")
-        (staging / "airk-build.json").write_text(receipt_text, encoding="utf-8")
-        seal_install_payload(staging, version, operating_system, architecture)
-        if source_identity() != source:
-            raise RuntimeError("Native source changed during offline payload staging")
+        qualify_staged_runtime(staging, version, operating_system, architecture, args.profile,
+                               source, static_inputs, admin_inventory if split else None, admin_block,
+                               development_macos_signing=True)
         # The final directory is created only after both artifacts and identities verify.
         publish_staging(staging, destination)
     print(f"Staged {version} {args.profile} runtime: {destination}")

@@ -8,8 +8,18 @@ searches on this computer. The extension does not contain the service.
 **Installing or updating this extension never installs, updates, repairs or
 removes AIRK Service**; the service has its own installer and uninstaller.
 
-Download the AIRK Service installer from the AIRK downloads page,
-**https://airk.ioka.io/#downloads**, or from the versioned
+When the service is confirmed absent on a supported local host, **Install AIRK
+Service** offers **Download and install automatically**, **Install manually** and
+**Not now**. Automatic installation requires your choice and a review of the
+version, platform and default locations before the payload downloads. It uses
+the official compatible GitHub release, verifies its digest, cryptographic GitHub build provenance and platform publisher
+signature where available, and runs `--silent` without prompts. Certificate trust
+is skipped; a predecessor reset requiring acknowledgement refuses this attempt.
+Manual and Not now never download an installer. A stopped, damaged or unknown
+installation needs checking or recovery instead of fresh automatic installation.
+
+For manual installation, download the AIRK Service installer from the AIRK downloads page,
+**https://airk.ioka.io/index.html**, or from the versioned
 [GitHub Releases](https://github.com/iokaio/airk/releases), then:
 
 - **Windows:** run the AIRK Service installer (`.exe`) and follow its steps. No
@@ -27,41 +37,22 @@ The extension finds the service only through the installer's per-user install
 record. It verifies the installed `airkctl` (signature on Windows and macOS,
 record digest on Linux) before running it and then reaches the service only
 through `airkctl`. When the service is missing, stopped or incompatible, AIRK
-shows that state with **Download AIRK Service**, **Start** or **Check again**;
+shows that state with **Install AIRK Service**, **Start** or **Check again**;
 **AIRK: Open AIRK Admin** opens the service's management pages
 (`airkctl admin open`) for index setup, sources, index sets, storage, agents
 and the service.
 
-**1.8.35 split candidate (13 November 2026).** This extension works with a
-separately installed AIRK Service ([split plan](https://github.com/iokaio/airk/blob/main/docs/split/split-plan.md) §8).
-The advanced split source keeps Reconnect's reviewed removal entries across
-confirmation and repair, requires verified exact-entry CLI support, and reports
-partial action errors. Admin job details and catalog pages fence stale replies
-and retain retry successor receipts. Existing VSIX/installer receipts retain their original
-source identities; this source checkpoint does not rebuild those artifacts.
-Indexes are created and changed in AIRK Admin, which opens in VS Code or in
-your browser (setting `airk.admin.openIn`). The Explorer shows live indexing
-progress, job, watch and pause state, usage and recent activity, and offers the
-everyday actions for the current index: Index now, Pause/Resume, watching
-on/off, and Retry or Cancel a job. Search scope is the union of the checked
-index sets and indexes; an index in no index set gets a visible set named after
-it when applied, and the checked indexes can be saved as a new index set.
-Management › Agents connects coding agents with one click through an open
-connection that follows the window's search scope; **Let the agent choose
-indexes** is off by default, so an agent reads only, or part of, that scope.
-The Workbench reads the window's search scope or explicitly named indexes and
-index sets, and **Max results per index** in the Workbench and Explorer Search
-gives every index of a multi-index search the same number of results. This
-candidate is unpublished and not
-installed-editor qualified. Earlier release notes below describe the pre-split
-extension, which bundled and installed the native runtime. They are kept as
-history.
+**1.9.0 advanced split source candidate (14 November 2026).** The service and extension are separate products with synchronized native/extension source versions. Browser and editor share Overview, Search, Indexes, Activity, Agents, Service and Help; Code, Documents, Evidence, Review and Strategies remain available under Explore evidence, and Workbench remains a separate workspace.
+
+Editor management reaches the native Admin owner through its verified `airkctl session`; credentials stay native-held. Browser Admin retains its HTTPS sign-in and anti-forgery protections. Original request/recovery identities survive uncertain results within their owning live session; a disconnect or ended session does not authorize automatic replay. Complete native results remain available alongside structured views.
+
+Arbiter contextual answers are optional, off by default and require explicit immutable-index enrollment plus a verified supported profile. Actual readiness, refusals and gaps remain visible. This source candidate does not establish independent model/task/device qualification, installed-editor acceptance or publication. See the [1.9.0 candidate record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.9.0.md) and the [execution ledger](https://github.com/iokaio/airk/blob/main/docs/simplify/one-process-ledger.md); earlier packages and screenshots retain their original identities.
 
 ## Meet AIRK Workbench
 
 Workbench is a compact evidence workspace in VS Code’s secondary sidebar. Ask about a named symbol, for example “I want to know about struct Owner.”, or use a slash command or evidence recipe. Inspect the retrieved evidence and open the original source. Copy cited results as Markdown or JSON, export a session, and return to recent investigations.
 
-A small toolbar holds history, settings and new-session controls. The **+** menu offers scope, recipes and tool forms when you need them, keeping the transcript available for results. Proposed plans remain editable and require an explicit run action. **No generative AI is used in AIRK Workbench**; supported intent parsing uses a fixed local classifier, and semantic retrieval uses local embeddings.
+A small toolbar holds history, settings and new-session controls. The **+** menu offers scope, recipes and tool forms when you need them, keeping the transcript available for results. Proposed plans remain editable and require an explicit run action. Ordinary supported intent parsing uses a fixed local classifier, and semantic retrieval uses local embeddings. The separate optional Arbiter path gathers cited contextual answers only under explicit configuration and index enrollment; unavailable or unsupported choices refuse honestly.
 
 ![AIRK Workbench 1.8.7 showing cited code and document evidence](https://raw.githubusercontent.com/iokaio/airk/main/docs/workbench/images/workbench-1.8.7-results.png)
 
@@ -69,7 +60,7 @@ A small toolbar holds history, settings and new-session controls. The **+** menu
 
 ## AIRK Explorer: search, inspect and manage
 
-Explorer brings search, code navigation, document facts, evidence review and a read-only view of the index library into one editor workspace. Check what is indexed and how indexing progresses, choose this window's search scope and inspect source citations. The Overview runs the everyday index actions (Index now, Pause/Resume, watching on/off, Retry and Cancel a job); Management › Usage and Management › Activity read usage and recent activity. To create or change indexes, index sets, storage or advanced agent connections, use **Open AIRK Admin**; Management › Agents connects coding agents to this window's search scope. With no index for the open folder, **Create an index for this folder** opens AIRK Admin's Index library with that folder filled in.
+Explorer brings search, code navigation, document facts, evidence review and a read-only view of the index library into one editor workspace. Check what is indexed and how indexing progresses, choose this window's search scope and inspect source citations. The Overview runs the everyday index actions (Index now, Pause/Resume, watching on/off, Retry and Cancel a job); Activity › Usage and Activity read usage and recent activity. To create or change indexes, index sets, storage or advanced agent connections, use **Open AIRK Admin**; Agents connects coding agents to this window's search scope. With no index for the open folder, **Create an index for this folder** opens AIRK Admin's Index library with that folder filled in.
 
 ![AIRK Explorer showing indexed project evidence and navigation](https://raw.githubusercontent.com/iokaio/airk/main/docs/explorer/images/explorer-1.7.1.png)
 
@@ -115,13 +106,13 @@ These are implemented adapter routes, not completed installed-client/platform qu
 
 ## Local control and transparent limits
 
-Project indexes stay separate from source files. Native background watching updates saved-file evidence; pause, manual-update and semantic opt-out settings remain available. Explorer’s Management tabs show indexing progress, published readiness, storage, service state, agent setup and logs. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens.
+Project indexes stay separate from source files. Native background watching updates saved-file evidence; pause, manual-update and semantic opt-out settings remain available. Explorer’s Indexes, Activity, Agents and Service destinations show indexing progress, published readiness, storage, service state, agent setup and logs. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. Search scope is available under Indexes and stays shared across Explorer screens.
 
 AIRK does not use a remote inference service. If you give retrieved evidence to an external coding agent, that agent’s provider, privacy and approval policies still apply. Local retrieval does not make the agent itself offline.
 
 Usage reporting can help inspect retrieval activity and supplied measurement scenarios. Context, token or cost savings depend on the task and agent; AIRK does not promise a universal reduction in tokens, time or bills.
 
-Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/main/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and public HTTPS share the 29-tool unified catalog; its 19 native evidence/help/plan/scope operations remain a backend subset.
+Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/main/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and public HTTPS share the Rust-owned unified catalog. Read `airkctl tools list --json` for its complete actual schemas; Help reads require a connected service but no selected project.
 
 ## Version and setup notes
 
@@ -131,7 +122,7 @@ Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/
 
 *Pre-split history (1.7–1.8):* Once the new AIRK loader is active, later detected extension replacements reload AIRK automatically and reopen Explorer if it was open. An older loaded extension still needs VS Code to activate the new loader; use **Restart Extensions** in VS Code’s Extensions pane for that one-time transition. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic runtime and terminal setup; discovery can still run bundled native probes. `airk.runtime.nativeExecution: false` starts no AIRK process at all, and `airk.cli.shellIntegration` limits which shell startup files setup edits.
 
-AIRK Service and its `airkctl` command are installed by the separate AIRK Service installer, not by this extension. New index source, storage and watching choices are reviewed in AIRK Admin, and destructive steps there need the target's name typed in. Choose this window's search scope with **Search scope** checkboxes and **Apply selection**: everything in the checked index sets plus every checked index, each read through the index sets that hold it; Overview and Search then show **Searching:** with **Clear**. Until you apply or clear one, the window reads its folder's index automatically; applying an index that is in no index set first creates a visible index set named after it. The choice is remembered for the workspace and applied again only after the index library is read at its current revision; if the index library changed, AIRK asks you to reselect. **Save as index set** saves the checked indexes as a new named index set; other index set changes are made in AIRK Admin. Management › Agents connects Claude Code, Codex or VS Code / GitHub Copilot with an open connection whose default scope is this window's search scope and follows it when you apply another one (no reconnect), lists this folder's coding-agent entries with **Disconnect** (an open connection no entry names is revoked), and offers **Let the agent choose indexes**, off by default: off, the agent searches only its default scope and cannot list or pick indexes; on, it can list every index and index set with descriptions and folders and search any of them. **Edit description** in Search scope sets or clears an index's or index set's description (at most 1 KiB). The scope needs an AIRK Service that offers it; native access records are handled internally. Existing accepted jobs or saved watching may continue independently. Hidden files can be indexed and common credential files are skipped by default, but AIRK is not a secret scanner: review sensitive sources before indexing. Indexes and saved Workbench results may retain excerpts; evidence returned to an agent may reach its provider. Private storage permissions, terminal cleanup and explicit data retirement remain separate controls. See [reviewed setup](https://github.com/iokaio/airk/blob/main/docs/service-project-setup.md) and [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy).
+AIRK Service and its `airkctl` command are installed by the separate AIRK Service installer, not by this extension. New index source, storage and watching choices are reviewed in AIRK Admin, and destructive steps there need the target's name typed in. Choose this window's search scope with **Search scope** checkboxes and **Apply selection**: everything in the checked index sets plus every checked index, each read through the index sets that hold it; Overview and Search then show **Searching:** with **Clear**. Until you apply or clear one, the window reads its folder's index automatically; applying an index that is in no index set first creates a visible index set named after it. The choice is remembered for the workspace and applied again only after the index library is read at its current revision; if the index library changed, AIRK asks you to reselect. **Save as index set** saves the checked indexes as a new named index set; other index set changes are made in AIRK Admin. Agents connects Claude Code, Codex or VS Code / GitHub Copilot with an open connection whose default scope is this window's search scope and follows it when you apply another one (no reconnect), lists this folder's coding-agent entries with **Disconnect** (an open connection no entry names is revoked), and offers **Let the agent choose indexes**, off by default: off, the agent searches only its default scope and cannot list or pick indexes; on, it can list every index and index set with descriptions and folders and search any of them. **Edit description** in Search scope sets or clears an index's or index set's description (at most 1 KiB). The scope needs an AIRK Service that offers it; native access records are handled internally. Existing accepted jobs or saved watching may continue independently. Hidden files can be indexed and common credential files are skipped by default, but AIRK is not a secret scanner: review sensitive sources before indexing. Indexes and saved Workbench results may retain excerpts; evidence returned to an agent may reach its provider. Private storage permissions, terminal cleanup and explicit data retirement remain separate controls. See [reviewed setup](https://github.com/iokaio/airk/blob/main/docs/service-project-setup.md) and [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy).
 
 AIRK stands for **Artifact Indexing and Retrieval Kernel**. It is an independent local indexing and retrieval engine, licensed under Apache-2.0.
 

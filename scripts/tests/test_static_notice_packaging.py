@@ -39,6 +39,7 @@ class StaticNoticePackagingTests(unittest.TestCase):
                 BUILDER.stage_static_notices(staged, inputs)
             metadata = json.loads((staged / "notices/static-onnx-runtime/inventory.json").read_text())
             self.assertEqual(metadata["schema"], 2)
+            self.assertEqual(metadata['ort_version'], '1.30.0')
             self.assertEqual(metadata["build_receipt_sha256"], inputs["build_receipt_sha256"])
             self.assertEqual({row["path"] for row in metadata["sources"].values()}, set(paths))
             self.assertEqual(len(metadata["files"]), len(paths))
@@ -49,6 +50,10 @@ class StaticNoticePackagingTests(unittest.TestCase):
                 self.assertEqual(BUILDER.digest(staged / name), digest)
             expected = BUILDER.static_notice_inventory(metadata, inputs["target"], metadata["files"])
             self.assertEqual(expected, {"notices/static-onnx-runtime/inventory.json", *metadata["files"]})
+            old_version = copy.deepcopy(metadata)
+            old_version['ort_version'] = '1.22.1'
+            with self.assertRaisesRegex(ValueError,'identity'):
+                BUILDER.static_notice_inventory(old_version,inputs['target'],metadata['files'])
             crossed = copy.deepcopy(metadata)
             first = next(iter(crossed["sources"]))
             crossed["sources"][first]["path"] = "notices/json/other/LICENSE"

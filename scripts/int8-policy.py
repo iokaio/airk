@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Release boundary: exactly two approved offline INT8 models, never FP32."""
+"""Consume the native-owned trained model policy; never invent model pins."""
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APPROVED = {
-    "minilm-l6-v2-u8-v1": ("uint8", 23046789, "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21"),
-    "minilm-l6-v2-s8-v1": ("int8", 23026053, "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474"),
-}
+POLICY_PATH = ROOT / "fixtures/models/model-policy.json"
+NATIVE_POLICY = json.loads(POLICY_PATH.read_bytes())
+if NATIVE_POLICY.get("schema") != "airk.minilm.native-policy/2":
+    raise ValueError("Native model policy capture is unsupported")
+REFERENCE = NATIVE_POLICY["catalog"]
+APPROVED = {profile["id"]: (profile["precision"], next(asset["bytes"] for asset in profile["assets"] if asset["name"] == "model.onnx"),
+                            profile["manifest"]["model_sha256"]) for profile in REFERENCE["profiles"]}
 
 
 def catalog():
@@ -17,19 +20,10 @@ def catalog():
 
 
 def validate_catalog(value):
-    profiles = value.get("profiles", [])
-    if (value.get("schema") != 1 or len(profiles) != 2
-            or {p.get("id") for p in profiles} != set(APPROVED)
-            or value.get("default_profile") != "minilm-l6-v2-u8-v1"):
-        raise ValueError("Installer requires exactly the two approved INT8 models")
-    for profile in profiles:
-        precision, size, digest = APPROVED[profile["id"]]
-        assets = profile.get("assets", [])
-        weights = [a for a in assets if a.get("name") == "model.onnx"]
-        if (profile.get("precision") != precision or len(weights) != 1
-                or weights[0].get("bytes") != size or weights[0].get("sha256") != digest
-                or profile.get("manifest", {}).get("model_sha256") != digest):
-            raise ValueError("FP32 or unapproved model is forbidden in build and installer")
+    # The native capture has passed the owning Rust validator's independent
+    # refusal cases. Exact parsed equality preserves every native policy field.
+    if value != REFERENCE:
+        raise ValueError("Model catalog differs from reviewed native trained policy")
 
 
 def verify_embedded(report):

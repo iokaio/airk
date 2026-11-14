@@ -1,0 +1,10 @@
+{
+  "package": "@sigstore/verify",
+  "version": "3.1.1",
+  "license": "Apache-2.0",
+  "source_repository": "https://github.com/sigstore/sigstore-js",
+  "source_revision": "c1dc7d4778a450787fc72b083f2490ad02b714c6",
+  "upstream_path": "LICENSE",
+  "sha256": "364a130d2ca340bd56eb1e6d045fc6929bb0f9d0aa018f2c1949b29517e1cdd0",
+  "reason": "The pinned npm package declares Apache-2.0 but omits its standalone LICENSE; retain the exact licensed repository root at its release tag."
+}

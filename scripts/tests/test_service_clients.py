@@ -644,7 +644,13 @@ class ServiceClientTests(unittest.TestCase):
         self.assertIn("airk_query_scope", CLIENTS.TOOLS)
         self.assertIn("airk_query_scope", CLIENTS.RETRYABLE_TOOLS)
         self.assertIn("query_scope", CLIENTS.MCP_TOOLS)
-        self.assertEqual((len(CLIENTS.TOOLS), len(CLIENTS.MCP_TOOLS)), (19, 29))
+        self.assertEqual((len(CLIENTS.TOOLS), len(CLIENTS.MCP_TOOLS)), (20, 30))
+
+    def test_public_answer_is_in_both_catalogs_without_replaying_finite_context_gathering(self):
+        self.assertIn("airk_answer", CLIENTS.TOOLS)
+        self.assertIn("answer", CLIENTS.MCP_TOOLS)
+        self.assertNotIn("airk_answer", CLIENTS.RETRYABLE_TOOLS)
+        self.assertNotIn("airk_parse", CLIENTS.RETRYABLE_TOOLS)
 
     def test_legacy_query_scope_never_accepts_catalog_expansion_or_false_completeness(self):
         reply = {"schema": "airk.query-scope/1", "mode": "legacy", "status": "configuration_required",

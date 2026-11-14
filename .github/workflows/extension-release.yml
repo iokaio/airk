@@ -3,8 +3,12 @@ name: Extension release
 on:
   workflow_dispatch:
     inputs:
+      qualified_sha:
+        description: Campaign only - exact final-qualified feat/advanced-split source SHA; empty preserves main
+        type: string
+        default: ''
       signed_run_id:
-        description: Successful GitHub release rehearsal or publication on this exact main commit and channel
+        description: Successful GitHub release rehearsal or publication on this exact source commit and channel
         type: string
         default: ''
       version:
@@ -24,6 +28,8 @@ on:
         description: Check Entra login and report the Marketplace member ID without building or publishing
         type: boolean
         default: false
+env:
+  AIRK_QUALIFIED_SHA: ${{ inputs.qualified_sha }}
 permissions:
   contents: read
   actions: read
@@ -37,26 +43,26 @@ jobs:
     outputs:
       action: ${{ steps.version.outputs.action }}
     steps:
-      - name: Publication requires the protected main branch
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Verify exact manual release source
+        run: python scripts/release-authority.py context --workflow extension-release.yml
+      - name: Verify separate identity and publication requests
         env:
           AIRK_PUBLISH: ${{ inputs.publish }}
           AIRK_VERIFY_IDENTITY: ${{ inputs.verify_identity }}
           AIRK_REF: ${{ github.ref }}
           AIRK_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$AIRK_REF" != refs/heads/main ]; then
-            echo 'Candidate promotion and Marketplace identity access require protected main.' >&2
-            exit 1
-          fi
           if [ "$AIRK_PUBLISH" = true ] && [ "$AIRK_VERIFY_IDENTITY" = true ]; then
             echo 'Identity verification and publication are separate operations.' >&2
             exit 1
           fi
           [[ "$AIRK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        if: ${{ !inputs.verify_identity }}
-        with:
-          persist-credentials: false
       - name: Select an unused version or finish the existing release
         if: ${{ !inputs.verify_identity }}
         id: version
@@ -88,7 +94,7 @@ jobs:
 
   version-pr:
     needs: preflight
-    if: ${{ inputs.publish && !inputs.verify_identity && needs.preflight.outputs.action == 'bump' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.publish && !inputs.verify_identity && needs.preflight.outputs.action == 'bump' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

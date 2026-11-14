@@ -2,7 +2,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-Repeat the routine native smokes under hosted-runner CPU limits before a PR.
+Repeat the routine native smokes under hosted-runner CPU limits before qualification.
 
 .DESCRIPTION
 High-core developer machines rarely expose the deadline races seen on 4-vCPU
@@ -24,6 +24,7 @@ param(
     [string]$StaticOrtDirectory
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Suites.Count) { throw 'At least one suite is required.' }
 if (-not $IsWindows -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
     throw 'This script reproduces the Windows x64 host. On Linux use taskset -c 0-3 with the same commands.'
 }
@@ -66,10 +67,6 @@ if (-not $SkipBuild) {
     }
 }
 if (-not (Test-Path (Join-Path $airkRuntime 'airk.exe'))) { throw "No release runtime at $airkRuntime; omit -SkipBuild." }
-if ((Invoke-AirkTool npm @('run', 'compile', '--prefix', 'packages/vscode') (Join-Path $airkOutput 'compile.log')) -ne 0) {
-    throw "Extension compile failed; see $airkOutput/compile.log"
-}
-
 # Children inherit this affinity when they are created, including detached service roles.
 $airkSelf = [Diagnostics.Process]::GetCurrentProcess()
 $airkSelf.ProcessorAffinity = [IntPtr]$(if ($Cores -ge 64) { -1 } else { ([int64]1 -shl $Cores) - 1 })
@@ -80,16 +77,18 @@ try {
     }
     $env:AIRK_TEST_BINARY = Join-Path $airkRuntime 'airk.exe'
     $env:AIRK_PROCESS_DIAGNOSTICS = '1'
-    $results = foreach ($iteration in 1..$Repeat) {
+    $results = [Collections.Generic.List[object]]::new()
+    :checks foreach ($iteration in 1..$Repeat) {
         foreach ($suite in $Suites) {
             $log = Join-Path $airkOutput "$suite-$iteration.log"
             $started = Get-Date
             $code = switch ($suite) {
-                'smoke' { Invoke-AirkTool node @('--test', 'packages/vscode/out/test/nativeSmoke.test.js') $log }
+                'smoke' { Invoke-AirkTool python @('scripts/check-service-clients.py', '--runtime-dir', $airkRuntime, '--cold-clients-only', '--report', (Join-Path $airkOutput "cold-$iteration.json")) $log }
                 'clients' { Invoke-AirkTool python @('scripts/check-service-clients.py', '--runtime-dir', $airkRuntime, '--files', '16', '--model', '--report', (Join-Path $airkOutput "clients-$iteration.json")) $log }
                 'install' { Invoke-AirkTool python @('scripts/check-service-install.py', '--runtime', $airkRuntime) $log }
             }
-            [pscustomobject]@{ Iteration = $iteration; Suite = $suite; Passed = ($code -eq 0); Seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1); Log = $log }
+            $results.Add([pscustomobject]@{ Iteration = $iteration; Suite = $suite; Passed = ($code -eq 0); Seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1); Log = $log })
+            if ($code -ne 0) { break checks }
         }
     }
 } finally {

@@ -32,6 +32,31 @@ class ContainerSourceSealTests(unittest.TestCase):
                       "scripts/build-service-container.py", "scripts/container-inputs.json",
                       "packages/vscode/src/test/fixtures/httpAuthorityDigest.json"]}), encoding="utf-8")
 
+    def test_public_copy_imports_runtime_and_smoke_driver_modules(self):
+        """Execute imports from only the reviewed COPY files, without Docker."""
+        import shutil
+        import subprocess
+        root = Path(__file__).parents[2]
+        manifest = json.loads((root / "scripts/container-inputs.json").read_text())
+        with tempfile.TemporaryDirectory() as temporary:
+            copied = Path(temporary)
+            for name in manifest["files"]:
+                if name.startswith("scripts/") and name.endswith(".py"):
+                    destination = copied / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(root / name, destination)
+            program = ("import importlib.util; from pathlib import Path; "
+                       "root=Path.cwd(); "
+                       "paths=['build-service-container.py','check-container.py']; "
+                       "[(lambda spec: spec.loader.exec_module(importlib.util.module_from_spec(spec)))"
+                       "(importlib.util.spec_from_file_location(p.replace('-','_'),root/'scripts'/p)) for p in paths]; "
+                       "spec=importlib.util.spec_from_file_location('builder',root/'scripts/build-service-runtime.py'); "
+                       "builder=importlib.util.module_from_spec(spec); spec.loader.exec_module(builder); "
+                       "builder.split_receipts(); builder.load_script('build-admin-assets')._receipts(); "
+                       "builder.load_script('standalone-installer-contract')")
+            result = subprocess.run([sys.executable, "-c", program], cwd=copied, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_actual_multistage_repository_recipe_has_a_bounded_complete_source_seal(self):
         root = Path(__file__).parents[2]
         result = BUILD.container_source_identity(root)

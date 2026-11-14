@@ -12,10 +12,19 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("sign_native", ROOT / "scripts/sign-native.py")
 signer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signer)
+spec = importlib.util.spec_from_file_location("release_authority", ROOT / "scripts/release-authority.py")
+authority = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(authority)
 TARGET = "x86_64-pc-windows-msvc"
 
 
 def guard():
+    if os.environ.get("GITHUB_REF") == "refs/heads/" + authority.CAMPAIGN_BRANCH:
+        authority.manual_context(os.environ, "github-release.yml")
+        if (sys.platform != "win32" or os.environ.get("GITHUB_ACTIONS") != "true"
+                or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"):
+            raise ValueError("Campaign Azure signing requires the hosted Windows release workflow")
+        return
     if (sys.platform != "win32" or os.environ.get("GITHUB_ACTIONS") != "true"
             or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
             or os.environ.get("GITHUB_REF") != "refs/heads/main"

@@ -35,6 +35,12 @@ PLATFORMS = {"win32-x64": "x86_64-pc-windows-msvc", "linux-x64": "x86_64-unknown
 _SPEC = importlib.util.spec_from_file_location("published_split_receipts", Path(__file__).with_name("split_receipts.py"))
 receipts = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(receipts)
+_SPEC = importlib.util.spec_from_file_location("published_publication_contract", Path(__file__).with_name("publication-contract.py"))
+publication = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(publication)
+_SPEC = importlib.util.spec_from_file_location("published_optional_contract", Path(__file__).with_name("optional-publication.py"))
+optional = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(optional)
 INSTALLERS = {"win32-x64": "exe", "linux-x64": "tar.gz", "darwin-x64": "dmg", "darwin-arm64": "dmg"}
 # Split plan §9.5: where each tested image is placed inside the installer's payload/ folder.
 SERVICE_PATHS = {"win32-x64": {"airk.exe": "payload/service/airk.exe", "airkctl.exe": "payload/bin/airkctl.exe"},
@@ -89,6 +95,21 @@ def accepted(validator, document):
     return True
 
 
+def verify_optional_parts(directory, release, sums, owner, checks):
+    verified = {}
+    for name, asset in owner["assets"].items():
+        path = directory / name
+        try:
+            optional.verify_part(path, asset)
+            correct = sums.get(name) == asset["sha256"] and release.get("assets", {}).get(name) == asset["sha256"]
+        except (ValueError, OSError):
+            correct = False
+        checks.expect(correct, f"optional part {name} matches native pins, release.json and SHA256SUMS")
+        if correct:
+            verified[name] = asset["sha256"]
+    return verified
+
+
 def verify_split(directory, version, platform, commit, authenticode):
     """Split catalog: the universal VSIX, this platform's pair ZIP and, when published, its installer."""
     checks = Checks()
@@ -102,16 +123,26 @@ def verify_split(directory, version, platform, commit, authenticode):
     sums = read_sums(directory)
     release = json.loads((directory / "release.json").read_text(encoding="utf-8"))
     checks.expect(sha256_file(directory / "release.json") == sums.get("release.json"), "release.json matches SHA256SUMS")
-    checks.expect(release.get("tag") == f"v{version}" and release.get("package_version") == version, "release.json names the requested version")
+    current_publication = publication.current(version, release.get("channel"))
+    optional_owner = optional.projection(release.get("tag")) if optional.current(version) else None
+    validator = (lambda value: optional.validate_release(value, optional_owner)) if optional_owner is not None else publication.validate_release
+    valid_current = accepted(validator, release) if current_publication else False
+    checks.expect(release.get("package_version") == version and (valid_current if current_publication else release.get("tag") == f"v{version}"), "release.json names the requested version")
     if commit:
         checks.expect(release.get("commit") == commit, "release commit matches the expected source commit")
     assets = release.get("assets", {})
+    if current_publication:
+        checks.expect(valid_current, "release.json has the exact current publication and installer capability contract")
+    optional_digests = verify_optional_parts(directory, release, sums, optional_owner, checks) if optional_owner is not None else {}
     published_installer = installer.name in assets
     checks.expect(published_installer == (release.get("channel") == "stable"),
                   "the release publishes an installer for this platform exactly when its channel requires one")
     paths = [vsix, vsix_manifest_path, native, native_manifest_path]
     if published_installer:
         paths += [installer, installer_manifest_path]
+    if current_publication:
+        paths += [directory / publication.standalone.portable_artifact(version, target),
+                  directory / publication.standalone.portable_manifest(version, target)]
     for path in paths:
         actual = sha256_file(path)
         checks.expect(actual == sums.get(path.name), f"{path.name} matches SHA256SUMS")
@@ -194,14 +225,29 @@ def verify_split(directory, version, platform, commit, authenticode):
         elif authenticode and platform.startswith("win32"):
             signatures[installer.name] = authenticode_status(installer)
             checks.expect(signatures[installer.name].get("status") == "Valid", "the installer has a valid Authenticode signature")
+    portable_sha256 = None
+    if current_publication:
+        spec = importlib.util.spec_from_file_location("published_portable", Path(__file__).with_name("package-portable.py"))
+        portable_owner = importlib.util.module_from_spec(spec); spec.loader.exec_module(portable_owner)
+        try:
+            _, portable = portable_owner.verify(directory, native_manifest, sha256_file(native_manifest_path),
+                                                published=True, channel=release["channel"])
+            portable_sha256 = sha256_file(portable)
+            checks.expect(True, "portable ZIP, manual, inventory and runtime bytes match the published native candidate")
+        except (ValueError, OSError, zipfile.BadZipFile):
+            checks.expect(False, "portable ZIP, manual, inventory and runtime bytes match the published native candidate")
     not_verified = ["bit-for-bit reproduction of the binaries from source",
                     f"authenticity of producer run {release.get('run_id')}: confirm it with `gh run view {release.get('run_id')} --repo iokaio/airk`",
                     "AIRK Service install, upgrade and uninstall behavior on this platform"]
+    if current_publication:
+        not_verified.append("portable extraction, setup, upgrade, cleanup and service journeys on this platform")
+    if optional_owner is not None:
+        not_verified.append("native optional-model concatenation/full logical hash, provisioning, inference and offline/resource qualification")
     if published_installer and not platform.startswith("linux"):
         not_verified.append("files inside the Windows/macOS installer beyond its signed manifest (open it on that OS)")
     return {"version": version, "platform": platform, "commit": release.get("commit"), "tree": release.get("tree"),
             "producer_run": release.get("run_id"), "channel": release.get("channel"),
-            "vsix_sha256": sha256_file(vsix), "native_sha256": sha256_file(native), "installer_sha256": installer_sha256,
+            "vsix_sha256": sha256_file(vsix), "native_sha256": sha256_file(native), "installer_sha256": installer_sha256, "portable_sha256": portable_sha256, "optional_parts_sha256": optional_digests,
             "signed_distribution": native_manifest.get("signed_distribution"), "authenticode": signatures,
             "qualification": {"native": native_manifest.get("qualification"), "vsix": vsix_manifest.get("qualification")},
             "passed": checks.passed, "failed": checks.failed, "not_verified": not_verified}

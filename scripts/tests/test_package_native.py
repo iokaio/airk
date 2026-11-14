@@ -38,7 +38,7 @@ class ArchiveContracts(unittest.TestCase):
                     path = root / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(b"fictional static legal bytes")
-                (root / prefix / "inventory.json").write_text(json.dumps({"schema": 2, "ort_version": "1.22.1", "target": target,
+                (root / prefix / "inventory.json").write_text(json.dumps({"schema": 2, "ort_version": lock["ort_version"], "target": target,
                     "build_receipt_sha256": "e" * 64,
                     "lock_sha256": builder.digest(builder.ROOT / "scripts/static-onnx-runtime-lock.json"),
                     "sources": {name: {"path": source, "bytes": (root / name).stat().st_size, "sha256": package.sha256(root / name)} for name, source in zip(static_names, source_names)},
@@ -298,7 +298,7 @@ def split_runtime(root, target, source, version=SPLIT_VERSION, admin=ADMIN_BLOCK
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fictional static legal bytes")
-    (root / prefix / "inventory.json").write_text(json.dumps({"schema": 2, "ort_version": "1.22.1", "target": target,
+    (root / prefix / "inventory.json").write_text(json.dumps({"schema": 2, "ort_version": lock["ort_version"], "target": target,
         "build_receipt_sha256": "e" * 64,
         "lock_sha256": builder.digest(builder.ROOT / "scripts/static-onnx-runtime-lock.json"),
         "sources": {name: {"path": src, "bytes": (root / name).stat().st_size, "sha256": package.sha256(root / name)}

@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      model_inputs_asset_id:
+        description: Official authenticated build-only model asset ID (native catalog pins remain authoritative)
+        type: string
+        default: ''
       fresh_build:
         description: Disable native and container cache restores for a cold qualification build
         type: boolean
@@ -16,6 +20,9 @@ on:
         default: false
   workflow_call:
     inputs:
+      model_inputs_asset_id:
+        type: string
+        default: ''
       channel:
         type: string
         default: stable
@@ -221,7 +228,13 @@ jobs:
         run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-before.json
       - name: Prepare pinned bundled model build inputs
         if: steps.resume.outputs.restored != 'true'
-        run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_INPUTS_ASSET_ID: ${{ inputs.model_inputs_asset_id || vars.AIRK_MODEL_BUILD_INPUT_ASSET_ID }}
+        shell: bash
+        run: |
+          python scripts/model-build-inputs.py acquire --asset-id "$MODEL_INPUTS_ASSET_ID" --destination target/local-vector-model
+          python scripts/provision-local-model.py --destination target/local-vector-model
       - name: Prepare pinned static CPU inference inputs
         if: steps.resume.outputs.restored != 'true'
         run: python scripts/provision-static-onnx-runtime.py --destination target/static-onnx-runtime/${{ matrix.target }} --target ${{ matrix.target }} --download --download-tools --build --parallel 2 --github-env
@@ -353,6 +366,23 @@ jobs:
       # pair metadata; the --binary harnesses also receive --airkctl, verified against the pair.
       - name: Native direct clients, retained reads and shared offline inference
         run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
+      - name: Two additional full native qualification passes
+        if: ${{ inputs.qualification }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pass in 2 3; do
+            python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients-$pass.json
+          done
+      - name: Two additional cold four-client first-status passes
+        if: ${{ !inputs.qualification }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pass in 2 3; do
+            python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --cold-clients-only --report artifacts/benchmarks/${{ matrix.target }}-cold-$pass.json
+          done
+
       - name: Installed process roles and client lifetime
         run: python scripts/check-service-install.py --runtime artifacts/runtime/${{ matrix.target }}
       - name: Real embedded model indexing and vector retrieval
@@ -382,8 +412,8 @@ jobs:
       # packages/vscode/src/test/nativeSmoke.test.ts was removed in split Phase 6. Its native
       # coverage now runs in "Native direct clients" above: the airkctl session/2 smoke (hello,
       # control health relay, clean exit), three concurrent HTTPS MCP clients reconnected twice,
-      # and full MCP/JSON API catalog parity. The four-cold-HTTPS-client first-status
-      # repetitions have no split owner yet (recorded follow-up, split plan 10.5.2 harness row).
+      # and full MCP/JSON API catalog parity. Native direct clients also owns the fresh
+      # sequential/concurrent four-HTTPS-client first-status checks; routine CI adds two passes.
       - name: Package and verify allowlisted native payload
         run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }}
       # The VSIX is universal and UI-only (U29); the extension job packages it once without
@@ -475,7 +505,11 @@ jobs:
         with:
           context: .
           target: smoke
-          build-args: AIRK_QUALIFICATION=${{ inputs.qualification && 'true' || 'false' }}
+          build-args: |
+            AIRK_QUALIFICATION=${{ inputs.qualification && 'true' || 'false' }}
+            AIRK_MODEL_INPUTS_ASSET_ID=${{ inputs.model_inputs_asset_id || vars.AIRK_MODEL_BUILD_INPUT_ASSET_ID }}
+          secrets: |
+            github_token=${{ github.token }}
           load: true
           tags: airk:dev
           cache-from: ${{ !inputs.fresh_build && 'type=gha,scope=airk-container-v2' || '' }}
@@ -483,7 +517,10 @@ jobs:
       - name: One-container collection smoke test
         run: python scripts/check-container.py --image airk:dev
       - name: Export container phase and test timings
-        run: docker buildx build --build-arg AIRK_QUALIFICATION=${{ inputs.qualification && 'true' || 'false' }} --target report --output type=local,dest=artifacts/container-ci .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_INPUTS_ASSET_ID: ${{ inputs.model_inputs_asset_id || vars.AIRK_MODEL_BUILD_INPUT_ASSET_ID }}
+        run: docker buildx build --secret id=github_token,env=GH_TOKEN --build-arg AIRK_MODEL_INPUTS_ASSET_ID="$MODEL_INPUTS_ASSET_ID" --build-arg AIRK_QUALIFICATION=${{ inputs.qualification && 'true' || 'false' }} --target report --output type=local,dest=artifacts/container-ci .
       - name: Summarize container measurements
         run: python scripts/ci-metrics.py summary --file artifacts/container-ci/timings.jsonl --junit artifacts/container-ci/junit.xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -44,16 +44,17 @@ MODULES = ("extension.js", "extensionUpdateLoader.js", "uninstallHook.js", "serv
            "privateDirectory.js", "mcpStdioSession.js", "sourceVerification.js", "publications.js",
            "agentConfig.js", "agentConfigHealth.js", "agentMigration.js", "agentReconnect.js", "agentToml.js",
            "unifiedAgentConfig.js",
-           "airkctl/index.js", "airkctl/install.js", "airkctl/runner.js", "airkctl/session.js",
+           "airkctl/index.js", "airkctl/install.js", "airkctl/runner.js", "airkctl/session.js", "airkctl/adminChunks.js",
            "airkctl/signingIdentity.js", "airkctl/states.js", "airkctl/tools.js", "airkctl/verify.js",
            "airkctl/version.js", "airkctl/agents/index.js", "airkctl/agents/jsonc.js",
+           "airkctl/bootstrap/controller.js", "airkctl/bootstrap/release.js", "airkctl/bootstrap/system.js", "airkctl/bootstrap/provenance.js",
            "airkctl/agents/recognizer.js", "airkctl/agents/toml.js", "airkctl/features/adminOpener.js",
            "airkctl/features/explorerHost.js", "airkctl/features/liveStatus.js", "airkctl/features/windowAgents.js",
            "airkctl/features/windowAssistance.js",
            "airkctl/features/windowScope.js",
            "airkctl/status/guidance.js",
            "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
-           "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js",
+           "explorerContracts.js", "uiPilotContract.js", "uiPilotHost.js", "uiPilotRuntime.js", "adminUiContract.js", "adminUiHost.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js",
            "explorerPanel.js", "explorerRoutes.js", "explorerSearch.js", "explorerSource.js",
            "explorerWorkspaceIO.js", "explorerFacts.js", "explorerInspect.js", "explorerManagement.js",
            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
@@ -64,12 +65,14 @@ MODULES = ("extension.js", "extensionUpdateLoader.js", "uninstallHook.js", "serv
            "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sharedCapabilityFields.js",
            "workbenchSessions.js", "workbenchStrategies.js", "workbenchReferenceRefresh.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
-BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css")
+BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css", "help-manifest.json")
+MODEL_NOTICE_FILES = tuple("notices/all-MiniLM-L6-v2/" + name for name in (
+    "LICENSE", "TRAINING-NOTICES.md", "training-provenance.json", "CC-BY-4.0.txt", "provenance.json"))
 # Host-only implementations that must never ship a second bundled copy.
 HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class NativeSession", "class IntentJournal", "class PrivateIntentStore", "function probeMcp",
                 "class ServiceConsoleController", "class RuntimeHost")
 # The update loader's inventory name rule (extensionUpdateLoader.ts); every sealed name must match it.
-LOADER_NAME = re.compile(r"(?:package\.json|images/airk\.svg|out/(?:airkctl/(?:(?:agents|features|status)/)?)?"
+LOADER_NAME = re.compile(r"(?:package\.json|images/airk\.svg|out/help-manifest\.json|out/airkctl/bootstrap/(?:controller|release|system|provenance)\.js|out/(?:airkctl/(?:(?:agents|features|status)/)?)?"
                          r"[A-Za-z0-9_-]+\.(?:js|css)|node_modules/jsonc-parser/(?:package\.json|lib/umd/(?:main|impl/[A-Za-z-]+)\.js))")
 # Executable image signatures: PE, ELF, Mach-O (thin, both byte orders) and fat/universal.
 NATIVE_MAGIC = (b"MZ", b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
@@ -104,13 +107,36 @@ def digest(data):
 
 
 def runtime_package(package):
-    """Retain the reviewed uninstall hook; development scripts never ship."""
+    """Retain only shipped externals; verifier dependencies are inside its sealed bundle."""
     package = dict(package)
     package.pop("devDependencies", None)
     if package.get("scripts", {}).get("vscode:uninstall") != "node ./out/uninstallHook.js":
         raise ValueError("Expected the packaged AIRK uninstall hook")
     package["scripts"] = {"vscode:uninstall": "node ./out/uninstallHook.js"}
+    dependencies = package.get("dependencies", {})
+    bundled = {"@sigstore/verify", "@sigstore/bundle", "@sigstore/protobuf-specs", "snappyjs"}
+    if not isinstance(dependencies, dict) or set(dependencies) - bundled - {"jsonc-parser"}:
+        raise ValueError("Unreviewed external extension runtime dependency")
+    if dependencies.get("jsonc-parser") != "3.3.1":
+        raise ValueError("Expected the shipped pinned jsonc-parser dependency")
+    # The Node producer/verifier owns exact versions and complete licenses of
+    # all five bundled packages. VSCE must enumerate only actual stage externals.
+    package["dependencies"] = {"jsonc-parser": dependencies["jsonc-parser"]}
+    # VSCE's package file list must include the sealed shared content and the
+    # exact public legal companions, even though this UI-only package has no weights.
+    package["files"] = list(dict.fromkeys([*package.get("files", []), "out/help-manifest.json", *MODEL_NOTICE_FILES]))
     return package
+
+
+def stage_model_notices(destination):
+    """Use the existing legal owner; never discover arbitrary model/corpus files."""
+    spec = importlib.util.spec_from_file_location("airk_license_notices", ROOT / "scripts/license-notices.py")
+    owner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(owner)
+    owner.stage_model_notices(ROOT, destination / "notices")
+    actual = {p.relative_to(destination).as_posix() for p in (destination / "notices").rglob("*") if p.is_file()}
+    if actual != set(MODEL_NOTICE_FILES):
+        raise ValueError("Unexpected trained-model notice inventory")
 
 
 def update_inventory_paths(native=False):
@@ -237,6 +263,12 @@ def stage_runtime_modules(compiled, destination):
             data = stream.read(4_194_305)
         if len(data) > 4_194_304:
             raise ValueError("Oversized runtime module: " + name)
+        if name == "uiPilotRuntime.js":
+            verify_pilot_runtime(data)
+        if name == "airkctl/bootstrap/provenance.js":
+            verify_bootstrap_runtime(data)
+        if name == "airkctl/bootstrap/release.js":
+            verify_bootstrap_release_runtime(data)
         for match in re.finditer(r'''\b(?:require|import)\s*\(\s*(["'])(\.[^"']*)\1\s*\)''', data.decode("utf-8")):
             if resolve_import(name, match.group(2)) is None:
                 raise ValueError("Runtime import outside allowlisted stage: " + name + " -> " + match.group(2))
@@ -247,7 +279,55 @@ def stage_runtime_modules(compiled, destination):
         target.write_bytes(data)
 
 
-def stage_bundles(compiled, destination, preact_version):
+def pilot_runtime_source_seal(root=ROOT):
+    """Exact pure adapter inputs used by build-explorer.cjs; no mtime inference."""
+    result = hashlib.sha256(b"AIRK-UI-PILOT-RUNTIME-1\0")
+    for source in ("packages/ui/src/nativePilot.ts", "packages/ui/src/pilotContract.ts",
+                   "packages/vscode/src/uiPilotContract.ts", "packages/vscode/scripts/build-explorer.cjs"):
+        result.update(source.encode("utf-8"))
+        result.update(b"\0")
+        result.update((root / source).read_bytes())
+        result.update(b"\0")
+    return result.hexdigest()
+
+
+def verify_pilot_runtime(data, root=ROOT):
+    expected = ("/* SPDX-License-Identifier: Apache-2.0 */\n/* AIRK UI pilot runtime source-sha256: "
+                + pilot_runtime_source_seal(root) + " */\n").encode("ascii")
+    if not data.startswith(expected):
+        raise ValueError("UI pilot runtime is missing its current source seal; compile the extension")
+    text = data.decode("utf-8")
+    if re.search(r'''\b(?:require|import)\s*\(''', text):
+        raise ValueError("UI pilot runtime must not load external modules")
+
+
+def verify_bootstrap_runtime(data, root=ROOT):
+    """The Node producer owns source, license and allowed-builtin closure checks.
+
+    Pass exactly the captured bytes, not a second mutable read of the compiled
+    path. No output is staged until every module has passed verification.
+    """
+    try:
+        result = subprocess.run(["node", str(root / "packages/vscode/scripts/build-bootstrap.cjs"), "--verify-stdin"],
+                                input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError("Bootstrap provenance owner verification unavailable") from error
+    if result.returncode != 0 or result.stdout != b"verified\n":
+        raise ValueError("Bootstrap provenance bundle failed owner verification; compile the extension")
+
+
+def verify_bootstrap_release_runtime(data, root=ROOT):
+    """Native publication binding is verified by its one owning Node producer."""
+    try:
+        result = subprocess.run(["node", str(root / "packages/vscode/scripts/build-bootstrap.cjs"), "--verify-release-stdin"],
+                                input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError("Bootstrap release owner verification unavailable") from error
+    if result.returncode != 0 or result.stdout != b"verified\n":
+        raise ValueError("Bootstrap release bundle failed owner verification; compile with the qualified native publication capture")
+
+
+def stage_bundles(compiled, destination, preact_version, help_source=None):
     """Stage reviewed esbuild bundles after checking they are self-contained.
 
     Bundles carry their third-party notice in a leading banner and may not load
@@ -263,6 +343,20 @@ def stage_bundles(compiled, destination, preact_version):
         if len(data) > 4_194_304:
             raise ValueError("Oversized bundle: " + name)
         text = data.decode("utf-8")
+        if name == "help-manifest.json":
+            source_manifest = help_source or ROOT / "packages/ui/generated/help-manifest.json"
+            if data != source_manifest.read_bytes():
+                raise ValueError("Shared Help manifest is stale; compile the extension")
+            document = json.loads(text)
+            version = json.loads((EXTENSION / "package.json").read_text(encoding="utf-8"))["version"]
+            if (not isinstance(document, dict) or document.get("schema") != "airk.help.manifest/1" or document.get("productVersion") != version
+                    or document.get("extensionVersion") != version or document.get("channel") is not None
+                    or not isinstance(document.get("native"), dict) or document["native"].get("version") != version
+                    or document["native"].get("schema") != "airk.help.native-content/1"
+                    or document.get("catalogVersion") != 1 or not isinstance(document.get("topics"), list)
+                    or any(key not in document or key not in document["native"] or document[key] != document["native"][key]
+                           for key in ("cliCommands", "helpRequestSchema", "tools"))):
+                raise ValueError("Shared Help manifest has an invalid schema or version identity")
         if name.endswith(".js"):
             if re.search(r'''\b(?:require|import)\s*\(\s*["']\.''', text):
                 raise ValueError("Bundle loads a local module: " + name)
@@ -480,6 +574,7 @@ def stage_extension(stage, package):
     (stage / "README.md").write_text(listing, encoding="utf-8")
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, stage / name)
+    stage_model_notices(stage)
     write_update_inventory(stage, package["version"])
     check_stage_content(stage)
     return {file.relative_to(stage).as_posix(): digest(file.read_bytes()) for file in stage.rglob("*") if file.is_file()}

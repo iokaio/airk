@@ -16,7 +16,7 @@ _policy = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_policy)
 _policy.validate_catalog(CATALOG)
 PROFILE = CATALOG["profiles"][0]
-if CATALOG["schema"] != 1 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "uint8" or len(CATALOG["profiles"]) != 2:
+if CATALOG["schema"] != 2 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "mixed-u8" or len(CATALOG["profiles"]) != 2:
     raise ValueError("No approved INT8 provisioning profiles")
 REVISION = PROFILE["manifest"]["revision"]
 SOURCE = PROFILE["manifest"]["source"]
@@ -48,7 +48,7 @@ def verify(path, expected_size, expected_digest):
         raise ValueError(f"Asset digest mismatch: {path.name}")
 
 
-def provision(destination, download=False, profile=None):
+def provision(destination, download=False, profile=None, source_directory=None):
     selected = PROFILE if profile is None else profile
     assets = ASSETS if profile is None else {a["name"]: (a["url"], a["bytes"], a["sha256"]) for a in profile["assets"]}
     validate_asset_bindings(selected, assets)
@@ -61,13 +61,19 @@ def provision(destination, download=False, profile=None):
         if path.exists() or path.is_symlink():
             verify(path, size, digest)
             continue
-        if not download:
-            raise ValueError(f"Missing {name}; use --download to explicitly fetch pinned public assets")
+        if source_directory is None and (not download or url is None):
+            raise ValueError(f"Missing {name}; trained assets require explicit authenticated local build inputs")
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(dir=destination, prefix="model-download-", delete=False) as output:
                 temporary = Path(output.name)
-                with urllib.request.urlopen(url, timeout=120) as source:
+                local = Path(source_directory) / name if source_directory is not None else None
+                if local is not None and (local.is_symlink() or not local.is_file()):
+                    raise ValueError("Local model input is not a regular unlinked file: " + name)
+                # Hash these actual copied bytes before publishing anything;
+                # no verify-then-reopen check stands in for their identity.
+                incoming = local.open("rb") if local is not None else urllib.request.urlopen(url, timeout=120)
+                with incoming as source:
                     count = 0
                     for block in iter(lambda: source.read(1024 * 1024), b""):
                         count += len(block)
@@ -103,10 +109,15 @@ def provision(destination, download=False, profile=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("--download", action="store_true", help="explicitly fetch the pinned public model/tokenizer/license")
+    parser.add_argument("--download", action="store_true", help="fetch only when the native catalog supplies an authenticated URL; trained-v2 assets are local-build inputs")
+    parser.add_argument("--profile", choices=[profile["id"] for profile in CATALOG["profiles"]])
+    parser.add_argument("--source-directory", type=Path, help="explicit local model.onnx/tokenizer.json/LICENSE inputs for --profile")
     args = parser.parse_args()
-    manifest = {profile["id"]: provision(args.destination / profile["id"], args.download, profile)
-                for profile in CATALOG["profiles"]}
+    if args.source_directory is not None and args.profile is None:
+        parser.error("--source-directory requires one explicit --profile")
+    profiles = [profile for profile in CATALOG["profiles"] if args.profile is None or profile["id"] == args.profile]
+    manifest = {profile["id"]: provision(args.destination / profile["id"], args.download, profile, args.source_directory)
+                for profile in profiles}
     print(json.dumps({"verified": True, "directory": str(args.destination.resolve()), "manifest": manifest}, indent=2))
 
 

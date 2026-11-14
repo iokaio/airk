@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import tempfile
+import shutil
 import tomllib
 import unittest
 
@@ -14,6 +15,42 @@ SPEC.loader.exec_module(MODULE)
 
 
 class DeclarationTests(unittest.TestCase):
+    def test_trained_model_notices_retain_all_four_companions_and_exact_catalog(self):
+        root = Path(__file__).resolve().parents[2]
+        expected = {'minilm-v2-LICENSE.txt':'LICENSE',
+                    'minilm-v2-TRAINING-NOTICES.md':'TRAINING-NOTICES.md',
+                    'minilm-v2-provenance.json':'training-provenance.json',
+                    'CC-BY-4.0.txt':'CC-BY-4.0.txt'}
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)/'notices'
+            MODULE.stage_model_notices(root, output)
+            staged = output/'all-MiniLM-L6-v2'
+            self.assertEqual({p.name for p in staged.iterdir()}, {*expected.values(),'provenance.json'})
+            for source, destination in expected.items():
+                self.assertEqual((staged/destination).read_bytes(),(root/'third_party/models'/source).read_bytes())
+            self.assertEqual((staged/'provenance.json').read_bytes(),
+                             (root/'crates/airk-retrieval/src/model_catalog.json').read_bytes())
+            self.assertIn(b'Requests', (staged/'LICENSE').read_bytes())
+
+    def test_any_mutated_companion_refuses_before_model_notice_output(self):
+        root = Path(__file__).resolve().parents[2]
+        for changed in ['minilm-v2-LICENSE.txt','minilm-v2-TRAINING-NOTICES.md',
+                        'minilm-v2-provenance.json','CC-BY-4.0.txt']:
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                fixture = Path(temporary)/'source'
+                models = fixture/'third_party/models'
+                models.mkdir(parents=True)
+                catalog = fixture/'crates/airk-retrieval/src/model_catalog.json'
+                catalog.parent.mkdir(parents=True)
+                shutil.copyfile(root/'crates/airk-retrieval/src/model_catalog.json',catalog)
+                for name in MODULE.MODEL_COMPANIONS:
+                    shutil.copyfile(root/'third_party/models'/name, models/name)
+                with (models/changed).open('ab') as output:output.write(b'changed')
+                destination = Path(temporary)/'output'
+                with self.assertRaisesRegex(ValueError,'digest mismatch'):
+                    MODULE.stage_model_notices(fixture,destination)
+                self.assertFalse(destination.exists())
+
     def test_asn1_impl_uses_actual_texts_at_its_published_source_revision(self):
         import json
         root = Path(__file__).resolve().parents[2]

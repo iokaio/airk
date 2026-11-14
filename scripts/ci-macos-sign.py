@@ -32,9 +32,21 @@ CERTIFICATE_SHA256 = "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877
 _RECEIPTS = importlib.util.spec_from_file_location("ci_macos_split_receipts", Path(__file__).with_name("split_receipts.py"))
 receipts = importlib.util.module_from_spec(_RECEIPTS)
 _RECEIPTS.loader.exec_module(receipts)
+_AUTHORITY = importlib.util.spec_from_file_location("ci_macos_release_authority", Path(__file__).with_name("release-authority.py"))
+authority = importlib.util.module_from_spec(_AUTHORITY)
+_AUTHORITY.loader.exec_module(authority)
 
 
 def runner_directory():
+    if os.environ.get("GITHUB_REF") == "refs/heads/" + authority.CAMPAIGN_BRANCH:
+        # The campaign uses the canonical signed release assembly, which first
+        # authenticates the complete CI producer. The standalone signing flow
+        # keeps its existing protected-main boundary.
+        authority.manual_context(os.environ, "github-release.yml")
+        if (sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") != "true"
+                or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"):
+            raise ValueError("Campaign signing requires the hosted Mac release workflow")
+        return Path(os.environ["RUNNER_TEMP"]).resolve(strict=True) / "airk-macos-signing"
     if (sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") != "true"
             or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
             or os.environ.get("GITHUB_REF") != "refs/heads/main"

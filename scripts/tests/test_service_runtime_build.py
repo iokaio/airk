@@ -14,6 +14,68 @@ from unittest import mock
 
 
 class ServiceRuntimeBuildTests(unittest.TestCase):
+    def test_static_identity_binds_actual_aggregate_descriptor_and_refuses_mixed_or_tampered_inputs(self):
+        specification = importlib.util.spec_from_file_location(
+            'aggregate_identity_builder',Path(__file__).resolve().parents[1]/'build-service-runtime.py')
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        for target, archive in [('x86_64-pc-windows-msvc','onnxruntime.lib'),
+                                ('aarch64-apple-darwin','libonnxruntime.a')]:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                (root/'aggregate').mkdir()
+                (root/'build-receipt.json').write_bytes(b'original immutable C++ producer')
+                receipt = {'schema':1,'result':'genuine_aggregate_not_yet_final_link_or_model_qualified',
+                           'plan':{'schema':1,'target':target,'layout':'genuine-monolithic-static',
+                                   'inputs':[{'path':'original/archive','sha256':'a'*64}]},
+                           'command':{'exit_code':0,'owned_descendants_settled':True},
+                           'output':{'path':'aggregate/'+archive,'bytes':123456,'sha256':'b'*64}}
+                receipt_file = root/'static-aggregate-receipt.json'
+                receipt_file.write_text(builder.json.dumps(receipt),encoding='utf-8')
+                descriptor = {'path':receipt_file.name,'sha256':builder.digest(receipt_file),'receipt':receipt}
+                environment = {'ORT_LIB_LOCATION':str(root/'aggregate'),'ORT_LIB_PROFILE':'Release'}
+                verified = {'receipt':{'original':True},'environment':environment,'static_aggregate':descriptor}
+                provisioner = mock.Mock()
+                provisioner.verify_build.return_value = verified
+                def expected_digest(value):
+                    return hashlib.sha256(builder.json.dumps(value,sort_keys=True,separators=(',',':'),
+                        ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+                with mock.patch.dict(builder.os.environ,environment), \
+                     mock.patch.object(builder,'load_script',return_value=provisioner), \
+                     mock.patch.object(builder.subprocess,'check_output',return_value='host: '+target+'\n'):
+                    observed = builder.verify_static_inputs()
+                    self.assertEqual(observed['static_link_closure_sha256'],expected_digest(descriptor))
+                    self.assertNotEqual(observed['static_link_closure_sha256'],expected_digest(receipt['plan']))
+                    self.assertEqual(observed['verified_inputs_sha256'],expected_digest(verified))
+                    self.assertEqual(observed['build_receipt_sha256'],builder.digest(root/'build-receipt.json'))
+                    self.assertIsNone(observed['static_link_supplement_sha256'])
+                    self.assertIsNone(observed['static_link_recovery_sha256'])
+                    for key,value in [('static_link_closure',{'schema':1}),
+                                      ('static_link_supplement',{}),('static_link_recovery',{})]:
+                        verified[key] = value
+                        with self.assertRaisesRegex(RuntimeError,'mix aggregate and legacy'):
+                            builder.verify_static_inputs()
+                        del verified[key]
+                    descriptor['path'] = 'unreviewed.json'
+                    with self.assertRaisesRegex(RuntimeError,'aggregate receipt identity'):
+                        builder.verify_static_inputs()
+                    descriptor['path'] = receipt_file.name
+                    descriptor['receipt'] = {**receipt,'schema':True}
+                    with self.assertRaisesRegex(RuntimeError,'aggregate receipt identity'):
+                        builder.verify_static_inputs()
+                    descriptor['receipt'] = receipt
+                    original_receipt_bytes = receipt_file.read_bytes()
+                    receipt_file.write_bytes(b'x'*65_537)
+                    with self.assertRaisesRegex(RuntimeError,'aggregate receipt identity'):
+                        builder.verify_static_inputs()
+                    receipt_file.write_bytes(original_receipt_bytes)
+                    receipt_file.write_bytes(b'changed receipt')
+                    with self.assertRaisesRegex(RuntimeError,'aggregate receipt identity'):
+                        builder.verify_static_inputs()
+                    verified.pop('static_aggregate')
+                    with self.assertRaisesRegex(RuntimeError,'lack a verified consumer'):
+                        builder.verify_static_inputs()
+
     def test_static_identity_binds_verified_link_closure_and_optional_supplement(self):
         script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
         specification = importlib.util.spec_from_file_location("closure_identity_builder", script)
@@ -66,17 +128,17 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
         specification = importlib.util.spec_from_file_location("model_probe_builder", script)
         builder = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(builder)
-        report = {"schema": 1, "source": "embedded", "engine": "onnxruntime-cpu/1.22.1", "dimensions": 384,
-                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v1", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
-        for field, value in ((None, None), ("schema", True), ("source", "directory"), ("engine", "onnxruntime-cpu/1.22.0"),
-                             ("dimensions", 383), ("repeat_equal", 1), ("profile", "fp32"), ("pipeline_digest", "incomplete")):
+        report = {"schema": 1, "source": "embedded", "engine": "onnxruntime-cpu/1.30.0", "dimensions": 384,
+                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v2", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
+        for field, value in ((None, None), ("schema", True), ("source", "directory"), ("engine", "onnxruntime-cpu/1.22.1"),
+                             ("dimensions", 383), ("repeat_equal", 1), ("profile", "fp32"), ("profile", "minilm-l6-v2-u8-v1"), ("pipeline_digest", "incomplete")):
             candidate = {**report, **({field: value} if field else {})}
             with self.subTest(field=field), mock.patch.object(builder.subprocess, "check_output", return_value=builder.json.dumps(candidate)) as probe:
                 if field:
                     with self.assertRaisesRegex(RuntimeError, "smoke contract differs"):
-                        builder.verify_model_smoke(Path("owned"), "linux", "1.8.14")
+                        builder.verify_model_smoke(Path("owned"), "linux", "1.9.0")
                 else:
-                    self.assertEqual(builder.verify_model_smoke(Path("owned"), "linux", "1.8.14"), report)
+                    self.assertEqual(builder.verify_model_smoke(Path("owned"), "linux", "1.9.0"), report)
                 self.assertEqual(probe.call_args.args[0], [str(Path("owned/airk")), "--verify-model-smoke"])
 
     def test_static_import_inspection_fails_for_external_ort_and_requires_native_tool_success(self):
@@ -289,12 +351,25 @@ int main(int argc, char **argv) {
                     command = call.args[0]
                     self.assertEqual(command[command.index("--sign") + 1], "-")
                     self.assertEqual(command[command.index("--options") + 1], "0")
+    def test_current_mac_signed_login_plist_matches_independent_i4_fixture(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("current_mac_login_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        expected = (script.parents[1] / "fixtures/split/i4/macos_current_login.plist").read_bytes()
+        resources = builder.macos_bundle_files("1.9.0")
+        self.assertEqual(resources["AIRK.app/Contents/Library/LaunchAgents/io.iokaio.airk.service.stable.plist"], expected)
+        for channel in ("stable", "preview"):
+            observed = plistlib.loads(resources[f"AIRK.app/Contents/Library/LaunchAgents/io.iokaio.airk.service.{channel}.plist"])
+            self.assertEqual(observed["ProgramArguments"], ["airk", "__airk_role", "service-login-current"])
+            self.assertEqual(observed["Label"], "io.iokaio.airk.service." + channel)
+
     def test_mac_sealed_login_entry_changes_only_for_direct_service_versions(self):
         script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
         specification = importlib.util.spec_from_file_location("service_runtime_builder", script)
         builder = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(builder)
-        for version, entry in (("1.8.13", "login-foreground"), ("1.8.14", "login-serve"), ("1.9.0", "login-serve")):
+        for version, arguments in (("1.8.13", ["airk", "runtime", "login-foreground"]), ("1.8.14", ["airk", "runtime", "login-serve"]), ("1.8.99", ["airk", "runtime", "login-serve"]), ("1.9.0", ["airk", "__airk_role", "service-login-current"]), ("1.9.1", ["airk", "__airk_role", "service-login-current"])):
             resources = builder.macos_bundle_files(version)
             for channel in ("stable", "preview"):
                 name = f"AIRK.app/Contents/Library/LaunchAgents/io.iokaio.airk.service.{channel}.plist"
@@ -302,7 +377,7 @@ int main(int argc, char **argv) {
                 self.assertEqual(definition, {
                     "Label": f"io.iokaio.airk.service.{channel}",
                     "BundleProgram": "Contents/MacOS/airk",
-                    "ProgramArguments": ["airk", "runtime", entry, "--channel", channel],
+                    "ProgramArguments": arguments if version in ("1.9.0", "1.9.1") else arguments + ["--channel", channel],
                     "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False},
                     "ThrottleInterval": 30, "ProcessType": "Background",
                 })
@@ -384,6 +459,63 @@ def load_builder(name):
 
 class SplitPairBuildTests(unittest.TestCase):
     """Split versions (>= 1.8.24) build and inventory airk and airkctl; earlier versions are unchanged."""
+
+    def test_source_identity_seals_the_compiled_signer_policy(self):
+        builder = load_builder("signer_source_builder")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy = root / "scripts/signing-identity.json"
+            policy.parent.mkdir()
+            policy.write_bytes(b'{"publisher":"reviewed fixture"}')
+            def listing(command, **_kwargs):
+                return b"scripts/signing-identity.json\0" if "scripts/signing-identity.json" in command else b""
+            with mock.patch.object(builder, "ROOT", root), mock.patch.object(builder.subprocess, "check_output", side_effect=listing):
+                before = builder.source_identity()
+                policy.write_bytes(b'{"publisher":"different signer policy"}')
+                self.assertNotEqual(builder.source_identity(), before)
+                self.assertEqual(before["files"], 1)
+
+    def test_source_identity_seals_the_actual_aggregate_verifier(self):
+        builder = load_builder('aggregate_verifier_source')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            verifier = root/'scripts/static-onnx-aggregate.py'
+            verifier.parent.mkdir()
+            verifier.write_bytes(b'original genuine aggregate verifier')
+            def listing(command, **_kwargs):
+                return b'scripts/static-onnx-aggregate.py\0' if 'scripts/static-onnx-aggregate.py' in command else b''
+            with mock.patch.object(builder,'ROOT',root), \
+                 mock.patch.object(builder.subprocess,'check_output',side_effect=listing):
+                before = builder.source_identity()
+                verifier.write_bytes(b'changed verifier policy')
+                self.assertNotEqual(builder.source_identity(),before)
+                self.assertEqual(before['files'],1)
+
+    def test_new_external_literal_and_manifest_embeds_enter_the_source_seal(self):
+        builder = load_builder("external_embed_builder")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "crates/core/src/lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text('const HELP: &str = include_str!("../../../help/topic.txt");\n'
+                              'const MODEL: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/weights.bin"));\n')
+            for name in ("help/topic.txt", "models/weights.bin"):
+                path = root / name
+                path.parent.mkdir()
+                path.write_bytes(b"original independent embed")
+            with (mock.patch.object(builder, "ROOT", root),
+                  mock.patch.object(builder.subprocess, "check_output", return_value=b"crates/core/src/lib.rs\0")):
+                before = builder.source_identity()
+                self.assertEqual(before["files"], 3)
+                for name in ("help/topic.txt", "models/weights.bin"):
+                    path = root / name
+                    path.write_bytes(b"different compiled bytes")
+                    self.assertNotEqual(builder.source_identity(), before, name)
+                    path.write_bytes(b"original independent embed")
+                (root / "help/topic.txt").unlink()
+                with self.assertRaisesRegex(RuntimeError, "Compiled source input is missing"):
+                    builder.source_identity()
+
 
     def test_split_roster_selects_images_by_name(self):
         builder = load_builder("split_roster_builder")
@@ -490,7 +622,8 @@ class SplitPairBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             names = ["crates/airk-cli/src/lib.rs", "packages/admin/src/app.tsx", "packages/admin/package-lock.json",
-                     "packages/contracts-gen/i3.ts", "fixtures/split/i3/admin_operations.json"]
+                     "packages/contracts-gen/i3.ts", "fixtures/split/i3/admin_operations.json",
+                     "packages/vscode/src/uiPilotContract.ts", "packages/vscode/src/generated/i2.ts"]
             for name in names:
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_text("original " + name, encoding="utf-8")
@@ -500,7 +633,8 @@ class SplitPairBuildTests(unittest.TestCase):
                 pathspec = listing.call_args.args[0]
                 for required in ("packages/admin", "packages/ui", "packages/contracts-gen", "crates",
                                  "fixtures/split/i3/admin_operations.json", "scripts/build-admin-assets.py",
-                                 "scripts/split_receipts.py"):
+                                 "scripts/split_receipts.py", "packages/vscode/src/uiPilotContract.ts",
+                                 "packages/vscode/src/generated/i2.ts"):
                     self.assertIn(required, pathspec)
                 for frontend in names[1:]:
                     (root / frontend).write_text("changed frontend input", encoding="utf-8")

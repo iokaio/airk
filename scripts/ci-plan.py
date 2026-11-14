@@ -39,6 +39,8 @@ FULL_MAIN_PREFIXES = (".cargo/",)
 # input (crates/airkctl, packages/contracts-gen, fixtures/split, packages/ui, installers,
 # scripts) stays on the fail-closed full plan below.
 ADMIN_PREFIXES = ("packages/admin/", "crates/airk-cli/admin-assets/")
+# Pure shared presentation contract and its generated type input are consumed by Admin.
+SHARED_ADMIN_INPUTS = {"packages/vscode/src/adminUiContract.ts", "packages/vscode/src/uiPilotContract.ts", "packages/vscode/src/generated/i2.ts"}
 
 
 def candidates():
@@ -97,7 +99,9 @@ def classify(paths, event):
     if event != "pull_request" or not paths:
         return dict.fromkeys(plan, True)
     for path in paths:
-        if path.startswith("packages/vscode/"):
+        if path in SHARED_ADMIN_INPUTS:
+            plan["native"] = plan["container"] = plan["extension"] = plan["contracts"] = True
+        elif path.startswith("packages/vscode/"):
             plan["extension"] = True
             # TS/manifest changes require the real native adapter on every OS.
             if not (path.endswith(".md") or path.startswith("packages/vscode/media/")):

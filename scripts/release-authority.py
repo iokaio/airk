@@ -6,8 +6,10 @@ consumers must authenticate the exact run/workflow/jobs/artifacts through GitHub
 before signing or publication. This module never mutates policies or publishes.
 """
 from copy import deepcopy
+import argparse
 import hashlib
 import json
+import os
 import re
 
 REPOSITORY = "iokaio/airk"
@@ -64,7 +66,7 @@ def record_branch(record):
         if "source_branch" in record or "qualified_commit" in record:
             raise ValueError("release_legacy_record_changed")
         return "main"
-    if schema not in ("airk-ci-producer/3", "airk-signed-release-producer/2"):
+    if schema not in ("airk-ci-producer/3", "airk-signed-release-producer/2", "airk-signed-release-producer/3"):
         raise ValueError("release_producer_schema_refused")
     if record.get("repository") != REPOSITORY or record.get("event") != "workflow_dispatch":
         raise ValueError("release_producer_origin_refused")
@@ -107,6 +109,36 @@ def verify_campaign_ci(api, run_id, commit):
         matches = [job for job in jobs if job.get("name") == name]
         if len(matches) != 1 or matches[0].get("conclusion") != "success":
             raise ValueError("release_campaign_job_refused: " + name)
+    # GitHub's run REST document does not expose dispatch inputs. The actual
+    # extended step, conditional on qualification in this frozen CI source,
+    # proves that a routine manual CI run cannot authorize publication.
+    for job in jobs:
+        if job.get("name") in CAMPAIGN_JOBS and job["name"].startswith("Native / "):
+            extended = [step for step in job.get("steps", [])
+                        if step.get("name") == "Two additional full native qualification passes"]
+            if len(extended) != 1 or extended[0].get("conclusion") != "success":
+                raise ValueError("release_campaign_qualification_step_refused: " + job["name"])
+    return run
+
+
+def verify_campaign_publisher(api, run_id, attempt, commit):
+    """Authenticate the actual active publisher; environment values only nominate it."""
+    commit_id(commit)
+    run_id, attempt = positive(run_id), positive(attempt)
+    run = api(f"actions/runs/{run_id}")
+    workflow = api("actions/workflows/github-release.yml")
+    def repository(value):
+        return value.get("full_name") if isinstance(value, dict) else None
+    if (not isinstance(run, dict) or not isinstance(workflow, dict)
+            or run.get("id") != run_id or positive(run.get("run_attempt")) != attempt
+            or run.get("workflow_id") != positive(workflow.get("id"))
+            or run.get("head_sha") != commit or run.get("head_branch") != CAMPAIGN_BRANCH
+            or run.get("path") != ".github/workflows/github-release.yml"
+            or run.get("event") != "workflow_dispatch" or run.get("status") != "in_progress"
+            or run.get("conclusion") is not None
+            or repository(run.get("repository")) != REPOSITORY
+            or repository(run.get("head_repository")) != REPOSITORY):
+        raise ValueError("release_live_publisher_refused")
     return run
 
 
@@ -166,3 +198,22 @@ def environment_restoration_plan(plan, created, current):
             raise ValueError("release_environment_policy_custody_changed")
         removals.append({"environment": name, "method": "DELETE", "path": f"environments/{name}/deployment-branch-policies/{policy_id}"})
     return removals
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("context",))
+    parser.add_argument("--workflow", action="append", choices=sorted(WORKFLOWS), required=True)
+    args = parser.parse_args(argv)
+    for workflow in args.workflow:
+        try:
+            nomination = manual_context(os.environ, workflow)
+        except ValueError:
+            continue
+        print(json.dumps(nomination, sort_keys=True))
+        return
+    raise ValueError("release_manual_context_refused")
+
+
+if __name__ == "__main__":
+    main()

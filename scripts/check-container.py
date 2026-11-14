@@ -258,7 +258,7 @@ def docker(*args, check=True, timeout=60):
     return result
 
 
-def enroll_container_http(name, install, control, selection, identifier, records):
+def enroll_container_http(name, install, control, selection, identifier, records, *, split=False):
     """One public installer submission using an owned in-container input file."""
     spec = importlib.util.spec_from_file_location("container_native_setup", Path(__file__).with_name("http_fixture.py"))
     helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
@@ -275,11 +275,11 @@ def enroll_container_http(name, install, control, selection, identifier, records
     record.update(exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr)
     result.check_returncode()
     try:
-        record["native_command"] = ["airk","runtime","http-connection","--install-dir",install,
-                                    "--selection-file",path,"--connection-id",identifier,"--client","unknown"]
-        response = docker("exec",name,"airk","runtime","http-connection","--install-dir",install,
-                          "--selection-file",path,"--connection-id",identifier,"--client","unknown",
-                          timeout=clients.remaining(until,60))
+        native = ["airk", *(["__airk_role", "setup-interim"] if split else []),
+                  "runtime", "http-connection", "--install-dir", install,
+                  "--selection-file", path, "--connection-id", identifier, "--client", "unknown"]
+        record["native_command"] = native
+        response = docker("exec", name, *native, timeout=clients.remaining(until,60))
         record["enrollment"] = {"exit_code":response.returncode,"stdout":response.stdout,"stderr":response.stderr}
         connection = json.loads(response.stdout)
         # Filesystem/CA validation occurs inside the container in check_https;
@@ -487,6 +487,7 @@ def main():
     fixtures = Path(__file__).resolve().parent.parent / "examples/workspaces"
     volume_created = False
     scopes = {}
+    split = False
     report = args.report or Path("artifacts/container-check-" + token + ".json")
     evidence = {"schema": "airk-container-check/2", "image": args.image, "records": [], "scopes": scopes, "status": "running"}
     records = evidence["records"]
@@ -502,8 +503,8 @@ def main():
 
     def command(collection, *command_args, check=True, timeout=60):
         selected = scopes[collection]["selection"]
-        exact = ("exec", name, "airk", "--service-install-dir", install,
-                 "--combined-session", json.dumps(selected), *command_args)
+        selected_client = ("airkctl", "--service-runtime-dir", control) if split else ("airk", "--service-install-dir", install)
+        exact = ("exec", name, *selected_client, "--combined-session", json.dumps(selected), *command_args)
         record = {"transport": "cli", "input": exact}; records.append(record)
         response = docker(*exact, check=check, timeout=timeout)
         record.update({"stdout": response.stdout, "stderr": response.stderr, "exit_code": response.returncode})
@@ -511,7 +512,7 @@ def main():
 
     def rpc(method, deadline=None):
         def invoke(exact, until):
-            arguments = ["docker", "exec", "-i", name, "airk", "service", "rpc", "--runtime-dir", control, "--stdin"]
+            arguments = ["docker", "exec", "-i", name, "airkctl" if split else "airk", "service", "rpc", "--runtime-dir", control, "--stdin"]
             record = {"transport": "metadata", "command": arguments, "input": exact}; records.append(record)
             response = subprocess.run(arguments, input=exact, text=True, capture_output=True,
                                       check=False, timeout=clients.remaining(until, 60))
@@ -523,10 +524,10 @@ def main():
     def ready():
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
-            location = docker("exec", name, "airk", "runtime", "location", check=False)
+            location = docker("exec", name, "airk", *(["__airk_role", "setup-interim"] if split else []), "runtime", "location", check=False)
             if location.returncode == 0:
                 control = json.loads(location.stdout)["user_paths"]["state"] + "/control"
-                health = docker("exec", name, "airk", "service", "health", "--runtime-dir", control, check=False)
+                health = docker("exec", name, "airkctl" if split else "airk", "service", "health", "--runtime-dir", control, check=False)
                 if health.returncode == 0:
                     return control
             time.sleep(0.2)
@@ -570,17 +571,18 @@ def main():
         assert json.loads(docker("volume", "inspect", volume).stdout)[0]["Labels"].get("io.airk.fixture") == token
         volume_created = True
         start()
+        image_runtime = json.loads(docker("exec", name, "cat", "/usr/lib/airk/airk-runtime.json").stdout)
+        assert image_runtime["schema"] in (1, 2, 3), "Unknown container runtime format"
+        split = image_runtime["schema"] == 3
         control = ready()
         print("Native container service is healthy.", flush=True)
         docker("exec", name, "mkdir", "-p", "/data/indexes")
-        install = json.loads(docker("exec", name, "airk", "runtime", "location").stdout)["install_dir"]
-        image_runtime = json.loads(docker("exec", name, "cat", "/usr/lib/airk/airk-runtime.json").stdout)
-        assert image_runtime["schema"] in (1, 2), "Unknown container runtime format"
-        modern = image_runtime["schema"] == 2
+        install = json.loads(docker("exec", name, "airk", *(["__airk_role", "setup-interim"] if split else []), "runtime", "location").stdout)["install_dir"]
+        modern = image_runtime["schema"] in (2, 3)
         for collection in ("project-a", "project-b"):
             scopes[collection] = reviewed_fixture(rpc, collection)
             binding = scopes[collection]["registration"]["binding"]
-            accepted_command = ("exec", name, "airk", "--service-runtime-dir", control, "--service-project", binding, "index")
+            accepted_command = ("exec", name, "airkctl" if split else "airk", "--service-runtime-dir", control, "--service-project", binding, "index")
             indexed = docker(*accepted_command)
             records.append({"transport": "administrative_cli", "input": accepted_command, "stdout": indexed.stdout, "stderr": indexed.stderr})
             accepted = json.loads(indexed.stdout)
@@ -621,7 +623,7 @@ def main():
             cli_read = lambda name, args: tool(collection, name, args, allow_error=name == "airk_read_file")
             if modern:
                 connection = enroll_container_http(name, install, control,
-                    {"kind":"combined","selection":scope["selection"]}, uuid.uuid4().hex, records)
+                    {"kind":"combined","selection":scope["selection"]}, uuid.uuid4().hex, records, split=split)
                 assert connection["selection"] == {"kind": "combined", "selection": scope["selection"]}, "HTTP scope changed during enrollment"
                 helper_spec = importlib.util.spec_from_file_location("container_http_identity", Path(__file__).with_name("http_fixture.py"))
                 helper = importlib.util.module_from_spec(helper_spec); helper_spec.loader.exec_module(helper)
@@ -630,10 +632,12 @@ def main():
             else:
                 check_stdio(name, install, scope, cli_read, catalog, records)
         assertions("project-a"); assertions("project-b")
-        pin = json.loads(docker("exec", name, "airk", "runtime", "inspect", "--install-dir", install).stdout)
+        pin = json.loads(docker("exec", name, "airk", *(["__airk_role", "setup-interim"] if split else []), "runtime", "inspect", "--install-dir", install).stdout)
         assert pin["managed_policy"]["lifecycle"] == "external"
         if modern:
-            assert docker("exec", name, "airk", "--version").stdout.strip() == "airk " + pin["approval"]["version"]
+            assert docker("exec", name, "airk", *(["__airk_role", "setup-interim"] if split else []), "--version").stdout.strip() == "airk " + pin["approval"]["version"]
+            if split:
+                assert docker("exec", name, "airkctl", "--version").stdout.strip() == "airkctl " + pin["approval"]["version"]
             for obsolete in ("/usr/lib/airk/airk-embed", install + "/airk-launcher"):
                 assert docker("exec", name, "test", "!", "-e", obsolete, check=False).returncode == 0, "Modern container resurrected a retired executable"
         else:

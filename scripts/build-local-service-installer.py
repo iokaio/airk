@@ -98,7 +98,7 @@ def default_iscc():
     return machine if machine.is_file() or not os.environ.get("LOCALAPPDATA") or not user.is_file() else user
 
 
-def stage(layout, airk, airkctl, version, signing):
+def stage(layout, airk, airkctl, version, signing, verified_notices=None):
     (layout / "bin").mkdir(parents=True)
     (layout / "service").mkdir()
     shutil.copy2(airkctl, layout / "bin/airkctl.exe")
@@ -107,8 +107,11 @@ def stage(layout, airk, airkctl, version, signing):
     notices.mkdir()
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, notices / name)
-    subprocess.run([sys.executable, str(ROOT / "scripts/license-notices.py"), "--output",
-                    str(notices / "dependencies"), "--release"], cwd=ROOT, check=True)
+    if verified_notices is not None:
+        shutil.copytree(verified_notices, notices / "dependencies")
+    else:
+        subprocess.run([sys.executable, str(ROOT / "scripts/license-notices.py"), "--output",
+                        str(notices / "dependencies"), "--release"], cwd=ROOT, check=True)
     files = {item.relative_to(layout).as_posix(): {"sha256": digest(item), "bytes": item.stat().st_size}
              for item in sorted(layout.rglob("*")) if item.is_file()}
     inventory = {"schema": INVENTORY_SCHEMA, "version": version, "channel": "stable", "target": TARGET,
@@ -213,7 +216,10 @@ def main():
         admin.check(run / "admin-assets.json", runner=lambda command, cwd: steps.run(
             "admin-" + command[1], [admin._resolve(command[0]), *command[1:]], cwd=cwd))
         runtime = load_script("build-service-runtime")
-        steps.call("static-ort-inputs", runtime.verify_static_inputs)
+        admin_inventory = json.loads((run / "admin-assets.json").read_text(encoding="utf-8"))
+        admin_block = admin.block_from_inventory(admin_inventory)
+        source = steps.call("source-inputs", runtime.source_identity)
+        static_inputs = steps.call("static-ort-inputs", runtime.verify_static_inputs)
         # One Cargo invocation with the local profile (published releases are built in CI).
         steps.call("airkctl-dependencies", lambda: runtime.check_lightweight_dependencies(unified=True))
         airk, airkctl = steps.call("native", lambda: runtime.cargo_pair("release-local"))
@@ -227,7 +233,23 @@ def main():
             airkctl = steps.call("sign-airkctl", lambda: signer.sign("airkctl", airkctl,
                                                                      run / "signed/bin/airkctl.exe"))
             signing = windows_signing()
-        inventory = steps.call("stage", lambda: stage(layout, airk, airkctl, version, signing))
+        # Qualify the signed copies, through the same no-Cargo sealing owner as
+        # the canonical runtime builder. Packaging never substitutes build-tree
+        # executables after these import/model/identity observations.
+        qualified = run / "qualified-runtime"
+        qualified.mkdir()
+        shutil.copy2(airk, qualified / "airk.exe")
+        shutil.copy2(airkctl, qualified / "airkctl.exe")
+        build = steps.call("runtime-qualification", lambda: runtime.qualify_staged_runtime(
+            qualified, version, "windows", "x86_64", "release-local", source, static_inputs,
+            admin_inventory, admin_block))
+        airk, airkctl = qualified / "airk.exe", qualified / "airkctl.exe"
+        inventory = steps.call("stage", lambda: stage(layout, airk, airkctl, version, signing,
+                                                       verified_notices=qualified / "notices"))
+        if (inventory["files"]["service/airk.exe"]["sha256"] != build["runtime"]["airk_sha256"]
+                or inventory["files"]["bin/airkctl.exe"]["sha256"] != build["runtime"]["airkctl_sha256"]
+                or inventory["admin_assets"] != {key: admin_block[key] for key in ("inventory_sha256", "bundle_sha256")}):
+            raise RuntimeError("Installer layout differs from the qualified runtime")
         artifact = f"airk-service-{version}-{TARGET}-{'installer' if signing else 'UNSIGNED-installer'}"
         compiled = run / "compiled"
         compiled.mkdir()
@@ -241,7 +263,14 @@ def main():
                                                                artifact, run)
             receipt["signing"] = {"provenance": "local", "claim": signing, "artifacts": signer.receipts,
                                   "uninstaller_unsigned_sha256": unsigned_uninstaller}
+        if (runtime.source_identity() != source or runtime.verify_static_inputs() != static_inputs
+                or admin.block_from_inventory(admin_inventory) != admin_block):
+            raise RuntimeError("Runtime inputs changed during installer packaging")
+        if any(not (layout / name).is_file() or digest(layout / name) != row["sha256"]
+               for name, row in inventory["files"].items()):
+            raise RuntimeError("Installer payload changed during compilation")
         receipt.update({"result": "built", "signed": signing is not None, "installer": str(installer),
+                        "runtime_build": build,
                         "installer_sha256": digest(installer),
                         "payload_inventory_sha256": digest(layout / "payload-inventory.json"),
                         "files": inventory["files"], "admin_assets": inventory["admin_assets"]})

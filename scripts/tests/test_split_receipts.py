@@ -59,6 +59,7 @@ PRE_SPLIT_INTEGERS = {"pair_metadata_3": (1, 2), "build_receipt_2": (1,)}
 REQUIRED_CODES = {"ok", "schema_mismatch", "unknown_field", "digest_invalid"}
 LOCAL_CODES = {"hosted_provenance", "path_absolute"}
 LOCAL_FIXTURES = {"native-signing-local.json", "service-pair-signing-local.json", "standalone-installer-local.json"}
+SEMANTIC_FIXTURES = {"runtime_metadata_cases.json", "release_authority.json", "publication_2.json", "publication_3.json"}
 
 
 def fixture(name):
@@ -103,13 +104,29 @@ def digest(data):
 
 class SplitReceiptFixtureTests(unittest.TestCase):
     def test_fixture_roster_and_schema_identities_are_reviewed(self):
-        self.assertEqual({path.name for path in FIXTURES.glob("*.json")}, set(FIXTURE_VALIDATORS))
+        self.assertEqual({path.name for path in FIXTURES.glob("*.json")}, set(FIXTURE_VALIDATORS) | SEMANTIC_FIXTURES)
         self.assertEqual(set(receipts.VALIDATORS), set(FIXTURE_VALIDATORS.values()))
         for name, kind in FIXTURE_VALIDATORS.items():
             data = fixture(name)
             self.assertEqual((data["schema"], data["validator"]), ("airk.split-fixture.receipts/1", kind))
             self.assertEqual(data["base"]["schema"], SPLIT_SCHEMAS[kind])
         self.assertFalse(set(PRE_SPLIT_NAMES) & {v for v in SPLIT_SCHEMAS.values() if isinstance(v, str)})
+
+    def test_python_pair_validator_matches_rust_emitted_semantics(self):
+        native = fixture("runtime_metadata_cases.json")
+        self.assertEqual(native["schema"], "airk.runtime-metadata-cases/1")
+        independent = fixture("pair_metadata_3.json")
+        self.assertEqual({row["name"] for row in native["cases"]}, {row["name"] for row in independent["cases"]})
+        self.assertEqual(len(native["cases"]), 17)
+        for row in native["cases"]:
+            with self.subTest(case=row["name"]):
+                accepted = outcome("pair_metadata_3", row["input"]) == "ok"
+                self.assertEqual(accepted, row["accepted"])
+                if accepted:
+                    self.assertEqual(json.loads(row["canonical"]), row["input"])
+                    self.assertEqual(outcome("pair_metadata_3", json.loads(row["canonical"])), "ok")
+                else:
+                    self.assertIsNone(row["canonical"])
 
     def test_every_case_matches_its_reviewed_expectation(self):
         selected = 0

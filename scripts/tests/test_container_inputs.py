@@ -99,7 +99,52 @@ def external_rust_inputs(root):
     return found
 
 
+def relative_frontend_inputs(root):
+    """Conservative local import closure, including tsc's erased type inputs.
+
+    Pinned npm dependencies stay owned by package-lock; local TS/JSON/CSS inputs
+    must exist and remain under the repository. This is not a JS parser.
+    """
+    pending = list((root / "packages/admin/src").rglob("*.ts*"))
+    found = set()
+    pattern = re.compile(r"\b(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)[\"'](\.[^\"']+)[\"']")
+    while pending:
+        path = pending.pop().resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise AssertionError("Admin source import escapes the repository")
+        name = path.relative_to(root.resolve()).as_posix()
+        if name in found:
+            continue
+        found.add(name)
+        if path.suffix not in (".ts", ".tsx", ".mjs", ".js"):
+            continue
+        for match in pattern.finditer(path.read_text(encoding="utf-8")):
+            base = path.parent / match[1]
+            candidates = [base, *(Path(str(base) + suffix) for suffix in (".ts", ".tsx", ".json", ".css")), base / "index.ts", base / "index.tsx"]
+            resolved = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if resolved is None:
+                raise AssertionError("Admin local import is missing: " + name + " -> " + match[1])
+            pending.append(resolved)
+    return found
+
+
 class ContainerInputInventoryTests(unittest.TestCase):
+    def test_static_inference_stage_copies_the_complete_current_producer_helpers(self):
+        expected = {'scripts/provision-static-onnx-runtime.py','scripts/static-onnx-runtime-lock.json',
+                    'scripts/provision-static-onnx-tools.py','scripts/static-onnx-tools-lock.json',
+                    'scripts/provision-static-cmake-source.py','scripts/static-cmake-source-lock.json',
+                    'scripts/static-onnx-link-closure.py','scripts/static-onnx-aggregate.py'}
+        selected = False
+        copied = set()
+        for opcode, arguments in BUILD.docker_instructions((ROOT/'Dockerfile').read_text()):
+            words = shlex.split(arguments)
+            if opcode == 'FROM':
+                if selected:break
+                selected = words[-2:] == ['AS','static-inference']
+            elif selected and opcode == 'COPY':
+                copied.update(words[:-1])
+        self.assertEqual(copied,expected)
+
     def test_effective_context_admits_only_manifest_external_files_and_owning_trees(self):
         manifest = json.loads((ROOT / "scripts/container-inputs.json").read_text())
         rules = (ROOT / ".dockerignore").read_text().splitlines()
@@ -177,13 +222,27 @@ std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         self.assertEqual(exclusions[-6:], ["temp/", "**/.airk/", "**/target/", "**/.env*", "**/*.pem", "**/*.key"])
         self.assertEqual(set(exclusions[1:-6]), {parent + "/**" for parent in expected_parents})
 
+    def test_admin_relative_imports_are_copied_and_covered_by_the_runtime_source_seal(self):
+        manifest = json.loads((ROOT / "scripts/container-inputs.json").read_text())
+        needed = relative_frontend_inputs(ROOT)
+        admitted = set(manifest["files"])
+        missing = {name for name in needed if name not in admitted and not any(name.startswith(tree + "/") for tree in manifest["trees"])}
+        self.assertEqual(missing, set())
+        builder = BUILD.builder
+        pathspec = builder.FRONTEND_INPUTS
+        unsealed = {name for name in needed if not any(name == source or name.startswith(source + "/") for source in pathspec)}
+        self.assertEqual(unsealed, set())
+        self.assertIn("packages/vscode/src/uiPilotContract.ts", needed)
+        self.assertIn("packages/vscode/src/generated/i2.ts", needed)
+
     def test_all_external_rust_test_inputs_are_exact_manifest_files(self):
         manifest = json.loads((ROOT / "scripts/container-inputs.json").read_text())
         required = external_rust_inputs(ROOT)
         self.assertGreaterEqual(len(required), 24)
         # A test that reads named files from a fixture folder (U95 parity
         # expectations) is admitted as a manifest tree.
-        self.assertEqual(required - set(manifest["files"]) - set(manifest["trees"]), set())
+        covered = {name for name in required if any(name == tree or name.startswith(tree + "/") for tree in manifest["trees"])}
+        self.assertEqual(required - set(manifest["files"]) - covered, set())
         for name in required:
             if name in manifest["trees"]:
                 self.assertTrue((ROOT / name).is_dir(), name)

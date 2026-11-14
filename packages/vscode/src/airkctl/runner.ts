@@ -3,7 +3,8 @@
 //! module"). Reviewed roster, pinned by src/test/explorerBoundaries.test.ts:
 //! the verified `airkctl` (one-shots and `session`), Windows PowerShell for
 //! the Authenticode and ACL observation and macOS `codesign` before the first
-//! `airkctl` execution. None of them is another AIRK transport.
+//! `airkctl` execution. Explicit bootstrap additionally runs its verified official
+//! installer and fixed OS archive/mount/ACL tools. None is another AIRK transport.
 import { spawn } from 'node:child_process';
 import type { ErrorLine, ExitClass } from '../generated/i2';
 
@@ -50,10 +51,12 @@ export interface ProcessResult {
 export interface ProcessOptions {
     readonly env: NodeJS.ProcessEnv; readonly cwd?: string; readonly input?: string;
     readonly timeoutMs: number; readonly maxStdout: number; readonly maxStderr: number;
+    /** Admitted setup owns cancellation/recovery; observation limits must not kill it. */
+    readonly preserveProcessOnLimit?: boolean;
 }
 export type Spawner = (file: string, args: readonly string[], options: ProcessOptions) => Promise<ProcessResult>;
 
-/** One bounded child process; no shell, no window, killed at its deadline. */
+/** One bounded child process; no shell or window. Setup may retain process ownership. */
 export const spawnBounded: Spawner = (file, args, options) => new Promise(resolve => {
     let child: ReturnType<typeof spawn>;
     try {
@@ -68,13 +71,24 @@ export const spawnBounded: Spawner = (file, args, options) => new Promise(resolv
         if (settled) { return; } settled = true; clearTimeout(timer);
         resolve({ exitCode, signal, stdout: Buffer.concat(out), stderr: Buffer.concat(err), timedOut, overflow });
     };
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, Math.max(1, options.timeoutMs));
+    const limit = () => {
+        if (options.preserveProcessOnLimit) {
+            child.unref();
+            (child.stdout as unknown as {unref?():void}).unref?.();
+            (child.stderr as unknown as {unref?():void}).unref?.();
+            finish(null,null);
+        }
+        else { child.kill(); }
+    };
+    const timer = setTimeout(() => { timedOut = true; limit(); }, Math.max(1, options.timeoutMs));
     child.stdout!.on('data', (bytes: Buffer) => {
+        if (settled) { return; }
         outBytes += bytes.length;
-        if (outBytes > options.maxStdout) { overflow = true; child.kill(); return; }
+        if (outBytes > options.maxStdout) { overflow = true; limit(); return; }
         out.push(bytes);
     });
     child.stderr!.on('data', (bytes: Buffer) => {
+        if (settled) { return; }
         // Keep the tail: the error line is the last stderr line.
         err.push(bytes); errBytes += bytes.length;
         while (errBytes > options.maxStderr && err.length > 1) { errBytes -= err.shift()!.length; }

@@ -9,6 +9,40 @@ import subprocess
 from urllib.parse import quote
 
 
+MODEL_COMPANIONS = {
+    'minilm-v2-LICENSE.txt': ('LICENSE', '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd'),
+    'minilm-v2-TRAINING-NOTICES.md': ('TRAINING-NOTICES.md', '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be'),
+    'minilm-v2-provenance.json': ('training-provenance.json', '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81'),
+    'CC-BY-4.0.txt': ('CC-BY-4.0.txt', '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411'),
+}
+
+
+def stage_model_notices(root, output):
+    """Retain complete trained-model rights text without any private inputs."""
+    catalog_path = root / 'crates/airk-retrieval/src/model_catalog.json'
+    catalog_bytes = catalog_path.read_bytes()
+    catalog = json.loads(catalog_bytes)
+    verified = {}
+    for source_name, (destination, expected) in MODEL_COMPANIONS.items():
+        source = root / 'third_party/models' / source_name
+        if source.is_symlink() or not source.is_file():
+            raise ValueError('Missing regular trained-model notice: ' + source_name)
+        content = source.read_bytes()
+        if hashlib.sha256(content).hexdigest() != expected:
+            raise ValueError('Trained-model notice digest mismatch: ' + source_name)
+        verified[destination] = content
+    license_hash = hashlib.sha256(verified['LICENSE']).hexdigest()
+    if not catalog['profiles'] or any(profile['manifest']['license_sha256'] != license_hash
+                                      for profile in catalog['profiles']):
+        raise ValueError('Bundled model license digest mismatch')
+    destination = output / 'all-MiniLM-L6-v2'
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, content in verified.items():
+        (destination / name).write_bytes(content)
+    (destination / 'provenance.json').write_bytes(catalog_bytes)
+    return catalog
+
+
 def declaration_provenance(source, record):
     """Authenticate a pinned publisher declaration; this does not supply legal text."""
     if not record or not record.get("declaration"):
@@ -123,15 +157,7 @@ def main():
             else:
                 unresolved.append(package["name"] + " " + package["version"])
                 print("Release review needed for license declaration without separate text: " + package["name"])
-    catalog = json.loads(Path("crates/airk-retrieval/src/model_catalog.json").read_text(encoding="utf-8"))
-    profile = catalog["profiles"][0]
-    model_notices = args.output / "all-MiniLM-L6-v2"
-    model_notices.mkdir(exist_ok=True)
-    license_bytes = Path("third_party/models/minilm-LICENSE.txt").read_bytes()
-    if hashlib.sha256(license_bytes).hexdigest() != profile["manifest"]["license_sha256"]:
-        raise SystemExit("Bundled model license digest mismatch")
-    (model_notices / "LICENSE").write_bytes(license_bytes)
-    (model_notices / "provenance.json").write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    stage_model_notices(Path('.'), args.output)
     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     bom = software_bill_of_materials(metadata)
     runtime = json.loads(Path("crates/airk-retrieval/src/ort_runtime_catalog.json").read_text(encoding="utf-8"))

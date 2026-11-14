@@ -76,7 +76,7 @@ def public_input_manifest(root):
             or len(set(manifest["trees"])) != len(manifest["trees"])
             or len(manifest["files"]) > 16_384
             or not set(manifest["trees"]).issubset({"crates", "third_party/models", "third_party/licenses",
-                                                       "fixtures/split/parity"})):
+                                                       "fixtures/split/parity", "fixtures/split/ui_pilot"})):
         raise ValueError("Container public input manifest differs from its reviewed schema")
     for name in manifest["files"]:
         path = Path(name)
@@ -181,51 +181,50 @@ def main():
     runtime.mkdir()
     source = container_source_identity()
     inputs = builder.verify_static_inputs()
-    main_binary = builder.cargo_binary("airk", args.profile, "local-inference")
+    split = builder.split_pair_version(version)
+    admin_inventory = None
+    admin_block = None
+    if split:
+        admin = builder.load_script("build-admin-assets")
+        inventory_path = ROOT / "artifacts/admin/admin-assets.json"
+        admin_inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        admin_block = admin.block_from_inventory(admin_inventory)
+        builder.check_lightweight_dependencies(unified=True)
+        main_binary, cli_binary = builder.cargo_pair(args.profile)
+        shutil.copy2(cli_binary, runtime / "airkctl")
+    else:
+        main_binary = builder.cargo_binary("airk", args.profile, "local-inference")
     shutil.copy2(main_binary, runtime / "airk")
     if args.profile == "debug":
-        # DWARF can exceed a gigabyte for the pair and dominates approval hashing.
-        # Strip the staged copies before sealing; the build tree stays untouched.
+        # Strip only staged copies; both images remain bound by final metadata.
         for executable in builder.runtime_executables("linux", version):
             subprocess.run(["strip", "--strip-debug", str(runtime / executable)], check=True)
     architecture = {"x86_64": "x86_64", "aarch64": "aarch64"}.get(platform.machine().lower())
     if not architecture:
         raise SystemExit("Unsupported Linux container architecture")
-    builder.verify_embedded_models(runtime, "linux", version)
-    imports = builder.verify_static_imports(runtime / "airk", "linux")
-    smoke = builder.verify_model_smoke(runtime, "linux", version)
-    if builder.verify_static_inputs() != inputs:
-        raise RuntimeError("Static ORT compiled inputs changed during container build")
-    builder.stage_static_notices(runtime, inputs)
-    metadata = builder.write_pair_metadata(runtime, version, "linux", architecture)
-    receipt = {
-        "schema": 1, "kind": "airk-container-build", "version": version,
-        "cargo_lock_sha256": builder.digest(ROOT / "Cargo.lock"),
-        "main_features": ["local-inference"],
-        "static_ort": inputs, "static_imports": imports, "embedded_model_smoke": smoke,
-    }
-    (runtime / "airk-container-build.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    build_receipt = {"schema": 1, "source": source, "profile": args.profile, "runtime": metadata,
-        "rustc": subprocess.check_output(["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip(),
-        "source_basis": "actual-public-container-copy-inputs/1",
-        "static_ort": inputs, "static_imports": imports, "embedded_model_smoke": smoke}
-    encoded = json.dumps(build_receipt, indent=2) + "\n"
-    if len(encoded.encode("utf-8")) > 16_384:
-        raise ValueError("Container build receipt exceeds native metadata bound")
-    (runtime / "airk-build.json").write_text(encoded, encoding="utf-8")
-    if container_source_identity() != source:
-        raise ValueError("Container public source inputs changed during build")
-    builder.seal_install_payload(runtime, version, "linux", architecture)
-    if container_source_identity() != source:
-        raise ValueError("Container public source inputs changed during payload sealing")
+    receipt = {"schema": 1, "kind": "airk-container-build", "version": version,
+               "cargo_lock_sha256": builder.digest(ROOT / "Cargo.lock"),
+               "source": source, "source_basis": "actual-public-container-copy-inputs/1",
+               "main_features": ["local-inference"], "static_ort": inputs}
+    def container_receipt(build):
+        # Retain the container observation fields as well as the canonical pair
+        # receipt. Write before the install inventory binds every payload file.
+        receipt.update({key: build[key] for key in ("static_imports", "embedded_model_smoke")})
+        (runtime / "airk-container-build.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    builder.qualify_staged_runtime(runtime, version, "linux", architecture, args.profile,
+                                   source, inputs, admin_inventory, admin_block,
+                                   observe_source=container_source_identity, before_seal=container_receipt)
     approved = builder.digest(runtime / "airk-install.json")
-    # This fixed approval is outside the provider payload and is owned by the
-    # immutable image. Workspace files/environment cannot nominate another pin.
+    # The image owns the fixed approval, outside the provider payload. Neither
+    # workspace files nor environment can nominate a replacement approval.
+    selector = "__airk_role setup-interim " if split else ""
     entrypoint = destination / "airk-container"
-    entrypoint.write_text("#!/bin/sh\nexec /usr/lib/airk/airk runtime container-host --source /usr/lib/airk "
-                          f"--approved-sha256 {approved} \"$@\"\n", encoding="utf-8")
+    entrypoint.write_text("#!/bin/sh\nexec /usr/lib/airk/airk " + selector
+                          + "runtime container-host --source /usr/lib/airk "
+                          + f"--approved-sha256 {approved} \"$@\"\n", encoding="utf-8")
     entrypoint.chmod(0o755)
-    result = json.loads(subprocess.check_output([str(runtime / "airk"), "runtime", "self-test"], text=True))
+    command = [str(runtime / "airk"), *(["__airk_role", "setup-interim"] if split else []), "runtime", "self-test"]
+    result = json.loads(subprocess.check_output(command, text=True))
     if result.get("self_test") != "passed" or result.get("version") != version:
         raise SystemExit("Container pair self-test failed")
     print(f"Staged Linux {architecture} container runtime {version}; approval {approved}")

@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 spec = importlib.util.spec_from_file_location("package_extension", Path(__file__).parents[1] / "package-extension.py")
@@ -72,6 +73,21 @@ def universal_candidate(directory, version=SPLIT, preview=False, commit=COMMIT, 
 
 
 class VsixContracts(unittest.TestCase):
+    def test_vsix_model_notice_owner_retains_exact_public_companions_and_rejects_extra_files(self):
+        expected = {"LICENSE": "minilm-v2-LICENSE.txt", "TRAINING-NOTICES.md": "minilm-v2-TRAINING-NOTICES.md",
+                    "training-provenance.json": "minilm-v2-provenance.json", "CC-BY-4.0.txt": "CC-BY-4.0.txt"}
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            package.stage_model_notices(stage)
+            notice = stage / "notices/all-MiniLM-L6-v2"
+            self.assertEqual({p.name for p in notice.iterdir()}, {*expected, "provenance.json"})
+            for output, source in expected.items():
+                self.assertEqual((notice / output).read_bytes(), (package.ROOT / "third_party/models" / source).read_bytes())
+            self.assertEqual((notice / "provenance.json").read_bytes(), (package.ROOT / "crates/airk-retrieval/src/model_catalog.json").read_bytes())
+            (notice / "not-reviewed.txt").write_text("must not ship")
+            with self.assertRaisesRegex(ValueError, "Unexpected trained-model notice inventory"):
+                package.stage_model_notices(stage)
+
     def test_finished_vsix_refuses_unresolvable_listing_images_even_with_valid_hashes(self):
         for image in ('![Workbench](images/workbench.png)', '<img src="images/explorer.png">',
                       '![Workbench](http://example.com/workbench.png)',
@@ -98,6 +114,8 @@ class VsixContracts(unittest.TestCase):
         self.assertIn("uninstallHook.js", package.MODULES)
         self.assertNotIn("devDependencies", staged)
         self.assertIn("test", source["scripts"])
+        self.assertEqual(staged["dependencies"], {"jsonc-parser": "3.3.1"})
+        self.assertIn("@sigstore/verify", source["dependencies"], "development pins remain intact")
         source["scripts"]["vscode:uninstall"] = "node ./missing.js"
         with self.assertRaisesRegex(ValueError, "uninstall hook"):
             package.runtime_package(source)
@@ -117,20 +135,22 @@ class VsixContracts(unittest.TestCase):
                 manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
                 (root / "package.json").write_text(json.dumps({"name": "airk", "publisher": "iokaio", "version": "1.1.2",
                     "engines": {"vscode": "^1.99.0"}, "repository": {"type": "git", "url": "https://github.com/iokaio/airk"},
-                    "license": "Apache-2.0", "files": [name for name in manifest["files"] if name != "airk-update.json"],
-                    "dependencies": manifest["dependencies"]}), encoding="utf-8")
+                    "license": "Apache-2.0", "files": [name for name in package.runtime_package(manifest)["files"] if name != "airk-update.json"],
+                    "dependencies": package.runtime_package(manifest)["dependencies"]}), encoding="utf-8")
                 (root / "README.md").write_text("AIRK packaging fixture", encoding="utf-8")
                 (root / "LICENSE").write_text("Fixture legal file", encoding="utf-8")
                 for name in ("out/fixture.js", "out/airkctl/agents/fixture.js", "out/fixture.css", "images/fixture.png",
-                             "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+                             "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md", "out/help-manifest.json"):
                     file = root / name
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(b"public packaging fixture")
+                package.stage_model_notices(root)
                 expected = {file.relative_to(root).as_posix(): package.digest(file.read_bytes()) for file in root.rglob("*") if file.is_file()}
                 archive = root / "fixture.vsix"
                 subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root), str(archive)], check=True, capture_output=True)
                 # Universal: VSCE wrote no TargetPlatform and the archive holds only the stage.
                 package.verify_vsix(archive, expected, version="1.1.2", pre_release=False)
+
                 refused = subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root),
                                           "win32-x64", str(root / "platform.vsix")], capture_output=True)
                 self.assertNotEqual(refused.returncode, 0, "the packager never accepts a target platform")
@@ -139,6 +159,16 @@ class VsixContracts(unittest.TestCase):
             source.write_text('require("./missing");', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Unpackaged jsonc-parser dependency"):
                 package.stage_jsonc_parser(stage, root / "rejected")
+
+    def test_runtime_manifest_refuses_unknown_externals_and_parser_drift(self):
+        source = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+        source["dependencies"] = {**source["dependencies"], "unreviewed-package": "1.0.0"}
+        with self.assertRaisesRegex(ValueError, "Unreviewed external"):
+            package.runtime_package(source)
+        del source["dependencies"]["unreviewed-package"]
+        source["dependencies"]["jsonc-parser"] = "0.0.0"
+        with self.assertRaisesRegex(ValueError, "shipped pinned jsonc-parser"):
+            package.runtime_package(source)
 
     def test_update_inventory_seals_the_complete_staged_host_ui_and_parser_graph(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -344,12 +374,17 @@ class VsixContracts(unittest.TestCase):
             self.assertIn(image, {"images/" + name for name in package.ILLUSTRATIONS})
             self.assertTrue((package.ROOT / "docs" / image).is_file())
 
-    def test_runtime_import_closure_includes_controls_without_test_extras(self):
+    @mock.patch.object(package, "verify_bootstrap_runtime")
+    @mock.patch.object(package, "verify_bootstrap_release_runtime")
+    def test_runtime_import_closure_includes_controls_without_test_extras(self, verify_release, verify_bootstrap):
         with tempfile.TemporaryDirectory() as directory:
             compiled = Path(directory) / "compiled"
             for name in package.MODULES:
                 (compiled / name).parent.mkdir(parents=True, exist_ok=True)
                 (compiled / name).write_text('"use strict";\n', encoding="utf-8")
+            (compiled / "uiPilotRuntime.js").write_bytes((
+                "/* SPDX-License-Identifier: Apache-2.0 */\n/* AIRK UI pilot runtime source-sha256: "
+                + package.pilot_runtime_source_seal() + " */\nexports.createNativePilot=function(){};\n").encode("utf-8"))
             (compiled / "extension.js").write_text(
                 'require("vscode"); require("./serviceExtension"); require("./extensionUpdateLoader.js");', encoding="utf-8")
             (compiled / "serviceExtension.js").write_text(
@@ -362,6 +397,8 @@ class VsixContracts(unittest.TestCase):
             (compiled / "generated" / "i2.js").write_text("not runtime", encoding="utf-8")
             stage = Path(directory) / "stage"
             package.stage_runtime_modules(compiled, stage)
+            verify_bootstrap.assert_called_once_with((compiled / "airkctl/bootstrap/provenance.js").read_bytes())
+            verify_release.assert_called_once_with((compiled / "airkctl/bootstrap/release.js").read_bytes())
             self.assertEqual({p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}, set(package.MODULES))
             for name in package.MODULES:
                 self.assertEqual((stage / name).read_bytes(), (compiled / name).read_bytes())
@@ -378,6 +415,75 @@ class VsixContracts(unittest.TestCase):
                         package.stage_runtime_modules(compiled, rejected)
                     self.assertFalse(rejected.exists(), "Validate closure before staging any runtime modules")
                     (compiled / source).write_bytes(original)
+
+    def test_ui_pilot_runtime_requires_current_source_and_no_extra_loader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = ("packages/ui/src/nativePilot.ts", "packages/ui/src/pilotContract.ts", "packages/vscode/src/uiPilotContract.ts", "packages/vscode/scripts/build-explorer.cjs")
+            for source in sources:
+                target = root / source
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("// " + source + "\n", encoding="utf-8")
+            seal = package.pilot_runtime_source_seal(root)
+            runtime = ("/* SPDX-License-Identifier: Apache-2.0 */\n/* AIRK UI pilot runtime source-sha256: "
+                       + seal + " */\nexports.createNativePilot=function(){};\n").encode("ascii")
+            package.verify_pilot_runtime(runtime, root)
+            with self.assertRaisesRegex(ValueError, "current source seal"):
+                package.verify_pilot_runtime(b'"use strict";\n', root)
+            with self.assertRaisesRegex(ValueError, "must not load external modules"):
+                package.verify_pilot_runtime(runtime + b'require("./extra");', root)
+            for source in sources:
+                target = root / source
+                original = target.read_bytes()
+                target.write_bytes(original + b"// changed\n")
+                with self.subTest(changed=source), self.assertRaisesRegex(ValueError, "current source seal"):
+                    package.verify_pilot_runtime(runtime, root)
+                target.write_bytes(original)
+
+    @mock.patch.object(package, "verify_bootstrap_runtime")
+    @mock.patch.object(package, "verify_bootstrap_release_runtime")
+    def test_ui_pilot_runtime_missing_refuses_before_any_staging(self, _verify_release, _verify_bootstrap):
+        with tempfile.TemporaryDirectory() as directory:
+            compiled = Path(directory) / "compiled"
+            for name in package.MODULES:
+                if name == "uiPilotRuntime.js":
+                    continue
+                target = compiled / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('"use strict";\n', encoding="utf-8")
+            destination = Path(directory) / "stage"
+            with self.assertRaisesRegex(ValueError, "Invalid or oversized runtime module: uiPilotRuntime.js"):
+                package.stage_runtime_modules(compiled, destination)
+            self.assertFalse(destination.exists())
+
+    def test_bootstrap_runtime_uses_owning_node_verifier_on_exact_captured_bytes(self):
+        captured = b"// exact captured bundle, not a reread\n"
+        with mock.patch.object(package.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"verified\n", b"")) as run:
+            package.verify_bootstrap_runtime(captured)
+            self.assertEqual(run.call_args.args[0], ["node", str(package.ROOT / "packages/vscode/scripts/build-bootstrap.cjs"), "--verify-stdin"])
+            self.assertEqual(run.call_args.kwargs["input"], captured)
+            self.assertEqual(run.call_args.kwargs["cwd"], package.ROOT)
+            self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        for result in [subprocess.CompletedProcess([], 1, b"", b"refused"), subprocess.CompletedProcess([], 0, b"", b""),
+                       subprocess.CompletedProcess([], 0, b"verified\nextra\n", b"")]:
+            with self.subTest(returncode=result.returncode, stdout=result.stdout), mock.patch.object(package.subprocess, "run", return_value=result):
+                with self.assertRaisesRegex(ValueError, "failed owner verification"):
+                    package.verify_bootstrap_runtime(captured)
+        with mock.patch.object(package.subprocess, "run", side_effect=subprocess.TimeoutExpired("node", 30)):
+            with self.assertRaisesRegex(ValueError, "verification unavailable"):
+                package.verify_bootstrap_runtime(captured)
+
+    def test_bootstrap_release_uses_native_binding_owner_on_exact_captured_bytes(self):
+        captured = b"// captured release bundle\n"
+        with mock.patch.object(package.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"verified\n", b"")) as run:
+            package.verify_bootstrap_release_runtime(captured)
+            self.assertEqual(run.call_args.args[0][-1], "--verify-release-stdin")
+            self.assertEqual(run.call_args.kwargs["input"], captured)
+        for result in (subprocess.CompletedProcess([], 1, b"", b"missing native capture"),
+                       subprocess.CompletedProcess([], 0, b"verified\nextra\n", b"")):
+            with self.subTest(result=result), mock.patch.object(package.subprocess, "run", return_value=result):
+                with self.assertRaisesRegex(ValueError, "release bundle failed owner verification"):
+                    package.verify_bootstrap_release_runtime(captured)
 
     @unittest.skipUnless((package.EXTENSION / "out" / "extension.js").is_file(), "compiled extension unavailable")
     def test_actual_compiled_runtime_imports_are_all_staged(self):
@@ -400,9 +506,33 @@ class VsixContracts(unittest.TestCase):
             (compiled / "workbenchWebview.css").write_bytes(b"body{margin:0}\n")
             assistance = "/*! AIRK Explorer Assistance MCP server 1.0.0. No third-party code. */\n"
             (compiled / "explorerAssistance.js").write_bytes((assistance + 'require("node:crypto");\n').encode("utf-8"))
+            version = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))["version"]
+            cli = {"example": 'require("./documented-example")'}
+            help_bytes = json.dumps({"schema": "airk.help.manifest/1", "productVersion": version, "extensionVersion": version,
+                                     "channel": None, "catalogVersion": 1, "topics": [], "cliCommands": cli,
+                                     "helpRequestSchema": {}, "tools": [], "native": {"version": version,
+                                         "schema": "airk.help.native-content/1", "cliCommands": cli, "helpRequestSchema": {}, "tools": []}}).encode("utf-8")
+            help_source = Path(directory) / "source-help.json"
+            help_source.write_bytes(help_bytes)
+            (compiled / "help-manifest.json").write_bytes(help_bytes)
             stage = Path(directory) / "stage"
-            package.stage_bundles(compiled, stage, "10.0.0")
+            package.stage_bundles(compiled, stage, "10.0.0", help_source)
             self.assertEqual({p.name for p in stage.iterdir()}, set(package.BUNDLES))
+            self.assertEqual((stage / "help-manifest.json").read_bytes(), help_bytes)
+            (compiled / "help-manifest.json").write_bytes(help_bytes + b"\n")
+            with self.assertRaisesRegex(ValueError, "Help manifest is stale"):
+                package.stage_bundles(compiled, Path(directory) / "stale-help", "10.0.0", help_source)
+            self.assertFalse((Path(directory) / "stale-help").exists())
+            changed_help = json.loads(help_bytes)
+            changed_help["extensionVersion"] = "0.0.0"
+            invalid_help = json.dumps(changed_help).encode("utf-8")
+            (compiled / "help-manifest.json").write_bytes(invalid_help)
+            help_source.write_bytes(invalid_help)
+            with self.assertRaisesRegex(ValueError, "invalid schema or version"):
+                package.stage_bundles(compiled, Path(directory) / "wrong-help-version", "10.0.0", help_source)
+            self.assertFalse((Path(directory) / "wrong-help-version").exists())
+            (compiled / "help-manifest.json").write_bytes(help_bytes)
+            help_source.write_bytes(help_bytes)
             rejected = {
                 'require("./serviceClient");': "local module",
                 'import("./serviceClient");': "local module",
@@ -415,7 +545,7 @@ class VsixContracts(unittest.TestCase):
                 (compiled / "explorerWebview.js").write_bytes((banner + body).encode("utf-8"))
                 target = Path(directory) / "rejected"
                 with self.assertRaisesRegex(ValueError, message):
-                    package.stage_bundles(compiled, target, "10.0.0")
+                    package.stage_bundles(compiled, target, "10.0.0", help_source)
                 self.assertFalse(target.exists(), "Validate every bundle before staging any")
             (compiled / "explorerWebview.js").write_bytes(banner.encode("utf-8"))
             for body, message in {
@@ -427,16 +557,16 @@ class VsixContracts(unittest.TestCase):
             }.items():
                 (compiled / "explorerAssistance.js").write_bytes((assistance + body).encode("utf-8"))
                 with self.assertRaisesRegex(ValueError, message):
-                    package.stage_bundles(compiled, Path(directory) / "assistance", "10.0.0")
+                    package.stage_bundles(compiled, Path(directory) / "assistance", "10.0.0", help_source)
             (compiled / "explorerAssistance.js").write_bytes(b"require('node:fs');")
             with self.assertRaisesRegex(ValueError, "identifying banner"):
-                package.stage_bundles(compiled, Path(directory) / "assistance", "10.0.0")
+                package.stage_bundles(compiled, Path(directory) / "assistance", "10.0.0", help_source)
             (compiled / "explorerAssistance.js").write_bytes(assistance.encode("utf-8"))
             with self.assertRaisesRegex(ValueError, "pinned Preact notice"):
-                package.stage_bundles(compiled, Path(directory) / "wrong-version", "10.0.1")
+                package.stage_bundles(compiled, Path(directory) / "wrong-version", "10.0.1", help_source)
             (compiled / "explorerWebview.css").unlink()
             with self.assertRaisesRegex(ValueError, "Invalid or oversized bundle"):
-                package.stage_bundles(compiled, Path(directory) / "missing", "10.0.0")
+                package.stage_bundles(compiled, Path(directory) / "missing", "10.0.0", help_source)
 
     @unittest.skipUnless((package.EXTENSION / "out" / "explorerWebview.js").is_file(), "compiled webview unavailable")
     def test_actual_bundles_stage_with_the_pinned_preact_notice(self):

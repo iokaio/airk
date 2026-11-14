@@ -43,7 +43,7 @@ def fixture(base, version=PRESPLIT_VERSION):
         path = runtime / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fictional static dependency license\n")
-    metadata = {"schema": 2, "ort_version": "1.22.1", "target": package.TARGET,
+    metadata = {"schema": 2, "ort_version": lock["ort_version"], "target": package.TARGET,
                 "build_receipt_sha256": "e" * 64,
                 "lock_sha256": builder.digest(package.ROOT / "scripts/static-onnx-runtime-lock.json"),
                 "sources": {name: {"path": source_name, "bytes": (runtime / name).stat().st_size,
@@ -231,7 +231,7 @@ mode=${5:-complete}
 printf '%s\\n' "$mode" >> "$AIRK_FAKE_LOG"
 cp "$operation" "$AIRK_FAKE_LOG.${mode#--}.json"
 if [ "$mode" = --plan ]; then
-    printf '{"predecessors":[{"removed":%s}],"location_problems":[%s]}\\n' "$AIRK_FAKE_REMOVED" "$AIRK_FAKE_PROBLEM" > "$(dirname "$operation")/plan.json"
+    printf '{"predecessors":[{"removed":%s}],"location_problems":[%s],"blockers":[]}\\n' "$AIRK_FAKE_REMOVED" "$AIRK_FAKE_PROBLEM" > "$(dirname "$operation")/plan.json"
     printf 'fictional plan\\r\\n' > "$(dirname "$operation")/plan.txt"
 fi
 printf '{"schema":"airk-setup-result/1","status":"fixture"}\\n'
@@ -477,7 +477,7 @@ class LinuxServiceInstaller(unittest.TestCase):
         self.assertEqual(operation["locations"], locations)
         self.assertEqual(operation["requested_by"], "install-sh")
         self.assertEqual(operation["acknowledgements"], {"predecessor_removal": True, "index_reset": True})
-        self.assertEqual(operation["options"], {"login_startup": True, "trust": "ask", "start": True,
+        self.assertEqual(operation["options"], {"login_startup": True, "trust": "skip", "start": True,
                                                 "delete_indexes": "keep"})
         self.assertEqual(operation["payload_inventory_sha256"], values["INVENTORY_SHA256"])
         self.assertEqual(operation["expires_unix_ms"] - operation["created_unix_ms"], 600000)

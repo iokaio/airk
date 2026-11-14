@@ -43,7 +43,7 @@ export interface InstallRecord {
     admin_assets: { inventory_sha256: string; bundle_sha256: string };
     locations: { program: string; data: string; state: string; cache: string; logs: string };
     signing: Signing;
-    installed_by: { operation_id: string; installer: 'inno' | 'dmg' | 'app_first_launch' | 'install_sh'; installed_unix_ms: number };
+    installed_by: { operation_id: string; installer: 'inno' | 'dmg' | 'app_first_launch' | 'install_sh' | 'portable'; installed_unix_ms: number };
 }
 
 const INCARNATION = /^[0-9a-f]{32}$/;
@@ -104,7 +104,7 @@ const RECORD = struct([
         macos: [['team_id', str]],
         linux: [['signed', bool], ['integrity', str]],
     })],
-    ['installed_by', struct([['operation_id', incarnation], ['installer', oneOf('inno', 'dmg', 'app_first_launch', 'install_sh')], ['installed_unix_ms', u64]])],
+    ['installed_by', struct([['operation_id', incarnation], ['installer', oneOf('inno', 'dmg', 'app_first_launch', 'install_sh', 'portable')], ['installed_unix_ms', u64]])],
 ]);
 
 /** Persisted bytes are one compact JSON line in declaration order, then a newline. */

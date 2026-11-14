@@ -1,4 +1,4 @@
-AIRK Service @VERSION@ — Linux x86-64
+AIRK Service @VERSION@ â€” Linux x86-64
 
 This package installs AIRK Service for your account: the airk service and the
 airkctl command-line client. It contains no VSIX and does not install or open
@@ -30,7 +30,7 @@ locations (defaults below; a later install keeps the locations in use), then
 shows what AIRK setup found. Every earlier AIRK installation is stopped and
 removed with its indexes, which must be rebuilt; no source file is read,
 changed or deleted, and coding agents must be reconnected. Setup asks before
-it proceeds; an unattended install (--yes) needs --acknowledge-reset when an
+it proceeds; an unattended install (--silent; --yes remains an alias) needs --acknowledge-reset when an
 earlier installation is found.
 
   Program folder  ~/.local/lib/airk-service   (bin/airkctl, service/airk, notices/)
@@ -64,3 +64,19 @@ not uninstall AIRK Service.
 
 Requirements: Linux x86-64, a POSIX shell and GNU coreutils/findutils.
 No Python, jq, network download or editor is required by this installer.
+
+Headless --silent never reads stdin or asks for certificate trust. Trust is
+skipped; request it later through the native interactive consent flow. A setup
+or PATH/link failure exits nonzero and prints a persistent private recovery
+folder containing the original request and verified setup image. Preserve it
+and check service status before attempting recovery. Resume with the exact same
+installer payload and original request:
+
+  ./install.sh --resume "<absolute retained operation-request.json>"
+
+Add --silent only when the original operation did not request consent. Do not
+supply new locations/options, edit the JSON or replace it with a new request.
+This also resumes an original native uninstall request retained by airkctl;
+completed native work is reconciled before remaining wrapper work runs.
+The portable CLI --resume command is reserved for portable setup requests.
+Unicode paths are accepted.
