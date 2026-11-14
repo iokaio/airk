@@ -6,8 +6,9 @@ correction fences automatic scope switching/reselection and retains both
 revocation obligations of an uncertain lease renewal. Exact-entry removal keeps
 reviewed agent rows across confirmation and repair, revalidates live entries and
 retains partial action errors. Admin job details and catalog pages fence stale
-replies and retain retry successor receipts. Native Admin outcome handling is
-implemented; UI receipt controls remain in progress. Candidate version remains 1.8.35;
+replies and retain retry successor receipts. Native Admin outcome handling and UI receipt controls retain original
+requests through uncertain outcomes and page/index navigation within a live
+browser session. Reload and browser reply-loss recovery remain unqualified. Candidate version remains 1.8.35;
 earlier installer/VSIX receipts retain their original
 source identities. Progress and checks: [execution ledger](simplify/one-process-ledger.md).
 

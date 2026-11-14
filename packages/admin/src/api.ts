@@ -38,6 +38,73 @@ export function reviewOf(result: CallResult): string | null {
   return typeof review === 'string' && REVIEW_TOKEN.test(review) ? review : null;
 }
 
+/** Exact native unknown outcomes; shared Rust-validated recovery cases pin this decision. */
+export function isUnknownOutcome(result: CallResult): boolean {
+  if (result.kind !== 'failed' || result.status !== 503
+      || result.envelope.error.class !== 'unavailable' || result.envelope.error.retryable) return false;
+  switch (result.envelope.error.code) {
+    case 'service_request_outcome_unknown':
+    case 'catalog_apply_outcome_unknown':
+    case 'catalog_index_setup_outcome_unknown':
+    case 'catalog_split_apply_outcome_unknown':
+    case 'catalog_metadata_saved_outcome_unknown':
+    case 'source_change_resolution_outcome_unknown': return true;
+    default: return false;
+  }
+}
+
+/** Failure handles authorize only the matching receipt read, never a generic apply. */
+export function recoveryOf(result: CallResult): string | null {
+  if (!isUnknownOutcome(result) || result.kind !== 'failed') return null;
+  const review = result.envelope.review;
+  return typeof review === 'string' && REVIEW_TOKEN.test(review) ? review : null;
+}
+
+const record = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const digest = (value: unknown): boolean => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+
+/** A matching immutable receipt acknowledges a submitted action, not job completion. */
+export function receiptAcknowledges(result: CallResult, operation: Operation, method: unknown): boolean {
+  if (result.kind !== 'ok') return false;
+  const native = record(result.envelope.result);
+  const receipt = record(native?.receipt);
+  if (!native || !receipt || native.expired !== false) return false;
+  if (operation === 'catalog.policy_resume') {
+    const submitted = record(record(method)?.catalog_policy_resume);
+    const job = record(receipt.job);
+    const configuration = record(record(record(receipt.configuration)?.request)?.configuration);
+    const policy = record(configuration?.policy);
+    if (!submitted || !job || !configuration || !policy) return false;
+    return native.status === 'catalog_policy_resume_receipt'
+      && native.index_id === submitted.index_id && native.operation_id === submitted.operation_id
+      && digest(receipt.source_job) && digest(job.id) && job.kind === 'configure'
+      && configuration.operation === 'apply_source_policy' && configuration.operation_id === submitted.operation_id
+      && policy.index_id === submitted.index_id && job.project === policy.owner_binding;
+  }
+  if (operation === 'catalog.split_recover') {
+    const submitted = record(record(record(method)?.catalog_split_recover)?.request);
+    const acknowledged = record(receipt.request);
+    const outcome = record(receipt.outcome);
+    if (!submitted || !acknowledged || !outcome || native.status !== 'catalog_split_recovery_receipt'
+        || native.operation_id !== submitted.operation_id || !digest(receipt.request_digest)) return false;
+    for (const key of ['operation_id', 'request_digest', 'expected_receipt_digest', 'action']) {
+      if (acknowledged[key] !== submitted[key]) return false;
+    }
+    if ((acknowledged.expected_finalization_revision ?? null) !== (submitted.expected_finalization_revision ?? null)) return false;
+    switch (outcome.outcome) {
+      case 'resume_accepted':
+      case 'continuation_accepted':
+      case 'finalization_accepted':
+      case 'cancel_before_fence_accepted':
+      case 'restrictive_completion_required':
+      case 'already_complete': return digest(outcome.receipt_digest);
+      default: return false;
+    }
+  }
+  return false;
+}
+
 /** Sends a ReviewedCall for a review-mode or destructive row. */
 export function callReviewed(
   operation: Operation,

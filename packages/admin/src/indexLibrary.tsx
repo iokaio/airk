@@ -11,7 +11,7 @@
 import { createCatalogRequests, indexDetailValue, setDetailValue, itemOf, type Item, type CatalogHeader } from './catalogRequests';
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { reviewedCall, reviewOf } from './api';
+import { isUnknownOutcome, receiptAcknowledges, recoveryOf, reviewedCall, reviewOf, type CallResult } from './api';
 import { currentSession } from './session';
 import {
   body,
@@ -45,6 +45,7 @@ const num = (value: unknown): number | null => (typeof value === 'number' && Num
 const arr = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const okResult = (state: CallState): Rec | null => rec(resultOf(state));
 const reviewIn = (state: CallState): string | null => (state.phase === 'done' ? reviewOf(state.result) : null);
+const unknownIn = (state: CallState): boolean => state.phase === 'done' && isUnknownOutcome(state.result);
 const failedCode = (state: CallState): string | null =>
   state.phase === 'done' && state.result.kind === 'failed' ? state.result.envelope.error.code : null;
 const short = (id: string): string => id.slice(0, 12);
@@ -352,6 +353,118 @@ function ReviewHint(props: { state: CallState; confirm: string | null; onReviewA
   return null;
 }
 
+/** Receipt expiry never offers a generating mutation as a recovery action. */
+function ReceiptHint(props: { state: CallState }): JSX.Element | null {
+  return failedCode(props.state) === 'admin_review_unknown'
+    ? <p class="error">The receipt handle expired. Read status or Activity to inspect the original operation; do not regenerate it.</p>
+    : null;
+}
+
+type RunCall = (operation: Operation, method: unknown) => Promise<CallResult>;
+type HeldGenerated = { method: unknown; receiptMethod: unknown; review: string | null; unresolved: boolean };
+
+type NavigationCell<T> = { value: T; listeners: Set<() => void>; subscribed: boolean; release: () => void };
+let navigationSession = currentSession();
+let navigationCells = new Map<string, NavigationCell<unknown>>();
+
+/** Memory-only custody survives navigation, within this exact session object. */
+function useNavigationCustody<T>(key: string, create: () => T, outstanding: (value: T) => boolean): NavigationCell<T> {
+  const session = currentSession();
+  if (navigationSession !== session) {
+    navigationSession = session;
+    navigationCells = new Map();
+  }
+  const entries = navigationCells;
+  let cell = entries.get(key) as NavigationCell<T> | undefined;
+  if (cell === undefined) {
+    const created: NavigationCell<T> = { value: create(), listeners: new Set(), subscribed: false, release: () => {
+      if (created.subscribed && created.listeners.size === 0 && !outstanding(created.value)
+          && entries.get(key) === created) entries.delete(key);
+    } };
+    entries.set(key, created as NavigationCell<unknown>);
+    cell = created;
+  }
+  const owner = cell;
+  const [, render] = useState(0);
+  useLayoutEffect(() => {
+    const changed = (): void => render(value => value + 1);
+    owner.subscribed = true;
+    owner.listeners.add(changed);
+    // Also observe a reply that settled between render and subscription.
+    changed();
+    return () => { owner.listeners.delete(changed); owner.release(); };
+  }, [owner]);
+  return owner;
+}
+
+function publishCustody<T>(cell: NavigationCell<T>): void {
+  for (const changed of cell.listeners) changed();
+  cell.release();
+}
+
+type GeneratedCustody = {
+  held: HeldGenerated | null;
+  sending: { method: unknown; receiptMethod: unknown } | null;
+  result: CallState;
+  receipt: CallState;
+  receiptOwner: unknown;
+  receiptTicket: number;
+};
+
+/** The service owns keys; this surviving view owner retains their receipt handle. */
+function useGeneratedReceipt(operation: Operation, receiptOperation: Operation, scope: string, run: RunCall, read: RunCall) {
+  const session = currentSession();
+  const cell = useNavigationCustody<GeneratedCustody>(`${operation}:${scope}`, () => ({
+    held: null, sending: null, result: { phase: 'idle' }, receipt: { phase: 'idle' }, receiptOwner: null, receiptTicket: 0,
+  }), value => value.sending !== null || value.held?.unresolved === true);
+  const custody = cell.value;
+  const held = custody.held;
+  const generate = async (method: unknown, receiptMethod: unknown): Promise<void> => {
+    if (session === null || session !== currentSession() || custody.sending !== null || custody.held?.unresolved) return;
+    const submitted = { method, receiptMethod };
+    custody.sending = submitted;
+    custody.result = { phase: 'pending', operation };
+    publishCustody(cell);
+    try {
+      const result = await run(operation, submitted.method);
+      if (session !== currentSession()) return;
+      custody.result = { phase: 'done', operation, result, at: Date.now() };
+      if (isUnknownOutcome(result)) {
+        custody.held = { ...submitted, review: recoveryOf(result), unresolved: true };
+      } else if (result.kind === 'ok') {
+        custody.held = { ...submitted, review: reviewOf(result), unresolved: false };
+      }
+      // Known no-effect refusals, including review capacity, preserve prior custody.
+    } finally {
+      if (custody.sending === submitted) {
+        custody.sending = null;
+        if (session === currentSession()) publishCustody(cell);
+      }
+    }
+  };
+  const receipt = async (): Promise<void> => {
+    if (session === null || session !== currentSession()) return;
+    const original = custody.held;
+    if (!original || original.review === null) return;
+    const ticket = ++custody.receiptTicket;
+    custody.receipt = { phase: 'pending', operation: receiptOperation };
+    publishCustody(cell);
+    const result = await read(receiptOperation, reviewedCall(original.receiptMethod, original.review));
+    if (session !== currentSession() || ticket !== custody.receiptTicket || custody.held?.method !== original.method) return;
+    custody.receipt = { phase: 'done', operation: receiptOperation, result, at: Date.now() };
+    custody.receiptOwner = original.method;
+    if (custody.held === original && receiptAcknowledges(result, operation, original.method)) {
+      custody.held = { ...original, unresolved: false };
+    }
+    publishCustody(cell);
+  };
+  // With no held caption, preserve standalone receipt errors. Once an intent
+  // is held, show only receipts observed for that same immutable method.
+  const visibleReceipt = (held === null || custody.receiptOwner === held.method) && session === currentSession();
+  return { held, visibleReceipt, result: custody.result, receiptState: custody.receipt,
+    locked: custody.sending !== null || held?.unresolved === true, generate, receipt };
+}
+
 function ApplyCatalog(props: {
   token: string;
   staged: Staged;
@@ -381,7 +494,7 @@ function ApplyCatalog(props: {
       )}
       <Outcome state={apply} />
       <ReviewHint state={apply} confirm={props.confirm} onReviewAgain={props.onReviewAgain} />
-      {applied || failedCode(apply) === 'service_request_outcome_unknown' ? (
+      {applied || unknownIn(apply) ? (
         <div class="row">
           <button
             type="button"
@@ -392,8 +505,8 @@ function ApplyCatalog(props: {
           </button>
         </div>
       ) : null}
-      <Outcome state={receipt} />
-      <ReviewHint state={receipt} confirm={null} onReviewAgain={props.onReviewAgain} />
+      <Outcome state={receipt} receiptOnly />
+      <ReceiptHint state={receipt} />
     </div>
   );
 }
@@ -581,7 +694,7 @@ function ApplySetup(props: {
       </button>
       <Outcome state={apply} />
       <ReviewHint state={apply} confirm={null} onReviewAgain={props.onReviewAgain} />
-      {applied !== null || failedCode(apply) === 'service_request_outcome_unknown' ? (
+      {applied !== null || unknownIn(apply) ? (
         <div class="row">
           <button
             type="button"
@@ -606,8 +719,8 @@ function ApplySetup(props: {
           follow it on the Activity page (Events), then refresh this library.
         </p>
       ) : null}
-      <Outcome state={receipt} />
-      <ReviewHint state={receipt} confirm={null} onReviewAgain={props.onReviewAgain} />
+      <Outcome state={receipt} receiptOnly />
+      <ReceiptHint state={receipt} />
     </div>
   );
 }
@@ -1100,6 +1213,7 @@ function codeOf(state: CallState): string {
 }
 
 function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged: () => void }): JSX.Element {
+  const session = currentSession();
   const indexId = text(props.index.id);
   const name = text(props.index.name);
   const [sources, runSources] = useCall();
@@ -1114,13 +1228,25 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
   const [problem, setProblem] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [finished, setFinished] = useState(false);
-  const [tokens, setTokens] = useState<{ create: string | null; member: string | null }>({
-    create: null,
-    member: null,
-  });
-  // The newest run wins; an index change or unmount drops older answers.
+  type HeldStep = { step: 'create' | 'member'; token: string; requestDigest: string; indexId: string };
+  type Tokens = { create: string | null; member: string | null };
+  type ReadableCustody = { waiting: HeldStep | null; active: boolean; completed: boolean; tokens: Tokens;
+    applyStep: 'create' | 'member' | null; apply: CallState; receipt: CallState; receiptTicket: number };
+  const cell = useNavigationCustody<ReadableCustody>(`make-readable:${indexId}`, () => ({
+    waiting: null, active: false, completed: false, tokens: { create: null, member: null },
+    applyStep: null, apply: { phase: 'idle' }, receipt: { phase: 'idle' }, receiptTicket: 0,
+  }), value => value.active || value.waiting !== null);
+  const custody = cell.value;
+  const unresolved = custody.waiting;
+  const tokens = custody.tokens;
+  const setTokens = (next: Tokens | ((previous: Tokens) => Tokens)): void => {
+    custody.tokens = typeof next === 'function' ? next(custody.tokens) : next;
+    publishCustody(cell);
+  };
+  const hold = (value: HeldStep | null): void => { custody.waiting = value; publishCustody(cell); };
+  // Unmount stops the remaining chain; a sent apply still updates session custody.
   const ticket = useRef(0);
-  useEffect(
+  useLayoutEffect(
     () => () => {
       ticket.current++;
     },
@@ -1128,8 +1254,15 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
   );
 
   const go = async (): Promise<void> => {
+    if (session === null || session !== currentSession() || custody.active || custody.waiting !== null || custody.completed) return;
+    custody.active = true;
+    custody.applyStep = null;
+    custody.apply = { phase: 'idle' };
+    custody.receipt = { phase: 'idle' };
+    custody.receiptTicket++;
+    publishCustody(cell);
     const mine = ++ticket.current;
-    const live = (): boolean => mine === ticket.current;
+    const live = (): boolean => mine === ticket.current && session === currentSession();
     setRunning(true);
     setSteps([]);
     setProblem(null);
@@ -1201,16 +1334,27 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
         if (!live()) return;
         const token = reviewOf(preview);
         const staged = preview.kind === 'ok' ? fromPreview(rec(preview.envelope.result) ?? {}, method) : null;
-        if (token === null || staged === null) {
+        const requestDigest = preview.kind === 'ok' ? str(rec(rec(preview.envelope.result)?.preview)?.request_digest) : null;
+        if (token === null || staged === null || requestDigest === null || !isDigest(requestDigest)) {
           return stop(`The review of a new index set "${name}" was refused or incomplete.`);
         }
         setTokens((current) => ({ ...current, create: token }));
+        custody.applyStep = 'create';
+        custody.apply = { phase: 'pending', operation: OPS.catalogApply };
+        publishCustody(cell);
         const applied = await runCreateApply(
           OPS.catalogApply,
           reviewedCall(body.catalogApply(staged.request, staged.previewDigest), token, null),
         );
+        if (session === currentSession()) {
+          custody.apply = { phase: 'done', operation: OPS.catalogApply, result: applied, at: Date.now() };
+          if (isUnknownOutcome(applied)) hold({ step: 'create', token, requestDigest, indexId });
+          publishCustody(cell);
+        }
         if (!live()) return;
-        if (applied.kind !== 'ok') return stop(`Creating the index set "${name}" did not complete.`);
+        if (applied.kind !== 'ok') {
+          return stop(`Creating the index set "${name}" did not complete.`);
+        }
         note(`Created the index set "${name}" (${projectId}).`);
       }
 
@@ -1237,34 +1381,80 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
       if (!live()) return;
       const token = reviewOf(preview);
       const staged = preview.kind === 'ok' ? fromPreview(rec(preview.envelope.result) ?? {}, method) : null;
-      if (token === null || staged === null) return stop('The review of the membership was refused or incomplete.');
+      const requestDigest = preview.kind === 'ok' ? str(rec(rec(preview.envelope.result)?.preview)?.request_digest) : null;
+      if (token === null || staged === null || requestDigest === null || !isDigest(requestDigest)) return stop('The review of the membership was refused or incomplete.');
       setTokens((current) => ({ ...current, member: token }));
+      custody.applyStep = 'member';
+      custody.apply = { phase: 'pending', operation: OPS.catalogApply };
+      publishCustody(cell);
       const applied = await runMemberApply(
         OPS.catalogApply,
         reviewedCall(body.catalogApply(staged.request, staged.previewDigest), token, null),
       );
+      if (session === currentSession()) {
+        custody.apply = { phase: 'done', operation: OPS.catalogApply, result: applied, at: Date.now() };
+        if (isUnknownOutcome(applied)) hold({ step: 'member', token, requestDigest, indexId });
+        if (applied.kind === 'ok') custody.completed = true;
+        publishCustody(cell);
+      }
       if (!live()) return;
-      if (applied.kind !== 'ok') return stop('Adding the index to the index set did not complete.');
+      if (applied.kind !== 'ok') {
+        return stop('Adding the index to the index set did not complete.');
+      }
       note(`Added the index to "${name}" with every enabled source root, whole.`);
       setFinished(true);
       props.onChanged();
     } finally {
+      custody.active = false;
+      if (session === currentSession()) publishCustody(cell);
       if (live()) setRunning(false);
     }
   };
 
-  const outcomeUnknown =
-    failedCode(createApply) === 'service_request_outcome_unknown' ||
-    failedCode(memberApply) === 'service_request_outcome_unknown';
+  const readReceipt = async (step: 'create' | 'member', token: string): Promise<void> => {
+    if (session === null || session !== currentSession()) return;
+    const original = custody.waiting;
+    const mine = ticket.current;
+    const receiptTicket = ++custody.receiptTicket;
+    custody.receipt = { phase: 'pending', operation: OPS.catalogReceipt };
+    publishCustody(cell);
+    const result = await runReceipt(OPS.catalogReceipt, reviewedCall(body.catalogReceipt(), token));
+    if (session !== currentSession() || receiptTicket !== custody.receiptTicket) return;
+    custody.receipt = { phase: 'done', operation: OPS.catalogReceipt, result, at: Date.now() };
+    publishCustody(cell);
+    if (!original || custody.waiting !== original || original.step !== step || original.token !== token || result.kind !== 'ok') return;
+    const native = rec(result.envelope.result);
+    const acknowledgment = rec(native?.receipt);
+    if (native?.status !== 'catalog_receipt' || acknowledgment?.schema !== 1
+        || acknowledgment.request_digest !== original.requestDigest) return;
+    hold(null);
+    if (step === 'member') custody.completed = true;
+    publishCustody(cell);
+    if (mine !== ticket.current) return;
+    if (original.indexId === indexId) {
+      setProblem(null);
+      setSteps((current) => [...current, step === 'create'
+        ? 'The original index set creation is acknowledged. Choose Make readable to review the remaining membership.'
+        : 'The original membership change is acknowledged by its receipt.']);
+    }
+    if (step === 'member' && original.indexId === indexId) {
+      setFinished(true);
+      props.onChanged();
+    }
+  };
+  const shownCreate = custody.applyStep === 'create' ? custody.apply : createApply;
+  const shownMember = custody.applyStep === 'member' ? custody.apply : memberApply;
+  const shownReceipt = custody.receipt.phase === 'idle' ? receipt : custody.receipt;
+  const outcomeUnknown = unknownIn(shownCreate) || unknownIn(shownMember);
   const calls: [string, CallState][] = [
     ['Sources', sources],
     ['Index sets', sets],
     ['New index set: review', createPreview],
-    ['New index set: apply', createApply],
+    ['New index set: apply', shownCreate],
     ['Index set read back', setRead],
     ['Membership: review', memberPreview],
-    ['Membership: apply', memberApply],
-    ['Receipt', receipt],
+    ['Membership: apply', shownMember],
+    ['Receipt', shownReceipt],
   ];
   const started = calls.some(([, state]) => state.phase !== 'idle');
   const failedStep = calls.find(([, state]) => state.phase === 'done' && state.result.kind !== 'ok');
@@ -1287,7 +1477,7 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
             (an empty one left by an earlier attempt is reused) and adds this index with every enabled source root, whole. Each change is
             previewed by the service and applied exactly as previewed; the complete results are below.
           </p>
-          <button type="button" disabled={running} onClick={() => void go()}>
+          <button type="button" disabled={running || custody.active || unresolved !== null || finished || custody.completed} onClick={() => void go()}>
             Make readable
           </button>
         </>
@@ -1311,23 +1501,23 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
               ({failedStep[0]}: <code><Text value={codeOf(failedStep[1])} /></code>)
             </>
           ) : null}{' '}
-          Running Make readable again reuses an index set it already created.
+          {unresolved !== null ? 'Read the matching receipt before starting another Make readable operation.' : 'Running Make readable again reuses an index set it already created.'}
         </p>
       ) : null}
-      {finished ? (
+      {finished || custody.completed ? (
         <p>
           The index is readable through the index set <Text value={`"${name}"`} />.
         </p>
       ) : null}
-      <ReviewHint state={createApply} confirm={null} onReviewAgain={() => void go()} />
-      <ReviewHint state={memberApply} confirm={null} onReviewAgain={() => void go()} />
-      {finished || outcomeUnknown ? (
+      <ReviewHint state={shownCreate} confirm={null} onReviewAgain={() => void go()} />
+      <ReviewHint state={shownMember} confirm={null} onReviewAgain={() => void go()} />
+      {finished || custody.completed || outcomeUnknown ? (
         <div class="row">
           {tokens.create !== null ? (
             <button
               type="button"
               class="secondary"
-              onClick={() => void runReceipt(OPS.catalogReceipt, reviewedCall(body.catalogReceipt(), tokens.create))}
+              onClick={() => { if (tokens.create !== null) void readReceipt('create', tokens.create); }}
             >
               Read index set receipt
             </button>
@@ -1336,14 +1526,14 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
             <button
               type="button"
               class="secondary"
-              onClick={() => void runReceipt(OPS.catalogReceipt, reviewedCall(body.catalogReceipt(), tokens.member))}
+              onClick={() => { if (tokens.member !== null) void readReceipt('member', tokens.member); }}
             >
               Read membership receipt
             </button>
           ) : null}
         </div>
       ) : null}
-      <ReviewHint state={receipt} confirm={null} onReviewAgain={() => void go()} />
+      <ReceiptHint state={shownReceipt} />
       {started ? (
         <details class="complete" open={failedStep !== undefined}>
           <summary>Make readable: complete results</summary>
@@ -1352,7 +1542,7 @@ function MakeReadable(props: { index: Rec; memberCount: number | null; onChanged
             .map(([label, state]) => (
               <div key={label}>
                 <h4>{label}</h4>
-                <Outcome state={state} />
+                <Outcome state={state} receiptOnly={label === 'Receipt'} />
               </div>
             ))}
         </details>
@@ -1543,7 +1733,15 @@ function PolicyPanel(props: { indexId: string }): JSX.Element {
     if (found !== null) setOperationId(found);
   }, [found]);
   const valid = isIncarnation(operationId);
-  const token = reviewIn(resume);
+  const generated = useGeneratedReceipt(OPS.catalogPolicyResume, OPS.catalogPolicyResumeReceipt, props.indexId, runResume, runReceipt);
+  const resumeNow = (): void => {
+    if (!valid) return;
+    void generated.generate(body.policyResume(props.indexId, operationId), body.policyResumeReceipt(props.indexId, operationId));
+  };
+  const original = rec(rec(generated.held?.method)?.catalog_policy_resume);
+  const retainedReceipt = generated.receiptState.phase === 'idle' ? receipt : generated.receiptState;
+  const shownReceipt: CallState = generated.visibleReceipt || retainedReceipt.phase === 'pending' ? retainedReceipt : { phase: 'idle' };
+  const shownResume = generated.result.phase === 'idle' ? resume : generated.result;
   return (
     <>
       <div class="row">
@@ -1565,32 +1763,24 @@ function PolicyPanel(props: { indexId: string }): JSX.Element {
         />
         <button
           type="button"
-          disabled={!valid || resume.phase === 'pending'}
-          onClick={() => void runResume(OPS.catalogPolicyResume, body.policyResume(props.indexId, operationId))}
+          disabled={!valid || shownResume.phase === 'pending' || generated.locked}
+          onClick={resumeNow}
         >
           Resume policy change
         </button>
         <button
           type="button"
           class="secondary"
-          disabled={!valid || token === null}
-          onClick={() =>
-            void runReceipt(
-              OPS.catalogPolicyResumeReceipt,
-              reviewedCall(body.policyResumeReceipt(props.indexId, operationId), token),
-            )
-          }
+          disabled={generated.held?.review == null}
+          onClick={() => void generated.receipt()}
         >
           Read resume receipt
         </button>
       </div>
-      <Outcome state={resume} />
-      <Outcome state={receipt} />
-      <ReviewHint
-        state={receipt}
-        confirm={null}
-        onReviewAgain={() => void runResume(OPS.catalogPolicyResume, body.policyResume(props.indexId, operationId))}
-      />
+      {original ? <p class="muted">Receipt for policy operation <Text value={text(original.operation_id)} /> on <Text value={text(original.index_id)} />. {generated.held?.unresolved ? 'Reconcile this request before submitting another action.' : ''}</p> : null}
+      <Outcome state={shownResume} />
+      <Outcome state={shownReceipt} receiptOnly />
+      <ReceiptHint state={shownReceipt} />
     </>
   );
 }
@@ -1760,8 +1950,8 @@ function SplitApply(props: {
           Read split receipt
         </button>
       </div>
-      <Outcome state={receipt} />
-      <ReviewHint state={receipt} confirm={null} onReviewAgain={props.onReviewAgain} />
+      <Outcome state={receipt} receiptOnly />
+      <ReceiptHint state={receipt} />
     </div>
   );
 }
@@ -1782,11 +1972,14 @@ function SplitStatus(): JSX.Element {
     isDigest(requestDigest) &&
     isDigest(receiptDigest) &&
     (finalization === '' || (finalizationValue !== null && finalizationValue > 0));
-  const token = reviewIn(recover);
+  const generated = useGeneratedReceipt(OPS.catalogSplitRecover, OPS.catalogSplitRecoveryReceipt, '', runRecover, runRecoveryReceipt);
+  const original = rec(rec(rec(generated.held?.method)?.catalog_split_recover)?.request);
+  const retainedReceipt = generated.receiptState.phase === 'idle' ? recoveryReceipt : generated.receiptState;
+  const shownReceipt: CallState = generated.visibleReceipt || retainedReceipt.phase === 'pending' ? retainedReceipt : { phase: 'idle' };
+  const shownRecover = generated.result.phase === 'idle' ? recover : generated.result;
   const recoverNow = (): void => {
     if (!recoverReady) return;
-    void runRecover(
-      OPS.catalogSplitRecover,
+    void generated.generate(
       body.splitRecover({
         operation_id: operationId,
         request_digest: requestDigest,
@@ -1794,6 +1987,7 @@ function SplitStatus(): JSX.Element {
         ...(finalizationValue !== null ? { expected_finalization_revision: finalizationValue } : {}),
         action,
       }),
+      body.splitRecoveryReceipt(operationId),
     );
   };
   return (
@@ -1850,26 +2044,22 @@ function SplitStatus(): JSX.Element {
           phrase={`${action} ${short(operationId)}`}
           action="Recover split"
           danger={action === 'cancel'}
-          disabled={!recoverReady}
+          disabled={!recoverReady || shownRecover.phase === 'pending' || generated.locked}
           onConfirm={recoverNow}
         />
         <button
           type="button"
           class="secondary"
-          disabled={!valid || token === null}
-          onClick={() =>
-            void runRecoveryReceipt(
-              OPS.catalogSplitRecoveryReceipt,
-              reviewedCall(body.splitRecoveryReceipt(operationId), token),
-            )
-          }
+          disabled={generated.held?.review == null}
+          onClick={() => void generated.receipt()}
         >
           Read recovery receipt
         </button>
       </div>
-      <Outcome state={recover} />
-      <Outcome state={recoveryReceipt} />
-      <ReviewHint state={recoveryReceipt} confirm={null} onReviewAgain={recoverNow} />
+      {original ? <p class="muted">Receipt for split operation <Text value={text(original.operation_id)} /> ({text(original.action)}). {generated.held?.unresolved ? 'Reconcile this request before submitting another action.' : ''}</p> : null}
+      <Outcome state={shownRecover} />
+      <Outcome state={shownReceipt} receiptOnly />
+      <ReceiptHint state={shownReceipt} />
     </>
   );
 }

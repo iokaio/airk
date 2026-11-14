@@ -4,7 +4,7 @@
 // C0/C1 control characters are shown as visible escapes.
 import type { ComponentChildren, JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
-import { call, NOT_RUNNING, reviewOf, type CallResult } from './api';
+import { call, isUnknownOutcome, NOT_RUNNING, reviewOf, type CallResult } from './api';
 import type { Operation } from './operations';
 
 // C0 except tab/newline, DEL, C1, ALM, LRM/RLM, LRE..RLO, LRI..PDI, BOM.
@@ -106,11 +106,13 @@ const REQUEST_STATE_TEXT: Record<string, string> = {
 /** Reviewed-call codes (contracts §4.3b, U98). */
 const ERROR_TEXT: Record<string, string> = {
   admin_review_unknown: 'Review expired; run the review again.',
+  admin_review_capacity:
+    'The new change was not sent because this session reached its review limit. Existing receipt reads remain available. Keep this session open while an outcome is unresolved.',
   admin_confirmation_mismatch:
     "The typed text did not equal the target's current name exactly, so nothing was sent. Reload the details, then type the name exactly as shown.",
 };
 
-export function Outcome(props: { state: CallState }): JSX.Element | null {
+export function Outcome(props: { state: CallState; receiptOnly?: boolean }): JSX.Element | null {
   const s = props.state;
   if (s.phase === 'idle') return null;
   if (s.phase === 'pending') return <p class="muted">Calling {s.operation}…</p>;
@@ -135,7 +137,10 @@ export function Outcome(props: { state: CallState }): JSX.Element | null {
             {e.retryable ? ' — retryable' : ''}
             {typeof e.retry_after_ms === 'number' ? ` after ${e.retry_after_ms} ms` : ''}
           </p>
-          {ERROR_TEXT[e.code] !== undefined ? <p class="error">{ERROR_TEXT[e.code]}</p> : null}
+          {isUnknownOutcome(r) ? <p class="error">Outcome unknown. Read the matching receipt before starting another operation; status alone does not acknowledge this request.</p> : null}
+          {props.receiptOnly && e.code === 'admin_review_unknown'
+            ? <p class="error">The receipt handle expired. Read status or Activity for evidence; do not regenerate the unresolved operation.</p>
+            : ERROR_TEXT[e.code] !== undefined ? <p class="error">{ERROR_TEXT[e.code]}</p> : null}
           {e.native !== undefined ? <JsonBlock name={file} value={e.native} /> : null}
         </div>
       );

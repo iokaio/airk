@@ -2,6 +2,84 @@
 
 ## Advanced split implementation (13 November 2026)
 
+- R04 navigation correction reviewed by the primary separately from its
+  implementer: session-scoped memory retains pending admission, original
+  methods/handles and full mutation/receipt results. Same-session successors
+  receive late replies; unmount stops MakeReadable's remaining chain. Only
+  matching receipts resolve uncertainty, and shared read tickets preserve the
+  newest receipt. Settled cells are reclaimed after final subscriber cleanup.
+  `p1-r04-navigation-after` passes 63/63 (32 R04, 31 retained R19), 0.70 s,
+  unchanged seals, pinned Node 24.15.0. Original mounted/remount assertions
+  remain unchanged; additive subscription/cleanup and receipt-order cases
+  exercise actual root hooks/callbacks with injected host effects, not DOM.
+  TypeScript and canonical Admin build/check pass. Inventory receipt
+  `artifacts/advanced-split/admin-assets-r04-navigation.json`: inventory
+  `d69fe224b470a37e1296094adc5ffea7b1eb3dc967304cc9fc1c8903ca82c9ca`,
+  bundle `9471fd75965c8c6461ca501a2469976d8ca481b1b6fe923d4fc9b7eee37b76cd`.
+  `p1-r04-navigation-embedded` passes 2/2, 83 skipped, 10.61 s receipt,
+  unchanged native/frontend/harness/fixture seals; persistent isolated target,
+  incremental 1 and Cargo timings retained. Format, repository (2,776 public
+  files) and whitespace checks pass. Native classification/handler evidence
+  remains under its earlier identities. No installed artifact, reload or
+  browser-response-loss qualification; R20 remains separate. Version stays
+  the already bumped 1.8.35 candidate.
+- Option A prerequisite review found explicit archive-root selections can
+  bypass the examined relative `.airk` exclusions; public/auxiliary scope
+  coverage remains unqualified. This checkout's ignore rule does not prove
+  Git/package exclusion at arbitrary agent-file parents. Existing privacy
+  helpers lack the full stable native-object identity/publication interface.
+  Start with a private Rust receipt/root-marker contract in the owning config
+  module, independent encoding/recovery cases and a config CONTRACT.md; no
+  current shared consumer justifies a Core move. Writer consumers must refuse
+  paths until the approved privacy/exclusion/native proof gates are met.
+
+- User approved concurrent-config option A in contracts §3.13: retain displaced
+  files with private recovery receipts. This records the new state/workflow
+  decision; it is not native implementation or platform qualification. Next
+  step is owning Rust receipt plus independent recovery fixtures before writer
+  consumers, with privacy, source/read exclusion, Git/package eligibility and
+  native interruption/recovery gates preserved. Continue Admin R04 independently.
+
+- Resume review verified retained `p1-r04-frontend-after` (48/48, 0.72 s)
+  and `p1-r04-ui-embedded` (2/2, 11.26 s) receipts against every consumed
+  live input: no changes. These establish mounted callback and embedded-byte
+  behavior only. Independent source review found a remaining navigation gap:
+  PolicyPanel, SplitStatus and MakeReadable keep unresolved custody in hook
+  state that disappears on unmount. Add deterministic same-session remount
+  observations before correcting the surviving session owner; include pending
+  admission, original receipt binding and new-session isolation. No R20
+  browser transport-loss or installed/DOM qualification claim.
+- `p1-r04-remount-before` selects eight new callback/remount observations:
+  eight fail, 0.46 s, unchanged frontend/harness/fixture seals. Policy and split
+  generated unknown/pending cases and MakeReadable create/member unknown/pending
+  cases all lose admission on fresh same-session hook hosts. The original
+  mounted tests remain unchanged. Correction retains custody above those
+  component lifetimes, with subscription/cleanup observations added separately.
+- Retained concurrent-config diagnostics reviewed: `p1-config-publication-clippy`
+  passes (3.35 s); `p1-config-publication-before` selects five, two pass and
+  three fail (5.15 s). The after-sync observer reproduces overwritten in-place
+  edits, overwritten atomic editor replacements and resurrected deletions.
+  No-clobber creation and exact-byte no-op controls pass. Receipt input seals
+  were unchanged during those runs; later Admin asset regeneration differs
+  from their broad native seal, while the config source/tests remain exact.
+  The observer is cfg(test)-only; no production preservation protocol is
+  implemented or qualified. Review interruption, source preservation and
+  recovery semantics in a contract step before that behavior changes.
+
+- R19 `41639e63` and native R04 `eeefb927` pushed together after the recorded
+  combined qualification; both human DCO trailers verified. R04 frontend now
+  owns API/Outcome and only its IndexLibrary workflow slices. All fourteen
+  regression expectations and R19's thirty-one remain frozen. Finish original
+  intent/handle binding, synchronous admission and receipt-based reconciliation
+  before frontend validation; do not expand into generic response-body R20.
+- Concurrent-config follow-up is now tests-only: add a private `cfg(test)`
+  observer after staged-file sync and before existing publication, plus in-place
+  write, editor replacement, deletion and no-clobber creation observations and
+  a no-op byte-preservation control. Production publication semantics stay
+  unchanged. Primary owns review/execution; no archive/CAS protocol, new state
+  format or changed user workflow is implemented before this observation and
+  the applicable contract decision.
+
 - R19 committed as `41639e63` with human DCO verified before the separately
   owned native R04 behavior commit. Both use the combined frozen qualification
   identities recorded below; the shared asset checks are not relabeled as a
