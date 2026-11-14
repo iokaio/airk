@@ -1115,17 +1115,29 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             Some("runtime_incompatible"),
         );
     }
-    local_ipc::write_message_limited(
-        &mut stream,
-        &response,
-        Duration::from_secs(5),
-        response_budget,
+    deliver_control_response(
+        &state.shutdown,
+        shutdown,
+        local_ipc::write_message_limited(
+            &mut stream,
+            &response,
+            Duration::from_secs(5),
+            response_budget,
+        ),
     )
-    .await?;
-    if shutdown {
-        state.shutdown.notify_one();
+    .await
+}
+
+/// Accepted shutdown belongs to the service, independently of reply delivery.
+async fn deliver_control_response(
+    shutdown: &Notify,
+    requested_shutdown: bool,
+    write: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    if requested_shutdown {
+        shutdown.notify_one();
     }
-    Ok(())
+    write.await
 }
 
 /// The admin plane's calls reach this instance's own control endpoint, so
@@ -1508,6 +1520,9 @@ pub use airk_installer::control_client::{
 
 #[cfg(test)]
 mod registry_retry_tests;
+
+#[cfg(test)]
+mod response_delivery_tests;
 #[cfg(test)]
 mod single_instance_tests;
 

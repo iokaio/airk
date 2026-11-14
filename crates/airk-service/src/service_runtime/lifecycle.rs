@@ -3,7 +3,8 @@
 //! the service's existing lifecycle ledger (`airk-store`, unchanged format).
 //!
 //! - Accept: the request is recorded (Draining, saved explicit Stop set) with
-//!   this instance and executable; the service answers, then drains and exits.
+//!   this instance and executable; the service requests its drain before
+//!   attempting the reply. Failed delivery never cancels that accepted drain.
 //! - Drain end: the record this instance accepted advances (Stop → Complete,
 //!   Restart → Starting).
 //! - Admitted start (the private `service-detached` role, holding the
