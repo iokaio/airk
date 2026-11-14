@@ -21,7 +21,20 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
 
 /// One runtime command body writing through `io` (the process streams, or a
 /// `service session` request's captured streams).
-pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Result<()> {
+pub fn run_with<'a>(
+    command: &'a RuntimeCommand,
+    io: &'a crate::cli_io::CliIo,
+) -> impl std::future::Future<Output = Result<()>> + 'a {
+    // Construct/copy the command future on this separate owning factory frame,
+    // not inside every caller's coroutine or its debug polling frame.
+    Box::pin(run_with_owned(command, io))
+}
+
+fn resident_service(root: &Path) -> impl std::future::Future<Output = Result<()>> + '_ {
+    Box::pin(service_runtime::serve(root))
+}
+
+async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Result<()> {
     let output = match command {
         RuntimeCommand::HttpIssuerRotation {
             install_dir,
@@ -228,7 +241,7 @@ pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Re
             {
                 let root = macos_login::direct_root(*channel)?;
                 let control = crate::install_layout::saved_control(&root)?;
-                return service_runtime::serve(&control).await;
+                return resident_service(&control).await;
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -292,7 +305,7 @@ pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Re
             .await?;
             // The container is the explicit external supervisor. It starts this
             // already verified image directly; on-demand/user login APIs remain disabled.
-            return service_runtime::serve(&layout::control(&paths.install)?).await;
+            return resident_service(&layout::control(&paths.install)?).await;
         }
         RuntimeCommand::Location { channel } => {
             let paths = crate::runtime_install::discover_user_paths(*channel)?;
@@ -353,7 +366,7 @@ pub async fn run_with(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Re
                     current == executable.canonicalize()?,
                     "legacy_foreground_retired: restart the installed AIRK service through its direct managed/login entry; a copied launcher cannot supervise AIRK 1.8.14"
                 );
-                return service_runtime::serve(&layout::control(install_dir)?).await;
+                return resident_service(&layout::control(install_dir)?).await;
             }
             launcher_repair::require_settled(install_dir)?;
             if current != executable.canonicalize()?
@@ -951,28 +964,66 @@ mod connection_observation_tests {
         }
     }
 
-    /// Run `body` on a thread with the production CLI stack (`main.rs`
-    /// `CLI_STACK_BYTES`, 8 MiB): the source-scope path is deeper than the
-    /// test harness's default thread allows on Windows debug builds.
-    fn on_cli_stack<F>(body: fn() -> F) -> Result<()>
-    where
-        F: std::future::Future<Output = Result<()>> + 'static,
-    {
-        std::thread::Builder::new()
-            .stack_size(8 << 20)
-            .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?
-                    .block_on(body())
-            })?
-            .join()
-            .map_err(|_| anyhow::anyhow!("source-scope test thread panicked"))?
+    #[test]
+    fn dispatcher_future_inline_state_stays_within_the_readonly_command_stack_budget() {
+        fn inline_bytes<F: std::future::Future>(_: impl FnOnce() -> F) -> usize {
+            std::mem::size_of::<F>()
+        }
+        // Type inference measures without creating or polling either future,
+        // so this diagnostic itself is safe before the stack overflow repair.
+        let command = query(
+            Path::new("/unused-install"),
+            Path::new("/unused-source"),
+            PathBuf::from("/unused-control"),
+            "a".repeat(64),
+        );
+        let io = crate::cli_io::CliIo::process();
+        let process = inline_bytes(|| run(&command));
+        let captured = inline_bytes(|| run_with(&command, &io));
+        println!("dispatcher inline bytes: run={process}, run_with={captured}");
+        // Keep metadata callers below 1/32 of libtest's ordinary 2MiB stack,
+        // independently of optional service/inference startup state growth.
+        assert!(
+            process <= 64 * 1024,
+            "run embeds unrelated native startup state: {process}"
+        );
+        assert!(
+            captured <= 64 * 1024,
+            "run_with embeds unrelated native startup state: {captured}"
+        );
     }
 
     #[test]
-    fn source_scope_rejected_metadata_never_creates_install_lock_or_state() -> Result<()> {
-        on_cli_stack(source_scope_rejected_metadata_never_creates_install_lock_or_state_body)
+    fn captured_dispatch_allocates_before_poll_without_observing_or_creating_roots() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("not-created");
+        let command = query(
+            &root,
+            &owner.path().join("source"),
+            root.join("control"),
+            "a".repeat(64),
+        );
+        let io = crate::cli_io::CliIo::process();
+        let pending = run_with(&command, &io);
+        assert!(
+            std::mem::size_of_val(&pending) <= 2 * std::mem::size_of::<usize>(),
+            "the owning allocation boundary must return a heap handle, not inline command state"
+        );
+        assert!(
+            !root.exists(),
+            "constructing an unpolled command must remain lazy"
+        );
+        drop(pending);
+        assert!(
+            !root.exists(),
+            "canceling before poll must not inspect/create command state"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_scope_rejected_metadata_never_creates_install_lock_or_state() -> Result<()> {
+        source_scope_rejected_metadata_never_creates_install_lock_or_state_body().await
     }
 
     async fn source_scope_rejected_metadata_never_creates_install_lock_or_state_body() -> Result<()>
@@ -1009,12 +1060,10 @@ mod connection_observation_tests {
         Ok(())
     }
 
-    #[test]
-    fn source_scope_authenticates_digest_control_and_missing_state_without_creation() -> Result<()>
-    {
-        on_cli_stack(
-            source_scope_authenticates_digest_control_and_missing_state_without_creation_body,
-        )
+    #[tokio::test]
+    async fn source_scope_authenticates_digest_control_and_missing_state_without_creation()
+    -> Result<()> {
+        source_scope_authenticates_digest_control_and_missing_state_without_creation_body().await
     }
 
     async fn source_scope_authenticates_digest_control_and_missing_state_without_creation_body()
@@ -1127,6 +1176,7 @@ mod connection_observation_tests {
     #[tokio::test]
     async fn source_scope_managed_metadata_authenticates_both_modes_without_starting() -> Result<()>
     {
+        eprintln!("managed source-scope: entered ordinary test runtime");
         for lifecycle in ["external", "user_on_demand"] {
             let (owner, root, digest) = crate::runtime_install::tests::unselected_fixture()?;
             drop(install_lock(&root)?);
@@ -1148,7 +1198,9 @@ mod connection_observation_tests {
                 .context("managed policy absent")?
                 .verify()?;
             let before = inventory(owner.path())?;
+            eprintln!("managed source-scope: {lifecycle} before authenticated metadata dispatch");
             run(&query(&root, &source, control.clone(), digest.clone())).await?;
+            eprintln!("managed source-scope: {lifecycle} after authenticated metadata dispatch");
             assert_eq!(inventory(owner.path())?, before);
             policy["executable_sha256"] = "0".repeat(64).into();
             replace_json(&root, "managed-runtime.json", &policy)?;

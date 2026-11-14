@@ -2,7 +2,11 @@
 //! Direct per-user Windows/Linux manager entry; never forwards or launches a child.
 use super::*;
 
-pub(super) async fn serve(root: &Path) -> Result<()> {
+pub(super) fn serve(root: &Path) -> impl std::future::Future<Output = Result<()>> + '_ {
+    Box::pin(serve_owned(root))
+}
+
+async fn serve_owned(root: &Path) -> Result<()> {
     ensure!(
         cfg!(any(windows, target_os = "linux")),
         "direct task/systemd entry is unavailable on this platform"
@@ -22,7 +26,7 @@ pub(super) async fn serve(root: &Path) -> Result<()> {
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
     manager.require_direct_entry(&current, &approval.manifest_sha256)?;
     let control = layout::control(root)?;
-    service_runtime::serve(&control).await
+    super::resident_service(&control).await
 }
 
 /// Task Scheduler gives a console-subsystem image started at logon its own

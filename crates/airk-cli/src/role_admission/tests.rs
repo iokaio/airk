@@ -233,6 +233,11 @@ fn listed_roles_match_the_reviewed_table() {
         let name = role["name"].as_str().unwrap();
         let outcome = parse(&args(&["airk", SELECTOR, name])).unwrap();
         match role["status"].as_str().unwrap() {
+            "served" if name == "service-login-current" => assert_eq!(
+                outcome.expect("the reviewed fixed Mac login role has no syntax arguments"),
+                RoleRequest::ServiceLoginCurrent,
+                "host/I4/C10 authority is checked by the role executor, not invented syntax arguments"
+            ),
             "served" => assert!(
                 refusal(outcome).starts_with("role_admission_refused"),
                 "{name}"
