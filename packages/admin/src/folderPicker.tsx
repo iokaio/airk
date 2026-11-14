@@ -7,7 +7,9 @@
 // here: a folder that does not exist yet is chosen by name, and the setup
 // review says it will be created.
 import type { JSX } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { PageVisible } from './pageVisibility';
+import { currentSession } from './session';
 import { call, type CallResult } from './api';
 import { body, OPS } from './operations';
 
@@ -111,6 +113,7 @@ export function FolderPicker(props: {
   onPick: (path: string) => void;
   onClose: () => void;
 }): JSX.Element {
+  const visible = useContext(PageVisible);
   const [starts, setStarts] = useState<FolderEntry[]>([]);
   const [listing, setListing] = useState<FolderListing | null>(null);
   const [typed, setTyped] = useState(props.initial);
@@ -122,6 +125,17 @@ export function FolderPicker(props: {
   const pathInput = useRef<HTMLInputElement>(null);
   // Only the newest listing request may update the dialog.
   const ticket = useRef(0);
+  const owner = useRef(currentSession());
+  const alive = useRef(true);
+  const visibleNow = useRef(visible);
+  visibleNow.current = visible;
+  const current = (): boolean => alive.current && visibleNow.current && owner.current === currentSession();
+  useLayoutEffect(() => () => { alive.current = false; ticket.current++; }, []);
+  // Host navigation can hide a retained page while its modal is open. Revoke
+  // pending reads before closing its focus trap and background inertness.
+  useLayoutEffect(() => {
+    if (!visible) { alive.current = false; ticket.current++; props.onClose(); }
+  }, [visible]);
 
   // Focus moves into the dialog and returns to the opener when it closes.
   useLayoutEffect(() => {
@@ -172,10 +186,11 @@ export function FolderPicker(props: {
   };
 
   const open = async (path: string | null, after: string | null = null, showHidden = hidden): Promise<void> => {
+    if (!current()) return;
     const mine = ++ticket.current;
     setBusy(true);
     const answer = await browse(path, showHidden, after);
-    if (mine !== ticket.current) return;
+    if (!current() || mine !== ticket.current) return;
     setBusy(false);
     if ('error' in answer) {
       setError(answer.error);
@@ -194,8 +209,12 @@ export function FolderPicker(props: {
   };
 
   useEffect(() => {
+    if (!current() || ticket.current !== 0) return;
+    const mine = ++ticket.current;
+    const accepted = (): boolean => current() && mine === ticket.current;
     void (async () => {
       const first = await browse(null, false, null);
+      if (!accepted()) return;
       if ('listing' in first) setStarts(first.listing.entries);
       const initial = props.initial.trim();
       if (initial === '') {
@@ -204,6 +223,7 @@ export function FolderPicker(props: {
         return;
       }
       const opened = await browse(initial, false, null);
+      if (!accepted()) return;
       if ('listing' in opened) {
         setListing(opened.listing);
         return;
@@ -211,6 +231,7 @@ export function FolderPicker(props: {
       // A folder that does not exist yet: show its nearest listed parent.
       const parent = parentOf(initial);
       const up = parent !== '' && parent !== initial ? await browse(parent, false, null) : opened;
+      if (!accepted()) return;
       if ('listing' in up && props.allowNew) {
         // Index storage that does not exist yet is expected: setup creates it.
         setListing(up.listing);

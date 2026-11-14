@@ -4,7 +4,7 @@
 // C0/C1 control characters are shown as visible escapes.
 import type { ComponentChildren, JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
-import { call, isUnknownOutcome, reviewOf, type CallResult } from './api';
+import { call, isUnknownOutcome, preparationAdmissionRefused, preparationOf, reviewOf, type CallResult } from './api';
 import type { Operation } from './operations';
 
 // C0 except tab/newline, DEL, C1, ALM, LRM/RLM, LRE..RLO, LRI..PDI, BOM.
@@ -123,6 +123,13 @@ export function Outcome(props: { state: CallState; receiptOnly?: boolean }): JSX
     case 'no_session':
       return <p class="error">No session. Open with <code>airkctl admin open</code>.</p>;
     case 'transport':
+      if (preparationAdmissionRefused(r)) {
+        const prepared = preparationOf(r);
+        return <div class="outcome failed"><p class="error"><Text value={r.message} /></p>
+          <p>This attempt was not submitted. Any earlier unresolved action keeps its original recovery handle.</p>
+          {prepared ? <JsonBlock name={file} value={prepared.acknowledgment} /> : null}
+        </div>;
+      }
       return (
         <div class="outcome failed">
           <p class="error">{r.status === null

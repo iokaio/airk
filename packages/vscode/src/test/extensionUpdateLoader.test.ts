@@ -477,3 +477,30 @@ test('installed root resolution uses the current profile exact AIRK entry and re
         await assert.rejects(installedExtensionRoot(host), /escapes its shared extension directory/);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('update inventory admits only the four reviewed bootstrap modules',async()=>{
+    const f=await diskFixture();
+    try {
+        for (const name of ['controller','release','system','provenance']) {f.files[`out/airkctl/bootstrap/${name}.js`]='exports.reviewed=true;';}
+        await f.write();
+        const accepted=await readUpdatePayload(f.root);
+        for (const name of ['controller','release','system','provenance']) {assert.ok(accepted.files.has(`out/airkctl/bootstrap/${name}.js`));}
+        for (const name of ['out/airkctl/bootstrap/extra.js','out/airkctl/bootstrap/provenanceTrust.js','out/airkctl/bootstrap/system.css','out/airkctl/bootstrap/nested/system.js','out/airkctl/other/system.js']) {
+            f.files[name]='unreviewed';await f.write();
+            await assert.rejects(readUpdatePayload(f.root),/Invalid AIRK update inventory entry/);
+            delete f.files[name];
+        }
+    } finally {await f.close();}
+});
+
+test('update inventory admits the exact bounded Help data filename',async()=>{
+    const f=await diskFixture();
+    try {
+        f.files['out/help-manifest.json']='{"schema":"fixture-only"}';await f.write();
+        assert.ok((await readUpdatePayload(f.root)).files.has('out/help-manifest.json'));
+        f.files['out/help-manifest.json']=' '.repeat(4*1024*1024+1);await f.write();
+        await assert.rejects(readUpdatePayload(f.root),/bound|large|size/i);
+        delete f.files['out/help-manifest.json'];f.files['out/other-help.json']='{}';await f.write();
+        await assert.rejects(readUpdatePayload(f.root),/Invalid AIRK update inventory entry/);
+    }finally{await f.close();}
+});

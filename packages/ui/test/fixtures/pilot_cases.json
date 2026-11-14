@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "request_cases": [
+    {"name":"usage_json","request":{"v":1,"type":"pilot.read","requestId":"usage_1","epoch":4,"read":{"kind":"usage-json","binding":"1111111111111111111111111111111111111111111111111111111111111111","days":7}},"accepted":true},
+    {"name":"usage_max_days","request":{"v":1,"type":"pilot.read","requestId":"usage_2","epoch":4,"read":{"kind":"usage-json","binding":"1111111111111111111111111111111111111111111111111111111111111111","days":365}},"accepted":true},
+    {"name":"help_home_no_binding","request":{"v":1,"type":"pilot.read","requestId":"help_1","epoch":0,"read":{"kind":"help-topic","topic":"","startLine":1}},"accepted":true},
+    {"name":"help_later_section","request":{"v":1,"type":"pilot.read","requestId":"help_2","epoch":0,"read":{"kind":"help-topic","topic":"request-recovery","startLine":100000}},"accepted":true},
+    {"name":"unknown_version","request":{"v":2,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"help-topic","topic":"usage","startLine":1}},"accepted":false},
+    {"name":"arbitrary_execute","request":{"v":1,"type":"pilot.invoke","requestId":"read_1","epoch":0,"read":{"kind":"help-topic","topic":"usage","startLine":1}},"accepted":false},
+    {"name":"argv_passthrough","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"argv":["service","stop"],"read":{"kind":"help-topic","topic":"usage","startLine":1}},"accepted":false},
+    {"name":"native_method_passthrough","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"help-topic","topic":"usage","startLine":1,"method":{"lifecycle":"stop"}}},"accepted":false},
+    {"name":"unknown_read","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"service-stop"}},"accepted":false},
+    {"name":"usage_missing_binding","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"usage-json","days":7}},"accepted":false},
+    {"name":"usage_bad_binding","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"usage-json","binding":"../private","days":7}},"accepted":false},
+    {"name":"usage_zero_days","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"usage-json","binding":"1111111111111111111111111111111111111111111111111111111111111111","days":0}},"accepted":false},
+    {"name":"usage_too_many_days","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"usage-json","binding":"1111111111111111111111111111111111111111111111111111111111111111","days":366}},"accepted":false},
+    {"name":"usage_fractional_days","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"usage-json","binding":"1111111111111111111111111111111111111111111111111111111111111111","days":1.5}},"accepted":false},
+    {"name":"help_bad_topic","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"help-topic","topic":"../credentials","startLine":1}},"accepted":false},
+    {"name":"help_wrong_selector","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"help-topic","tool":"airk_read_file","topic":"usage","startLine":1}},"accepted":false},
+    {"name":"help_zero_line","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"read":{"kind":"help-topic","topic":"usage","startLine":0}},"accepted":false},
+    {"name":"request_id_not_url","request":{"v":1,"type":"pilot.read","requestId":"https://example.test/","epoch":0,"read":{"kind":"help-topic","topic":"usage","startLine":1}},"accepted":false},
+    {"name":"negative_epoch","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":-1,"read":{"kind":"help-topic","topic":"usage","startLine":1}},"accepted":false},
+    {"name":"secret_not_authority","request":{"v":1,"type":"pilot.read","requestId":"read_1","epoch":0,"csrf":"fixture-not-authority","read":{"kind":"help-topic","topic":"usage","startLine":1}},"accepted":false}
+  ],
+  "admission_cases": [
+    {"name":"trusted_selected_usage","request":"usage_json","context":{"host":"vscode","epoch":4,"ready":true,"trusted":true,"nativeEnabled":true,"usageBinding":"1111111111111111111111111111111111111111111111111111111111111111"},"refusal":null},
+    {"name":"browser_selected_usage","request":"usage_json","context":{"host":"browser","epoch":4,"ready":true,"trusted":true,"nativeEnabled":true,"usageBinding":"1111111111111111111111111111111111111111111111111111111111111111"},"refusal":null},
+    {"name":"untrusted_host","request":"usage_json","context":{"host":"vscode","epoch":4,"ready":true,"trusted":false,"nativeEnabled":true},"refusal":"pilot_untrusted"},
+    {"name":"native_disabled","request":"usage_json","context":{"host":"vscode","epoch":4,"ready":true,"trusted":true,"nativeEnabled":false},"refusal":"pilot_native_disabled"},
+    {"name":"disconnected","request":"usage_json","context":{"host":"vscode","epoch":4,"ready":false,"trusted":true,"nativeEnabled":true},"refusal":"pilot_not_ready"},
+    {"name":"changed_while_waiting","request":"usage_json","context":{"host":"vscode","epoch":5,"ready":true,"trusted":true,"nativeEnabled":true,"usageBinding":"1111111111111111111111111111111111111111111111111111111111111111"},"refusal":"pilot_context_changed"},
+    {"name":"no_selected_binding","request":"usage_json","context":{"host":"vscode","epoch":4,"ready":true,"trusted":true,"nativeEnabled":true},"refusal":"pilot_binding_mismatch"},
+    {"name":"other_selected_binding","request":"usage_json","context":{"host":"vscode","epoch":4,"ready":true,"trusted":true,"nativeEnabled":true,"usageBinding":"2222222222222222222222222222222222222222222222222222222222222222"},"refusal":"pilot_binding_mismatch"},
+    {"name":"metadata_help_without_index","request":"help_home_no_binding","context":{"host":"vscode","epoch":0,"ready":true,"trusted":true,"nativeEnabled":true},"refusal":null}
+  ]
+}

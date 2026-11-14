@@ -2,6 +2,7 @@
 // Activity's request/state owners. Session observations are injected and opaque.
 import type { CallResult } from './api';
 import { body, MAX_INDEX_LIST_LIMIT, OPS, type Operation } from './operations';
+import { generatedAction } from './generatedActions';
 type Rec = Record<string, unknown>;
 const rec = (value: unknown): Rec | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
@@ -19,6 +20,7 @@ export interface JobCallbacks {
   observedAt?: () => number;
   transition?: (transition: JobTransition) => void;
   seed?: JobTransition;
+  changed?: () => void;
 }
 /** In-memory handoff only: the complete result is retained, never serialized with context. */
 export interface JobTransition {
@@ -36,11 +38,22 @@ export function createJobRequests(callbacks: JobCallbacks) {
   let selected = str(seed?.job.id) ?? '', accepted: Rec | null = seed?.job ?? null;
   let detailId: string | null = null, actionId: string | null = null;
   let transition = seed;
+  const localIdentity = {};
+  let retryOwner: ReturnType<typeof generatedAction> | null = null, retryId = '', retryContext: unknown;
+  const releaseRetry = () => { retryOwner?.dispose(); retryOwner = null; retryId = ''; retryContext = undefined; };
+  const attachRetry = (id: string) => {
+    const identity = context.value !== null && typeof context.value === 'object' ? context.value : localIdentity;
+    if (retryOwner && retryId === id && retryContext === identity) return retryOwner;
+    releaseRetry(); retryId = id; retryContext = identity;
+    retryOwner = generatedAction(identity, `jobs.retry:${id}`, callbacks.changed);
+    return retryOwner;
+  };
   const current = () => !disposed && context.value === callbacks.currentContext?.() && selection === callbacks.currentSelection?.();
   const live = (ticket: number, captured: typeof context) => current() && generation === ticket && captured === context;
   const bind = (next: unknown) => {
     if (next === context.value || disposed) return context;
     context = { value: next }; generation++;
+    releaseRetry();
     selected = ''; accepted = null; detailId = null; actionId = null; transition = undefined;
     return context;
   };
@@ -48,6 +61,7 @@ export function createJobRequests(callbacks: JobCallbacks) {
     if (!current() || captured !== context) return;
     const ticket = ++generation;
     selected = id; accepted = null; detailId = id; actionId = null; transition = undefined;
+    attachRetry(id);
     setJobId(id);
     if (!live(ticket, captured)) return;
     setJobRecord(null);
@@ -60,12 +74,21 @@ export function createJobRequests(callbacks: JobCallbacks) {
   };
   const jobChange = async (jobId: string, kind: 'retry' | 'cancel', captured = context): Promise<void> => {
     if (!current() || captured !== context || selected !== jobId || str(accepted?.id) !== jobId) return;
+    const custody = kind === 'retry' ? attachRetry(jobId) : null;
+    const intent = custody?.begin(OPS.jobsRetry, body.jobsRetry(jobId));
+    if (custody && !intent) { callbacks.changed?.(); return; }
     const ticket = ++generation;
     actionId = jobId; transition = undefined;
-    const result = await runJobAction(
-      kind === 'retry' ? OPS.jobsRetry : OPS.jobsCancel,
-      kind === 'retry' ? body.jobsRetry(jobId) : body.jobsCancel(jobId),
-    );
+    let result: CallResult;
+    try {
+      result = await runJobAction(kind === 'retry' ? OPS.jobsRetry : OPS.jobsCancel,
+        intent ? intent.method : body.jobsCancel(jobId));
+    } catch (error) {
+      if (custody && intent) custody.settle(intent, { kind: 'transport', status: null,
+        message: 'The original retry did not return a usable outcome. Inspect Activity before another retry.' }, callbacks.observedAt?.() ?? 0);
+      throw error;
+    }
+    if (custody && intent) custody.settle(intent, result, callbacks.observedAt?.() ?? 0);
     if (!live(ticket, captured) || selected !== jobId) return;
     const updated = rec(okValue(result)?.job);
     const updatedId = str(updated?.id);
@@ -82,10 +105,11 @@ export function createJobRequests(callbacks: JobCallbacks) {
     setJobRecord(updated);
   };
   return { openJob, jobChange, bind,
-    dispose: () => { disposed = true; generation++; },
+    dispose: () => { disposed = true; generation++; releaseRetry(); },
     snapshot: () => ({ record: current() ? accepted : null, selected,
       detailCurrent: current() && detailId === selected,
       actionCurrent: current() && actionId === selected,
+      retry: current() && retryId === selected ? retryOwner?.snapshot() ?? null : null,
       transition: current() ? transition : undefined }),
   };
 }

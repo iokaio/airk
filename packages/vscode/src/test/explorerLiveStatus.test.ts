@@ -199,3 +199,34 @@ test('consoleState builds rows from the live reads and this window events (vscod
         assert.deepEqual([stopped.page, stopped.events], [undefined, []], 'no rows or events are shown without a ready service');
     } finally { (Module as any)._load = load; }
 });
+
+
+test('the ninth selected index is monitored and every omitted or stale observation is explicit', async () => {
+    const bindings = Array.from({ length: 9 }, (_, index) => (index + 1).toString(16).padStart(64, '0'));
+    const calls: string[] = [];
+    let refuse = false;
+    const live = new LiveStatus({ control: async (method: any) => {
+        const project = method.progress?.project ?? method.watch.project;
+        calls.push(project);
+        return refuse ? { status: 'failure', code: 'observation_refused' }
+            : { status: method.progress ? 'progress' : 'watch', project, observation: { complete: true } };
+    } }, () => {}, manualTimers().timers);
+    live.track(bindings, bindings[8]);
+    assert.deepEqual(live.subset, { tracked: [bindings[8], ...bindings.slice(0, 7)], observed: [], omitted: [bindings[7]], limit: 8 });
+    assert.deepEqual(live.monitoring(bindings[8]), { state: 'pending' });
+    assert.deepEqual(live.monitoring(bindings[7]), { state: 'not_monitored', reason: 'monitoring_subset_limit' });
+    await live.read();
+    assert.equal(calls.length, 16);
+    assert.deepEqual(calls.slice(0, 2), [bindings[8], bindings[8]]);
+    assert.equal(calls.includes(bindings[7]), false);
+    assert.deepEqual(live.monitoring(bindings[8]), { state: 'observed' });
+    live.track(bindings, bindings[7]);
+    assert.equal(live.subset.tracked[0], bindings[7]);
+    assert.deepEqual(live.monitoring(bindings[8]), { state: 'not_monitored', reason: 'monitoring_subset_limit' });
+    assert.equal(live.observation(bindings[8])?.progress?.observation !== undefined, true, 'old native result retained beside explicit omission');
+    refuse = true; await live.read();
+    assert.deepEqual(live.monitoring(bindings[0]), { state: 'stale', reason: 'observation_not_current' });
+    live.clear();
+    assert.deepEqual(live.subset, { tracked: [], observed: [], omitted: [], limit: 8 });
+    live.dispose();
+});

@@ -4,6 +4,8 @@ import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from '.
 import {validateCombinedCatalogSession} from './catalogSession';
 import {NativeMetadataProjectionCache} from './nativeMetadata';
 import * as vscode from 'vscode';
+import type { Budget, ContextRequest } from './generated/arbiter';
+import { WORKBENCH_CONTEXT_BUDGET } from './workbenchContracts';
 import * as path from 'node:path';
 import { comparePublication, comparePublicationVector, type PublicationObservation, type PublicationRelation } from './publications';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -19,7 +21,7 @@ import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
 import { assertOriginalPublicationForSymbolInputs, assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from './workbenchStrategies';
 import { newSession, SessionStore } from './workbenchSessions';
 import { CurrentTurnProjections, combinedReadDetails, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, evidenceRows, renderExport } from './workbenchRender';
-import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, OpenSelection, parseWorkbenchMessage, validateOpenSelection, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, OpenSelection, parseWorkbenchMessage, validateOpenSelection, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WorkbenchTurn, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
 
 /** Separate saved histories for explicit scopes; native backing remains service.project. */
 export function workbenchProjectKey(spec:LaunchSpec):string|undefined {
@@ -312,6 +314,35 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         }
         this.send();
     }
+    private async answer(question: string, budget: Budget = WORKBENCH_CONTEXT_BUDGET): Promise<void> {
+        this.authorized();
+        if (!this.session) throw new Error('Choose a project or explicit index selection first.');
+        this.stop();
+        const session = this.session, client = this.evidence(), generation = this.generation, identity = this.clientIdentity;
+        const named = this.selectedSpec()?.openSelection;
+        const request: ContextRequest = { schema: 'airk.arbiter.context.request/1', question,
+            budget: structuredClone(budget) };
+        // The existing persisted title field stays bounded; the full question and
+        // every budget field remain in the original request and native result.
+        const turn: WorkbenchTurn = { id: randomUUID(), at: Date.now(), input: question.slice(0, 4096), format: 'structured', request: structuredClone(request),
+            ...(named ? { selection: { indexes: [...named.indexes], sets: [...named.sets] } } : {}) };
+        session.turns.push(turn); this.busy = true; this.notice = undefined; this.send();
+        try {
+            const result = await client.call('airk_answer', request, { supersede: 'workbench', timeout: 35000 });
+            if (generation !== this.generation || session !== this.session || client !== this.client
+                || identity !== this.clientIdentity || identity !== this.evidenceIdentity() || !this.permitted()) return;
+            turn.envelope = result.rawPayload ?? result.payload;
+            if (result.rawPayload) this.metadata.remember(result.rawPayload, result.payload);
+            this.turnAuthorities.set(turn, identity!);
+        } catch (error) {
+            if (generation === this.generation && session === this.session) {
+                turn.error = error instanceof Error ? error.message : String(error);
+                if (error instanceof EvidenceFailure && error.nativeResponse) turn.nativeFailure = structuredClone(error.nativeResponse);
+            }
+        } finally {
+            if (generation === this.generation && session === this.session) { this.busy = false; session.updatedAt = Date.now(); this.save(session); this.send(); }
+        }
+    }
     private async run(input:string,prepare=false,recipe?:string,plan?:Value,pathPrefix?:string):Promise<void>{
         this.authorized();if(!this.session){throw new Error('Choose a project first.');}
         // Validate before electing a client or stopping an outstanding request.
@@ -432,6 +463,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         if(message.type==='help'){await vscode.commands.executeCommand('airk.explorer.open',WORKBENCH_HELP_ROUTE);return;}
         this.authorized();
         switch(message.type){
+            case 'answer': await this.answer(message.question, message.budget); break;
             case 'exportReferenceRefresh':await this.exportReferenceRefresh(message);break;
             case 'refreshReferences':await this.refreshReferences(message);break;
             case 'checkReferenceRefresh':await this.observeReferenceRefresh(message.id,false);break;
@@ -483,7 +515,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 // inspect its retained plan before discarding any revision fence.
                 assertPortablePlanInputs(object(object(turn.envelope).plan));
                 const request=object(turn.request),plan=request.plan?planForWorkbenchRerun(object(request.plan)):undefined;
-                await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);
+                if (request.schema === 'airk.arbiter.context.request/1') await this.answer(String(request.question), request.budget as Budget);
+                else await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);
             }break;}
             case 'saveStrategy':{
                 const turn=this.session?.turns.find(t=>t.id===message.turn);if(!turn?.envelope){throw new Error('Collect or prepare evidence first.');}

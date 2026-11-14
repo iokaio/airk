@@ -13,7 +13,7 @@ export const NATIVE_TOOLS = ['airk_search', 'airk_read_file', 'airk_list_files',
     'airk_symbols', 'airk_imports', 'airk_document_facts', 'airk_references', 'airk_context', 'airk_capabilities', 'airk_code_facts',
     'airk_relationships', 'airk_changes', 'airk_query_scope'] as const;
 export type NativeTool = typeof NATIVE_TOOLS[number];
-export const WORKBENCH_TOOLS = [...NATIVE_TOOLS, 'airk_parse'] as const;
+export const WORKBENCH_TOOLS = [...NATIVE_TOOLS, 'airk_parse', 'airk_answer'] as const;
 export type EvidenceTool = typeof WORKBENCH_TOOLS[number];
 
 /** Usage attribution label recorded by the native worker (ClientFamily::Explorer). */
@@ -215,7 +215,7 @@ export class EvidenceClient {
                 }
                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
             }
-            const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope,expectedScope,originalArguments);
+            const delay = task.tool === 'airk_parse' || task.tool === 'airk_answer' ? undefined : readRetryDelay(envelope,expectedScope,originalArguments);
             const windowScope=!!expectedScope&&typeof expectedScope==='object'&&'window_scope_selection' in expectedScope;
             if (delay !== undefined && (!windowScope||retries===0) && Date.now() + delay < Math.min(deadline,requestDeadline)
                 && !this.disposed && isDeepStrictEqual(activeScope(),expectedScope)) {

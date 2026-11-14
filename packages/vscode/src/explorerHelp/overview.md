@@ -12,7 +12,7 @@ The Overview shows the selected project and its published index. The status pill
 
 The pill names a known cause: **indexing 992/2,016 files** (committed of captured files in the running attempt; **indexing…** when the counts are not reported), **paused**, or **not readable: no index set** when the index belongs to no index set. **index unavailable** means the service reported no readable publication without another cause.
 
-Without a chosen search scope, the window reads its folder's index automatically through the index sets that hold it. An index in no index set is not readable yet: the Overview says so and offers **Choose it in Search scope** (applying it creates an index set named after it) or **Make readable in AIRK Admin**; indexing continues meanwhile. **Connect an agent** opens Management › Agents.
+Without a chosen search scope, the window reads its folder's index automatically through the index sets that hold it. An index in no index set is not readable yet: the Overview says so and offers **Choose it in Search scope** (applying it creates an index set named after it) or **Make readable in AIRK Admin**; indexing continues meanwhile. **Connect an agent** opens Agents.
 
 **Index actions** run the everyday actions on the selected index: Index now, Pause or Resume, Turn watching on or off, and Retry or Cancel a job. Each shows its native result.
 
@@ -29,7 +29,7 @@ Without a chosen search scope, the window reads its folder's index automatically
 
 1. Pick a project in the header if more than one is registered.
 2. Choose **Refresh status** to read published status again.
-3. Use a journey card to go to Search, Code, Review, Strategies or Management.
+3. Use a journey card to go to Search, Agents, Activity, Indexes or Service, or open Code, Review and Strategies under Explore evidence.
 4. Choose a Developer, Tester, Architect or Writer lens. It only reorders journeys. **Role workflow help**, **Choose indexing by purpose** and **Document type guidance** explain which evidence and indexing choices suit the task.
 
 The header's **Help** offers current-screen or general guidance through a native VS Code quick pick, and searches bundled Explorer and engine guidance offline; **About** opens project background, public links and the Ioka Discord community invitation.
@@ -40,4 +40,4 @@ Ready means a publication exists. It does not prove that the saved files still m
 
 ## Appearance and navigation
 
-Themed in the upper-right switches AIRK design colors on or off; off follows VS Code colors with the same panels and responsive layout. The choice persists per workspace, and high-contrast themes retain editor colors. Management stays beside the other workspace links while the content pane scrolls. The A› activity icon opens Explorer directly, retaining the old sidebar only if Explorer cannot load. Help offers current-screen guidance or general help through a native quick pick.
+Themed in the upper-right switches AIRK design colors on or off; off follows VS Code colors with the same panels and responsive layout. The choice persists per workspace, and high-contrast themes retain editor colors. The main destinations stay beside the content pane while it scrolls. The A› activity icon opens Explorer directly, retaining the old sidebar only if Explorer cannot load. Help offers current-screen guidance or general help through a native quick pick.

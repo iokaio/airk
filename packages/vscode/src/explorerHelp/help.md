@@ -14,9 +14,9 @@ Help searches one offline catalog of Explorer topics and AIRK engine guidance. T
 
 1. Search by purpose, role or source format, for example tester PDF, architect dependencies, writer spreadsheet or developer bug. Titles and aliases are ranked ahead of body matches; narrow the Area filter if needed.
 2. Choose a role starting point, Choose indexing by purpose, Document types and extraction, Work with an AI agent, Share a reviewed snapshot or About AIRK.
-3. Choose **Help** in the upper-right, then select current-screen guidance or Browse all help in the native VS Code quick pick. Overview's role workflow buttons and Management's guidance buttons open the corresponding guides.
-4. Use **Engine guide** to read the related engine topic offline. **Live reference** asks the connected engine for its actual version's help; it needs an authorized registered project connection.
-5. Under Live reference type, choose MCP tool schema, CLI command help or Engine topic, enter its exact name and choose **Read live reference**. Examples are search, collections extraction detail and indexing. This reads help only; it never executes that command or tool. Follow **Next page** for a long schema, or **First page** to restart it.
+3. Choose **Help** in the upper-right, then select current-screen guidance or Browse all help in the native VS Code quick pick. Overview's role workflow buttons and contextual guidance buttons open the corresponding guides.
+4. Use **Engine guide** to read the related engine topic offline. **Live reference** asks the connected engine for its actual version's help; it needs the connected service; Help itself does not require a selected project.
+5. Under Live reference type, choose MCP tool schema, CLI command help or Engine topic, enter its exact name and choose **Read live reference**. Examples are search, service status and indexing. This reads help only; it never executes that command or tool. Follow **Next page** for a long schema, or **First page** to restart it.
 6. If live reference fails, choose **Back to** the bundled topic. A late reference reply cannot replace a different topic you selected.
 
 ## About and community

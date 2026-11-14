@@ -375,6 +375,7 @@ test('boundary actual parent selection wins before child unmount while a legitim
         export function useLayoutEffect(effect){host().cursor++;host().layouts.push(effect);}
         export function useMemo(make){host().cursor++;return make();}
         export function useCallback(callback){host().cursor++;return callback;}
+        export function useContext(){host().cursor++;return true;}
       ` }));
       plugin.onResolve({ filter: /^\.\/session$/ }, () => ({ path: 'session', namespace: 'r19-session' }));
       plugin.onLoad({ filter: /.*/, namespace: 'r19-session' }, () => ({ contents: `
@@ -398,6 +399,12 @@ test('boundary actual parent selection wins before child unmount while a legitim
   const formForJob = tree => nodes(tree).find(node => node.type === 'form'
     && nodes(node.props.children).some(child => child.type?.name === 'Field' && child.props.label === 'Job id (64 hex characters)'));
   const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  // This actual browser API callback now requires prepare-first journal
+  // admission. Supply its browser dependency rather than bypassing persistence.
+  const preparationStorage = new Map();
+  globalThis.window = { sessionStorage: { getItem: key => preparationStorage.get(key) ?? null,
+    setItem: (key, value) => preparationStorage.set(key, value), removeItem: key => preparationStorage.delete(key) } };
   const a = '01'.repeat(32), b = '02'.repeat(32), successor = '03'.repeat(32);
   try {
     for (const selectB of [false, true]) {
@@ -438,7 +445,11 @@ test('boundary actual parent selection wins before child unmount while a legitim
       };
       await settle(); card = render(actual.JobDetail, selectedA.props, child);
       assert.equal(card.props.record.id, a);
-      card.props.onChange('retry'); await entered.work;
+      card.props.onChange('retry');
+      await new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => reject(Error('actual retry must enter its native call under the observation deadline')), 5000);
+        entered.work.then(() => { clearTimeout(deadline); resolve(); });
+      });
       if (selectB) {
         typeJob(b);
         formForJob(tree).props.onSubmit({ preventDefault() {} });
@@ -463,6 +474,6 @@ test('boundary actual parent selection wins before child unmount while a legitim
       assert.deepEqual(calls.map(call => call[0]), ['jobs.get', 'jobs.retry']);
     }
   } finally {
-    globalThis.fetch = originalFetch; delete globalThis.__airkR19Hooks; delete globalThis.__airkR19Session;
+    globalThis.fetch = originalFetch; globalThis.window = originalWindow; delete globalThis.__airkR19Hooks; delete globalThis.__airkR19Session;
   }
 });

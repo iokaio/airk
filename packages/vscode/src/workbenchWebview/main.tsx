@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { publicationRelationLabel } from '../publications';
-import { render } from 'preact';
+import { h, render, type ComponentChildren } from 'preact';
+import { answerPresentation, type AnswerNode } from '../../../ui/src/answerPresentation';
+import type { ContextResponse } from '../../../contracts-gen/arbiter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields } from '../workbenchContracts';
+import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields, WORKBENCH_CONTEXT_BUDGET } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
 import { canonical, combinedReadDetails, discoveryDetails, markdown, materializeCapabilityMember, openSelectionArgv, searchExecutionLabel, workbenchStepReportOmissions } from '../workbenchRender';
 import './style.css';
@@ -10,6 +12,14 @@ declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):voi
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
 const COMMANDS=['/search','/symbols','/code-facts','/refs','/read','/outline','/files','/info','/imports','/facts','/changes --since','/status','/diagnostics','/capabilities','/context','/relationships','/help'];
 const RECIPES=[['definition','Explore a definition'],['documents','Collect document evidence'],['impact','Find possible impact'],['tests','Find test mentions'],['component','Explore a component'],['readiness','Check retrieval readiness']];
+function AnswerView(props: { answer: ContextResponse; identity: string }) {
+    const show = (value: AnswerNode | string): ComponentChildren => typeof value === 'string' ? value : h(value.tag, {
+        ...(value.id ? { id: value.id, tabIndex: -1 } : {}),
+        ...(value.citationTarget ? { type: 'button', onClick: () => { const record = document.getElementById(value.citationTarget!);
+            record?.closest('details')?.setAttribute('open', ''); record?.focus(); record?.scrollIntoView({ block: 'start' }); } } : {}),
+    }, ...value.children.map(show));
+    return <>{show(answerPresentation(props.answer, props.identity))}</>;
+}
 interface ToolFormProps {
     state:WorkbenchState;issue:string;currentDraft:()=>WorkbenchFormDraft|undefined;
     onSelect:(tool:string)=>void;onField:(tool:string,name:string,value:string)=>void;onReset:(tool:string)=>void;onIssue:(issue:string)=>void;
@@ -110,6 +120,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
         {publicationNotice&&<p class="warning">{publicationNotice}</p>}
         {turn.error&&<p class="error" role="alert">{turn.error}</p>}
         {turn.trimmed&&<p class="warning">Saved result trimmed. Re-run to collect current evidence.</p>}
+        {turn.request && <details><summary>Complete original request</summary><pre>{canonical(turn.request)}</pre></details>}
 
         {!!turn.nativeFailure&&<section class="result" aria-label="Original native refusal">
             <details class="complete-response"><summary>Complete original native refusal</summary><p class="note">Captured native response from this attempt. It does not certify current authorization or publication freshness.</p><pre>{canonical(turn.nativeFailure)}</pre></details>
@@ -121,10 +132,12 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
             {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(planText);}}>Review proposed plan</button>}
             {edit&&<div class="editor"><label>Plan JSON<textarea value={draft} onInput={e=>setDraft(e.currentTarget.value)} spellcheck={false}/></label><button onClick={()=>runPlan(true)}>Prepare edited plan</button><button disabled={state.busy} onClick={()=>runPlan(false)}>Run plan</button>{issue&&<p role="alert">{issue}</p>}</div>}
             {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(planText);revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
-            <section class="result"><header><span>{String(envelope.status)} · {cards.length} retained records</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
+            <section class="result"><header><span>{String(envelope.status ?? envelope.stop ?? 'native result')} · {envelope.schema === 'airk.arbiter.context/1' && Array.isArray(envelope.records) ? envelope.records.length : cards.length} retained records</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
                 {format==='structured'?<>
+                    {envelope.schema === 'airk.arbiter.context/1' && Array.isArray(envelope.paragraphs) && Array.isArray(envelope.records)
+                        ? <AnswerView answer={envelope as ContextResponse} identity={turn.id} /> : null}
                     <DiscoveryDetails turn={turn} state={state}/>
                     {cards.length>0&&<details class="result-tools"><summary>Filter and group evidence{filter?` · ${rows.length} matches`:''}</summary><label class="filter">Filter retained evidence<input value={filter} onInput={e=>setFilter(e.currentTarget.value)}/></label><button aria-pressed={group} onClick={()=>setGroup(!group)}>Group by file</button><p class="counts">Showing {Math.min(show,rows.length)} of {rows.length} matching retained records.</p></details>}
                     {envelope.truncated===true&&<p class="warning">Upstream or output omissions reported.</p>}
@@ -180,6 +193,7 @@ function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'|'rese
 }
 function App(){
     const [state,setState]=useState<WorkbenchState>({projects:[],recent:[],cards:{},busy:false,save:'',persistence:true}),[input,setInput]=useState(''),[menu,setMenu]=useState<Menu>(),[history,setHistory]=useState(-1),[title,setTitle]=useState(''),[formIssue,setFormIssue]=useState('');
+    const [contextQuestion,setContextQuestion]=useState(''),[contextBudget,setContextBudget]=useState(()=>JSON.stringify(WORKBENCH_CONTEXT_BUDGET,null,2)),[contextIssue,setContextIssue]=useState('');
     const liveState=useRef(state);liveState.current=state;
     const formDraft=normalizeWorkbenchFormDraft(state.session?.formDraft)??defaultWorkbenchFormDraft(),scope=formDraft.scope,recipe=formDraft.recipe;
     const currentDraft=():WorkbenchFormDraft|undefined=>{
@@ -243,6 +257,20 @@ function App(){
         <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>No reviewed AIRK Index or Project scope is active in this window. Trust the workspace and finish setup if needed, then review and use a scope in Management. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
         <div class="composer">
             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
+            <button type="button" disabled={!state.project || state.busy || !input.trim()} onClick={() => { send({ type: 'answer', question: input.trim() }); setInput(''); }}>Gather cited context</button>
+            <p class="note">Cited context uses bounded canonical reads and reports gaps. Optional local Arbiter models require explicit Service enrollment; unavailable models never imply a successful model decision.</p>
+            <details><summary>Cited context question and budget</summary>
+                <label>Context question (up to 16,384 UTF-8 bytes)<textarea aria-label="Context question" maxLength={16384} value={contextQuestion} onInput={e=>setContextQuestion(e.currentTarget.value)}/></label>
+                <label>Native context budget (JSON)<textarea aria-label="Native context budget" maxLength={2048} value={contextBudget} onInput={e=>setContextBudget(e.currentTarget.value)}/></label>
+                <p class="note">The native service validates budget limits. A smaller budget can return gaps or omissions.</p>
+                {contextIssue&&<p role="alert">{contextIssue}</p>}
+                <button type="button" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>{
+                    try { const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,budget:JSON.parse(contextBudget)});
+                        if(!message)throw new Error('Provide a nonempty question within 16,384 UTF-8 bytes and every integer native budget field.');
+                        setContextIssue('');send(message);
+                    } catch(error) { setContextIssue(error instanceof Error?error.message:String(error)); }
+                }}>Gather with this budget</button>
+            </details>
             {input.startsWith('/')&&!input.includes(' ')&&<div class="commands" aria-label="Commands">{COMMANDS.filter(c=>c.startsWith(input)).map(c=><button onClick={()=>{setInput(`${c} `);composer.current?.focus();}}>{c}</button>)}</div>}
             <textarea ref={composer} maxLength={4096} aria-label="Request indexed evidence" placeholder={recipe?'Enter a name or statement for this recipe':'Ask about this project, or type /'} value={input} onInput={e=>{setInput(e.currentTarget.value);setHistory(-1);}} onKeyDown={e=>{
                 if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();run();}

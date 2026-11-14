@@ -6,7 +6,8 @@
 // tab is hidden. The readable summary never replaces the complete native result,
 // which stays available below it.
 import type { JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
+import { PageVisible } from './pageVisibility';
 import { Badge, Complete, JOB_STATE, jobKind, ProblemLine } from './activity';
 import { call } from './api';
 import { body, isDigest, OPS } from './operations';
@@ -242,6 +243,9 @@ const LIVE_TEXT: Record<Live, string> = {
 
 /** Live progress of one registered index, by its 64-hex project binding. */
 export function ProgressPanel(props: { binding: string }): JSX.Element {
+  const visible = useContext(PageVisible);
+  const visibleNow = useRef(visible);
+  visibleNow.current = visible;
   const [shown, setShown] = useState<{ binding: string; state: CallState } | null>(null);
   const [live, setLive] = useState<Live>('loading');
   // The newest read wins; a binding change or unmount drops older answers.
@@ -257,6 +261,7 @@ export function ProgressPanel(props: { binding: string }): JSX.Element {
   };
   const refresh = async (binding: string): Promise<void> => {
     stopTimer();
+    if (!visibleNow.current) { setLive('hidden'); return; }
     stoppedHidden.current = false;
     const mine = ++ticket.current;
     setLive('loading');
@@ -272,7 +277,7 @@ export function ProgressPanel(props: { binding: string }): JSX.Element {
       setLive('idle');
       return;
     }
-    if (document.visibilityState === 'hidden') {
+    if (!visibleNow.current || document.visibilityState === 'hidden') {
       stoppedHidden.current = true;
       setLive('hidden');
       return;
@@ -283,6 +288,7 @@ export function ProgressPanel(props: { binding: string }): JSX.Element {
 
   useEffect(() => {
     if (!isDigest(props.binding)) return undefined;
+    if (!visible) { stopTimer(); setLive('hidden'); return undefined; }
     const binding = props.binding;
     stoppedHidden.current = false;
     void refresh(binding);
@@ -304,7 +310,7 @@ export function ProgressPanel(props: { binding: string }): JSX.Element {
       stopTimer();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [props.binding]);
+  }, [props.binding, visible]);
 
   if (!isDigest(props.binding)) {
     return <p class="muted">This index has no project binding, so its progress cannot be read.</p>;

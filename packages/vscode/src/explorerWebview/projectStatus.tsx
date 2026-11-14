@@ -102,6 +102,13 @@ export function WorkProgress(props: { entry: ManagedProject }) {
     const work = props.entry.work;
     const display=workProgressDisplay(work,props.entry.summary.jobKind,props.entry.jobState);
     const sample=<section class="card work-progress" aria-label="Indexing progress">
+        {props.entry.monitoring && <div class={props.entry.monitoring.state === 'observed' ? 'note' : 'warning'} role="status">
+            <p>{props.entry.monitoring.state === 'observed' ? 'Current live observation completed.' : props.entry.monitoring.state === 'pending'
+                ? 'Live observation pending; retained counters are not current progress.' : props.entry.monitoring.state === 'stale'
+                ? 'Live observation is stale; retained counters are not current progress.' : 'This index is not currently monitored. Select it to include it in the bounded live subset; retained counters are historical.'}</p>
+            <p>Live subset: {props.entry.monitoring.observed.length} observed, {props.entry.monitoring.tracked.length} tracked, {props.entry.monitoring.omitted.length} omitted; limit {props.entry.monitoring.limit}.</p>
+            <details><summary>Exact monitored and omitted index bindings</summary><pre>{JSON.stringify(props.entry.monitoring, null, 2)}</pre></details>
+        </div>}
         <div class="section-head"><h2>{work.current&&props.entry.jobState==='running'?'Working now':'Latest work attempt'}</h2><span class="muted">Updated {ago(work.observedAt)}</span><CopyDetails section="progress" project={props.entry.summary.project} /></div>
         <h3>{display.title}</h3>
         <p class="muted">{work.current ? 'Worker connected · matching job sample' : 'Retained sample · current progress unconfirmed'}.

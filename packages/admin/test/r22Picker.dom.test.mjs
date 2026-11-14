@@ -102,7 +102,9 @@ after(async () => {
   try { if (call) await call('Browser.close'); } finally {
     socket?.close();
     if (browser && browser.exitCode === null && browser.signalCode === null) {
-      const exited = once(browser, 'exit'); browser.kill(); await exited;
+      const exited = once(browser, 'exit', { signal: AbortSignal.timeout(10000) });
+      if (!call) browser.kill();
+      await exited;
     }
     if (scratch && resolve(scratch).startsWith(`${resolve(tmpdir())}${sep}`)) await rm(scratch, { recursive: true, force: true });
   }

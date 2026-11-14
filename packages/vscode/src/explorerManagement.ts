@@ -9,7 +9,7 @@ import { indexContents, semanticExplanation } from './explorerStatus';
 export function panelDetails(view: ManagementView, section: string, version: string, projectId?: string, status?: StatusSummary, now = Date.now()): string {
     const entry=view.projects.find(project=>project.summary.project===projectId);
     if(section!=='service'&&!entry)throw new Error('Project details are no longer available. Refresh status and copy again.');
-    const lines=[`AIRK ${version} — ${section}`,`Captured: ${new Date(now).toISOString()}`,`Connection: ${view.connected?'connected':'disconnected'} (${view.authority})`,`Service check: ${view.checkedAt===undefined?'Not observed':new Date(view.checkedAt).toISOString()}`,
+    const lines=[`AIRK ${version} â€” ${section}`,`Captured: ${new Date(now).toISOString()}`,`Connection: ${view.connected?'connected':'disconnected'} (${view.authority})`,`Service check: ${view.checkedAt===undefined?'Not observed':new Date(view.checkedAt).toISOString()}`,
         'Cached observations; capture time does not establish source freshness.'];
     const facts=(heading:string,rows:readonly FactRow[])=>{lines.push('',heading,...rows.map(([key,value])=>`${key}: ${value}`));};
     if(entry){
@@ -55,7 +55,7 @@ export function panelDetails(view: ManagementView, section: string, version: str
         facts('Requests',entry.requests);
     }
     if(section==='service'){
-        lines.push('Selected service/runtime summary fields only. Use Management → Service → Complete runtime diagnostics to open, copy or export the full cached native bootstrap and diagnostic observation.');
+        lines.push('Selected service/runtime summary fields only. Use Management â†’ Service â†’ Complete runtime diagnostics to open, copy or export the full cached native bootstrap and diagnostic observation.');
         if(view.capturedLifecycle)lines.push('',`Captured native lifecycle response: ${new Date(view.capturedLifecycle.capturedAt).toISOString()} (historical; not current health or authority).`,'Use the explicit lifecycle JSON actions for the complete native request, result and pre-operation health.');
         facts('Service',view.service);facts('Runtime',view.runtime);facts('Running versions',view.runtimeVersions);facts('Resources',view.resources);facts('Inference',view.inference);
         lines.push('',...view.processEvents);
@@ -63,7 +63,7 @@ export function panelDetails(view: ManagementView, section: string, version: str
     if(entry&&section==='storage')facts('Storage',entry.storage.rows);
     if(entry&&section==='recovery'){
         facts('Inspection and settings',entry.rows);facts('Source access',entry.watchDiagnostics??[]);
-        if(view.plan){facts('Repair plan',view.plan.rows);lines.push(...view.plan.items.map(item=>Object.entries(item).map(([key,value])=>`${key}: ${value}`).join(' · ')),view.plan.morePages?'More plan rows are not captured.':'');}
+        if(view.plan){facts('Repair plan',view.plan.rows);lines.push(...view.plan.items.map(item=>Object.entries(item).map(([key,value])=>`${key}: ${value}`).join(' Â· ')),view.plan.morePages?'More plan rows are not captured.':'');}
         else lines.push('Repair plan: Not observed');
     }
     const encoded=new TextEncoder().encode(lines.join('\n').replace(/\u0000/g,''));
@@ -82,7 +82,7 @@ function scalar(value: unknown): string {
 const rows = (values: [string, unknown][]): FactRow[] => values.map(([name, value]) => [name, scalar(value)]);
 const bytes = (value: unknown): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 const observed = (name: string, value: ConsoleObservation): FactRow =>
-    [name, `${value.state}${value.code ? ` · ${value.code}` : ''} · checked ${new Date(value.checkedAt).toISOString()}`];
+    [name, `${value.state}${value.code ? ` Â· ${value.code}` : ''} Â· checked ${new Date(value.checkedAt).toISOString()}`];
 
 function failureDetail(code: unknown): string {
     if (typeof code === 'string' && code.endsWith('quota_inventory_limit_exceeded')) {
@@ -111,9 +111,14 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
     const formats = obj(obj(state.health.value?.observation).storage_formats);
     const registration = obj(obj(row.project).registration), binding = String(registration.binding);
     const inspection = obj(row.inspection), snapshot = obj(inspection.snapshot), progress = obj(row.progress), work = obj(progress.progress), job = obj(progress.job), watch = obj(row.watch);
+    const monitored = obj(row.live_monitoring);
+    const bindings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    const monitoring: ManagedProject['monitoring'] = ['observed', 'pending', 'stale', 'not_monitored'].includes(String(monitored.state))
+        ? { state: monitored.state as NonNullable<ManagedProject['monitoring']>['state'], ...(typeof monitored.reason === 'string' ? { reason: monitored.reason } : {}),
+            tracked: bindings(monitored.tracked), observed: bindings(monitored.observed), omitted: bindings(monitored.omitted), limit: Number(monitored.limit) } : undefined;
     const workers = Array.isArray(state.workers?.observations) ? state.workers!.observations : [];
     const worker = obj(workers.find(value => obj(value).project === binding)), identity = obj(worker.identity), sampled = obj(progress.worker);
-    const current = state.connected && sampled.project === binding && identity.project === binding && typeof sampled.worker === 'string' && sampled.worker === identity.worker && sampled.service === identity.service
+    const current = (!monitoring || monitoring.state === 'observed') && state.connected && sampled.project === binding && identity.project === binding && typeof sampled.worker === 'string' && sampled.worker === identity.worker && sampled.service === identity.service
         && sampled.project === identity.project && sampled.fencing_generation === identity.fencing_generation && sampled.fencing_generation === progress.current_fencing_generation;
     const pending = obj(row.pending_job), waiting = obj(worker.waiting), pendingGate=obj(row.pending_gate);
     const gate=pendingGate.job===pending.id?pendingGate:{};
@@ -142,7 +147,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             ? { severity: 'info', title: 'Connecting to AIRK', detail: 'Loading current project status. Published index information is shown separately.' }
             : { severity: 'warn', title: 'Connection unavailable', detail: 'These are retained observations. Reconnect to check current project health.' }
         : state.inactiveProjects
-        ? { severity: 'info', title: 'Removed from AIRK', detail: 'Automatic work is stopped. AIRK is deleting this project’s index data and saved settings. Source files are untouched. This entry disappears when removal completes.' }
+        ? { severity: 'info', title: 'Removed from AIRK', detail: 'Automatic work is stopped. AIRK is deleting this projectâ€™s index data and saved settings. Source files are untouched. This entry disappears when removal completes.' }
         : worker.automatic_start_blocked === true
         ? { severity: 'error', title: 'Indexing cannot continue', detail: 'No project worker is available and automatic startup retries are exhausted. The saved job may still say running. Restart only this project worker; active requests may disconnect.', action: 'restartProject', actionLabel: 'Restart project worker' }
         : worker.restarting === true
@@ -188,7 +193,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         rows: rows([['Index format', formats.index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.enabled === true && watch.failure === 'backend_unavailable' && typeof watch.observed_unix_ms !== 'number'
             ? 'Checking live update status'
             : watch.failure === 'root_unavailable'
-            ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management › Projects.'
+            ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management â€º Projects.'
             : watch.failure ?? watch.backend],
             ['Pending source changes', typeof watch.requested_revision === 'number' && typeof watch.completed_revision === 'number' ? Math.max(0, watch.requested_revision - watch.completed_revision) : undefined],
             ['Configured retained profile',snapshot.configured_retained_profile],['Published retained profile',snapshot.published_retained_profile],['Legacy detail / fallback',snapshot.index_detail],['Last inspected revision', snapshot.publication], ['Source availability (cached)', snapshot.source_state], ['Discovery (cached)', discovery.state],
@@ -198,8 +203,8 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             ['Configuration failure', obj(configuration.outcome).code], ['Configuration result failure', result?.code],
             ['Unavailable cached fields', Array.isArray(row.failed_observations) ? row.failed_observations.join(', ') : undefined]]),
         activity: rows([['Worker', identity.worker ?? (worker.restarting ? 'Restart queued' : worker.identity === null ? 'No resident worker observed' : 'Worker identity not observed')],
-            ['Worker observation', state.connected ? 'Connected sample' : 'Cached sample'], ['Phase', work.phase], ['Job', job.id ? `${scalar(job.kind)} · ${scalar(job.state)}` : undefined],
-            ['Pending job', pending.id ? `${scalar(pending.kind)} · ${scalar(pending.state)}` : undefined],
+            ['Worker observation', state.connected ? 'Connected sample' : 'Cached sample'], ['Phase', work.phase], ['Job', job.id ? `${scalar(job.kind)} Â· ${scalar(job.state)}` : undefined],
+            ['Pending job', pending.id ? `${scalar(pending.kind)} Â· ${scalar(pending.state)}` : undefined],
             ['Queued request eligibility',gate.code??(pending.id?'No plan gate observed':'No queued request')],['Owning repair plan',gate.plan],['Owning plan phase',gate.plan_phase],['Wait reason (sampled)', wait],
             ['Wait sample age (ms)', matchingWait ? waiting.age_ms : undefined], ['Captured / extracted files', work.captured_files === undefined ? undefined : `${scalar(work.captured_files)} / ${scalar(work.extracted_files)}`],
             ['Prepared changes', work.prepared_changes], ['Committed changes', work.committed_changes], ['Published batches', work.publications], ['Total files', work.total_files],
@@ -211,13 +216,13 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             lifecycle: !state.inactiveProjects ? 'Active' : configuration.state === 'pending' || configuration.state === 'running' ? 'Cleanup or removal request pending'
                 : configuration.state === 'succeeded' && resultValue?.complete === true ? 'Cleanup completed; ready to review registration'
                 : typeof resultValue?.guard === 'string' ? 'Cleanup captured; finish cleanup before adding again' : 'Removal pending; deleting project data',
-            requests: rows([...recoveries.map((r):[string,unknown]=>['Automatic recovery',`${scalar(r.reason)} · ${scalar(r.state)} · attempt ${scalar(r.attempts)} / ${scalar(r.limit)}${r.state==='waiting'&&typeof r.next_check_unix_ms==='number'?` · next check ${new Date(r.next_check_unix_ms).toLocaleTimeString()}`:''}`]),['Latest settings request', configuration.id ? `${scalar(configuration.state)} · ${scalar(configuration.id)}` : 'None observed'],
+            requests: rows([...recoveries.map((r):[string,unknown]=>['Automatic recovery',`${scalar(r.reason)} Â· ${scalar(r.state)} Â· attempt ${scalar(r.attempts)} / ${scalar(r.limit)}${r.state==='waiting'&&typeof r.next_check_unix_ms==='number'?` Â· next check ${new Date(r.next_check_unix_ms).toLocaleTimeString()}`:''}`]),['Latest settings request', configuration.id ? `${scalar(configuration.state)} Â· ${scalar(configuration.id)}` : 'None observed'],
                 ['Settings result', obj(configuration.outcome).code ?? (configuration.state === 'succeeded' ? 'Applied; published coverage is observed separately' : undefined)],
-                ['Current / latest job', job.id ? `${scalar(job.kind)} · ${scalar(job.state)} · ${scalar(job.id)}` : 'None observed'],
-                ['Queued job', pending.id ? `${scalar(pending.kind)} · ${scalar(pending.state)} · ${scalar(pending.id)}` : 'None observed'],
+                ['Current / latest job', job.id ? `${scalar(job.kind)} Â· ${scalar(job.state)} Â· ${scalar(job.id)}` : 'None observed'],
+                ['Queued job', pending.id ? `${scalar(pending.kind)} Â· ${scalar(pending.state)} Â· ${scalar(pending.id)}` : 'None observed'],
                 ['Job result', obj(job.outcome).code ?? obj(job.outcome).state], ['Observed publication', snapshot.publication]]),
             events: state.events.filter(event => event.project === binding).slice(-16).reverse().map(event =>
-                `${scalar(event.kind)} · ${scalar(event.job_kind)}${event.code ? ` · ${scalar(event.code)}` : ''} · ${typeof event.observed_unix_ms === 'number' ? new Date(event.observed_unix_ms).toLocaleString() : 'time not observed'}`),
+                `${scalar(event.kind)} Â· ${scalar(event.job_kind)}${event.code ? ` Â· ${scalar(event.code)}` : ''} Â· ${typeof event.observed_unix_ms === 'number' ? new Date(event.observed_unix_ms).toLocaleString() : 'time not observed'}`),
             configuration: { detail: typeof snapshot.index_detail === 'string' ? snapshot.index_detail : undefined, configuredRetention:typeof snapshot.configured_retained_profile==='string'?snapshot.configured_retained_profile:undefined,publishedRetention:typeof snapshot.published_retained_profile==='string'?snapshot.published_retained_profile:undefined, state: typeof configuration.state === 'string' ? configuration.state : undefined,
                 requestedVectors:typeof requested.vectors_enabled==='boolean'?requested.vectors_enabled:undefined,
                 requestedDetail:typeof requested.detail==='string'?requested.detail:undefined,
@@ -257,9 +262,10 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
                 ['Last directory check', traversalTime && Number.isFinite(traversalTime.getTime()) ? traversalTime.toISOString() : undefined],
                 ['Unreadable directories', unreadable.length || traversal.truncated === true ? 'Observed failures; coverage is incomplete'
                     : Array.isArray(traversal.incomplete_roots) && traversal.incomplete_roots.length ? 'No unreadable paths reported; traversal is incomplete' : 'None in the latest completed traversal'],
-                ...unreadable.map((entry, index): [string, unknown] => [`Directory ${index + 1} · ${scalar(entry.reason)}`, entry.path]),
+                ...unreadable.map((entry, index): [string, unknown] => [`Directory ${index + 1} Â· ${scalar(entry.reason)}`, entry.path]),
                 ['Diagnostic list truncated', traversal.truncated],
             ]) } : {}),
+            ...(monitoring ? { monitoring } : {}),
             selected: state.selected.has(binding),
             ...(typeof job.id === 'string' ? { jobId: job.id, jobState: String(job.state) } : {}),
             ...(typeof pending.id === 'string' && pending.id !== job.id ? { pendingJobId: pending.id } : {}),
@@ -348,16 +354,16 @@ export function managementView(state: ServiceConsoleState): ManagementView {
             ['Activation phase', activation.phase], ['Runtime staging error', diagnosis.staging_error], ['Runtime activation error', diagnosis.activation_error],
             ['Last activation outcome', activationResult.outcome]])],
         runtimeVersions: rows([
-            ['Native CLI (airk)', typeof bootstrap.selectedVersion === 'string' ? `${bootstrap.selectedVersion} · selected payload${bootstrap.payloadVerified === true ? ', verified' : ', verification not observed'}` : undefined],
-            [inProcess?'Inference engine (in service)':typeof bootstrap.selectedVersion === 'string'&&/^1\.(?:[4-7]\.[0-9]+|8\.(?:[0-9]|1[0-3]))$/.test(bootstrap.selectedVersion)?'Inference helper (airk-embed)':'Inference engine (owner not observed)', inProcess?`${typeof health.version==='string'?health.version:'Version not observed'} · native service owner · generation ${String(identity.provider_generation??'not observed')}`:bootstrap.payloadVerified === true && typeof bootstrap.selectedVersion === 'string' && /^1\.(?:[4-7]\.[0-9]+|8\.(?:[0-9]|1[0-3]))$/.test(bootstrap.selectedVersion) ? `${bootstrap.selectedVersion} · verified selected payload; running helper version not observed` : undefined],
-            ['Service (airk)', typeof health.version === 'string' ? `${health.version} · ${state.health.state} health observation${typeof health.process_id === 'number' ? ` · PID ${health.process_id}` : ''}` : undefined],
+            ['Native CLI (airk)', typeof bootstrap.selectedVersion === 'string' ? `${bootstrap.selectedVersion} Â· selected payload${bootstrap.payloadVerified === true ? ', verified' : ', verification not observed'}` : undefined],
+            [inProcess?'Inference engine (in service)':typeof bootstrap.selectedVersion === 'string'&&/^1\.(?:[4-7]\.[0-9]+|8\.(?:[0-9]|1[0-3]))$/.test(bootstrap.selectedVersion)?'Inference helper (airk-embed)':'Inference engine (owner not observed)', inProcess?`${typeof health.version==='string'?health.version:'Version not observed'} Â· native service owner Â· generation ${String(identity.provider_generation??'not observed')}`:bootstrap.payloadVerified === true && typeof bootstrap.selectedVersion === 'string' && /^1\.(?:[4-7]\.[0-9]+|8\.(?:[0-9]|1[0-3]))$/.test(bootstrap.selectedVersion) ? `${bootstrap.selectedVersion} Â· verified selected payload; running helper version not observed` : undefined],
+            ['Service (airk)', typeof health.version === 'string' ? `${health.version} Â· ${state.health.state} health observation${typeof health.process_id === 'number' ? ` Â· PID ${health.process_id}` : ''}` : undefined],
         ]),
         resources: [observed('Resources', state.resources), observed('Source work', state.sources), ...rows([['Preset', configuration.preset],
             ['Concurrent evidence requests', configuration.query_concurrency],
             ['Resident workers / limit', resources.resident_workers === undefined ? undefined : `${scalar(resources.resident_workers)} / ${scalar(resources.resident_limit)}`],
             ['Running jobs', resources.running_jobs], ['Waiting projects', resources.waiting_projects], ['Logical CPUs', resources.logical_cpus],
             ['Extraction threads admitted / limit', resources.extraction_threads_reserved === undefined ? undefined : `${scalar(resources.extraction_threads_reserved)} / ${scalar(resources.extraction_threads_limit)}`],
-            ['Inference thread limit', resources.inference_threads_limit], ['Reserved / allowed memory (bytes)', resources.memory_reserved_bytes === undefined ? undefined
+            ['Embedding inference thread limit', resources.inference_threads_limit], ['Reserved / allowed memory (bytes)', resources.memory_reserved_bytes === undefined ? undefined
                 : `${scalar(resources.memory_reserved_bytes)} / ${scalar(resources.memory_limit_bytes)}`], ['Observed RSS (bytes)', resources.observed_rss_bytes],
             ['Available host memory (bytes)', resources.available_memory_bytes], ['Memory pressure', resources.pressure], ['Protected query headroom (bytes)', resources.query_headroom_bytes],
             ['Source pacing ceiling (bytes/s)', resources.background_io_limit_bytes_per_second], ['Telemetry complete', resources.telemetry_complete]])],
@@ -372,13 +378,13 @@ export function managementView(state: ServiceConsoleState): ManagementView {
         ...(plan(state) ? { plan: plan(state)! } : {}),
         // Unacknowledged requests belong to the internal journal and diagnostics.
         pending: [],
-        events: state.events.slice(-32).reverse().map(event => `${scalar(event.kind)} · ${scalar(event.project)} · ${scalar(event.job_kind)} · ${scalar(event.code ?? event.observed_unix_ms)}`),
+        events: state.events.slice(-32).reverse().map(event => `${scalar(event.kind)} Â· ${scalar(event.project)} Â· ${scalar(event.job_kind)} Â· ${scalar(event.code ?? event.observed_unix_ms)}`),
         processEvents: (Array.isArray(state.serviceEvents?.value?.records) ? state.serviceEvents!.value!.records : []).slice(-32).reverse().map(value => {
             const event = obj(value), timestamp = bytes(event.observed_unix_ms);
             const time = timestamp !== undefined && timestamp <= 8640000000000000 ? new Date(timestamp).toISOString() : scalar(event.observed_unix_ms);
             return [scalar(event.kind), time, ...(event.project ? [`project ${scalar(event.project)}`] : []),
                 ...(event.job ? [`job ${scalar(event.job)}`] : []), ...(event.code ? [`reason ${scalar(event.code)}`] : []),
-                `service ${scalar(event.instance)}`].join(' · ');
+                `service ${scalar(event.instance)}`].join(' Â· ');
         }),
         historyOmitted: state.historyOmitted,
         processLogStatus: state.serviceEvents ? observed('Process logs', state.serviceEvents)[1] : 'Not observed; refresh to request recent service events.',

@@ -8,7 +8,7 @@ related_airk_help: agent-setup, mcp
 ---
 # Project instructions for AI agents
 
-Management > Agents > Help your agent discover and use AIRK offers optional guidance for Claude Code, Codex, GitHub Copilot and other assistants. This helps prevent an agent from mistaking deferred tools for an unavailable server, and encourages focused use of indexed evidence with live-file verification.
+Agents > Help your agent discover and use AIRK offers optional guidance for Claude Code, Codex, GitHub Copilot and other assistants. This helps prevent an agent from mistaking deferred tools for an unavailable server, and encourages focused use of indexed evidence with live-file verification.
 
 ## Steps
 

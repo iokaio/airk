@@ -127,6 +127,7 @@ export function activityRecord(event: ClientEvent, now: number): RecordValue | u
 export class LiveStatus {
     private readonly observations = new Map<string, LiveObservation>();
     private bindings: string[] = [];
+    private requested: string[] = [];
     private retainers = 0;
     /** An event arrived while hidden; the next retain reads again. */
     private outdated = false;
@@ -143,12 +144,26 @@ export class LiveStatus {
         private readonly log: (line: string) => void = () => {}) {}
 
     /** The indexes to observe (this window's projects); others are forgotten. */
-    track(bindings: readonly string[]): void {
-        this.bindings = [...new Set(bindings.filter(binding => /^[0-9a-f]{64}$/.test(binding)))].slice(0, MAX_LIVE_BINDINGS);
-        for (const binding of [...this.observations.keys()]) { if (!this.bindings.includes(binding)) { this.observations.delete(binding); } }
+    track(bindings: readonly string[], selected?: string): void {
+        this.requested = [...new Set(bindings.filter(binding => /^[0-9a-f]{64}$/.test(binding)))];
+        const ordered = selected && this.requested.includes(selected)
+            ? [selected, ...this.requested.filter(binding => binding !== selected)] : this.requested;
+        this.bindings = ordered.slice(0, MAX_LIVE_BINDINGS);
+        for (const binding of [...this.observations.keys()]) { if (!this.requested.includes(binding)) { this.observations.delete(binding); } }
+    }
+    /** Explicit bounded subset; a retained old observation never implies current monitoring. */
+    get subset(): { tracked: string[]; observed: string[]; omitted: string[]; limit: number } {
+        return { tracked: [...this.bindings], observed: this.bindings.filter(binding => this.monitoring(binding).state === 'observed'), omitted: this.requested.filter(binding => !this.bindings.includes(binding)), limit: MAX_LIVE_BINDINGS };
+    }
+    monitoring(binding: string): { state: 'observed' | 'pending' | 'stale' | 'not_monitored'; reason?: string } {
+        const prior = this.observations.get(binding);
+        if (!this.bindings.includes(binding)) { return { state: 'not_monitored', reason: this.requested.includes(binding) ? 'monitoring_subset_limit' : 'outside_window' }; }
+        if (!prior) { return { state: 'pending' }; }
+        if (this.outdated || prior.progressError || prior.watchError) { return { state: 'stale', reason: 'observation_not_current' }; }
+        return { state: 'observed' };
     }
     observation(binding: string): LiveObservation | undefined { return this.observations.get(binding); }
-    clear(): void { this.observations.clear(); this.stop(); }
+    clear(): void { this.observations.clear(); this.bindings = []; this.requested = []; this.stop(); }
 
     /** One Progress and one Watch read per tracked index; concurrent calls share one pass and run once more after it. */
     read(): Promise<void> {

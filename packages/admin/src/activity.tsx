@@ -643,8 +643,10 @@ function JobDetail(props: {
   const [, setJobRecord] = useState<Rec | null>(null);
   const transition = useRef<JobTransition | undefined>(undefined);
   const model = useRef<ReturnType<typeof createJobRequests> | null>(null);
+  const [, changed] = useState(0);
   const seed = props.seed?.context === currentSession() && str(props.seed?.job.id) === props.id ? props.seed : undefined;
   model.current ??= createJobRequests({ runJob, runJobAction, setJobRecord, currentContext: currentSession,
+    changed: () => changed(value => value + 1),
     seed, currentSelection: props.currentSelection, observedAt: Date.now, transition: value => { transition.current = value; },
     setJobId: id => { if (id !== props.id) props.onSelect(id, transition.current); },
   });
@@ -656,11 +658,17 @@ function JobDetail(props: {
   const id = str(view.record?.id) ?? props.id;
   const acceptedTransition = view.transition;
   let actionState: CallState = view.actionCurrent ? action : { phase: 'idle' };
+  const retry = view.retry;
+  if (retry?.intent && (retry.pending || retry.unknown || actionState.phase === 'idle' && retry.result !== null)) {
+    actionState = retry.pending ? { phase: 'pending', operation: retry.intent.operation }
+      : { phase: 'done', operation: retry.intent.operation, result: retry.result!, at: retry.at };
+  }
   if (actionState.phase === 'idle' && acceptedTransition !== undefined && acceptedTransition.context === currentSession()
     && str(acceptedTransition.job.id) === id) {
     actionState = { phase: 'done', operation: OPS.jobsRetry, result: acceptedTransition.result, at: acceptedTransition.at };
   }
   return <JobCard id={id} record={view.record} state={view.detailCurrent ? job : { phase: 'idle' }} action={actionState}
+    retryBlocked={retry?.pending ? 'pending' : retry?.unknown ? 'unknown' : retry?.capacity ? 'capacity' : undefined}
     actionOrigin={acceptedTransition?.origin} timeline={props.timeline} nameOf={props.nameOf}
     onReload={() => void requests.openJob(id, context)}
     onChange={kind => { const acceptedId = str(requests.snapshot().record?.id); if (acceptedId !== null) void requests.jobChange(acceptedId, kind, context); }} />;
@@ -672,6 +680,7 @@ function JobCard(props: {
   state: CallState;
   action: CallState;
   actionOrigin?: string;
+  retryBlocked?: 'pending' | 'unknown' | 'capacity';
   timeline: Timeline | null;
   nameOf: (binding: string) => string;
   onReload: () => void;
@@ -764,7 +773,7 @@ function JobCard(props: {
             <Confirm
               phrase={`retry ${short(props.id)}`}
               action="Retry job"
-              disabled={props.action.phase === 'pending'}
+              disabled={props.action.phase === 'pending' || props.retryBlocked !== undefined}
               onConfirm={() => props.onChange('retry')}
             />
           ) : (
@@ -772,6 +781,8 @@ function JobCard(props: {
           )}
         </div>
       ) : null}
+      {props.retryBlocked === 'unknown' ? <p class="error" role="alert">The original retry outcome is unresolved. Another retry is blocked. Inspect saved requests and current jobs in Activity; the received outcome is retained below.</p>
+        : props.retryBlocked === 'capacity' ? <p role="status">This session holds the limit of unresolved generated actions. Inspect saved requests before starting another retry.</p> : null}
       {request ? (
         <p class={`request request-${request.state}`}>
           Request <code>{request.nonce}</code>: <Text value={REQUEST_STATE[request.state] ?? request.state} />

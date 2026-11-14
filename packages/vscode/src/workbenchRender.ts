@@ -351,7 +351,8 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>,projection=
         `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.selection ? [`Explicit selection: ${escape(openSelectionArgv(turn.selection).join(' '))}`] : []), ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
         ...(e.scope_observation!==undefined?[`### Recorded scope observation\n\n${fenced(canonical(e.scope_observation))}`]:[]),
         ...(selected?[`### ${selectedChecks?.requested?'Selected evidence and dated source observations':'Selected evidence'}\n\n${fenced(canonical({evidence:selectedRows,...(selectedChecks?.requested?{source_verification_observations:selectedChecks.observations,selected_verification_accounting:selectedChecks.accounting}:{})}))}`]:[]),
-        ...metadata,...(turn.envelope ? [`### ${selected?'Complete selected response':'Complete response'}\n\n${fenced(canonical(selected?selectedEnvelope(turn,selected,e):turn.envelope))}`] : []),
+        ...metadata,...(turn.request ? [`### Complete original request\n\n${fenced(canonical(turn.request))}`] : []),
+        ...(turn.envelope ? [`### ${selected?'Complete selected response':'Complete response'}\n\n${fenced(canonical(selected?selectedEnvelope(turn,selected,e):turn.envelope))}`] : []),
         ...(turn.nativeFailure?[`### Complete original native refusal\n\n${fenced(canonical(turn.nativeFailure))}`]:[]),
         `Warnings: ${escape(JSON.stringify(e.warnings ?? []))}`, `Completeness: ${escape(JSON.stringify(e.completeness ?? []))}`,
         ...(e.source_verification?[verificationLabel(e.source_verification),'Saved-byte observations retain their original dates. Extraction, coverage, relevance and unsaved buffers remain unverified; recheck before later edits.']:['Untrusted indexed evidence. Verify relevant live files before edits.'])].join('\n\n');

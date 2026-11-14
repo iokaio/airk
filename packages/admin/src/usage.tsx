@@ -8,11 +8,13 @@
 // available". Exports (Markdown/CSV) and settings documents are the same reads in
 // other formats. Every read keeps its complete native result in a collapsed JSON
 // block.
-import { Fragment, type ComponentChildren, type JSX } from 'preact';
+import { Fragment, h, type ComponentChildren, type JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { call } from './api';
 import { body, isDigest, OPS, type UsageRead } from './operations';
 import { Field, Outcome, Panel, Text, visible, type CallState, useCall } from './render';
+import { SharedPilotPane } from './pilotPane';
+import { renderUsageNode, usagePresentation, type UsageTab } from '../../ui/src/usagePresentation';
 
 // ---------------------------------------------------------------------------
 // Readers over untyped native JSON.
@@ -718,6 +720,7 @@ const SETTINGS_VIEWS = [
 ] as const;
 
 export function Usage(): JSX.Element {
+  const [tab, setTab] = useState<UsageTab>('summary');
   const [indexes, loadIndexes] = useIndexes();
   const [report, runReport] = useCall();
   const [policy, runPolicy] = useCall();
@@ -808,8 +811,13 @@ export function Usage(): JSX.Element {
         </details>
       </Panel>
 
+      <div class="actions" aria-label="Usage views">{(['summary', 'breakdown', 'recording'] as const).map(id =>
+        <button type="button" class={tab === id ? '' : 'secondary'} aria-pressed={tab === id} onClick={() => setTab(id)}>{id[0].toUpperCase() + id.slice(1)}</button>)}</div>
+      <div hidden={tab !== 'recording'}>
       {policy.phase !== 'idle' || report.phase !== 'idle' ? (
         <Panel title={`Recording${loaded !== null ? ` for ${loaded.label}` : ''}`}>
+          {reportView !== undefined ? renderUsageNode((tag, children): JSX.Element => h(tag, null, ...children),
+            usagePresentation(documentOf(report), { index: loaded?.binding ?? binding, days: shownDays }, 'recording')) : null}
           {policyValue !== undefined && loaded !== null ? (
             <PolicyView key={loaded.binding} policy={policyValue} binding={loaded.binding} />
           ) : null}
@@ -820,18 +828,22 @@ export function Usage(): JSX.Element {
           <Complete state={policy} label="Complete policy result (JSON)" />
         </Panel>
       ) : null}
+      </div>
 
-      {report.phase !== 'idle' ? (
-        <Panel title={`Report${loaded !== null ? ` for ${loaded.label}` : ''}`}>
+      {report.phase !== 'idle' && tab !== 'recording' ? (
+        <Panel title={`${tab === 'summary' ? 'Summary' : 'Breakdown'}${loaded !== null ? ` for ${loaded.label}` : ''}`}>
           {loaded !== null && loaded.binding !== binding ? (
             <p class="muted">These results are for {loaded.label}; choose Show usage to read the selected index.</p>
           ) : null}
-          {reportView !== undefined ? <ReportView view={reportView} days={shownDays} /> : null}
+          {reportView !== undefined ? renderUsageNode((tag, children): JSX.Element => h(tag, null, ...children),
+            usagePresentation(documentOf(report), { index: loaded?.binding ?? binding, days: shownDays }, tab)) : null}
+          {reportView !== undefined && tab === 'breakdown' ? <details><summary>Detailed report tables</summary><ReportView view={reportView} days={shownDays} /></details> : null}
           <Problem state={report} />
           <Complete state={report} label="Complete report result (JSON)" />
         </Panel>
       ) : null}
 
+      <details><summary>Exports, index settings and read preview</summary>
       <Panel title="Export a report">
         <p class="muted">The same report as Markdown or CSV, as the CLI prints it.</p>
         <div class="row">
@@ -886,6 +898,8 @@ export function Usage(): JSX.Element {
         <Problem state={settings} />
         <Complete state={settings} open />
       </Panel>
+      <SharedPilotPane read={{ kind: 'usage-json', binding, days }} />
+      </details>
     </>
   );
 }

@@ -11,7 +11,7 @@
 import { createCatalogRequests, indexDetailValue, setDetailValue, itemOf, type Item, type CatalogHeader } from './catalogRequests';
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { isUnknownOutcome, receiptAcknowledges, recoveryOf, reviewedCall, reviewOf, type CallResult } from './api';
+import { bindPreparationScope, isUnknownOutcome, onPreparationChange, preparationOf, recoverPreparedResult, receiptAcknowledges, recoveryOf, reviewedCall, reviewOf, type CallResult } from './api';
 import { currentSession } from './session';
 import {
   body,
@@ -361,7 +361,7 @@ function ReceiptHint(props: { state: CallState }): JSX.Element | null {
 }
 
 type RunCall = (operation: Operation, method: unknown) => Promise<CallResult>;
-type HeldGenerated = { method: unknown; receiptMethod: unknown; review: string | null; unresolved: boolean };
+type HeldGenerated = { method: unknown; receiptMethod: unknown; review: string | null; unresolved: boolean; prepared?: CallResult };
 
 type NavigationCell<T> = { value: T; listeners: Set<() => void>; subscribed: boolean; release: () => void };
 let navigationSession = currentSession();
@@ -418,10 +418,21 @@ function useGeneratedReceipt(operation: Operation, receiptOperation: Operation, 
     held: null, sending: null, result: { phase: 'idle' }, receipt: { phase: 'idle' }, receiptOwner: null, receiptTicket: 0,
   }), value => value.sending !== null || value.held?.unresolved === true);
   const custody = cell.value;
+  useLayoutEffect(() => onPreparationChange(() => {
+    const original = custody.held;
+    if (session !== currentSession() || !original?.prepared || !original.unresolved || isUnknownOutcome(original.prepared)) return;
+    const observed = preparationOf(original.prepared);
+    if (!observed || observed.state !== 'known' || observed.pending) return;
+    custody.held = { ...original, unresolved: false };
+    custody.receipt = { phase: 'done', operation, result: observed.result, at: Date.now() };
+    custody.receiptOwner = original.method;
+    publishCustody(cell);
+  }), [cell, session]);
   const held = custody.held;
   const generate = async (method: unknown, receiptMethod: unknown): Promise<void> => {
     if (session === null || session !== currentSession() || custody.sending !== null || custody.held?.unresolved) return;
     const submitted = { method, receiptMethod };
+    bindPreparationScope(submitted.method, cell);
     custody.sending = submitted;
     custody.result = { phase: 'pending', operation };
     publishCustody(cell);
@@ -430,7 +441,8 @@ function useGeneratedReceipt(operation: Operation, receiptOperation: Operation, 
       if (session !== currentSession()) return;
       custody.result = { phase: 'done', operation, result, at: Date.now() };
       if (isUnknownOutcome(result)) {
-        custody.held = { ...submitted, review: recoveryOf(result), unresolved: true };
+        custody.held = { ...submitted, review: recoveryOf(result), unresolved: true,
+          ...(preparationOf(result) ? { prepared: result } : {}) };
       } else if (result.kind === 'ok') {
         custody.held = { ...submitted, review: reviewOf(result), unresolved: false };
       }
@@ -445,15 +457,17 @@ function useGeneratedReceipt(operation: Operation, receiptOperation: Operation, 
   const receipt = async (): Promise<void> => {
     if (session === null || session !== currentSession()) return;
     const original = custody.held;
-    if (!original || original.review === null) return;
+    if (!original || original.review === null && !original.prepared) return;
     const ticket = ++custody.receiptTicket;
     custody.receipt = { phase: 'pending', operation: receiptOperation };
     publishCustody(cell);
-    const result = await read(receiptOperation, reviewedCall(original.receiptMethod, original.review));
+    const result = original.prepared ? await recoverPreparedResult(original.prepared)
+      : await read(receiptOperation, reviewedCall(original.receiptMethod, original.review));
     if (session !== currentSession() || ticket !== custody.receiptTicket || custody.held?.method !== original.method) return;
     custody.receipt = { phase: 'done', operation: receiptOperation, result, at: Date.now() };
     custody.receiptOwner = original.method;
-    if (custody.held === original && receiptAcknowledges(result, operation, original.method)) {
+    if (custody.held === original && (original.prepared ? !isUnknownOutcome(result)
+      : receiptAcknowledges(result, operation, original.method))) {
       custody.held = { ...original, unresolved: false };
     }
     publishCustody(cell);
@@ -1771,7 +1785,7 @@ function PolicyPanel(props: { indexId: string }): JSX.Element {
         <button
           type="button"
           class="secondary"
-          disabled={generated.held?.review == null}
+          disabled={generated.held?.review == null && !generated.held?.prepared}
           onClick={() => void generated.receipt()}
         >
           Read resume receipt
@@ -2050,7 +2064,7 @@ function SplitStatus(): JSX.Element {
         <button
           type="button"
           class="secondary"
-          disabled={generated.held?.review == null}
+          disabled={generated.held?.review == null && !generated.held?.prepared}
           onClick={() => void generated.receipt()}
         >
           Read recovery receipt
@@ -2263,6 +2277,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
   const indexItems = indexRows?.session === session && indexRows.namespace === namespace ? indexRows.items : [];
   const [openIndex, setOpenIndex] = useState<string | null>(null);
   const [openSet, setOpenSet] = useState<string | null>(null);
+  const [view, setView] = useState<'indexes' | 'create' | 'sets' | 'grants'>(() => props.params.has('root') ? 'create' : props.params.has('set') ? 'sets' : 'indexes');
   const concurrency = useQueryConcurrency();
 
   useEffect(() => {
@@ -2270,6 +2285,9 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
     const set = props.params.get('set');
     if (index !== null && isCatalogId('idx_', index)) setOpenIndex(index);
     if (set !== null && isCatalogId('prj_', set)) setOpenSet(set);
+    if (props.params.has('root')) setView('create');
+    else if (set !== null) setView('sets');
+    else if (index !== null) setView('indexes');
   }, [props.seq]);
 
   const refresh = (): void => setReload((n) => n + 1);
@@ -2285,6 +2303,11 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
 
   return (
     <>
+      <div class="actions" aria-label="Index library views">
+        {([['indexes', 'Indexes'], ['create', 'Create an index'], ['sets', 'Index sets'], ['grants', 'Access grants']] as const).map(([id, label]) =>
+          <button type="button" class={view === id ? '' : 'secondary'} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}
+      </div>
+      <div hidden={view !== 'indexes'}>
       <Panel title="Indexes">
         <CatalogList
           kind="indexes"
@@ -2310,6 +2333,8 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
             reload={reload} onRevision={onRevision} onChanged={refresh} />
         </>
       ) : null}
+      </div>
+      <div hidden={view !== 'create'}>
       <Panel title="Set up an index">
         <SetupIndex
           revision={revision}
@@ -2319,6 +2344,8 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
           onActivity={props.onActivity}
         />
       </Panel>
+      </div>
+      <div hidden={view !== 'sets'}>
       <Panel title="Index sets">
         <CatalogList
           kind="projects"
@@ -2351,13 +2378,16 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
             concurrency={concurrency}
             onRevision={onRevision}
             onChanged={refresh}
-            onOpenIndex={setOpenIndex}
+            onOpenIndex={id => { setOpenIndex(id); setView('indexes'); }}
           />
         </>
       ) : null}
+      </div>
+      <div hidden={view !== 'grants'}>
       <Panel title="Grants">
         <Grants revision={revision} reload={reload} onRevision={onRevision} onChanged={refresh} />
       </Panel>
+      </div>
     </>
   );
 }

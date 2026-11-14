@@ -86,6 +86,8 @@ import type { Availability } from './explorerFeatures';
 import type { DraftKind, ProposalOutcome, ProposalReceipt } from './explorerDrafts';
 import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
 import { ROUTE_KEYS } from './explorerRoutes';
+import { parsePilotRequest } from './uiPilotContract';
+import { ADMIN_UI_PAYLOAD_BYTES, parseAdminUiRequest } from './adminUiContract';
 import type { CatalogView } from './indexingCatalog';
 
 export const MESSAGE_VERSION = 1;
@@ -195,6 +197,9 @@ export interface ConnectionCheck {
     indexState?: 'not_indexed' | 'unavailable' | 'unknown' | 'published';
 }
 export interface ExplorerViewState {
+    /** Bundled read-only shared presentation pilot; no new native authority. */
+    readonly pilot?: { readonly epoch: number; readonly available: boolean };
+    readonly adminManagement?: { readonly epoch: number; readonly available: boolean };
     readonly revision: number;
     readonly extensionVersion: string;
     readonly workbenchVisible?: boolean;
@@ -502,6 +507,8 @@ export interface ProjectHealthView {
     readonly reviewTab?: 'repair' | 'logs';
 }
 export interface ManagedProject {
+    readonly monitoring?: { readonly state: 'observed' | 'pending' | 'stale' | 'not_monitored'; readonly reason?: string;
+        readonly tracked: readonly string[]; readonly observed: readonly string[]; readonly omitted: readonly string[]; readonly limit: number };
     readonly health: ProjectHealthView;
     readonly work: ProjectWorkView;
     readonly lifecycle: string;
@@ -757,6 +764,10 @@ const CONNECTION_ID = { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32
 
 export const WEBVIEW_MESSAGES = {
     'ready': {},
+    'pilot.read': { epoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, read: { kind: 'json', max: 1024 } },
+    'admin.session': { epoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'admin.call': { epoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, operation: { kind: 'string', min: 1, max: 128 }, payload: { kind: 'json', max: ADMIN_UI_PAYLOAD_BYTES } },
+    'admin.close': { epoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
     'nav.go': { route: { kind: 'string', min: 1, max: 128 } },
     'help.openExternal': { destination: { kind: 'enum', values: Object.keys(ABOUT_LINKS) } },
     'project.select': { project: PROJECT },
@@ -897,6 +908,7 @@ export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;
  * A lost acknowledgement never authorizes replay of native or local writes.
  * Draft/preview and receipt reads stay reads even when they retain observations. */
 const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
+    'admin.call', 'admin.close',
     'notice.dismiss',
     'indexing.scope.apply', 'indexing.recommendations.use', 'indexing.recommendations.copy',
     'strategy.run.export', 'details.copy', 'clipboard.write',
@@ -954,11 +966,14 @@ export function parseWebviewMessage(input: unknown): WebviewMessage | undefined 
         if (message[key] === undefined) { if (spec.optional) { continue; } return undefined; }
         if (!valid(spec, message[key])) { return undefined; }
     }
+    if (message.type === 'pilot.read' && parsePilotRequest(message) === null) { return undefined; }
+    if (['admin.session', 'admin.call', 'admin.close'].includes(message.type) && parseAdminUiRequest(message) === null) { return undefined; }
     return message as WebviewMessage;
 }
 
 // ---- Host → webview messages.
 export type HostMessage =
+    | { v: 1; type: 'admin.ended'; epoch: number; status: 401 }
     | { v: 1; type: 'state'; state: ExplorerViewState }
     | { v: 1; type: 'indexing.session'; session: CatalogView }
     | { v: 1; type: 'search.session'; session: SearchSessionView }

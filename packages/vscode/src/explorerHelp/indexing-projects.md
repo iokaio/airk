@@ -1,12 +1,12 @@
 ---
 id: indexing.projects
-title: Indexing — Index sets
+title: Indexes — Index sets
 route: indexing/projects
 area: explorer
 aliases: index sets, saved selections, memberships, Projects
 related_airk_help: indexing
 ---
-# Indexing — Index sets
+# Indexes — Index sets
 
 Index sets are reusable selections of indexes. This tab lists them read-only from the AIRK Service; create, rename, change and delete index sets in AIRK Admin.
 

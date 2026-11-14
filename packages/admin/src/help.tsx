@@ -19,7 +19,11 @@ import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CallResult } from './api';
 import { body, OPS } from './operations';
-import { Outcome, Text, useCall, visible, type CallState } from './render';
+import { JsonBlock, Outcome, Text, useCall, visible, type CallState } from './render';
+import { SharedPilotPane } from './pilotPane';
+import { BundledHelp, type BundledHelpProps } from './bundledHelp';
+import { paramsOf } from '../../ui/src/helpSchema';
+import { blocks, type Block } from '../../ui/src/helpMarkdown';
 
 type Rec = Record<string, unknown>;
 const rec = (value: unknown): Rec | null =>
@@ -125,64 +129,14 @@ function inline(text: string): ComponentChildren[] {
   return parts;
 }
 
-type Block =
-  | { kind: 'heading'; level: number; text: string }
-  | { kind: 'para'; text: string }
-  | { kind: 'list'; ordered: boolean; items: string[] }
-  | { kind: 'code'; text: string };
-
-const BULLET = /^\s{0,3}[-*]\s+(.*)$/;
-const NUMBERED = /^\s{0,3}\d+[.)]\s+(.*)$/;
-
-function blocks(source: string): Block[] {
-  const out: Block[] = [];
-  const lines = source.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? '';
-    if (line.trim() === '') continue;
-    if (/^\s*```/.test(line)) {
-      const code: string[] = [];
-      for (i++; i < lines.length && !/^\s*```/.test(lines[i] ?? ''); i++) code.push(lines[i] ?? '');
-      out.push({ kind: 'code', text: code.join('\n') });
-      continue;
-    }
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      out.push({ kind: 'heading', level: heading[1]!.length, text: heading[2] ?? '' });
-      continue;
-    }
-    const ordered = NUMBERED.test(line);
-    const pattern = ordered ? NUMBERED : BULLET.test(line) ? BULLET : null;
-    if (pattern !== null) {
-      const items: string[] = [];
-      while (i < lines.length && pattern.test(lines[i] ?? '')) {
-        items.push(pattern.exec(lines[i] ?? '')?.[1] ?? '');
-        i++;
-      }
-      i--;
-      out.push({ kind: 'list', ordered, items });
-      continue;
-    }
-    if (/^( {2,}|\t)/.test(line)) {
-      const code: string[] = [];
-      while (i < lines.length && (/^( {2,}|\t)/.test(lines[i] ?? '') || (lines[i] ?? '').trim() === '')) {
-        code.push(lines[i] ?? '');
-        i++;
-      }
-      i--;
-      while (code.length > 0 && code[code.length - 1]!.trim() === '') code.pop();
-      out.push({ kind: 'code', text: code.join('\n') });
-      continue;
-    }
-    out.push({ kind: 'para', text: line });
-  }
-  return out;
-}
 
 export function Markdown(props: { source: string }): JSX.Element {
+  return <MarkdownBlocks values={blocks(props.source)} />;
+}
+function MarkdownBlocks(props: { values: readonly Block[] }): JSX.Element {
   return (
     <div class="markdown">
-      {blocks(props.source).map((block) => {
+      {props.values.map((block) => {
         switch (block.kind) {
           case 'heading': {
             // Page headings use h2; document headings start at h3.
@@ -193,9 +147,12 @@ export function Markdown(props: { source: string }): JSX.Element {
           case 'para':
             return <p>{inline(block.text)}</p>;
           case 'list': {
-            const items = block.items.map((item) => <li>{inline(item)}</li>);
-            return block.ordered ? <ol>{items}</ol> : <ul>{items}</ul>;
+            const items = block.items.map((item) => <li>{inline(item.text)}<MarkdownBlocks values={item.children} /></li>);
+            return block.ordered ? <ol start={block.start}>{items}</ol> : <ul>{items}</ul>;
           }
+          case 'table':
+            return <div class="help-table"><table><thead><tr>{block.headers.map(cell => <th>{inline(cell)}</th>)}</tr></thead>
+              <tbody>{block.rows.map(row => <tr>{row.map(cell => <td>{inline(cell)}</td>)}</tr>)}</tbody></table></div>;
           case 'code':
             return <pre class="doc">{visible(block.text)}</pre>;
         }
@@ -248,76 +205,6 @@ function resultOfDone(state: CallState): unknown {
   return state.phase === 'done' && state.result.kind === 'ok' ? state.result.envelope.result : undefined;
 }
 
-/** A JSON-schema type as a short phrase. */
-function typeText(schema: Rec | null, defs: Rec | null, depth = 0): string {
-  if (schema === null || depth > 4) return 'any';
-  const ref = str(schema.$ref);
-  if (ref !== null) {
-    const name = ref.split('/').pop() ?? ref;
-    const target = rec(defs?.[name]);
-    return target !== null ? typeText(target, defs, depth + 1) : name;
-  }
-  const values = arr(schema.enum);
-  if (values.length > 0) return `one of ${values.map((v) => JSON.stringify(v)).join(', ')}`;
-  if (schema.const !== undefined) return `exactly ${JSON.stringify(schema.const)}`;
-  const options = arr(schema.anyOf ?? schema.oneOf);
-  if (options.length > 0) {
-    const parts = options.map((option) => typeText(rec(option), defs, depth + 1)).filter((t) => t !== 'null');
-    return [...new Set(parts)].join(' or ') || 'null';
-  }
-  const all = arr(schema.allOf);
-  if (all.length === 1) return typeText(rec(all[0]), defs, depth + 1);
-  const type = schema.type;
-  const types = (Array.isArray(type) ? type : [type]).filter((t): t is string => typeof t === 'string');
-  const named = types.filter((t) => t !== 'null');
-  if (named.includes('array')) return `list of ${typeText(rec(schema.items), defs, depth + 1)}`;
-  return named.length > 0 ? named.join(' or ') : 'any';
-}
-
-function limitsText(schema: Rec): string[] {
-  const facts: string[] = [];
-  const min = num(schema.minimum);
-  const max = num(schema.maximum);
-  if (min !== null && max !== null) facts.push(`${min}–${max}`);
-  else if (min !== null) facts.push(`at least ${min}`);
-  else if (max !== null) facts.push(`at most ${max}`);
-  const maxLength = num(schema.maxLength);
-  if (maxLength !== null) facts.push(`up to ${maxLength} characters`);
-  const maxItems = num(schema.maxItems);
-  if (maxItems !== null) facts.push(`up to ${maxItems} items`);
-  if (schema.default !== undefined) facts.push(`default ${JSON.stringify(schema.default)}`);
-  return facts;
-}
-
-type Param = { name: string; type: string; required: boolean; description: string; limits: string[] };
-
-function paramsOf(schema: Rec | null): Param[] {
-  if (schema === null) return [];
-  const defs = rec(schema.$defs) ?? rec(schema.definitions);
-  const required = new Set(arr(schema.required).filter((r): r is string => typeof r === 'string'));
-  const params: Param[] = [];
-  const add = (props: Rec | null, req: Set<string>): void => {
-    for (const [name, value] of Object.entries(props ?? {})) {
-      const p = rec(value) ?? {};
-      params.push({
-        name,
-        type: typeText(p, defs),
-        required: req.has(name),
-        description: str(p.description) ?? '',
-        limits: limitsText(p),
-      });
-    }
-  };
-  add(rec(schema.properties), required);
-  // Flattened parts (`#[serde(flatten)]`) can appear as allOf members.
-  for (const part of arr(schema.allOf)) {
-    const resolved = rec(part);
-    const ref = str(resolved?.$ref);
-    const target = ref !== null ? rec(defs?.[ref.split('/').pop() ?? '']) : resolved;
-    add(rec(target?.properties), new Set(arr(target?.required).filter((r): r is string => typeof r === 'string')));
-  }
-  return params;
-}
 
 function ToolDocument(props: { state: CallState }): JSX.Element | null {
   const document = str(rec(resultOfDone(props.state))?.document);
@@ -443,9 +330,9 @@ function helpBody(topic: string, startLine: number): unknown {
 
 type Viewing = { kind: 'topic'; id: string } | { kind: 'tool'; name: string };
 
-type TopicView = { reply: HelpReply; content: string } | { problem: Problem } | null;
+type TopicView = { reply: HelpReply; content: string; problem?: Problem; observations?: readonly CallResult[] } | { problem: Problem } | null;
 
-export function Help(): JSX.Element {
+export function Help(props: BundledHelpProps = {}): JSX.Element {
   const [catalog, runCatalog] = useCall();
   const [toolHelp, runToolHelp] = useCall();
   const [topicCall, runTopic] = useCall();
@@ -461,14 +348,18 @@ export function Help(): JSX.Element {
     setView({ kind: 'topic', id });
     if (start === 1) setTopicView(null);
     const ticket = ++latest.current;
-    const answer = helpReplyOf(await runTopic(OPS.searchCall, helpBody(id, start)));
+    const result = await runTopic(OPS.searchCall, helpBody(id, start));
+    const answer = helpReplyOf(result);
     if (ticket !== latest.current) return;
     if ('problem' in answer) {
-      setTopicView(answer);
+      setTopicView(current => start > 1 && current !== null && 'reply' in current
+        ? { ...current, problem: answer.problem, observations: [...(current.observations ?? []), result] }
+        : answer);
       return;
     }
     const content = previous === '' ? answer.reply.content : `${previous}\n${answer.reply.content}`;
-    setTopicView({ reply: answer.reply, content });
+    setTopicView(current => ({ reply: answer.reply, content,
+      observations: [...(start > 1 && current !== null && 'reply' in current ? current.observations ?? [] : []), result] }));
     const listed = arr(answer.reply.topics)
       .map((t) => rec(t))
       .filter((t): t is Rec => t !== null && typeof t.id === 'string')
@@ -500,6 +391,8 @@ export function Help(): JSX.Element {
   const catalogProblem = catalog.phase === 'done' ? callProblem(catalog.result) : null;
 
   return (
+    <>
+    <BundledHelp {...props} />
     <div class="help-layout">
       <aside class="help-index" aria-label="Help topics and tools">
         <label class="field">
@@ -570,6 +463,7 @@ export function Help(): JSX.Element {
       </aside>
 
       <section class="panel help-view" aria-live="polite">
+        {view.kind === 'topic' ? <SharedPilotPane read={{ kind: 'help-topic', topic: view.id, startLine: 1 }} /> : null}
         {view.kind === 'topic' ? (
           <TopicPane
             state={topicCall}
@@ -592,6 +486,7 @@ export function Help(): JSX.Element {
         )}
       </section>
     </div>
+    </>
   );
 }
 
@@ -604,7 +499,7 @@ function TopicPane(props: {
   return (
     <>
       {props.state.phase === 'pending' && v === null ? <p class="muted">Loading help…</p> : null}
-      {v !== null && 'problem' in v ? <ProblemLine problem={v.problem} /> : null}
+      {v !== null && 'problem' in v && v.problem !== undefined ? <ProblemLine problem={v.problem} /> : null}
       {v !== null && 'reply' in v ? (
         <article class="help-doc">
           <h2>
@@ -624,10 +519,12 @@ function TopicPane(props: {
                 disabled={props.state.phase === 'pending' || num(v.reply.next_line) === null}
                 onClick={() => props.onMore(v.reply, v.content)}
               >
-                Show the rest
+                Load next section
               </button>
             </div>
           ) : null}
+          {v.observations && v.observations.length > 0 ? <details><summary>Complete received section outcomes (JSON)</summary>
+            <JsonBlock name="airk-help-sections.json" value={v.observations} /></details> : null}
         </article>
       ) : null}
       <Complete state={props.state} label="Last help call: complete result (JSON)" />

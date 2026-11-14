@@ -23,6 +23,73 @@ class Emitter<T> {
     dispose():void{this.listeners.clear();}
 }
 const A='aa'.repeat(32),B='bb'.repeat(32);
+
+test('A7 Workbench custom request matches the actual Rust public Answer case and complete bundled input schema',async()=>{
+    const root=path.resolve(__dirname,'../../../..');
+    const native=JSON.parse(await fs.readFile(path.join(root,'fixtures/split/arbiter/public_answer_cases.json'),'utf8'));
+    assert.equal(native.schema,'airk.arbiter.public-answer-cases/1');
+    assert.equal(native.public_tool,'answer');assert.equal(native.native_tool,'airk_answer');
+    assert.equal(native.maximum_question_utf8_bytes,16384);
+    const manifest=JSON.parse(await fs.readFile(path.join(root,'packages/ui/generated/help-manifest.json'),'utf8'));
+    assert.deepEqual(manifest.tools.find((tool:{name:string})=>tool.name==='answer').inputSchema,native.input_schema,'the complete native public schema is retained without projection');
+    const example=native.examples.find((row:{name:string})=>row.name==='complete_native_request');
+    assert.equal(example.accepted,true);
+    const f=fixture();
+    try{
+        await f.state.select(A);await tick();f.respond(async()=>({payload:{schema:'airk.arbiter.context/1',records:[],paragraphs:[]}}));
+        await f.state.message({type:'answer',question:example.arguments.question,budget:example.arguments.budget});
+        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,example.arguments,'all native custom budget fields and the mandatory native schema travel unchanged');
+    }finally{f.provider.dispose();}
+});
+
+// Renderer/host controls use synthetic opaque responses, not native parity evidence.
+test('A7 actual Workbench answer uses original bounded request and keeps complete result in copy/export', async () => {
+    const f = fixture();
+    const native: Value = { schema: 'airk.arbiter.context/1', question: 'Find the ownership fence', paragraphs: [], records: [], gaps: ['definition'],
+        stop: 'no_valid_read', candidate_count: 0, omitted_count: 2, applications: [], work: { calls: 1 }, advice: [], future_native_field: { all: ['retained'] } };
+    try {
+        await f.state.select(A); await tick();
+        f.respond(async tool => ({ payload: tool === 'airk_answer' ? native : { tag: tool } }));
+        await f.state.message({ type: 'answer', question: 'Find the ownership fence' }); await f.state.saveQueue;
+        const request = f.created[0].requests.find(entry => entry.tool === 'airk_answer');
+        assert.deepEqual(request?.args, { schema: 'airk.arbiter.context.request/1', question: 'Find the ownership fence',
+            budget: { calls: 8, rounds: 3, fanout: 8, input_tokens: 2048, candidates: 32, max_bytes: 262144, deadline_ms: 30000 } });
+        const turn = f.state.session!.turns.at(-1)!; assert.deepEqual(turn.envelope, native);
+        const exported = JSON.parse(renderExport(f.state.session!, 'json', turn.id));
+        assert.deepEqual(exported.turns[0].envelope, native);
+        assert.match(renderExport(f.state.session!, 'markdown', turn.id), /future_native_field/);
+        await f.state.message({ type: 'rerun', turn: turn.id });
+        assert.equal(f.created[0].calls.filter(tool => tool === 'airk_answer').length, 2);
+        assert.equal(f.created[0].calls.filter(tool => tool === 'airk_parse').length, 0, 'answer rerun never changes into a neighboring parser/context read');
+    } finally { f.provider.dispose(); }
+});
+test('A7 late answer cannot cross the existing window authority fence', async () => {
+    const f = fixture(), held = deferred<{ payload: Value }>();
+    try {
+        await f.state.select(A); await tick();
+        f.respond(tool => tool === 'airk_answer' ? held.promise : Promise.resolve({ payload: { tag: tool } }));
+        const reading = f.state.message({ type: 'answer', question: 'Original window question' }); await tick();
+        f.scope('replacement-window-grant');
+        held.resolve({ payload: { schema: 'airk.arbiter.context/1', complete: 'late-private-original' } });
+        await reading;
+        assert.ok(!f.state.session!.turns.some(turn => turn.envelope?.complete === 'late-private-original'));
+    } finally { held.resolve({ payload: {} }); f.provider.dispose(); }
+});
+
+test('A7 full question and custom budget survive request transport rerun and complete exports',async()=>{
+    const f=fixture(),question='é'.repeat(8192),budget={calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200};
+    try{
+        await f.state.select(A);await tick();f.respond(async()=>({payload:{schema:'airk.arbiter.context/1',question,records:[],paragraphs:[]}}));
+        await f.state.message({type:'answer',question,budget});await f.state.saveQueue;
+        const turn=f.state.session!.turns.at(-1)!;
+        assert.equal(turn.input.length,4096);assert.equal(turn.request?.question,question);
+        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,{schema:'airk.arbiter.context.request/1',question,budget});
+        assert.equal(JSON.parse(renderExport(f.state.session!,'json',turn.id)).turns[0].request.question,question);
+        assert.ok(renderExport(f.state.session!,'markdown',turn.id).includes(question));
+        await f.state.message({type:'rerun',turn:turn.id});
+        assert.deepEqual(f.created[0].requests.filter(entry=>entry.tool==='airk_answer').at(-1)?.args,{schema:'airk.arbiter.context.request/1',question,budget});
+    }finally{f.provider.dispose();}
+});
 const spec=(project:string):LaunchSpec=>({command:'/fixture/airk',root:`/fixture/${project}`,dataDir:`/fixture/data-${project}`,collection:'fixture',name:project===A?'A':'B',service:{installDir:'/fixture/runtime',project}});
 function fixture(attach=false) {
     let specs=[spec(A),spec(B)],trusted=true,native=true,scopeIdentity:string|undefined,scopeGeneration=0;

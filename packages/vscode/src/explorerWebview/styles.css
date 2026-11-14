@@ -224,6 +224,9 @@ textarea { width: 100%; font-family: var(--vscode-editor-font-family); resize: v
 textarea { min-height: 4rem; }
 .callout code, .help-topic { overflow-wrap: anywhere; }
 .help-topic { min-width: 0; }
+.help-topic table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.help-topic th, .help-topic td { padding: 0.4rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--airk-border); }
+.help-table { max-width: 100%; overflow-x: auto; }
 
 .help { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr); gap: 1.5rem; }
 .help-index input { width: 100%; margin-bottom: 0.4rem; }

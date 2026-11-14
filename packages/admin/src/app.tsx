@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The admin shell: session gate, navigation and the end-of-session screens.
-import type { JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import type { ComponentChildren, JSX } from 'preact';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ParsedResponse } from './envelope';
 import { IndexLibrary } from './indexLibrary';
 import { Activity } from './activity';
@@ -11,6 +11,12 @@ import { Logs, Overview, Recovery, Search, Service, Storage } from './pages';
 import { Text } from './render';
 import { currentSession, logout, onSessionChange, takeInitialRoute, type Session } from './session';
 import { Usage } from './usage';
+import { BundledHelp } from './bundledHelp';
+import { browserDestination, MAIN_DESTINATIONS } from '../../ui/src/navigation';
+import { PreparedActions } from './preparedActions';
+import { Arbiter } from './arbiter';
+import { onPreparationChange } from './api';
+import { PageVisible } from './pageVisibility';
 
 const PAGES = [
   ['overview', 'Overview'],
@@ -26,7 +32,7 @@ const PAGES = [
   ['help', 'Help'],
 ] as const;
 
-type PageId = (typeof PAGES)[number][0];
+export type PageId = (typeof PAGES)[number][0];
 
 /**
  * A page route from the fragment, `#<page>[?<query>]`, for example
@@ -134,21 +140,48 @@ function Signed(props: { gate: Gate }): JSX.Element {
   }
 }
 
-export function App(props: { initialGate: Gate }): JSX.Element {
+export function App(props: { initialGate: Gate; embedded?: boolean; active?: boolean; initialPage?: PageId; onPageChange?: (page: PageId) => void }): JSX.Element {
   const [session, setSession] = useState<Session | null>(currentSession());
+  const sessionOwner = useRef({ session, generation: 0 });
+  if (sessionOwner.current.session !== session) sessionOwner.current = { session, generation: sessionOwner.current.generation + 1 };
+  const [, refreshPrepared] = useState(0);
+  useEffect(() => onPreparationChange(() => refreshPrepared(value => value + 1)), [session]);
   const [gate, setGate] = useState<Gate>(props.initialGate);
   const [route, setRoute] = useState<Route>(() => {
+    if (props.embedded) return { page: props.initialPage ?? 'overview', params: new URLSearchParams(), seq: 0 };
     const initial = takeInitialRoute();
     return (initial === null ? null : parseRoute(initial, 1)) ?? { page: 'overview', params: new URLSearchParams(), seq: 0 };
   });
   const page = route.page;
+  const retained = useRef({ generation: sessionOwner.current.generation, routes: new Map<PageId, Route>() });
+  if (retained.current.generation !== sessionOwner.current.generation) retained.current = { generation: sessionOwner.current.generation, routes: new Map() };
+  if (session !== null && props.embedded) retained.current.routes.set(page, route);
+  const pageRoute = (id: PageId): Route => retained.current.routes.get(id) ?? route;
+  const view = (id: PageId, children: ComponentChildren): ComponentChildren => page === id || (props.embedded && retained.current.routes.has(id))
+    ? <section hidden={page !== id}><PageVisible.Provider value={page === id && props.active !== false}>{children}</PageVisible.Provider></section> : null;
+  // The Explorer owns navigation in the embedded host. Synchronize without
+  // remounting the exact-session draft/result owners or sending navigation back.
+  useLayoutEffect(() => {
+    if (props.embedded && props.initialPage !== undefined) setRoute(current => current.page === props.initialPage ? current
+      : { page: props.initialPage!, params: new URLSearchParams(), seq: current.seq + 1 });
+  }, [props.embedded, props.initialPage]);
   const setPage = (id: PageId): void => {
     setRoute((current) => ({ page: id, params: new URLSearchParams(), seq: current.seq + 1 }));
+    props.onPageChange?.(id);
     // Keeps a same-tab reload on this page; replaceState fires no hashchange.
-    window.history.replaceState(null, '', `#${id}`);
+    if (!props.embedded) window.history.replaceState(null, '', `#${id}`);
+  };
+  const navigateHelp = (params: URLSearchParams, replace: boolean): void => {
+    setRoute(current => ({ page: 'help', params, seq: current.seq + 1 }));
+    const destination = `#help${params.size ? `?${params}` : ''}`;
+    if (!props.embedded) {
+      if (replace) window.history.replaceState(null, '', destination);
+      else window.history.pushState(null, '', destination);
+    }
   };
 
   useEffect(() => {
+    if (props.embedded) return;
     const onHash = (): void => {
       const hash = window.location.hash;
       // A launch code never stays in the address bar (review M1); it is used once, on load.
@@ -160,9 +193,11 @@ export function App(props: { initialGate: Gate }): JSX.Element {
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  }, [props.embedded]);
 
-  useEffect(
+  // Observe session revocation before mounted controls can issue a request.
+  // A passive listener can miss an immediate native auth-ended notification.
+  useLayoutEffect(
     () =>
       onSessionChange((next) => {
         setSession(next);
@@ -181,13 +216,16 @@ export function App(props: { initialGate: Gate }): JSX.Element {
     return (
       <div class="gate">
         <h1>AIRK Admin</h1>
-        <Signed gate={gate} />
+        {props.embedded ? <p>The captured native management session ended. Reopen management after verifying the service connection. No original action will be replayed.</p> : <Signed gate={gate} />}
+        {page === 'help' ? <BundledHelp params={route.params} seq={route.seq} onNavigate={navigateHelp} />
+          : <button type="button" class="secondary" onClick={() => setPage('help')}>Read offline Help</button>}
       </div>
     );
   }
 
   return (
     <div class="layout">
+      {!props.embedded ? <>
       <header>
         <span class="brand">AIRK Admin</span>
         <span class="muted instance" title="service instance">
@@ -197,35 +235,39 @@ export function App(props: { initialGate: Gate }): JSX.Element {
           Sign out
         </button>
       </header>
-      <nav aria-label="Pages">
-        {PAGES.map(([id, label]) => (
+      <nav aria-label="AIRK main navigation">
+        {MAIN_DESTINATIONS.map(({ id, title, browser: target }) => (
           <button
             key={id}
             type="button"
-            class={id === page ? 'nav current' : 'nav'}
-            aria-current={id === page ? 'page' : undefined}
-            onClick={() => setPage(id)}
+            class={id === browserDestination(page) ? 'nav current' : 'nav'}
+            aria-current={id === browserDestination(page) ? 'page' : undefined}
+            onClick={() => setPage(target)}
           >
-            {label}
+            {title}
           </button>
         ))}
       </nav>
-      <main>
-        {page === 'overview' ? <Overview /> : null}
-        {page === 'index-library' ? (
-          <IndexLibrary params={route.params} seq={route.seq} onActivity={() => setPage('activity')} />
-        ) : null}
-        {page === 'activity' ? <Activity /> : null}
-        {page === 'agents' ? <Agents /> : null}
-        {page === 'storage' ? <Storage /> : null}
-        {page === 'recovery' ? <Recovery /> : null}
-        {page === 'service' ? (
-          <Service onLifecycle={(action) => endWith({ kind: action === 'stop' ? 'stopped' : 'restarted' })} />
-        ) : null}
-        {page === 'logs' ? <Logs /> : null}
-        {page === 'usage' ? <Usage /> : null}
-        {page === 'search' ? <Search /> : null}
-        {page === 'help' ? <Help /> : null}
+      </> : null}
+      <main key={sessionOwner.current.generation}>
+        <PreparedActions />
+        {browserDestination(page) === 'activity' ? <div class="actions" aria-label="Activity views">{(['activity', 'logs', 'usage'] as const).map(id =>
+          <button type="button" class={page === id ? '' : 'secondary'} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{PAGES.find(entry => entry[0] === id)![1]}</button>)}</div> : null}
+        {browserDestination(page) === 'service' ? <div class="actions" aria-label="Service views">{(['service', 'storage', 'recovery'] as const).map(id =>
+          <button type="button" class={page === id ? '' : 'secondary'} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{PAGES.find(entry => entry[0] === id)![1]}</button>)}</div> : null}
+        {view('overview', <Overview />)}
+        {view('index-library', <IndexLibrary params={pageRoute('index-library').params} seq={pageRoute('index-library').seq} onActivity={() => setPage('activity')} />)}
+        {view('activity', <Activity />)}
+        {view('agents', <Agents />)}
+        {view('storage', <Storage />)}
+        {view('recovery', <Recovery />)}
+        {view('service',
+          <><Service onLifecycle={(action) => endWith({ kind: action === 'stop' ? 'stopped' : 'restarted' })} />
+            <details class="panel"><summary>Optional local Arbiter</summary><Arbiter /></details></>)}
+        {view('logs', <Logs />)}
+        {view('usage', <Usage />)}
+        {view('search', <Search />)}
+        {view('help', <Help params={pageRoute('help').params} seq={pageRoute('help').seq} onNavigate={navigateHelp} />)}
       </main>
     </div>
   );

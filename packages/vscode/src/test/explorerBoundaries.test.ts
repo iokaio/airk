@@ -10,7 +10,7 @@ import {build as bundle} from 'esbuild';
 // test reads the TypeScript sources directly (out/test → ../../src).
 const source = path.resolve(__dirname, '..', '..', 'src');
 const compiled = path.resolve(__dirname, '..');
-const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
+const CONTRACTS = new Set(['adminUiContract', 'explorerContracts', 'uiPilotContract', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
 const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class NativeSession', 'class IntentJournal', 'class PrivateIntentStore', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
@@ -32,6 +32,11 @@ function target(from: string, specifier: string): string {
 const relative = (specifier: string) => specifier.startsWith('./') || specifier.startsWith('../');
 const contract = (from: string, specifier: string) => relative(specifier) && CONTRACTS.has(target(from, specifier));
 const within = (from: string, specifier: string, directory: string) => relative(specifier) && target(from, specifier).startsWith(directory + '/');
+function typeOnly(from: string, specifier: string): boolean {
+    const tree = ts.createSourceFile(from, fs.readFileSync(from, 'utf8'), ts.ScriptTarget.Latest, true);
+    return tree.statements.some(statement => ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
+        && statement.moduleSpecifier.text === specifier && statement.importClause?.isTypeOnly === true);
+}
 
 test('the standalone uninstall hook bundles only itself and Node built-ins (plan §8.5)',async()=>{
     const result=await bundle({absWorkingDir:path.dirname(source),entryPoints:['src/uninstallHook.ts'],bundle:true,write:false,metafile:true,
@@ -45,7 +50,8 @@ test('Explorer contract modules depend only on other contract modules', () => {
         const file = path.join(source, name + '.ts');
         if (!fs.existsSync(file)) { continue; }
         for (const specifier of imports(file)) {
-            assert.ok(contract(file, specifier), `${name} imports ${specifier}; contracts must stay free of Node, vscode and host modules`);
+            const generated = name === 'uiPilotContract' && specifier === './generated/i2' && typeOnly(file, specifier);
+            assert.ok(contract(file, specifier) || generated, `${name} imports ${specifier}; contracts must stay free of Node, vscode and host modules`);
         }
     }
 });
@@ -96,7 +102,9 @@ test('the standalone uninstall bundle retains no Indexing controller, Preact or 
 
 test('native read retry validators retain a pure shared dependency boundary',()=>{
     const file=path.join(source,'readRetry.ts');
-    assert.deepEqual(imports(file),['node:util','./catalogSession']);
+    // Rust I2 owns caller binding/selection types; this import emits no runtime dependency.
+    assert.deepEqual(imports(file),['node:util','./generated/i2','./catalogSession']);
+    assert.equal(typeOnly(file,'./generated/i2'),true);
     assert.ok(imports(path.join(source,'explorerEvidence.ts')).includes('./readRetry'));
     const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
     for(const statement of tree.statements)assert.ok(ts.isImportDeclaration(statement)||ts.isFunctionDeclaration(statement),
@@ -121,9 +129,44 @@ test('Explorer webview sources import only Preact, their own files and contracts
     assert.ok(files.length > 0, 'webview sources are present');
     for (const file of files) {
         for (const specifier of imports(file)) {
-            const allowed = WEBVIEW_PACKAGES.has(specifier) || within(file, specifier, 'explorerWebview') || contract(file, specifier);
+            // The approved native management consumer reuses the one Admin
+            // presentation and its credential-free native lifetime facade.
+            // This exception belongs only to that named consumer, never to
+            // arbitrary editor views or any Node/host implementation.
+            const management = path.basename(file) === 'sharedManagement.tsx' && (
+                ['../../ui/src/management', '../../ui/src/nativeSessionLifetime', '../../admin/src/session', '../../admin/src/envelope'].includes(target(file, specifier))
+                || target(file, specifier) === '../../ui/src/apiPort' && typeOnly(file, specifier)
+                || specifier === 'airk-shared-admin-css');
+            const shared = target(file, specifier) === '../../ui/src/pilotPresentation'
+                || target(file, specifier) === '../../ui/src/helpSearch'
+                || target(file, specifier) === '../../ui/src/helpMarkdown'
+                || target(file, specifier) === '../../ui/src/helpToolPresentation'
+                || target(file, specifier) === '../../ui/src/navigation'
+                || target(file, specifier) === '../../ui/generated/help-manifest.json' && typeOnly(file, specifier)
+                || target(file, specifier) === '../../ui/src/pilotContract' && typeOnly(file, specifier);
+            const allowed = WEBVIEW_PACKAGES.has(specifier) || within(file, specifier, 'explorerWebview') || contract(file, specifier) || shared || management;
             assert.ok(allowed, `${path.relative(source, file)} imports ${specifier}`);
         }
+    }
+});
+
+test('the shared pilot presenter has no browser, native or Preact runtime dependency', () => {
+    const presenter = path.resolve(source, '../../ui/src/pilotPresentation.ts');
+    assert.deepEqual(imports(presenter), ['./pilotContract', './pilotProjection']);
+    assert.equal(typeOnly(presenter, './pilotContract'), true);
+    const projector = path.resolve(source, '../../ui/src/pilotProjection.ts');
+    assert.deepEqual(imports(projector), ['./pilotContract']);
+    assert.equal(typeOnly(projector, './pilotContract'), true);
+    const forbidden = new Set(['window', 'document', 'fetch', 'require', 'dangerouslySetInnerHTML', 'innerHTML']);
+    for (const file of [presenter, projector]) {
+        const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+        const visit = (node: ts.Node): void => {
+            // Native payload properties such as response.document are data, not DOM globals.
+            const property = node.parent !== undefined && ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
+            if (ts.isIdentifier(node) && !property) assert.ok(!forbidden.has(node.text), node.text);
+            ts.forEachChild(node, visit);
+        };
+        visit(tree);
     }
 });
 

@@ -3,7 +3,7 @@
 // `node build.mjs` writes the sealed asset set; `node build.mjs --check` rebuilds into a
 // temporary directory and fails when the output directory differs from that rebuild.
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,8 @@ const CONTENT_TYPES = {
 
 // The repository's license header, first in every emitted script and stylesheet.
 const SPDX = '/* SPDX-License-Identifier: Apache-2.0 */';
+// Keep native Help whitespace inside escaped strings, never physical JS lines.
+export const JAVASCRIPT_SUPPORTED = Object.freeze({ 'template-literal': false });
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const sri = (bytes) => `sha256-${createHash('sha256').update(bytes).digest('base64')}`;
@@ -38,11 +40,12 @@ function checkOperations() {
   const admin = new Set(
     table.operations.filter((row) => row.surfaces.includes('admin')).map((row) => row.operation),
   );
-  const source = readFileSync(join(here, 'src', 'operations.ts'), 'utf8');
+  // The single pure C9/browser UI catalog retains the exact pre-migration OPS.
+  const source = readFileSync(join(here, '../vscode/src/adminUiContract.ts'), 'utf8');
   const block = source.match(/export const OPS = \{([\s\S]*?)\} as const;/);
-  if (!block) throw new Error('src/operations.ts: OPS table not found');
+  if (!block) throw new Error('adminUiContract.ts: OPS table not found');
   const used = [...block[1].matchAll(/'([a-z_]+\.[a-z_]+)'/g)].map((m) => m[1]);
-  if (used.length === 0) throw new Error('src/operations.ts: OPS table is empty');
+  if (used.length === 0) throw new Error('adminUiContract.ts: OPS table is empty');
   const missing = used.filter((op) => !admin.has(op));
   if (missing.length > 0) {
     throw new Error(`operations without an admin surface in ${operationsFixture}: ${missing.join(', ')}`);
@@ -68,6 +71,7 @@ async function bundle() {
     format: 'esm',
     platform: 'browser',
     target: ['es2022'],
+    supported: JAVASCRIPT_SUPPORTED,
     minify: true,
     sourcemap: false,
     legalComments: 'eof',
@@ -146,25 +150,29 @@ function compare(expected, actualDir) {
   return problems;
 }
 
-const check = process.argv.includes('--check');
-if (check) {
-  const temp = mkdtempSync(join(tmpdir(), 'airk-admin-'));
-  try {
-    const rebuilt = await build(temp);
-    const problems = compare(rebuilt, outDir);
-    if (problems.length > 0) {
-      console.error(`admin assets in ${outDir} are stale; run \`npm run build\` in packages/admin:`);
-      for (const problem of problems) console.error(`  ${problem}`);
-      process.exitCode = 1;
-    } else {
-      console.log(`admin assets up to date (${rebuilt.size} files)`);
+async function main() {
+  const check = process.argv.includes('--check');
+  if (check) {
+    const temp = mkdtempSync(join(tmpdir(), 'airk-admin-'));
+    try {
+      const rebuilt = await build(temp);
+      const problems = compare(rebuilt, outDir);
+      if (problems.length > 0) {
+        console.error(`admin assets in ${outDir} are stale; run \`npm run build\` in packages/admin:`);
+        for (const problem of problems) console.error(`  ${problem}`);
+        process.exitCode = 1;
+      } else {
+        console.log(`admin assets up to date (${rebuilt.size} files)`);
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
-} else {
-  const files = await build(outDir);
-  for (const [name, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
-    console.log(`${name}\t${bytes.length} bytes`);
+  } else {
+    const files = await build(outDir);
+    for (const [name, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+      console.log(`${name}\t${bytes.length} bytes`);
+    }
   }
 }
+// Importing the producer exposes its real code-generation policy without writes.
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) await main();

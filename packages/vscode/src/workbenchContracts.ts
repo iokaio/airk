@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Pure host/webview contract. Evidence content is always inert text. */
 import type { PublicationRelation } from './publications';
+import type { Budget } from './generated/arbiter';
+export const WORKBENCH_CONTEXT_BUDGET: Readonly<Budget> = Object.freeze({ calls: 8, rounds: 3, fanout: 8, input_tokens: 2048, candidates: 32, max_bytes: 262144, deadline_ms: 30000 });
 export type Value = Record<string, unknown>;
 /** Core workbench::MAX_STEP_REPORTS: twelve calls with six bound report slots. */
 export const WORKBENCH_MAX_STEP_REPORTS=72;
@@ -192,6 +194,7 @@ export function toolFormArguments(schema:unknown,values:Record<string,string>,co
     return Object.fromEntries(entries);
 }
 export type WorkbenchMessage =
+    | { type: 'answer'; question: string; budget?: Budget }
     | {type:'exportReferenceRefresh';id:string;format:'json'|'markdown';action:'copy'|'save'}
     | {type:'refreshReferences';turn:string;cards:string[];mode:'selected_only'|'full_reconcile_reviewed'}
     | {type:'checkReferenceRefresh'|'requeryReferenceRefresh';id:string}
@@ -217,6 +220,10 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
     const v = object(raw), type = v.type;
     const str = (k: string, max = 128) => typeof v[k] === 'string' && (v[k] as string).length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v[k] as string);
     const exact = (keys: string[]) => Object.keys(v).every(k => keys.includes(k));
+    if (type === 'answer' && exact(['type', 'question', 'budget']) && str('question', 16384)
+        && new TextEncoder().encode(String(v.question)).length <= 16384 && String(v.question).trim()
+        && (v.budget === undefined || (Object.keys(object(v.budget)).length === Object.keys(WORKBENCH_CONTEXT_BUDGET).length
+            && Object.keys(WORKBENCH_CONTEXT_BUDGET).every(key => Number.isSafeInteger(object(v.budget)[key]) && Number(object(v.budget)[key]) >= 0)))) return v as WorkbenchMessage;
     if (typeof type !== 'string' || JSON.stringify(raw).length > (type==='formDraft'?132096:40000)) { return; }
     const formFence=()=>str('sessionId')&&str('project',64)&&/^[0-9a-f]{64}$/.test(String(v.project))
         &&Number.isSafeInteger(v.epoch)&&Number(v.epoch)>=0&&Number.isSafeInteger(v.revision)&&Number(v.revision)>0&&Number(v.revision)<=2147483647

@@ -30,7 +30,8 @@ test('offline help includes every native engine topic, four role journeys, index
     const catalog = build.helpCatalog(), index = new HelpIndex(catalog);
     for (const id of build.engineTopics()) {
         const topic = catalog.topics.find(topic => topic.id === `engine.${id}`); assert.ok(topic, `offline engine guide ${id}`);
-        assert.equal(topic.source, 'crates/airk-mcp/src/help/topics.rs'); assert.equal(topic.applicability, 'implemented'); assert.ok(topic.body.length > 40);
+        // The merged guide consumes the exact Rust-emitted public content, not parsed Rust literals.
+        assert.equal(topic.source, 'crates/airk-mcp/src/help/content.json'); assert.equal(topic.applicability, 'implemented'); assert.ok(topic.body.length > 40);
     }
     for (const role of ['developer', 'tester', 'architect', 'writer']) {
         const topic = index.topic(`role-${role}`)!; assert.ok(topic); assert.match(topic.body, /## Steps/); assert.ok(topic.relatedAirkHelp.includes('indexing-choices'));

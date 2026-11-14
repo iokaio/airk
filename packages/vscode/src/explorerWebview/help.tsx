@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Notice, noticeKey } from './notices';
 import catalog from 'airk-explorer-help';
-import { ComponentChildren } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { ABOUT_LINKS, EngineHelpView, HelpTopic } from '../explorerContracts';
+import { h, type ComponentChildren, type VNode } from 'preact';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { ABOUT_LINKS, EngineHelpView } from '../explorerContracts';
 import { parseRoute } from '../explorerRoutes';
 import { request } from './api';
 import type { ScreenProps } from './workspaces';
+import { SharedPilotPane } from './pilotPane';
+import { helpExcerpt, helpScore } from '../../../ui/src/helpSearch';
+import { blocks, type Block } from '../../../ui/src/helpMarkdown';
+import { helpToolPresentation, renderHelpNode } from '../../../ui/src/helpToolPresentation';
 
 /** Inline `code` and **bold** only; everything renders as text, never HTML. */
 function inline(text: string): ComponentChildren[] {
@@ -14,46 +18,43 @@ function inline(text: string): ComponentChildren[] {
         part.startsWith('`') ? <code key={index}>{part.slice(1, -1)}</code> : part.startsWith('**') ? <strong key={index}>{part.slice(2, -2)}</strong> : part);
 }
 
-/** Minimal Markdown: headings, paragraphs, bulleted and numbered lists. */
+/** Shared safe block parser; text and inline spans use this host's Preact runtime. */
 export function Markdown(props: { text: string }) {
-    const blocks: ComponentChildren[] = [];
-    let list: { ordered: boolean; items: string[] } | undefined;
-    let paragraph: string[] = [];
-    const flush = () => {
-        if (paragraph.length) { blocks.push(<p key={blocks.length}>{inline(paragraph.join(' '))}</p>); paragraph = []; }
-        if (list) { const items = list.items.map((item, index) => <li key={index}>{inline(item)}</li>); blocks.push(list.ordered ? <ol key={blocks.length}>{items}</ol> : <ul key={blocks.length}>{items}</ul>); list = undefined; }
-    };
-    for (const line of props.text.split('\n')) {
-        const heading = /^(#{1,3})\s+(.*)$/.exec(line), bullet = /^[-*]\s+(.*)$/.exec(line), numbered = /^\d+\.\s+(.*)$/.exec(line);
-        if (heading) { flush(); blocks.push(heading[1].length === 1 ? <h2 key={blocks.length}>{inline(heading[2])}</h2> : <h3 key={blocks.length}>{inline(heading[2])}</h3>); }
-        else if (bullet || numbered) {
-            if (paragraph.length) { blocks.push(<p key={blocks.length}>{inline(paragraph.join(' '))}</p>); paragraph = []; }
-            const ordered = !!numbered;
-            if (list && list.ordered !== ordered) { flush(); }
-            list ??= { ordered, items: [] }; list.items.push((bullet ?? numbered)![1]);
-        } else if (!line.trim()) { flush(); }
-        else { if (list) { flush(); } paragraph.push(line.trim()); }
-    }
-    flush();
-    return <div class="markdown">{blocks}</div>;
+    return <MarkdownBlocks values={blocks(props.text)} />;
+}
+function MarkdownBlocks(props: { values: readonly Block[] }) {
+    return <div class="markdown">{props.values.map(block => {
+        switch (block.kind) {
+            case 'heading': return block.level === 1 ? <h2>{inline(block.text)}</h2> : <h3>{inline(block.text)}</h3>;
+            case 'para': return <p>{inline(block.text)}</p>;
+            case 'code': return <pre class="log">{block.text}</pre>;
+            case 'list': {
+                const items = block.items.map(item => <li>{inline(item.text)}<MarkdownBlocks values={item.children} /></li>);
+                return block.ordered ? <ol start={block.start}>{items}</ol> : <ul>{items}</ul>;
+            }
+            case 'table': return <div class="help-table"><table><thead><tr>{block.headers.map(cell => <th>{inline(cell)}</th>)}</tr></thead>
+                <tbody>{block.rows.map(row => <tr>{row.map(cell => <td>{inline(cell)}</td>)}</tr>)}</tbody></table></div>;
+        }
+    })}</div>;
 }
 
-export function helpScore(topic: HelpTopic, query: string): number {
-    const phrase = query.trim().toLowerCase(), terms = [...new Set(phrase.match(/[a-z0-9]+/g) ?? [])];
-    if (!terms.length) { return 0; }
-    const title = topic.title.toLowerCase(), aliases = topic.aliases.join(' ').toLowerCase(), body = topic.body.toLowerCase();
-    return (topic.id === phrase ? 40 : 0) + (title.includes(phrase) ? 24 : 0) + (aliases.includes(phrase) ? 16 : 0)
-        + terms.reduce((score, term) => score + (title.includes(term) ? 8 : 0) + (aliases.includes(term) ? 6 : 0) + (body.includes(term) ? 1 : 0), 0);
-}
+export { helpScore } from '../../../ui/src/helpSearch';
 
 export function HelpScreen(props: ScreenProps) {
     const [query, setQuery] = useState('');
+    const [bundledTool, setBundledTool] = useState('');
     const [area, setArea] = useState('');
     const [referenceType, setReferenceType] = useState<'topic' | 'command' | 'tool'>('tool');
     const [reference, setReference] = useState('airk_search');
     const [lastQuery, setLastQuery] = useState<{ topic?: string; command?: string; tool?: string }>({});
     const [linkError, setLinkError] = useState<string>();
-    const [selected, setSelected] = useState<HelpTopic>(catalog.topics.find(topic => topic.id.replaceAll('.', '-') === props.route.focus) ?? catalog.topics.find(topic => topic.route === 'help') ?? catalog.topics[0]);
+    const [selected, setSelected] = useState<(typeof catalog.topics)[number]>(catalog.topics.find(topic => topic.id.replaceAll('.', '-') === props.route.focus) ?? catalog.topics.find(topic => topic.route === 'help') ?? catalog.topics[0]);
+    const article = useRef<HTMLElement>(null), previousTopic = useRef(selected.id);
+    useLayoutEffect(() => {
+        if (previousTopic.current === selected.id) return;
+        previousTopic.current = selected.id;
+        article.current?.focus(); article.current?.scrollIntoView({ block: 'start' });
+    }, [selected.id]);
     const [engine, setEngine] = useState<{ value?: EngineHelpView; error?: string; busy: boolean }>({ busy: false });
     const [showEngine, setShowEngine] = useState(false);
     const referenceEpoch = useRef(0);
@@ -91,7 +92,8 @@ export function HelpScreen(props: ScreenProps) {
                 })}</div>
                 <ul>{topics.map(topic => (
                     <li key={topic.id}><button type="button" class={topic.id === selected.id ? 'link current' : 'link'} onClick={() => { setSelected(topic); closeReference(); }}>
-                        {topic.title}{topic.applicability !== 'implemented' && <span class="tag">planned</span>}</button></li>
+                        {topic.title}{topic.applicability !== 'implemented' && <span class="tag">planned</span>}</button>
+                        {query.trim() && <p class="muted">{topic.area} · Preview: {helpExcerpt(topic.body, query)}</p>}</li>
                 ))}</ul>
                 {!topics.length && <p class="muted">No bundled topic matches. Try fewer words or choose a role above.</p>}
                 <button type="button" class="ghost" disabled={!props.state.trusted || !props.state.selectedProject} onClick={() => { void openEngine(); }}>Live AIRK engine reference</button>
@@ -103,7 +105,13 @@ export function HelpScreen(props: ScreenProps) {
                 </form>
                 <p class="muted">Bundled Explorer and engine guidance {catalog.extensionVersion}. Available offline; live reference needs an authorized project connection.</p>
             </aside>
-            <article class="help-topic">
+            <article ref={article} tabIndex={-1} class="help-topic">
+                <details><summary>Bundled public tool reference</summary>
+                    <label>Tool<select value={bundledTool} onChange={event => setBundledTool(event.currentTarget.value)}><option value="">Choose a tool</option>
+                        {catalog.tools.map(tool => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select></label>
+                    {catalog.tools.filter(tool => tool.name === bundledTool).map(tool => renderHelpNode<VNode>((tag, children) => h(tag, null, ...children), helpToolPresentation(tool)))}
+                </details>
+                <SharedPilotPane state={props.state} read={{ kind: 'help-topic', topic: selected.id.startsWith('engine.') ? selected.id.slice(7) : selected.relatedAirkHelp[0] ?? '', startLine: 1 }} />
                 {showEngine ? (
                     <section>
                         {engine.busy && <p class="muted">Reading airk_help…</p>}

@@ -18,6 +18,7 @@ import { acceptSearchSession, selectSearchProject } from './searchStore';
 import { Notice, NoticeContext, noticeKey } from './notices';
 import { AgentConfigAlert } from './projectStatus';
 import { openAdmin } from './adminLinks';
+import { editorDestination, MAIN_DESTINATIONS } from '../../../ui/src/navigation';
 
 interface Persisted { route?: string; lens?: string; themed?: boolean }
 
@@ -154,11 +155,10 @@ export function App() {
                         <p>Reload this window to load the updated interface and finish runtime activation. Saved indexing work is retained by the AIRK service.</p>
                         <button type="button" onClick={() => { void request('extension.reload', {}).catch(surface); }}>Reload to finish update</button>
                     </Notice>}
-                    {route.workspace === 'overview'
-                        ? <Overview state={state} project={project} go={go} />
-                        : <WorkspaceView route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
+                    {route.workspace === 'overview' ? <Overview state={state} project={project} go={go} /> : null}
+                    <div hidden={route.workspace === 'overview'}><WorkspaceView route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
                             inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }}
-                            runRecipe={recipe => { setIncoming(prior => ({ query: recipe.query, recipe, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' }); }} />}
+                            runRecipe={recipe => { setIncoming(prior => ({ query: recipe.query, recipe, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' }); }} /></div>
                 </main>
             </div>
             {palette && <Palette state={state} go={go} close={() => setPalette(false)} />}
@@ -235,9 +235,18 @@ function Rail(props: { route: Route; state: ExplorerViewState; go(route: Route):
         );
     };
     return (
-        <nav class="rail" aria-label="Explorer workspaces">
-            <div class="rail-caption" aria-hidden="true">Workspace</div>
-            <ul>{WORKSPACES.filter(entry => entry.placement === 'main' || entry.placement === 'pinned').map(entry => item(entry.id))}</ul>
+        <nav class="rail" aria-label="AIRK main navigation">
+            <div class="rail-caption" aria-hidden="true">AIRK</div>
+            <ul>{MAIN_DESTINATIONS.map(entry => {
+                const route = parseRoute(entry.editor)!;
+                const current = editorDestination(routeKey(props.route)) === entry.id;
+                return <li key={entry.id}><button type="button" title={entry.title} aria-label={entry.title} aria-current={current ? 'page' : undefined}
+                    class={current ? 'current' : ''} onClick={() => props.go(route)}><WorkspaceIcon name={route.workspace} /><span class="nav-label">{entry.title}</span>
+                    {props.state.features[entry.editor] !== 'implemented' && <span class="tag">preview</span>}</button></li>;
+            })}</ul>
+            <details open={['code', 'docs', 'evidence', 'review', 'strategies'].includes(props.route.workspace)}>
+                <summary>Explore evidence</summary><ul>{['code', 'docs', 'evidence', 'review', 'strategies'].map(id => item(id))}</ul>
+            </details>
         </nav>
     );
 }

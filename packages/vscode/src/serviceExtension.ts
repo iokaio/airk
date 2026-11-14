@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Composition root of the split extension (plan §8, §10.3). The extension
 //! reaches the AIRK Service only through the verified `airkctl` (I2) found by
-//! the install pointer (I4). It ships no native runtime and never installs,
-//! repairs, updates or removes the service; management lives in the admin
+//! the install pointer (I4). It ships no native runtime. An explicit user choice may acquire and run
+//! the verified official installer; management lives in the admin
 //! pages (`airkctl admin open`).
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import { InstallerBootstrap, nativeCompletionMatches, type BootstrapChoice } from './airkctl/bootstrap/controller';
+import { SystemInstaller } from './airkctl/bootstrap/system';
+import { targetOf } from './airkctl/bootstrap/release';
 // Name index modules explicitly: the isolated update loader resolves only `x`, `x.js` and
 // `x.json` (extensionUpdateLoader.ts), and the packager applies the same rule.
 import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState } from './airkctl/index';
@@ -31,6 +35,8 @@ function nativeExecutionSetting(): boolean {
     return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue !== false;
 }
 const REMOVED_ENTRIES_KEY = 'airk.agents.removedWithoutService';
+const INSTALL_DEFERRED_KEY = 'airk.installation.deferred';
+const INSTALL_PENDING_KEY = 'airk.installation.pending';
 const VSCODE_CONNECTION_KEY = 'airk.vscodeMcp.connection';
 const INCARNATION = /^[0-9a-f]{32}$/;
 
@@ -40,11 +46,13 @@ class SplitExtension implements vscode.Disposable {
     readonly airkctl: Airkctl;
     readonly host: AirkctlExplorerHost;
     readonly admin: AdminOpener;
+    readonly bootstrap: InstallerBootstrap;
     readonly definitions = new vscode.EventEmitter<void>();
     private explorer?: Promise<ExplorerController>;
     private explorerLoaded?: ExplorerController;
     private lastNotified?: string;
     private disposed = false;
+    private bootstrapProgress?: vscode.Progress<{message?:string}>;
     private readonly subscriptions: vscode.Disposable[] = [];
 
     constructor(private readonly context: vscode.ExtensionContext) {
@@ -60,6 +68,53 @@ class SplitExtension implements vscode.Disposable {
             gate: () => !vscode.workspace.isTrusted ? 'workspace_untrusted' : !nativeExecutionAllowed() ? 'native_execution_disabled' : undefined,
             session: { label: (vscode.workspace.name ?? 'VS Code window').slice(0, 128) },
             log: line => this.output.appendLine(line),
+        });
+        const target = targetOf(process.platform,process.arch);
+        const installer = new SystemInstaller(version,target ?? 'unsupported',line => {if(!this.disposed){this.output.appendLine(line);}},message=>this.bootstrapProgress?.report({message}));
+        this.bootstrap = new InstallerBootstrap({
+            admission: async () => {
+                await this.airkctl.check();
+                const state = this.airkctl.state;
+                return { discovery: state.kind === 'not_installed' ? 'absent' : state.kind === 'ready' || state.kind === 'stopped' ? 'installed' : 'unknown',
+                    supported: Boolean(target) && !vscode.env.remoteName,
+                    trusted: vscode.workspace.isTrusted, nativeAllowed: nativeExecutionAllowed(), setupActive: state.kind === 'updating' || this.context.globalState.get<boolean>(INSTALL_PENDING_KEY,false) };
+            },
+            manual: async () => { await vscode.env.openExternal(vscode.Uri.parse(DOWNLOAD_URL)); },
+            discover: signal => installer.discover(signal),
+            review: async offer => {
+                const home = os.userInfo().homedir;
+                const defaults = process.platform === 'win32' ? `${process.env.LOCALAPPDATA ?? path.join(home,'AppData','Local')}\\AIRK Service (program, data/indexes, state/service, cache/service, logs/service)`
+                    : process.platform === 'darwin' ? `${home}/Library/Application Support/AIRK (program, data/indexes, state/service); ${home}/Library/Caches/AIRK/service; ${home}/Library/Logs/AIRK/service`
+                    : `${home}/.local/lib/airk-service; ${process.env.XDG_DATA_HOME ?? home+'/.local/share'}/airk/indexes; ${process.env.XDG_STATE_HOME ?? home+'/.local/state'}/airk/service; ${process.env.XDG_CACHE_HOME ?? home+'/.cache'}/airk/service; ${process.env.XDG_STATE_HOME ?? home+'/.local/state'}/airk/service-logs`;
+                return await vscode.window.showWarningMessage(`Install AIRK Service ${offer.version} for ${offer.target}?`,{modal:true,
+                    detail:`Target machine: ${os.hostname()} (${process.platform}/${process.arch}). Download: ${(offer.bytes/(1024*1024)).toFixed(1)} MiB. Official iokaio/airk GitHub release with verified build provenance. ${offer.signature === 'unsigned_digest' ? 'Linux has no OS signature; integrity uses the official release digest.' : 'The platform publisher signature will be verified.'}\nDefault locations: ${defaults}\nCertificate trust is skipped. ${offer.target.endsWith('apple-darwin')?'Login startup is skipped on macOS; AIRK starts once.':'User-level login startup and service start use the installer defaults.'} Any predecessor reset requiring acknowledgement refuses this automatic attempt. Choose manual installation to select other locations.`},'Download and install') === 'Download and install';
+            },
+            downloadAndVerify: (offer,signal) => installer.downloadAndVerify(offer,signal),
+            execute: (image,signal) => installer.execute(image,signal,()=>Promise.resolve(this.context.globalState.update(INSTALL_PENDING_KEY,true))),
+            confirmNativeSuccess: async (installer,_signal) => {
+                if(this.disposed){return false;}
+                await this.airkctl.check();
+                const installed=this.airkctl.installation?.record;
+                if (!installed || installed.version!==installer.offer.version || installed.target!==installer.offer.target ||
+                    installed.executables.airk.sha256!==installer.images.serviceSha256 || installed.executables.airkctl.sha256!==installer.images.cliSha256) {return false;}
+                const observation=await this.airkctl.oneShotJson(['service','setup-receipt']);
+                return nativeCompletionMatches(observation,{operationId:installed.installed_by.operation_id,installId:installed.install_id});
+            },
+            rediscoverAndHealth: async () => {
+                if(this.disposed){return false;}
+                await this.airkctl.check(); await this.host.refresh(false);
+                const ready=this.airkctl.state.kind === 'ready';
+                if (ready) {await this.context.globalState.update(INSTALL_PENDING_KEY,false);}
+                return ready;
+            },
+            stage:message=>this.bootstrapProgress?.report({message}),
+            result: outcome => {
+                if(this.disposed){return;}
+                this.output.appendLine(`AIRK installation: ${JSON.stringify(outcome)}`);
+                if (outcome.kind === 'failed' || outcome.kind === 'refused') {
+                    void vscode.window.showErrorMessage(`AIRK: ${outcome.detail}${outcome.receipt ? ` Recovery: ${outcome.receipt}` : ''}`,'Show Output','Install manually').then(choice => { if (choice==='Show Output') { this.output.show(true); } else if (choice==='Install manually') {void vscode.env.openExternal(vscode.Uri.parse(DOWNLOAD_URL));} });
+                } else if (outcome.kind === 'ready') { void vscode.window.showInformationMessage('AIRK Service is installed, verified and ready.'); }
+            },
         });
         this.admin = new AdminOpener({
             open: async args => { await this.airkctl.check(); return this.airkctl.openAdmin(args); },
@@ -98,7 +153,13 @@ class SplitExtension implements vscode.Disposable {
         const key = JSON.stringify([state.kind, 'code' in state ? state.code : undefined, 'reason' in state ? state.reason : undefined]);
         if (advice.severity === 'none' || key === this.lastNotified) { return; }
         this.lastNotified = key;
-        this.notify(advice.severity, advice.message, advice.actions);
+        if (state.kind === 'not_installed' && this.context.globalState.get<boolean>(INSTALL_DEFERRED_KEY,false)) {return;}
+        if (state.kind === 'not_installed' && targetOf(process.platform,process.arch) && !vscode.env.remoteName && !this.context.globalState.get<boolean>(INSTALL_PENDING_KEY,false)) {
+            void vscode.window.showInformationMessage('AIRK Service is not installed. Choose how to install it.',
+                'Download and install automatically','Install manually','Not now').then(choice => {
+                if (choice) { return this.installService(choice === 'Download and install automatically' ? 'automatic' : choice === 'Install manually' ? 'manual' : 'defer'); }
+            }).then(undefined,error=>this.output.appendLine(String(error)));
+        } else { this.notify(advice.severity, advice.message, advice.actions); }
     }
     notify(severity: 'info' | 'warning' | 'error', message: string, actions: readonly GuidanceAction[]): void {
         const show = severity === 'error' ? vscode.window.showErrorMessage : severity === 'warning' ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
@@ -106,6 +167,24 @@ class SplitExtension implements vscode.Disposable {
             const action = actions.find(item => ACTION_LABELS[item] === choice);
             if (action) { return vscode.commands.executeCommand(action); }
         }).then(undefined, error => this.output.appendLine(String(error)));
+    }
+
+    async installService(selected?: BootstrapChoice): Promise<void> {
+        const automatic = Boolean(targetOf(process.platform,process.arch)) && !vscode.env.remoteName && vscode.workspace.isTrusted && nativeExecutionAllowed() && !this.context.globalState.get<boolean>(INSTALL_PENDING_KEY,false);
+        const choice = selected ? {value:selected} : await vscode.window.showQuickPick([
+            ...(automatic ? [{label:'Download and install automatically',value:'automatic' as BootstrapChoice}] : []),
+            {label:'Install manually',value:'manual' as BootstrapChoice},
+            {label:'Not now',value:'defer' as BootstrapChoice},
+        ],{title:`AIRK Service installation on ${os.hostname()}`,placeHolder:automatic?'Choose how to install AIRK. Nothing downloads until you choose automatic installation.':'Automatic installation is unavailable on this host or a previous attempt needs recovery. Use manual instructions or defer.'});
+        if (choice?.value==='defer') {await this.context.globalState.update(INSTALL_DEFERRED_KEY,true);}
+        if (choice?.value === 'automatic') {
+            await this.context.globalState.update(INSTALL_DEFERRED_KEY,false);
+            await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'AIRK: Installing service',cancellable:true},async (_progress,token) => {
+                this.bootstrapProgress=_progress;
+                const subscription=token.onCancellationRequested(()=>{this.bootstrap.cancel();this.bootstrapProgress?.report({message:'Cancellation requested. Setup already running may continue; check status before retrying.'});});
+                try { await this.bootstrap.choose('automatic'); } finally { subscription.dispose();this.bootstrapProgress=undefined; }
+            });
+        } else if (choice) { await this.bootstrap.choose(choice.value); }
     }
 
     async start(): Promise<void> {
@@ -289,6 +368,7 @@ class SplitExtension implements vscode.Disposable {
     dispose(): void {
         if (this.disposed) { return; }
         this.disposed = true;
+        this.bootstrap.cancel();
         setEvidenceTransport(undefined);
         this.explorerLoaded?.dispose();
         this.airkctl.dispose();
@@ -327,10 +407,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         }
     };
     const commands: Record<string, (...args: unknown[]) => unknown> = {
-        // Status and guidance (§8.1): these only guide; none installs.
+        // Status and explicit installation choices (§8.1 and §8.5).
         openAdmin: page => extension.openAdmin({ page: typeof page === 'string' && (ADMIN_PAGES as readonly string[]).includes(page) ? page as AdminPage : 'overview' }),
         serviceStart: () => extension.startService(),
-        downloadService: () => vscode.env.openExternal(vscode.Uri.parse(DOWNLOAD_URL)),
+        downloadService: () => extension.installService(),
         installationInstructions: () => vscode.env.openExternal(vscode.Uri.parse(DOWNLOAD_URL)),
         checkAgain: () => extension.start(),
         serviceConnect: () => extension.start(),

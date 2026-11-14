@@ -244,3 +244,13 @@ test('selected Markdown and JSON share the complete selected response including 
     assert.ok(md.includes(canonical(selected)),'Markdown retains exactly the same complete selected response as JSON');
     assert.equal(selected.evidence.length,1);assert.deepEqual(selected.evidence[0],turn.envelope.evidence[0]);assert.doesNotMatch(md,/unselected/);
 });
+
+test('cited context admits full native UTF8 questions and exact integer budget fields',()=>{
+    const budget={calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200};
+    const question='é'.repeat(8192);
+    assert.deepEqual(parseWorkbenchMessage({type:'answer',question,budget}),{type:'answer',question,budget});
+    assert.equal(parseWorkbenchMessage({type:'answer',question:question+'é',budget}),undefined);
+    assert.equal(parseWorkbenchMessage({type:'answer',question:'ok',budget:{...budget,extra:1}}),undefined);
+    assert.equal(parseWorkbenchMessage({type:'answer',question:'ok',budget:{...budget,calls:1.5}}),undefined);
+    assert.equal(parseWorkbenchMessage({type:'answer',question:'ok',budget:{...budget,calls:undefined}}),undefined);
+});

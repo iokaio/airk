@@ -1,12 +1,12 @@
 ---
 id: indexing.library
-title: Indexing — Index library
+title: Indexes — Index library
 route: indexing/library
 area: explorer
 aliases: indexes, sources, catalog
 related_airk_help: indexing
 ---
-# Indexing — Index library
+# Indexes — Index library
 
 The index library lists the indexes stored on this computer, read from the AIRK Service with the same complete data AIRK Admin and airkctl index list|show return. It is read-only: create, change, split and delete indexes in AIRK Admin.
 

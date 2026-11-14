@@ -10,6 +10,7 @@ import { request } from './api';
 import { CompleteNativeResponse, Facts } from './components';
 import { AdminButton } from './adminLinks';
 import { Notice, noticeKey } from './notices';
+import { SharedPilotPane } from './pilotPane';
 
 /** One `airkctl` command's complete outcome as the host returns it (liveStatus.ts `CommandOutcome`). */
 export interface CommandOutcomeView { ok?: boolean; argv?: string[]; class?: string; exitCode?: number; result?: unknown; stdout?: string; stderr?: string; error?: { code?: string; message?: string } }
@@ -46,6 +47,7 @@ export function UsageScreen(props: ScreenProps) {
     const owner = JSON.stringify([props.state.selectedProject, readable(props)]);
     useEffect(() => { if (project && readable(props)) { void read(days); } }, [owner]);
     return <section class="manage-usage">
+        <SharedPilotPane state={props.state} read={{ kind: 'usage-json', binding: props.state.selectedProject ?? '', days }} />
         <article class="card">
             <div class="section-head"><h2>Usage{project ? ` · ${project.name}` : ''}</h2>
                 <AdminButton page="usage" label="Usage settings in AIRK Admin" ghost disabled={!props.state.trusted} choose={false} /></div>

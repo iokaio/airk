@@ -38,9 +38,19 @@ import { nativeSavedSourceState, readResultBody, verificationLabel } from './sou
 import { ServiceError } from './serviceClient';
 import type { AgentClient, ReadRouteView, WorkAction } from './explorerContracts';
 import type { CommandOutcome } from './airkctl/features/liveStatus';
+import type { PilotViewContext } from './uiPilotContract';
+import type { AdminUiContext } from './adminUiContract';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
+    adminManagement?(input: unknown, view: () => Pick<AdminUiContext, 'epoch' | 'ready'>, onStatus?: (status: number) => void): Promise<unknown>;
+    revokeAdminManagement?(): Promise<void>;
+    /** Closed C9 read pilot; the owning host rechecks current context and native gates. */
+    pilotRead?(input: unknown, view: () => PilotViewContext): Promise<unknown>;
+    /** Private service/session generation identity; never sent to the webview. */
+    pilotIdentity?(): object;
+    /** Native Admin lifetime changes only with its actual I2 owner, not a repeated health probe. */
+    adminManagementIdentity?(): object;
     /** Resolve an already reviewed selection against protected native HTTPS setup. */
     prepareEvidenceConnection?(spec:LaunchSpec,client?:'airk-explorer'|'airk-workbench'):Promise<LaunchSpec>;
     /** Select the drafted indexes and index sets as the window search scope, then prefill an inert Workbench form. */
@@ -182,6 +192,10 @@ export class ExplorerController implements vscode.Disposable {
     private selectedSpecIdentity?:string;
     private readonly sourceFiles = new Map<string, string>();
     private selectionEpoch = 0;
+    private pilotEpoch = 0;
+    private adminEpoch = 0;
+    private adminOwner?: { identity: object | undefined; key: string };
+    private pilotOwner?: { identity: object | undefined; key: string };
     private searchState?: SearchSessionView;
     private searchSequence = 0;
     private status?: StatusSummary;
@@ -277,6 +291,9 @@ export class ExplorerController implements vscode.Disposable {
         const runtimeUpgrade=this.host.trusted()?this.host.runtimeUpgrade?.():undefined;
         const connection=this.host.trusted()?this.control.connection():this.host.workspaceTrusted?.()===false?'untrusted':'disconnected';
         return {
+            ...(this.host.pilotRead ? { pilot: { epoch: this.pilotContext().epoch, available: !this.disposed && this.host.trusted() && this.host.nativeExecutionEnabled?.() !== false } } : {}),
+            ...(this.host.adminManagement ? { adminManagement: { epoch: this.adminContext().epoch,
+                available: !this.disposed && this.host.trusted() && this.host.nativeExecutionEnabled?.() !== false } } : {}),
             revision: this.revision,
             extensionVersion: this.host.version,
             workbenchVisible: this.host.workbenchVisible?.()??false,
@@ -562,6 +579,24 @@ export class ExplorerController implements vscode.Disposable {
         return this.selected ? this.sourceFiles.get(this.selected) : undefined;
     }
 
+    private pilotContext(): PilotViewContext {
+        const identity = this.host.pilotIdentity?.();
+        const key = JSON.stringify([this.selectionEpoch, this.panel.generation, this.host.trusted(), this.host.nativeExecutionEnabled?.() !== false]);
+        if (!this.pilotOwner || identity !== this.pilotOwner.identity || key !== this.pilotOwner.key) {
+            this.pilotOwner = { identity, key }; this.pilotEpoch++;
+        }
+        return { epoch: this.pilotEpoch, ...(this.selected ? { binding: this.selected } : {}), available: !this.disposed };
+    }
+    private adminContext(): Pick<AdminUiContext, 'epoch' | 'ready'> {
+        if (!this.host.trusted() || this.host.nativeExecutionEnabled?.() === false)
+            void this.host.revokeAdminManagement?.().catch(() => this.host.log('AIRK: captured Admin close was not confirmed.'));
+        const identity = this.host.adminManagementIdentity?.() ?? this.host.pilotIdentity?.();
+        const key = JSON.stringify([this.panel.generation, this.host.trusted(), this.host.nativeExecutionEnabled?.() !== false]);
+        if (!this.adminOwner || identity !== this.adminOwner.identity || key !== this.adminOwner.key) {
+            this.adminOwner = { identity, key }; this.adminEpoch++;
+        }
+        return { epoch: this.adminEpoch, ready: !this.disposed };
+    }
     private requireProject(): string {
         if (!this.selected) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
         return this.selected;
@@ -690,7 +725,7 @@ export class ExplorerController implements vscode.Disposable {
             const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
             // Using recommended advice and applying an agent search draft select the window search
             // scope themselves, which starts a new evidence epoch; their own committed outcome stands.
-            const managementOrLocal=['admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','agents.choice','agents.follow','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
+            const managementOrLocal=['admin.session','admin.call','admin.close','pilot.read','admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','agents.choice','agents.follow','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -702,6 +737,24 @@ export class ExplorerController implements vscode.Disposable {
         if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
         if(message.type.startsWith('indexing.'))this.requireAuthorization(true);
         switch (message.type) {
+            case 'admin.session': case 'admin.call': case 'admin.close': {
+                if (message.type !== 'admin.close') this.requireAuthorization(true);
+                if (!this.host.adminManagement) throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED'));
+                const panel = this.panel.generation;
+                const pending = this.host.adminManagement(message, () => ({ ...this.adminContext(), ready: !this.disposed && panel === this.panel.generation }), status => {
+                    if (status === 401 && !this.disposed && panel === this.panel.generation && message.epoch === this.adminContext().epoch)
+                        this.panel.post({ v: 1, type: 'admin.ended', epoch: message.epoch, status: 401 });
+                });
+                if (message.type !== 'admin.close') return pending;
+                try { return await pending; }
+                finally { this.adminOwner = undefined; this.publish(); }
+            }
+            case 'pilot.read': {
+                this.requireAuthorization(true);
+                if (!this.host.pilotRead) throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'The shared read preview is not available in this host.'));
+                const panel = this.panel.generation;
+                return this.host.pilotRead(message, () => ({ ...this.pilotContext(), available: !this.disposed && panel === this.panel.generation }));
+            }
             case 'notice.dismiss': return this.dismissNotice(message.key);
             case 'indexing.recommendations':{
                 return this.indexing.recommendations(async()=>{

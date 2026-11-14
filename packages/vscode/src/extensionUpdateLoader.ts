@@ -97,9 +97,9 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
     if (entries.length < 3 || entries.length > 256) { throw new Error('Invalid AIRK update inventory size'); }
     const files = new Map<string, Buffer>(); let total = 0, generation: string | undefined;
     for (const [name, expected] of entries) {
-        if (!/^(?:package\.json|images\/airk\.svg|out\/(?:airkctl\/(?:(?:agents|features|status)\/)?)?[A-Za-z0-9_-]+\.(?:js|css)|node_modules\/jsonc-parser\/(?:package\.json|lib\/umd\/(?:main|impl\/[A-Za-z-]+)\.js))$/.test(name)
+        if (!/^(?:package\.json|images\/airk\.svg|out\/help-manifest\.json|out\/airkctl\/bootstrap\/(?:controller|release|system|provenance)\.js|out\/(?:airkctl\/(?:(?:agents|features|status)\/)?)?[A-Za-z0-9_-]+\.(?:js|css)|node_modules\/jsonc-parser\/(?:package\.json|lib\/umd\/(?:main|impl\/[A-Za-z-]+)\.js))$/.test(name)
             || typeof expected !== 'string' || !/^[0-9a-f]{64}$/.test(expected)) { throw new Error('Invalid AIRK update inventory entry'); }
-        const content = await boundedFile(await contained(name), name === 'package.json' ? 256 * 1024 : MAX_FILE); total += content.length;
+        const content = await boundedFile(await contained(name), name === 'package.json' ? 256 * 1024 : name === 'out/help-manifest.json' ? 4 * 1024 * 1024 : MAX_FILE); total += content.length;
         if (total > MAX_TOTAL) { throw new Error('AIRK update payload exceeds its byte budget'); }
         if (name === 'package.json') {
             const installed = JSON.parse(content.toString('utf8'));

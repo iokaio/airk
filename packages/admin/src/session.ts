@@ -10,21 +10,26 @@
 // in a URL, cookie, localStorage, IndexedDB or the DOM. A new tab has no token.
 import type { ExchangeResponse } from '../../contracts-gen/i3';
 import { endsSession, parseEnvelope, type ParsedResponse } from './envelope';
+import { isNativeUiSession, nativeLifetimeOf, type NativeSessionLifetime, type NativeUiSession } from '../../ui/src/nativeSessionLifetime';
+import { PREPARATION_STORAGE_PREFIX } from './preparedMutations';
 
 const STORAGE_PREFIX = 'airk-admin-csrf:';
 const SHELL_PATH = '/admin/';
 const EXCHANGE_PATH = '/admin/api/v1/session';
 const LOGOUT_PATH = '/admin/api/v1/session/logout';
 
-export type Session = {
+export type BrowserSession = {
   readonly csrf: string;
   readonly serviceInstance: string;
   /** Wall-clock deadlines computed from the exchange reply; informational only. */
   readonly idleExpiresInMs: number | null;
   readonly absoluteDeadline: number | null;
 };
+export type Session = BrowserSession | NativeUiSession;
 
 let current: Session | null = null;
+let nativeMode = false;
+let stopNativeObservation: (() => void) | null = null;
 const listeners = new Set<(session: Session | null) => void>();
 
 export function currentSession(): Session | null {
@@ -41,11 +46,31 @@ function publish(session: Session | null): void {
   for (const listener of listeners) listener(session);
 }
 
+/** Install an already captured host lifetime; this creates no browser credentials. */
+export function adoptNativeSession(lifetime: NativeSessionLifetime): NativeUiSession | null {
+  if (nativeLifetimeOf(lifetime.session) !== lifetime || !lifetime.isOpen()) return null;
+  const prior = current;
+  stopNativeObservation?.(); stopNativeObservation = null;
+  if (prior !== null && isNativeUiSession(prior) && prior !== lifetime.session) nativeLifetimeOf(prior)?.invalidate();
+  else if (prior !== null && !isNativeUiSession(prior)) forgetMirror();
+  nativeMode = true;
+  const stop = lifetime.subscribe(() => {
+    if (current === lifetime.session) publish(null);
+    stop();
+    if (stopNativeObservation === stop) stopNativeObservation = null;
+  });
+  stopNativeObservation = stop;
+  publish(lifetime.session);
+  return lifetime.session;
+}
+export function isNativeHost(): boolean { return nativeMode; }
+
 /**
  * Reads the launch code from the fragment and removes it from the address bar and
  * the current history entry. Must run before anything else on the page.
  */
 export function takeLaunchCode(): string | null {
+  if (nativeMode) return null;
   const hash = window.location.hash;
   let code = '';
   let route: string | null = null;
@@ -83,6 +108,7 @@ let initialRoute: string | null = null;
 
 /** The page route the document was opened with (after any launch code), or null. */
 export function takeInitialRoute(): string | null {
+  if (nativeMode) return null;
   const route = initialRoute;
   initialRoute = null;
   return route;
@@ -109,9 +135,17 @@ function forgetMirror(): void {
       // Storage unavailable: nothing was mirrored.
     }
   }
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (key?.startsWith(PREPARATION_STORAGE_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) window.sessionStorage.removeItem(key);
+  } catch { /* A new exchange cannot inherit an inaccessible journal. */ }
 }
 
-function mirror(session: Session): void {
+function mirror(session: BrowserSession): void {
   forgetMirror();
   try {
     window.sessionStorage.setItem(`${STORAGE_PREFIX}${session.serviceInstance}`, session.csrf);
@@ -122,6 +156,7 @@ function mirror(session: Session): void {
 
 /** Restores this tab's token after a reload (M1); a new tab finds nothing. */
 export function restoreSession(): Session | null {
+  if (nativeMode) return current;
   const keys = storageKeys();
   if (keys.length !== 1) {
     forgetMirror();
@@ -138,7 +173,7 @@ export function restoreSession(): Session | null {
     forgetMirror();
     return null;
   }
-  const session: Session = {
+  const session: BrowserSession = {
     csrf,
     serviceInstance: key.slice(STORAGE_PREFIX.length),
     idleExpiresInMs: null,
@@ -150,6 +185,13 @@ export function restoreSession(): Session | null {
 
 /** Ends the local session state (logout, any 401, stop or restart). */
 export function dropSession(): void {
+  if (current !== null && isNativeUiSession(current)) {
+    const prior = current;
+    nativeLifetimeOf(prior)?.invalidate();
+    if (current === prior) publish(null);
+    return;
+  }
+  if (nativeMode) { publish(null); return; }
   forgetMirror();
   publish(null);
 }
@@ -171,6 +213,8 @@ export type ExchangeOutcome =
   | { kind: 'failed'; response: ParsedResponse };
 
 export async function exchange(code: string): Promise<ExchangeOutcome> {
+  if (nativeMode) return { kind: 'failed', response: { kind: 'transport', status: null,
+    message: 'Browser sign-in is unavailable in the native management host.' } };
   const originalSession = current;
   let response: Response;
   try {
@@ -207,7 +251,7 @@ export async function exchange(code: string): Promise<ExchangeOutcome> {
     };
   }
   const result = parsed.envelope.result;
-  const session: Session = {
+  const session: BrowserSession = {
     csrf: result.csrf,
     serviceInstance: result.service_instance,
     idleExpiresInMs: result.idle_expires_in_ms,
@@ -222,6 +266,10 @@ export async function logout(): Promise<void> {
   const session = current;
   dropSession();
   if (session === null) return;
+  if (isNativeUiSession(session)) {
+    try { await nativeLifetimeOf(session)?.close(); } catch { /* The captured UI lifetime is already closed. */ }
+    return;
+  }
   try {
     await fetch(LOGOUT_PATH, {
       method: 'POST',

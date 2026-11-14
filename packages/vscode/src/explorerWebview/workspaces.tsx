@@ -3,7 +3,7 @@ import { JSX } from 'preact';
 import { ExplorerViewState } from '../explorerContracts';
 import type { SearchRecipe } from '../explorerStrategies';
 import type { NavigationFilters } from '../explorerDrafts';
-import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
+import { parseRoute, Route, routeKey, WORKSPACES } from '../explorerRoutes';
 import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
@@ -16,6 +16,8 @@ import { LibraryScreen, StudioScreen } from './strategies';
 import { IndexingScreen } from './indexing';
 import { ActivityScreen, UsageScreen } from './manageViews';
 import { AgentsScreen } from './agents';
+import { editorDestination, MAIN_DESTINATIONS } from '../../../ui/src/navigation';
+import { SharedManagement } from './sharedManagement';
 
 export interface ScreenProps {
     manageEmbedded?: boolean;
@@ -72,13 +74,18 @@ export function WorkspaceView(props: ScreenProps) {
     const management = workspace.id === 'manage';
     const tabs = workspace.tabs;
     const activeTab = props.route.tab;
+    const destination = editorDestination(key);
+    const title = MAIN_DESTINATIONS.find(entry => entry.id === destination)?.title ?? workspace.title;
+    const sharedPage = ({ 'manage/activity': 'activity', 'manage/repair': 'recovery', 'manage/storage': 'storage',
+        'manage/service': 'service', 'manage/agents': 'agents', 'manage/usage': 'usage', 'manage/logs': 'logs',
+        'indexing/library': 'index-library' } as const)[key as 'manage/activity'];
     return (
         <section class="workspace">
-            <div class="workspace-heading"><div><p class="eyebrow">AIRK workspace</p><h1>{workspace.title}</h1></div>
+            <div class="workspace-heading"><div><p class="eyebrow">AIRK workspace</p><h1>{title}</h1></div>
             </div>
             <div>
-            {tabs.length > 0 && (
-                <div class="tabs" role="tablist" aria-orientation="horizontal" aria-label={`${workspace.title} views`}>
+            {tabs.length > 0 && !(management && sharedPage && props.state.adminManagement) && (
+                <div class="tabs" role="tablist" aria-orientation="horizontal" aria-label={`${title} views`}>
                     {tabs.map(tab => {
                         const selected = tab.id === activeTab;
                         const available = props.state.features[`${workspace.id}/${tab.id}`];
@@ -97,7 +104,16 @@ export function WorkspaceView(props: ScreenProps) {
                     })}
                 </div>
             )}
-            <div class="workspace-content" role={activeTab ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab ? `tab-${workspace.id}-${activeTab}` : undefined}>{Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
+            <div class="workspace-content" role={activeTab && !(management && sharedPage && props.state.adminManagement) ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab && !(management && sharedPage && props.state.adminManagement) ? `tab-${workspace.id}-${activeTab}` : undefined}>
+            {props.state.adminManagement ? <section hidden={!sharedPage}>
+                <SharedManagement state={props.state} page={sharedPage} active={!!sharedPage} onPageChange={page => {
+                    const routes = { overview: 'overview', 'index-library': 'indexing/library', activity: 'manage/activity', agents: 'manage/agents',
+                        storage: 'manage/storage', recovery: 'manage/repair', service: 'manage/service', logs: 'manage/logs', usage: 'manage/usage', search: 'search/query', help: 'help' } as const;
+                    const destination = parseRoute(routes[page]); if (destination) props.go(destination);
+                }} />
+            </section> : null}
+            {sharedPage && props.state.adminManagement ? <details><summary>Retained editor workflows</summary>{Screen ? <Screen {...props} /> : null}</details>
+                : Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
             </div>
         </section>
     );

@@ -2,9 +2,9 @@
 // Admin pages (split plan §7.3). Each page calls only admin-surface operations and
 // shows complete native results as text.
 import type { JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { IndexSelect, useIndexes } from './activity';
-import { reviewedCall } from './api';
+import { isUnknownOutcome, reviewedCall } from './api';
 import { body, isDigest, isIncarnation, MAX_INDEX_LIST_LIMIT, MAX_PAGE_LIMIT, OPS } from './operations';
 import {
   bindingsIn,
@@ -21,6 +21,9 @@ import {
 import { ProgressPanel } from './progress';
 import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
 import { concurrencyNote, typedScopeCount } from './scopeConcurrency';
+import { generatedAction } from './generatedActions';
+import { currentSession } from './session';
+import type { CallResult } from './api';
 
 /** U103: live progress of one registered index, chosen from the catalog names. */
 function OverviewProgress(): JSX.Element {
@@ -262,25 +265,49 @@ function LoginStartup(): JSX.Element {
 }
 
 export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => void }): JSX.Element {
+  const [view, setView] = useState<'resources' | 'tls' | 'startup' | 'lifecycle'>('resources');
   const [resources, runResources] = useCall();
   const [trust, runTrust] = useCall();
   const [rotation, runRotation] = useCall();
   const [lifecycle, runLifecycle] = useCall();
+  const [, changed] = useState(0);
+  const session = currentSession();
+  const lifetime = useRef<{ session: unknown; owner: ReturnType<typeof generatedAction> | null } | null>(null);
+  if (lifetime.current?.session !== session) {
+    lifetime.current?.owner?.dispose();
+    lifetime.current = { session, owner: session === null ? null : generatedAction(session, 'service.lifecycle', () => changed(value => value + 1)) };
+  }
+  const owner = lifetime.current?.owner ?? null;
+  useLayoutEffect(() => () => owner?.dispose(), [owner]);
+  const retained = owner?.snapshot();
+  const lifecycleState = retained?.intent && (retained.pending || retained.result !== null)
+    ? retained.pending ? { phase: 'pending' as const, operation: retained.intent.operation }
+      : { phase: 'done' as const, operation: retained.intent.operation, result: retained.result!, at: retained.at }
+    : lifecycle;
+  const blocked = retained?.pending === true || retained?.unknown === true || retained?.capacity === true;
   const lifecycleCall = async (action: 'stop' | 'restart'): Promise<void> => {
-    const result =
-      action === 'stop'
-        ? await runLifecycle(OPS.serviceStop, body.serviceStop())
-        : await runLifecycle(OPS.serviceRestart, body.serviceRestart());
-    if (result.kind === 'ok' && result.envelope.request?.state !== 'refused') props.onLifecycle(action);
+    if (session === null || session !== currentSession() || !owner || lifetime.current?.owner !== owner) return;
+    const intent = owner.begin(action === 'stop' ? OPS.serviceStop : OPS.serviceRestart, action === 'stop' ? body.serviceStop() : body.serviceRestart());
+    if (!intent) return;
+    let result: CallResult;
+    try { result = await runLifecycle(intent.operation, intent.method); }
+    catch { result = { kind: 'transport', status: null, message: 'The original lifecycle request did not return a usable outcome. Inspect the service status before another lifecycle action.' }; }
+    owner.settle(intent, result, Date.now());
+    if (session === currentSession() && result.kind === 'ok' && !isUnknownOutcome(result) && result.envelope.request?.state !== 'refused') props.onLifecycle(action);
   };
   return (
     <>
+      <div class="actions" aria-label="Service settings views">{([['resources', 'Resources'], ['tls', 'TLS and trust'], ['startup', 'Start at sign-in'], ['lifecycle', 'Restart or stop']] as const).map(([id, label]) =>
+        <button type="button" class={view === id ? '' : 'secondary'} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</div>
+      <div hidden={view !== 'resources'}>
       <Panel title="Resources">
         <button type="button" onClick={() => void runResources(OPS.resources, body.resources())}>
           Load
         </button>
         <Outcome state={resources} />
       </Panel>
+      </div>
+      <div hidden={view !== 'tls'}>
       <Panel title="HTTPS issuer">
         <div class="row">
           <button type="button" onClick={() => void runTrust(OPS.trustStatus, body.trustStatus())}>
@@ -298,18 +325,25 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
         <Command text="airkctl service trust remove --expected-ca-sha256 <issuer-sha256>" />
         <Command text="airkctl service issuer-rotation status" />
       </Panel>
+      </div>
+      <div hidden={view !== 'startup'}>
       <LoginStartup />
+      </div>
+      <div hidden={view !== 'lifecycle'}>
       <Panel title="Restart or stop">
         <p>
           A restart or stop ends this admin session. After a stop, start the service again with{' '}
           <code>airk</code> or <code>airkctl service start</code>, then run <code>airkctl admin open</code>.
         </p>
         <div class="actions">
-          <Confirm phrase="restart service" action="Restart" danger onConfirm={() => void lifecycleCall('restart')} />
-          <Confirm phrase="stop service" action="Stop" danger onConfirm={() => void lifecycleCall('stop')} />
+          <Confirm phrase="restart service" action="Restart" danger disabled={blocked} onConfirm={() => void lifecycleCall('restart')} />
+          <Confirm phrase="stop service" action="Stop" danger disabled={blocked} onConfirm={() => void lifecycleCall('stop')} />
         </div>
-        <Outcome state={lifecycle} />
+        {retained?.unknown ? <p class="error" role="alert">The original lifecycle outcome is unresolved. Another Stop or Restart is blocked. Inspect service status and Activity; the received outcome is retained below.</p>
+          : retained?.capacity ? <p role="status">This session holds the limit of unresolved generated actions. Inspect saved requests before another lifecycle action.</p> : null}
+        <Outcome state={lifecycleState} />
       </Panel>
+      </div>
     </>
   );
 }
@@ -369,7 +403,7 @@ export function Search(): JSX.Element {
     <>
       <Panel title="1. Choose indexes">
         <p>
-          This selection belongs to this browser session only. It does not change any editor window's scope
+          This selection belongs to this management session only. It does not change any editor window's scope
           or any agent connection's grant.
         </p>
         <button

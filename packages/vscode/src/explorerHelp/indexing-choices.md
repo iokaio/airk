@@ -13,8 +13,8 @@ Choose for the evidence you need, the source formats you actually have and the m
 ## Steps
 
 1. Identify the purpose: exact text lookup, code investigation, requirements/testing, architecture analysis or writing. Identify source languages and Markdown, PDF, DOCX, XLSX, PPTX or scanned/image material. Ask the user when these are unknown; do not choose a richer index merely because a role is selected.
-2. Check Overview and Management. Missing prerequisite inspections are requested automatically when changing settings. An agent can use status and capabilities to check published detail, adapters, lexical readiness and independent semantic readiness.
-3. In Management, choose **Change detail…**. The native picker uses essential, agent_lean, balanced and detailed. Review and approve a change; observe the resulting native job and new publication before assuming it took effect.
+2. Check Overview and the intended index in AIRK Admin. Missing prerequisite inspections are requested automatically when changing settings. An agent can use status and capabilities to check published detail, adapters, lexical readiness and independent semantic readiness.
+3. In AIRK Admin, open the intended index and choose **Change detail…**. The native picker uses essential, agent_lean, balanced and detailed. Review and approve a change; observe the resulting native job and new publication before assuming it took effect.
 4. Choose vectors separately with **Search mode**. Review **Vector eligibility** when selected files should stay lexical-only. Adapter overrides, source scan limits, watching and storage quotas are separate settings.
 5. Check representative files with Evidence > Inspector and Documents > Facts or Code > Symbols. Compare useful answers, retained coverage and costs before raising detail or budgets further.
 

@@ -18,6 +18,7 @@ import type {
     ErrorLine, ExitClass, SessionCursor, SessionEvent, SessionMethod, SessionOutcome, WindowSelection, EventTopic,
 } from '../generated/i2';
 import { airkctlEnvironment, EXIT_CLASSES, parseErrorLine } from './runner';
+import { createAdminChunks } from './adminChunks';
 
 export const SESSION_PROTOCOL = 2;
 export const CLIENT_NAME = 'airk-vscode';
@@ -64,6 +65,9 @@ export interface Greeting {
     readonly version: string; readonly i2Contract: number; readonly capabilities: readonly string[];
     readonly serviceInstance?: string; readonly windowId?: string;
 }
+/** Host-local identity only; the native session keeps all Admin credentials. */
+export type AdminIdentity = Readonly<{ serviceInstance: string }>;
+type AdminOwner = { child: SessionChild; greeting: Greeting; closed: boolean; ended: boolean; confirmed: boolean; closing: Promise<void> | null };
 export interface SessionOptions {
     readonly clientVersion: string;
     readonly contracts?: readonly number[];
@@ -111,6 +115,16 @@ function requestShapeValid(request: unknown): boolean {
         }
         case 'cancel': return keys(body, ['target']) && typeof body.target === 'string' && ID.test(body.target);
         case 'control': return keys(body, ['method']);
+        case 'admin_call': {
+            if (!keys(body, ['operation', 'body', 'deadline_ms']) || typeof body.operation !== 'string'
+                || !/^[a-z][a-z0-9_.]{0,127}$/.test(body.operation) || !Number.isSafeInteger(body.deadline_ms)
+                || (body.deadline_ms as number) < 1 || (body.deadline_ms as number) > MAX_INVOKE_DEADLINE_MS) return false;
+            try { const encoded = JSON.stringify(body.body); return typeof encoded === 'string' && utf8(encoded) <= 64 * 1024; }
+            catch { return false; }
+        }
+        case 'admin_read': return keys(body, ['target', 'offset']) && typeof body.target === 'string' && ID.test(body.target) && u64(body.offset);
+        case 'admin_cancel': return keys(body, ['target']) && typeof body.target === 'string' && ID.test(body.target);
+        case 'admin_close': return keys(body, []);
         case 'subscribe': return keys(body, ['topics'], ['cursor']) && Array.isArray(body.topics)
             && body.topics.every(topic => ['status', 'jobs', 'assistance'].includes(topic as string)) && (body.cursor === undefined || cursorValid(body.cursor));
         case 'unsubscribe': case 'scope_release': return keys(body, []);
@@ -140,7 +154,7 @@ export function encodeRequest(id: string, request: SessionMethod): Buffer {
     return frame;
 }
 
-const OUTCOMES = new Set(['hello', 'control', 'invoked', 'subscribed', 'unsubscribed', 'scope', 'scope_released', 'acknowledged', 'handoff', 'refused', 'failed', 'cancelled']);
+const OUTCOMES = new Set(['hello', 'control', 'invoked', 'subscribed', 'unsubscribed', 'scope', 'scope_released', 'acknowledged', 'handoff', 'refused', 'failed', 'cancelled', 'admin_chunk', 'admin_closed']);
 const EVENTS = new Set(['status', 'job', 'assistance_draft', 'resync', 'closing']);
 export type Frame = { kind: 'reply'; id: string; outcome: SessionOutcome } | { kind: 'event'; event: SessionEvent };
 /** Decode one reply or event frame; anything else is a protocol violation. */
@@ -219,17 +233,19 @@ export class AirkctlCommandError extends Error {
     get retryable(): boolean { return this.result.error?.retryable === true; }
 }
 
-type Kind = 'invoke' | 'control' | 'window';
+type Kind = 'invoke' | 'control' | 'window' | 'admin';
 const ALLOWED: Record<Kind, readonly string[]> = {
     invoke: ['invoked', 'failed', 'cancelled'],
     control: ['control', 'failed', 'cancelled'],
     window: ['subscribed', 'unsubscribed', 'scope', 'scope_released', 'acknowledged', 'handoff', 'refused', 'failed', 'cancelled'],
+    admin: ['admin_chunk', 'admin_closed', 'refused', 'failed', 'cancelled'],
 };
 interface Exchange {
     id: string; request: SessionMethod; kind: Kind; deadlineAt: number; busyRetries: number;
     state: 'queued' | 'sent' | 'abandoned' | 'settled';
     timer?: unknown; retryTimer?: unknown; cancelTimer?: unknown;
     resolve(outcome: SessionOutcome): void; reject(error: Error): void;
+    owner?: SessionChild; originalId?: string; adminTarget?: string; admit?: () => boolean;
 }
 /** Native events, plus `session_lost` when the child ended (not a native event). */
 export type ClientEvent = SessionEvent | { kind: 'session_lost'; code: string };
@@ -263,6 +279,8 @@ export class AirkctlSession {
     private disposed = false;
     private spawned = 0;
     private greeting?: Greeting;
+    private readonly adminOwners = new WeakMap<AdminIdentity, AdminOwner>();
+    private currentAdmin?: AdminIdentity;
     private readonly timers: SessionTimers;
     private readonly launch: (image: SessionImage, label: string | undefined) => SessionChild;
     constructor(private readonly options: SessionOptions, private readonly gate: SessionGate = () => {}) {
@@ -316,6 +334,75 @@ export class AirkctlSession {
         if (outcome.status === 'control') { return outcome.response as Record<string, unknown>; }
         throw this.failure(outcome);
     }
+    /** Capture the existing verified child; this never starts or rebinds one. */
+    captureAdmin(): AdminIdentity {
+        const child = this.child, greeting = this.greeting;
+        if (!this.ready || !child || !greeting?.serviceInstance || !greeting.capabilities.includes('admin-management/1'))
+            throw new SessionError('admin_context_unavailable', false);
+        const prior = this.currentAdmin && this.adminOwners.get(this.currentAdmin);
+        if (prior?.child === child && prior.greeting === greeting) {
+            if (!prior.closed) return this.currentAdmin!;
+            if (prior.ended || !prior.confirmed) throw new SessionError('admin_close_unconfirmed', false);
+        }
+        const identity = Object.freeze({ serviceInstance: greeting.serviceInstance });
+        this.adminOwners.set(identity, { child, greeting, closed: false, ended: false, confirmed: false, closing: null });
+        this.currentAdmin = identity;
+        return identity;
+    }
+    adminCurrent(identity: AdminIdentity): boolean {
+        const owner = this.adminOwners.get(identity);
+        return !!owner && this.currentAdmin === identity && this.ready && this.child === owner.child
+            && this.greeting === owner.greeting && !owner.closed;
+    }
+    async adminCall(identity: AdminIdentity, operation: string, body: unknown, options: {
+        deadlineMs?: number; signal?: AbortSignal; onStatus?: (status: number) => void; admit?: () => boolean;
+    } = {}): Promise<{ httpStatus: number; body: string }> {
+        if (!this.adminCurrent(identity)) throw new SessionError('admin_context_changed', false);
+        const owner = this.adminOwners.get(identity)!, child = owner.child, target = newId();
+        const deadline = Math.max(1, Math.min(options.deadlineMs ?? 60_000, MAX_INVOKE_DEADLINE_MS));
+        const deadlineAt = this.timers.now() + deadline;
+        const chunks = createAdminChunks(status => {
+            if (status === 401) { owner.closed = true; owner.ended = true; }
+            options.onStatus?.(status);
+        });
+        const sameOwner = () => this.child === child && this.ready && this.greeting === owner.greeting && owner.closing === null;
+        const current = () => { try { return sameOwner() && options.admit?.() !== false; } catch { return false; } };
+        try {
+            let outcome = await this.exchange({ admin_call: { operation, body, deadline_ms: deadline } }, 'admin', deadline,
+                options.signal, { owner: child, originalId: target, adminTarget: target, admit: () => this.adminCurrent(identity) && current() });
+            for (;;) {
+                if (outcome.status === 'failed' && outcome.code === 'admin_session_ended_outcome_unknown') {
+                    owner.closed = true; owner.ended = true; options.onStatus?.(401);
+                    const error = new SessionError('admin_session_ended_outcome_unknown', true, false, true);
+                    Object.assign(error, { observedStatus: 401 }); throw error;
+                }
+                if (outcome.status !== 'admin_chunk') throw this.failure(outcome);
+                const full = chunks.accept(outcome.chunk);
+                if (full) return full;
+                if (!current() || options.signal?.aborted || this.timers.now() >= deadlineAt) throw new SessionError('admin_context_changed', true);
+                outcome = await this.exchange({ admin_read: { target, offset: chunks.offset } }, 'admin', deadlineAt - this.timers.now(),
+                    options.signal, { owner: child, adminTarget: target, admit: current });
+            }
+        } catch (error) {
+            if (sameOwner()) this.cancelAdmin(child, target);
+            // Preserve already observed status even when a later frame/body fails.
+            if (error instanceof Error && !('observedStatus' in error)) Object.assign(error, { observedStatus: chunks.status });
+            throw error;
+        }
+    }
+    adminClose(identity: AdminIdentity): Promise<void> {
+        const owner = this.adminOwners.get(identity);
+        if (!owner) return Promise.resolve();
+        owner.closed = true; // revocation precedes queueing or awaiting.
+        if (owner.closing) return owner.closing;
+        owner.closing = Promise.resolve().then(async () => {
+            if (this.child !== owner.child || !this.ready || this.greeting !== owner.greeting) return;
+            const outcome = await this.exchange({ admin_close: {} }, 'admin', 20_000, undefined, { owner: owner.child });
+            if (outcome.status !== 'admin_closed') throw this.failure(outcome);
+            owner.confirmed = true;
+        });
+        return owner.closing;
+    }
     subscribe(topics: EventTopic[], cursor?: SessionCursor): Promise<SessionOutcome> {
         return this.window({ subscribe: { topics, ...(cursor ? { cursor } : {}) } });
     }
@@ -334,14 +421,18 @@ export class AirkctlSession {
         return new SessionError('session_cancelled', true);
     }
 
-    private exchange(request: SessionMethod, kind: Kind, timeoutMs: number, signal?: AbortSignal): Promise<SessionOutcome> {
+    private exchange(request: SessionMethod, kind: Kind, timeoutMs: number, signal?: AbortSignal,
+        captured?: Pick<Exchange, 'owner' | 'originalId' | 'adminTarget' | 'admit'>): Promise<SessionOutcome> {
         if (this.disposed) { return Promise.reject(new SessionError('session_disposed', false)); }
-        try { this.gate(); } catch (error) { return Promise.reject(error); }
+        // Revocation may use an already captured child after native execution
+        // is disabled. It may never start a child or address a replacement.
+        const revocation = kind === 'admin' && 'admin_close' in request && captured?.owner === this.child && this.ready;
+        if (!revocation) { try { this.gate(); } catch (error) { return Promise.reject(error); } }
         if (this.queue.length >= (this.options.maxQueued ?? 64)) { return Promise.reject(new SessionError('session_queue_full', false)); }
         if (signal?.aborted) { return Promise.reject(new SessionError('session_aborted', false)); }
         try { encodeRequest(newId(), request); } catch (error) { return Promise.reject(error); }
         return new Promise((resolve, reject) => {
-            const entry: Exchange = { id: '', request, kind, deadlineAt: this.timers.now() + timeoutMs, busyRetries: 0, state: 'queued', resolve, reject };
+            const entry: Exchange = { id: '', request, kind, deadlineAt: this.timers.now() + timeoutMs, busyRetries: 0, state: 'queued', resolve, reject, ...captured };
             entry.timer = this.timers.set(() => { entry.timer = undefined; this.abandon(entry, 'session_deadline_exceeded'); }, Math.max(1, timeoutMs));
             signal?.addEventListener('abort', () => this.abandon(entry, 'session_aborted'), { once: true });
             this.live.add(entry); this.queue.push(entry);
@@ -377,11 +468,20 @@ export class AirkctlSession {
         const id = newId();
         if (this.cancels.size >= 64) { this.cancels.delete(this.cancels.keys().next().value!); }
         this.cancels.set(id, entry.id);
-        child.stdin.write(encodeRequest(id, { cancel: { target: entry.id } }), error => { if (error) { this.lost(child, 'session_closed'); } });
         entry.cancelTimer = this.timers.set(() => {
             entry.cancelTimer = undefined;
             if (this.sent.get(entry.id) === entry) { this.lost(child, 'session_unresponsive'); }
         }, this.options.cancelGraceMs ?? 30_000);
+        child.stdin.write(encodeRequest(id, entry.adminTarget ? { admin_cancel: { target: entry.adminTarget } }
+            : { cancel: { target: entry.id } }), error => { if (error) { this.lost(child, 'session_closed'); } });
+    }
+    private cancelAdmin(child: SessionChild, target: string): void {
+        if (child !== this.child || !this.ready) return;
+        if ([...this.cancels.values()].includes(target)) return;
+        const id = newId();
+        if (this.cancels.size >= 64) this.cancels.delete(this.cancels.keys().next().value!);
+        this.cancels.set(id, target);
+        child.stdin.write(encodeRequest(id, { admin_cancel: { target } }), error => { if (error) this.lost(child, 'session_closed'); });
     }
     private start(): void {
         if (this.disposed || this.child || this.startTimer !== undefined || !this.queue.length) { return; }
@@ -413,11 +513,17 @@ export class AirkctlSession {
         if (!child || !this.ready || this.disposed) { return; }
         while (this.queue.length && this.sent.size < MAX_IN_FLIGHT) {
             const entry = this.queue.shift()!;
+            if (entry.owner && entry.owner !== child || entry.admit && !entry.admit()) {
+                this.settle(entry); entry.reject(new SessionError('admin_context_changed', false)); continue;
+            }
+            if (entry.deadlineAt <= this.timers.now()) { this.abandon(entry, 'session_deadline_exceeded'); continue; }
             if ('invoke' in entry.request) {
                 const remaining = Math.max(1, Math.min(entry.request.invoke.deadline_ms, Math.round(entry.deadlineAt - this.timers.now())));
                 entry.request = { invoke: { ...entry.request.invoke, deadline_ms: remaining } };
             }
-            entry.id = newId(); entry.state = 'sent'; this.sent.set(entry.id, entry);
+            if ('admin_call' in entry.request) entry.request = { admin_call: { ...entry.request.admin_call,
+                deadline_ms: Math.max(1, Math.min(entry.request.admin_call.deadline_ms, Math.floor(entry.deadlineAt - this.timers.now()))) } };
+            entry.id = entry.originalId ?? newId(); entry.state = 'sent'; this.sent.set(entry.id, entry);
             child.stdin.write(encodeRequest(entry.id, entry.request), error => { if (error) { this.lost(child, 'session_closed'); } });
         }
     }
@@ -434,6 +540,10 @@ export class AirkctlSession {
         }
     }
     private event(event: ClientEvent): void {
+        if (event.kind === 'resync' && event.reason === 'service_restarted' && this.currentAdmin) {
+            const owner = this.adminOwners.get(this.currentAdmin);
+            if (owner) { owner.closed = true; owner.ended = true; }
+        }
         for (const listener of [...this.listeners]) { try { listener(event); } catch { /* A listener failure never breaks the session. */ } }
     }
     private dispatch(child: SessionChild, id: string, outcome: SessionOutcome): void {
@@ -461,7 +571,7 @@ export class AirkctlSession {
         if (!entry || !ALLOWED[entry.kind].includes(outcome.status)) { this.lost(child, 'session_invalid_response'); return; }
         this.sent.delete(id);
         if (entry.cancelTimer !== undefined) { this.timers.clear(entry.cancelTimer); entry.cancelTimer = undefined; }
-        if (entry.state === 'sent' && outcome.status === 'failed' && outcome.code === 'session_busy' && outcome.retryable) {
+        if (entry.kind !== 'admin' && entry.state === 'sent' && outcome.status === 'failed' && outcome.code === 'session_busy' && outcome.retryable) {
             const delay = Math.min(1000, 25 * 2 ** entry.busyRetries++);
             if (this.timers.now() + delay < entry.deadlineAt) {
                 entry.state = 'queued';
@@ -479,6 +589,11 @@ export class AirkctlSession {
         if (child !== this.child) { return; }
         this.child = undefined; this.ready = false; this.helloId = undefined; this.greeting = undefined;
         if (this.helloTimer !== undefined) { this.timers.clear(this.helloTimer); this.helloTimer = undefined; }
+        // Captured Admin work cannot cause a replacement process to start just
+        // so its owner fence can subsequently refuse the queued request.
+        for (const entry of [...this.live]) if (entry.state === 'queued' && entry.owner === child) {
+            this.settle(entry); entry.reject(new SessionError('admin_context_changed', false));
+        }
         for (const entry of this.sent.values()) {
             if (entry.cancelTimer !== undefined) { this.timers.clear(entry.cancelTimer); entry.cancelTimer = undefined; }
             if (entry.state === 'sent') { this.settle(entry); entry.reject(new SessionError(code, true)); }

@@ -31,6 +31,10 @@ import { libraryCommands, openSelectionSpec, WindowScope } from './windowScope';
 import { WindowAgents } from './windowAgents';
 import { HANDOFF_CAPABILITY, WindowAssistance, WindowHandoffs } from './windowAssistance';
 import { commandOutcome, LiveStatus, liveRow, LOGS_ARGV, usageArgv, workActionArgv, type CommandOutcome, type LiveObservation } from './liveStatus';
+import { createUiPilotReader } from '../../uiPilotHost';
+import { AdminUiHost } from '../../adminUiHost';
+import type { AdminUiContext } from '../../adminUiContract';
+import type { PilotViewContext } from '../../uiPilotContract';
 
 /** The Workbench side of the window search scope: prefills an inert search form under it. */
 export interface WindowScopeWorkbench { prefillWindowSearch(search: SearchDraft): Promise<void> }
@@ -133,6 +137,11 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     private workbench?: WindowScopeWorkbench;
     /** The project the Explorer selected; its index is read under the automatic scope. */
     private followed?: string;
+    private pilotSession: object = {};
+    private adminSession: object = {};
+    private sharedManagement?: AdminUiHost;
+    private pilotView: () => PilotViewContext = () => ({ epoch: 0, available: false });
+    private sharedPilot?: (input: unknown) => Promise<unknown>;
 
     constructor(context: vscode.ExtensionContext, private readonly airkctl: Airkctl, private readonly output: vscode.OutputChannel,
         private readonly status: vscode.StatusBarItem, private readonly admin?: AdminOpener) {
@@ -168,7 +177,10 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
             retain: () => host.live.retain(),
             onDidChangeState: listener => { host.stateChanged.add(listener); return { dispose: () => { host.stateChanged.delete(listener); } }; },
         };
-        this.subscriptions.push(airkctl.onDidChangeState(() => { void this.refresh(false); }), airkctl.session.onEvent(event => {
+        this.subscriptions.push(airkctl.onDidChangeState(() => { this.pilotSession = {}; void this.refresh(false); }), airkctl.session.onEvent(event => {
+            if (event.kind === 'session_lost' || event.kind === 'resync' && event.reason === 'service_restarted') {
+                this.pilotSession = {}; this.adminSession = {};
+            }
             void this.assistance.event(event);
             this.live.event(event);
             // The window and its scope grant are gone; the remembered choice is applied again on the next refresh.
@@ -269,13 +281,29 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
     /** The Explorer selected `binding`: read its index under the automatic scope (U103). */
     followProject(binding: string | undefined): void {
         this.followed = binding;
-        if (this.airkctl.state.kind === 'ready') { void this.windowScope.ensureDefault(this.workspaceBinding()); }
+        if (this.airkctl.state.kind === 'ready') {
+            this.live.track(this.specs().flatMap(spec => spec.service ? [spec.service.project] : []), binding);
+            this.publishLive();
+            void this.live.read();
+            void this.windowScope.ensureDefault(this.workspaceBinding());
+        }
     }
     /** How the selected index is read without a chosen scope (scope, binding or not readable). */
     readRoute(): ReadRouteView | undefined { return this.windowScope.readRoute(); }
 
     private publishLive(): void {
         this.current = consoleState(this.airkctl.state, this.rows, this.trusted(), this.revision, binding => this.live.observation(binding), this.live.events, this.live.eventsOmitted);
+        if (this.current.page) {
+            const subset = this.live.subset;
+            this.current.page.projects = this.current.page.projects.map(row => {
+                const project = row.project as { registration?: { binding?: string } } | undefined;
+                const binding = project?.registration?.binding;
+                return { ...row, live_monitoring: { ...this.live.monitoring(binding ?? ''), ...subset } };
+            });
+            if (subset.omitted.length) {
+                this.current = { ...this.current, message: `Live progress monitors ${subset.tracked.length} of ${subset.tracked.length + subset.omitted.length} indexes. The selected index has priority; other indexes outside this subset are not monitored.` };
+            }
+        }
         for (const listener of [...this.stateChanged]) { try { listener(this.current); } catch { /* Listener failures stay local. */ } }
     }
 
@@ -289,7 +317,7 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         } else { this.rows = []; }
         this.revision++;
         const ready = this.airkctl.state.kind === 'ready';
-        if (ready) { this.live.track(this.specs().flatMap(spec => spec.service ? [spec.service.project] : [])); } else { this.live.clear(); }
+        if (ready) { this.live.track(this.specs().flatMap(spec => spec.service ? [spec.service.project] : []), this.followed); } else { this.live.clear(); }
         this.publishLive();
         if (JSON.stringify(this.rows) !== before) { this.specsChanged.fire(); }
         if (ready) {
@@ -313,6 +341,34 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         await this.live.read();
         return outcome;
     }
+    /** The shared read pilot uses the verified session and this exact host/view lifetime. */
+    pilotIdentity(): object { return this.pilotSession; }
+    adminManagementIdentity(): object { return this.adminSession; }
+    revokeAdminManagement(): Promise<void> { return this.sharedManagement?.close() ?? Promise.resolve(); }
+    adminManagement(input: unknown, view: () => Pick<AdminUiContext, 'epoch' | 'ready'>, onStatus?: (status: number) => void): Promise<unknown> {
+        this.sharedManagement ??= new AdminUiHost(this.airkctl.session);
+        return this.sharedManagement.request(input, () => ({ ...view(), ready: view().ready && this.airkctl.state.kind === 'ready',
+            trusted: this.workspaceTrusted(), nativeEnabled: this.nativeExecutionEnabled(), management: true }), onStatus);
+    }
+    async pilotRead(input: unknown, view: () => PilotViewContext): Promise<unknown> {
+        this.pilotView = view;
+        this.sharedPilot ??= createUiPilotReader({
+            context: () => {
+                const current = this.pilotView();
+                const binding = current.binding && this.specs().some(spec => spec.service?.project === current.binding) ? current.binding : undefined;
+                return { host: 'vscode', epoch: current.epoch, ready: current.available && this.airkctl.state.kind === 'ready',
+                    trusted: this.workspaceTrusted(), nativeEnabled: this.nativeExecutionEnabled(), ...(binding ? { usageBinding: binding } : {}) };
+            },
+            session: () => this.airkctl.state.kind === 'ready' ? this.pilotSession : null,
+            invoke: async (argv, options) => {
+                const outcome = await this.airkctl.session.invoke(argv, options);
+                return { status: 'invoked', class: outcome.class, exit_code: outcome.exitCode, stdout: outcome.stdout,
+                    stderr: outcome.stderr, ...(outcome.error ? { error: outcome.error } : {}) };
+            },
+        });
+        return this.sharedPilot(input);
+    }
+
     /** `airkctl usage report` for one index of this window (complete native document). */
     async usage(binding: string, days: number): Promise<CommandOutcome> {
         this.requireReadyState();

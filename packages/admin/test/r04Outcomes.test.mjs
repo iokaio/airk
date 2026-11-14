@@ -20,6 +20,11 @@ function receiptCase(name) {
 const token = '5f'.repeat(16);
 const indexId = `idx_${'01'.repeat(16)}`;
 const operationId = '02'.repeat(16);
+// Prepare-first browser admission requires retaining the opaque acknowledgment
+// before submit. This callback harness supplies that actual browser dependency.
+const preparationStorage = new Map();
+globalThis.window = { sessionStorage: { getItem: key => preparationStorage.get(key) ?? null,
+  setItem: (key, value) => preparationStorage.set(key, value), removeItem: key => preparationStorage.delete(key) } };
 
 const bundled = await build({
   stdin: { contents: `export * from './api'; export * from './envelope'; export { Outcome } from './render';
@@ -41,6 +46,8 @@ const bundled = await build({
       export function useLayoutEffect(make,deps){effect(make,deps);}
       export function useMemo(make){host().cursor++;return make();}
       export function useCallback(callback){host().cursor++;return callback;}
+      // Root callback observations are visible; real provider transitions have DOM coverage.
+      export function useContext(){host().cursor++;return true;}
     ` }));
     plugin.onResolve({ filter: /^\.\/session$/ }, args => (args.importer.endsWith('api.ts') || args.importer.endsWith('indexLibrary.tsx'))
       ? { path: 'session', namespace: 'r04-session' } : undefined);
@@ -665,6 +672,50 @@ function invokeGenerating(tree, kind) {
   if (kind === 'policy') control.props.onClick();
   else control.props.onConfirm();
 }
+for (const kind of ['policy', 'split']) test(`R17 actual ${kind} component recovers original preparation only; READY cannot unlock or resubmit`, async () => {
+  const f = host({ csrf: 'r17-session', serviceInstance: kind });
+  try {
+    const operation = kind === 'policy' ? 'catalog.policy_resume' : 'catalog.split_recover';
+    const known = receiptCase(kind === 'policy' ? 'policy_known_accepted' : 'split_already_complete');
+    const method = kind === 'policy' ? known.request.catalog_policy_resume : known.request.catalog_split_recover.request;
+    const component = kind === 'policy' ? actual.PolicyPanel : actual.SplitStatus, props = { indexId };
+    let tree = f.render(component, props); setRecoveryFields(tree, kind, method.operation_id); tree = f.render(component, props);
+    const preparation = { preparation: token, receipt_operation: known.operation };
+    f.queue(operation, succeeded(operation, preparation));
+    f.queue(operation, failed('service_request_outcome_unknown', { handle: true }));
+    invokeGenerating(tree, kind); await f.idle(); tree = f.render(component, props);
+    assert.equal(generatingControl(tree, kind).props.disabled, true);
+    setRecoveryFields(tree, kind, '09'.repeat(16)); tree = f.render(component, props);
+    const label = kind === 'policy' ? 'Read resume receipt' : 'Read recovery receipt';
+    f.queue(operation, succeeded(operation, preparation)); click(tree, label); await f.idle();
+    tree = f.render(component, props); assert.equal(generatingControl(tree, kind).props.disabled, true, 'READY is not a completed mutation');
+    f.queue(operation, succeeded(operation, known.expect.native));
+    f.queue(operation, succeeded(operation, { acknowledged: token }));
+    click(tree, label); await f.idle(); tree = f.render(component, props);
+    assert.notEqual(generatingControl(tree, kind).props.disabled, true, 'native-known original outcome resolves custody');
+    assert.deepEqual(f.calls, [
+      { operation, body: known.request }, { operation, body: { prepared: token } },
+      { operation, body: { recover: token } }, { operation, body: { recover: token } }, { operation, body: { acknowledged: token } },
+    ]);
+    assert.ok(nodes(tree).some(node => JSON.stringify(node?.props?.state?.result?.envelope?.result) === JSON.stringify(known.expect.native)), 'complete positive native receipt remains visible');
+  } finally { f.close(); }
+});
+test('R17 actual Outcome distinguishes retained READY storage refusal from unknown submitted effects', async () => {
+  const f = host({ csrf: 'r17-storage', serviceInstance: 'storage-refusal' });
+  const storage = window.sessionStorage, originalSet = storage.setItem;
+  try {
+    storage.setItem = () => { throw Error('quota'); };
+    const operation = 'catalog.policy_resume', acknowledgment = succeeded(operation, { preparation: token, receipt_operation: 'catalog.policy_resume_receipt' });
+    f.queue(operation, acknowledgment);
+    const result = await actual.call(operation, receiptCase('policy_known_accepted').request);
+    assert.equal(f.calls.length, 1, 'the generated mutation was never submitted');
+    assert.equal(actual.isUnknownOutcome(result), true, 'retained preparation still blocks regeneration');
+    const tree = actual.Outcome({ state: done(operation, result) });
+    assert.match(text(tree), /This attempt was not submitted/);
+    assert.doesNotMatch(text(tree), /If this request changes state, its outcome is unknown/);
+    assert.ok(nodes(tree).some(node => JSON.stringify(node?.props?.value) === JSON.stringify(actual.parseEnvelope(200, JSON.stringify(acknowledgment.body)))), 'complete native preparation acknowledgment stays visible');
+  } finally { storage.setItem = originalSet; f.close(); }
+});
 async function waitForCalls(f, count) {
   const deadline = Date.now() + 5000;
   while (f.calls.length < count && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
