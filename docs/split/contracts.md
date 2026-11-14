@@ -802,6 +802,178 @@ configuration-edit regressions cover selected removal and source revalidation.
 Composed Reconnect preserves the pre-confirmation removal rows, rejects changed
 targets, and reports partial errors or unavailable evidence without success.
 
+### 3.13 Approved D8 decision: retaining displaced agent configuration
+
+**Option A approved by the user, 13 November 2026; not implemented.** The P1
+late-publication observation selected five tests: the absent-target no-clobber
+and no-op observer controls passed; in-place user edits and editor replacements
+were overwritten, and a user deletion was recreated, each reported `Ok(true)`.
+The existing check-before-staging is not content compare-and-swap. This section
+defines the approved private state/workflow boundary. Land the Rust-owned
+receipt and independent recovery fixtures before writer consumers; the privacy,
+exclusion and native recovery proof gates below remain prerequisites. Approval
+does not qualify an OS/filesystem or change the current I2 schema.
+
+The user selected “Retain displaced files with private recovery receipts
+(proposed option A)” in response to the concrete A/B decision. This satisfies
+[AGENTS.md](../../AGENTS.md)'s requirement to ask before changing a persisted
+format without a recorded contract decision. The contract adds separately
+identified state beside agent files; it neither adopts nor rewrites an existing
+installation format. Preserve the explicit refusal/manual workflow on paths
+where the required privacy, exclusion or native guarantees cannot be proved.
+
+#### Approved option A: retain the displaced object and report conflicts
+
+The owner remains `airkctl::agents::config::io`; the service, extension and MCP
+never write these files. A later implementation must land the owning Rust
+receipt and independent recovery fixtures before its writer. Automatic
+replacement of an existing configuration is permitted only with the following
+retention protocol. Absent-target creation keeps no-clobber publication.
+
+| Decision | Proposed value |
+| --- | --- |
+| Location | `<target parent>/.airk/agent-edits/v1/<transaction-id>/`, on the same filesystem/volume as the target, under the existing reserved `.airk` path component. Own only the new `agent-edits/v1` subtree: never adopt, replace or change an existing `.airk` owner, state, permissions or unrelated contents. One transaction owns `receipt.json`, `prepared` and the actual displaced object, named `before` (Windows) or occupying `prepared` after Unix exchange. A subtree ownership marker binds the user, root identity and schema; never adopt an existing unmarked or inconsistent subtree. An unsafe or incompatible existing `.airk` root causes refusal. |
+| Privacy and identity | Verify/open the parent and retention directories without following redirects; Unix root/transaction directories are 0700 and metadata is 0600; Windows uses an owner-private native boundary. Refuse when that boundary cannot be established. Record directory and file identities using native stable identifiers, not path equality alone. Retained contents, paths and hashes are private and never telemetry. |
+| Receipt identity | New schema `airk.agent-config-edit/1`, random 128-bit transaction ID, owner SID/UID, root and parent directory identities, exact target basename, operation (`connect`, `repair`, `remove`), observed original identity/length/SHA-256, prepared identity/length/SHA-256, primitive, state and sequence. Post-operation observations add retained/target identities, lengths, bounded content observations and native error code. Relative artifact names are fixed; no receipt-supplied arbitrary restore/delete path. A receipt is evidence to revalidate, not authorization to mutate the target. |
+| Bounds before effects | Per target-parent retention root: at most 16 undiscarded transactions, 64 MiB of observed retained/staged content and a 64 KiB receipt bound. Reserve 2 MiB plus 128 KiB metadata headroom and check available disk before staging/publication; account for pending reservations under one local admission lock. Each original/prepared input retains the existing 1 MiB limit. Refuse excess admission before touching the target; do not evict old transactions. |
+| Lifetime | No expiry, age-based deletion, startup sweep or automatic cleanup, including successful replacements. Existing open writers can still modify the displaced object. The user explicitly discards a named transaction directory through their OS file manager/terminal after reviewing its location and risk; v1 adds no native discard command or automatic restore. Ordinary uninstall/reset does not imply permission to remove these archives. |
+| Unsupported hosts/volumes | Refuse existing-file modification with an actionable manual-edit message when private retention, same-filesystem placement, required native semantics or durability cannot be established. No fallback to overwrite rename, copy/delete, cross-volume move or a lock that other editors do not honor. Initially qualify local filesystems only; do not infer network/FUSE/filesystem-extension support from the OS name. |
+
+**Exclusion proof is required before writing source-derived bytes or metadata.**
+The live ingestion walker deliberately uses `hidden(false)` in
+`crates/airk-ingest/src/source_scope.rs`; a dot-prefixed archive name is not
+an exclusion. `airk_ingest::excluded` in `crates/airk-ingest/src/lib.rs`
+already reserves the `.airk` component. That observation motivates the location
+above; it does not prove every ingestion/read route applies the exclusion.
+Directory mode 0700 or an owner-private DACL also does not keep a same-user
+indexer out.
+
+Before creating a receipt, staged configuration or before-image, prove that
+the actual subtree is excluded from ordinary discovery, bounded/direct-file
+indexing, explicitly selected roots and auxiliary extraction/indexing paths.
+The proof must also cover public read/discovery/API scope: retained contents,
+original locations, basenames, hashes, receipt metadata and derived evidence
+must not become source inventory, source counts, symbols, chunks, search hits,
+continuations or directly addressable indexed reads. Only the authorized
+native edit result/manual recovery guidance may disclose the private
+transaction location; these archives never become an MCP evidence source.
+
+Independently prove the subtree is excluded from ordinary Git staging and
+packaging/publishing eligibility at that target location before retaining any
+content. A kernel hard exclusion does not establish Git ignore or package
+rules. Do not edit user ignore files automatically, weaken ignore rules, rely
+on a developer remembering not to stage the directory, or silently change the
+target location. If any required exclusion cannot be proved, or root/private
+ownership is unsafe, refuse automatic existing-file editing and offer the
+manual workflow. Exact mechanisms and per-path regressions remain prerequisites
+for implementation; no new kernel behavior or complete exclusion qualification
+is claimed by this proposal.
+
+The 2 MiB reservation follows the existing 1 MiB input and prepared-output
+bounds, rather than raising a parser limit. These are **admission bounds**:
+a previously open writer can enlarge the displaced object after retention,
+including beyond 1 MiB or the root budget. Preserve that whole object, stop
+new admission when the observed budget is exceeded, and disclose the excess;
+never truncate it, reject its writes or delete it to enforce a quota. This
+proposal cannot promise a hard disk cap against uncooperative external writers,
+nor a global cap across arbitrarily many target-parent directories. Approval
+must explicitly accept these limits and the manual-discard burden.
+
+The root marker and receipt are new versioned private formats, with exact
+encoding/identity fixtures required before consumers. Their proposed fields
+are not another handwritten I2 mirror. Unknown versions, missing artifacts,
+identity mismatches and incomplete receipts cause refusal and preserve all
+objects; they never trigger an inferred restore, replay or deletion.
+
+#### Native publication and recovery obligations
+
+The Windows candidate is `ReplaceFileW` with a transaction-owned backup path
+on the same volume. Its documented failures distinguish 1175/1176, which can
+leave original names, from 1177, which can leave the displaced file under the
+backup name while the replacement remains separate. The implementation must
+observe those identities after failure and retain both files; an error is not
+proof that nothing changed. `REPLACEFILE_WRITE_THROUGH` is documented as
+unsupported, so durable receipt/directory ordering needs separate proof.
+Do not ignore ACL/attribute merge errors. [Microsoft ReplaceFileW reference](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew).
+
+The Linux candidate is `renameat2(RENAME_EXCHANGE)` through opened directories;
+it exchanges existing names and therefore retains the displaced object at the
+staged name. Missing target, unsupported flags/filesystem and cross-mount
+operations refuse. Open descriptors survive a rename: retaining the displaced
+object does not make its future contents immutable. [Linux man-pages rename reference](https://man7.org/linux/man-pages/man2/rename.2.html).
+
+The macOS candidate is `renamex_np`/`renameatx_np` with `RENAME_SWAP`, only on a
+qualified volume supporting swap rename. Apple exposes a per-volume support
+key and documents flagged swaps as unsupported for the cited FSKit handler;
+do not substitute ordinary rename when a swap is unavailable. These are API
+and capability references, not AIRK tests of macOS behavior. [Apple swap support](https://developer.apple.com/documentation/foundation/urlresourcekey/volumesupportsswaprenamingkey),
+[Apple FSKit rename limitations](https://developer.apple.com/documentation/fskit/fsvolume/handler/renameitem(_:indirectory:named:to:indirectory:overitem:context:replyhandler:)).
+
+Before publication, stage/sync the proposed bytes and write/sync a `prepared`
+receipt. Persist `publication_started` before invoking the native primitive.
+Then inspect the current target, staged path and retained object; update/sync
+one of the following states without removing any artifact:
+
+- `published_retained`: observed publication matches the prepared object and
+  the retained before-image matches the reviewed original at that observation.
+  This records an observation, not permanent immutability or future ownership.
+- `conflict_retained`: the actual displaced identity/bytes differ from those
+  reviewed, including a replacement or later write. Keep the actual displaced
+  object, report its private location and stop; the proposed bytes may already
+  be at the target. Never claim that nothing was written.
+- `outcome_unknown`: publication, durable recording or identity reconciliation
+  cannot be established. Keep all objects and the native error; no retry or
+  automatic rollback. A crash at `publication_started` enters reconciliation
+  of the existing artifacts, never replay of the original edit.
+- `refused_retained`: observations prove publication did not occur. Preserve
+  the transaction for explicit user discard; leave the current target alone.
+
+A late deletion must not be recreated: exchange/replace requires the existing
+target. An oversized, continuously changing or unreadable displaced object is
+retained intact with incomplete-observation/conflict status; bounded readers
+must not manufacture a complete hash. Later inspection revalidates live
+identity/content instead of treating an earlier hash as an immutable archive.
+No state authorizes moving a before-image over a newer target. Recovery is
+human-directed review, not blind rollback, automatic merging or automatic
+discard. Exact error/durability handling remains an implementation proof gate.
+
+Existing I2 `ErrorLine`, exit classes and `schema: 1` action/result shapes can
+remain unchanged: use the existing refusal/error fields for a known conflict
+and outcome-unknown class where an operation result permits it, with bounded
+transaction/path guidance in the existing message. Partial action errors remain
+visible. Do not add fields, claim overall success, leak content or mint a new
+capability until the protocol and each caller's unknown-outcome handling pass.
+If existing result shapes cannot represent the distinction faithfully, stop
+for a separate I2 contract step instead of silently collapsing it.
+
+#### Alternative and required acceptance evidence
+
+**Option B:** refuse automatic edits of existing agent files; preserve list/read
+and safe absent-file creation, and require the user to apply the proposed edit
+manually. This avoids retained source copies but changes Connect/Repair/Remove
+and Reconnect behavior and therefore needs an explicit product/workflow choice.
+Adding another last-byte check or advisory lock alone closes neither option.
+
+The present late-write regressions require concurrent bytes/deletion to remain
+at the canonical path. Option A deliberately allows an already-published
+proposal there while preserving the actual displaced source separately and
+reporting conflict. Its expectations may change only in a distinct behavior
+step implementing this approved archive contract, retaining the original failed
+receipt and adding independent target/archive/outcome expectations; never
+relabel their current failures as passes. Deletion remains canonical absence.
+
+Before calling option A implemented, qualify actual target/archive identities,
+in-place writes, editor replacements, deletion, absent-target creation,
+retained open-writer changes, repeated/concurrent edits, privacy and metadata,
+all indexing/read-scope and Git/package exclusions before retention, capacity
+refusal, unsupported volumes, every native failure phase, interruption
+between durable states, receipt failure after publication and explicit manual
+discard. Windows/Linux/macOS results are separate. Whether the native
+primitives, durability and privacy guarantees satisfy every failure case is
+**unproven**; a failed proof blocks that platform/volume rather than weakening
+preservation. No platform campaign or protocol implementation accompanies this
+proposal.
+
 ## 4. I3 — Admin HTTP contract
 
 **This section is the written input to the independent security review
@@ -1042,8 +1214,19 @@ Native classification, pre-dispatch reservation and receipt-only custody are
 implemented in the following handler step, with actual Admin handler regression
 coverage. Receipt-only handles remain pinned for the existing session lifetime,
 including after a known receipt; earlier reclamation is a follow-up. UI receipt
-consumers remain separate work. Existing installer/VSIX receipts retain their
+consumers preserve the original intent and use matching receipt reads. Existing installer/VSIX receipts retain their
 original source identities; this source checkpoint rebuilds neither artifact.
+
+The browser consumer retains pending admission and unresolved original intent
+in a surviving in-memory owner for the exact live session. Switching pages,
+closing index details or selecting another index must not discard custody or
+allow the same unresolved generated action to mint a new key. Remounting its
+workflow recovers the original method, receipt handle and complete observed
+result. Receipt reads use that original method even after form edits; only a
+matching native receipt can acknowledge the uncertainty. A late reply updates
+that owner without advancing an unmounted workflow's next mutation. Session
+replacement isolates custody. This navigation guarantee adds no durable state
+and does not establish recovery after document reload or browser reply loss.
 
 ### 4.5 Launch-code exchange [P, for review]
 
