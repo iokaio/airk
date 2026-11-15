@@ -199,22 +199,22 @@ impl LocalTools {
                 || context.captured_transport_attempt().is_some(),
             "narrowed Answer requires the native Host-captured absolute attempt before local dispatch"
         );
+        anyhow::ensure!(
+            context.context_partition().is_none_or(|partition| {
+                if partition.is_ordinary_focus() {
+                    matches!(name.as_str(), "airk_search" | "search")
+                } else {
+                    matches!(name.as_str(), "airk_answer" | "answer")
+                }
+            }),
+            "native partition purpose differs from the canonical operation"
+        );
         if let Some(attempt) = context.captured_transport_attempt()
             && matches!(
                 name.as_str(),
                 "airk_answer" | "answer" | "airk_search" | "search"
             )
         {
-            anyhow::ensure!(
-                context.context_partition().is_none_or(|partition| {
-                    if partition.is_ordinary_focus() {
-                        matches!(name.as_str(), "airk_search" | "search")
-                    } else {
-                        matches!(name.as_str(), "airk_answer" | "answer")
-                    }
-                }),
-                "native partition purpose differs from the canonical operation"
-            );
             server.kernel = match context.context_partition() {
                 Some(partition) => server
                     .kernel

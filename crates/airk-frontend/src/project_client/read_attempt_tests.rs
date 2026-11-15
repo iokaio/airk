@@ -250,3 +250,196 @@ async fn crossed_request_or_worker_proof_fails_closed_without_replay() -> Result
     exchange_fixture("identity", true, false).await?;
     exchange_fixture("scope", true, false).await
 }
+
+async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
+    use airk_core::combined_context::PartitionAllowance;
+    let fixtures: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
+    ))?;
+    let allowance: PartitionAllowance = serde_json::from_value(fixtures[row]["allowance"].clone())?;
+    allowance.validate()?;
+    let canonical = match fixtures[row]["canonical_tool"].as_str() {
+        Some("search") => "airk_search",
+        Some("answer") => "airk_answer",
+        _ => anyhow::bail!("fixture canonical operation missing"),
+    }
+    .to_owned();
+    let arguments = if canonical == "airk_search" {
+        serde_json::json!({"query":"fixed native purpose control", "limit":allowance.resources.candidates, "max_bytes":4096})
+    } else {
+        let mut budget = allowance.parent_budget.clone();
+        budget.calls = allowance.resources.calls;
+        budget.candidates = allowance.resources.candidates;
+        budget.max_bytes = allowance.resources.bytes;
+        budget.input_tokens = allowance.resources.input_tokens.max(1);
+        let request = airk_core::arbiter::context_action::ContextRequestV2 {
+            schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+            question: "fixed native purpose control".into(),
+            budget,
+        };
+        request.validate()?;
+        serde_json::to_value(request)?
+    };
+    if canonical == "airk_search" {
+        let _: airk_mcp::SearchArgs = serde_json::from_value(arguments.clone())?;
+    } else {
+        serde_json::from_value::<airk_mcp::AnswerArgs>(arguments.clone())?
+            .request
+            .validate()?;
+    }
+    let arguments = arguments.as_object().unwrap().clone();
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("runtime");
+    local_ipc::prepare_root(&root)?;
+    let endpoint = local_ipc::endpoint(&root, "partition-purpose")?;
+    let mut listener = local_ipc::Listener::bind(&endpoint)?;
+    let expected = allowance.clone();
+    let expected_arguments = arguments.clone();
+    let expected_tool = canonical.clone();
+    let peer = tokio::spawn(async move {
+        let mut stream = listener.accept().await?;
+        let query: Query = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+            .await?
+            .context("valid partition was not submitted")?;
+        ensure!(
+            query.tool == expected_tool && query.native.is_none(),
+            "wrong purpose crossed exchange"
+        );
+        ensure!(
+            query.arguments == expected_arguments,
+            "canonical arguments changed"
+        );
+        ensure!(
+            serde_json::to_value(&query.context_partition)?
+                == serde_json::to_value(Some(&expected))?,
+            "original partition changed"
+        );
+        let attempt = query.read_attempt.context("original attempt omitted")?;
+        ensure!(
+            attempt.request_id == expected.attempt,
+            "original attempt identity changed"
+        );
+        ensure!(
+            airk_host::read_attempt::decode(attempt)?.deadline() > Instant::now(),
+            "original attempt expired"
+        );
+        local_ipc::write_message(
+            &mut stream,
+            &protocol::QueryResult {
+                result: airk_mcp::unified::success(serde_json::json!({"complete":true})),
+                status_receipt: Default::default(),
+                rebind: false,
+                read_admission: None,
+            },
+            Duration::from_secs(5),
+        )
+        .await?;
+        let extra =
+            local_ipc::read_message::<_, Query>(&mut stream, Duration::from_secs(5)).await?;
+        ensure!(extra.is_none(), "unexpected second frame or replay");
+        Ok::<_, anyhow::Error>(())
+    });
+    let stream = local_ipc::connect(&endpoint).await?;
+    let now = Instant::now();
+    let mut connection = Connection {
+        stream: Some(stream),
+        identity: airk_core::service::WorkerIdentity {
+            service: airk_core::identity::Incarnation::from_bytes([1; 16]),
+            worker: airk_core::identity::Incarnation::from_bytes([2; 16]),
+            project: "ab".repeat(32).parse()?,
+            fencing_generation: 1,
+        },
+        authorized_until: now + Duration::from_secs(55),
+        last_finished: now,
+        healthy: true,
+        scoped: true,
+        read_scope: None,
+        read_attempt_supported: true,
+        status_receipt: Default::default(),
+    };
+    let context = airk_mcp::read_attempt::ReadAttemptContext::new(
+        now + Duration::from_secs(5),
+        Default::default(),
+    )
+    .with_request_id(allowance.attempt)?
+    .with_context_partition(allowance.clone())?;
+    if refusals {
+        let wrong = if canonical == "airk_search" {
+            "airk_answer"
+        } else {
+            "airk_search"
+        };
+        assert!(
+            connection
+                .call_with_read_context(wrong.into(), arguments.clone(), context.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            connection.healthy && connection.stream.is_some(),
+            "crossed purpose reached submission"
+        );
+        assert!(
+            connection
+                .read_native_with_context(airk_mcp::local::NativeRead::UsagePolicy, context.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            connection.healthy && connection.stream.is_some(),
+            "native request reached submission"
+        );
+        connection.read_attempt_supported = false;
+        assert!(
+            connection
+                .call_with_read_context(canonical.clone(), arguments.clone(), context.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            connection.healthy && connection.stream.is_some(),
+            "unsupported attempt reached submission"
+        );
+        connection.read_attempt_supported = true;
+        let mut malformed = allowance.clone();
+        malformed.resources.calls = malformed.parent_budget.calls + 1;
+        assert!(
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                now + Duration::from_secs(5),
+                Default::default()
+            )
+            .with_request_id(malformed.attempt)?
+            .with_context_partition(malformed)
+            .is_err()
+        );
+    }
+    let reply = connection
+        .call_with_read_context(canonical, arguments, context)
+        .await?;
+    let body: serde_json::Value = serde_json::from_str(
+        reply["content"][0]["text"]
+            .as_str()
+            .context("body missing")?,
+    )?;
+    assert_eq!(body["complete"], true);
+    drop(connection);
+    peer.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn actual_connection_submits_focus_search_and_context_answer_with_original_allowance()
+-> Result<()> {
+    for row in ["ordinary_focus", "context", "zero_optional_work"] {
+        partition_purpose_exchange(row, false).await?;
+    }
+    Ok(())
+}
+#[tokio::test]
+async fn actual_connection_refuses_crossed_native_malformed_and_unsupported_partition_purposes()
+-> Result<()> {
+    for row in ["ordinary_focus", "context", "zero_optional_work"] {
+        partition_purpose_exchange(row, true).await?;
+    }
+    Ok(())
+}

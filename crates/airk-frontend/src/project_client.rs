@@ -620,9 +620,16 @@ impl Connection {
                 .as_ref()
                 .context("context partition original attempt missing")?;
             partition.validate_binding(attempt, partition.selection, partition.index_id)?;
+            // Core's validated purpose is inert: the actual selector/Host and
+            // worker still own admission, authority and the original budget.
+            let canonical_tool = if partition.is_ordinary_focus() {
+                "airk_search"
+            } else {
+                "airk_answer"
+            };
             ensure!(
-                query.native.is_none() && query.tool == "airk_answer",
-                "context partition requires canonical Answer"
+                query.native.is_none() && query.tool == canonical_tool,
+                "partition requires its canonical Search or Answer purpose"
             );
         }
         loop {

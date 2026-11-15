@@ -533,3 +533,80 @@ async fn focus_selection_requires_actual_singleton_allowance_and_retains_direct_
     tools.close().await?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_sdk_refuses_partition_on_other_canonical_tools_before_dispatch() -> Result<()> {
+    let temporary = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let source = temporary.path().join("source");
+    std::fs::create_dir_all(source.join("public"))?;
+    let saved = b"fixed source remains unchanged\n";
+    std::fs::write(source.join("public/a.txt"), saved)?;
+    let base = Kernel::open(&source, Some(temporary.path().join("data")))?;
+    base.configure_vectors(false)?;
+    base.index()?;
+    let reviewed = crate::scoped_observation_tests::authority(&base)?;
+    let scoped = base.with_scoped_reads(reviewed.clone())?;
+    let authority = ScopedReadRef {
+        schema: 1,
+        lease_generation: 1,
+        index_id: reviewed.index_id,
+        grant_id: Some(reviewed.grant.id),
+        grant_revision: Some(reviewed.grant.revision),
+        selection: None,
+        fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
+    };
+    let owner = Arc::new(FocusOwner {
+        enabled: true,
+        requests: Mutex::new(vec![]),
+    });
+    let mut tools = local::LocalTools::new(scoped.with_native_arbiter(
+        WorkerIdentity {
+            service: Incarnation::from_bytes([8; 16]),
+            worker: Incarnation::from_bytes([9; 16]),
+            project: reviewed.backing,
+            fencing_generation: 1,
+        },
+        authority,
+        owner.clone(),
+    )?)
+    .await?;
+    // Bundled Help is permitted by this exact reviewed scope. Global Status
+    // is intentionally denied (see scoped_observation_tests), not a fixture
+    // authority that an original attempt may replace.
+    payload(tools.call("airk_help".into(), Default::default()).await?)?;
+    let fixtures: Value = serde_json::from_slice(include_bytes!(
+        "../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
+    ))?;
+    for row in ["ordinary_focus", "context", "zero_optional_work"] {
+        let allowance: airk_core::combined_context::PartitionAllowance =
+            serde_json::from_value(fixtures[row]["allowance"].clone())?;
+        let mut wire = attempt().wire_attempt().unwrap();
+        wire.request_id = allowance.attempt;
+        let context = crate::read_attempt::ReadAttemptContext::new(
+            Instant::now() + Duration::from_secs(30),
+            Default::default(),
+        )
+        .with_wire_attempt(wire)?
+        .with_context_partition(allowance)?;
+        assert!(context.captured_transport_attempt().is_some());
+        for tool in ["airk_status", "status", "airk_help", "help"] {
+            let error = tools
+                .call_with_read_context(tool.into(), Default::default(), context.clone())
+                .await
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("native partition purpose differs"),
+                "{error:#}"
+            );
+        }
+    }
+    assert!(
+        owner.requests.lock().unwrap().is_empty(),
+        "a rejected purpose scored candidates"
+    );
+    assert_eq!(std::fs::read(source.join("public/a.txt"))?, saved);
+    tools.close().await?;
+    Ok(())
+}
