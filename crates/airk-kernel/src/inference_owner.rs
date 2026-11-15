@@ -90,3 +90,6 @@ mod evaluation_tests;
 
 #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
 mod context_action_tests;
+
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+mod context_action_calibration_tests;

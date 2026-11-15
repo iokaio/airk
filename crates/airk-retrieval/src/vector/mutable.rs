@@ -21,6 +21,9 @@ use std::sync::{
 mod codec;
 pub use codec::{record_bytes, specification};
 
+#[cfg(feature = "test-support")]
+pub mod self_probe;
+
 /// Bounds candidate/refill memory independently of the record-read budget.
 pub const MAX_SEARCH_CANDIDATES: usize = 4096;
 

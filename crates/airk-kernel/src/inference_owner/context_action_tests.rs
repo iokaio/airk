@@ -31,6 +31,9 @@ struct ParagraphSpan {
     end: usize,
 }
 fn covers(intervals: &[(usize, usize)], start: usize, end: usize) -> bool {
+    if start >= end {
+        return false;
+    }
     let mut ordered = intervals.to_vec();
     ordered.sort_unstable();
     let mut cursor = start;
@@ -79,7 +82,7 @@ fn intervals(body: &Value, source: &str) -> Result<Vec<(usize, usize)>> {
 fn paragraph_ids<'a>(spans: &'a [ParagraphSpan], ranges: &[(usize, usize)]) -> BTreeSet<&'a str> {
     spans
         .iter()
-        .filter(|span| covers(ranges, span.start, span.end))
+        .filter(|span| span.start < span.end && covers(ranges, span.start, span.end))
         .map(|span| span.id.as_str())
         .collect()
 }
@@ -112,7 +115,7 @@ fn source_alignment(
         let end = usize::try_from(value["end"].as_u64().context("source end")?)?;
         ensure!(
             start >= previous_end
-                && start < end
+                && start <= end
                 && source.get(start..end) == Some(text(document, "text")?)
                 && document["source_group"] == question["source_group"],
             "source span/family changed"
@@ -248,6 +251,24 @@ fn context_action_exact_span_union_keeps_partial_and_already_retained_support_di
         paragraph_ids(&spans, &[(0, 192), (192, 300)]),
         BTreeSet::from(["original"])
     );
+}
+
+#[test]
+fn context_action_original_empty_spans_are_metadata_never_vacuous_support() {
+    let spans = vec![ParagraphSpan {
+        id: "original-empty".into(),
+        start: 20,
+        end: 20,
+    }];
+    assert_eq!(
+        spans.len(),
+        1,
+        "original empty paragraph metadata remains present"
+    );
+    assert!(!covers(&[], 20, 20));
+    assert!(!covers(&[(0, 300)], 20, 20));
+    assert!(paragraph_ids(&spans, &[]).is_empty());
+    assert!(paragraph_ids(&spans, &[(0, 300)]).is_empty());
 }
 
 fn sha(bytes: &[u8]) -> Sha256Digest {

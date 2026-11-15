@@ -1,5 +1,24 @@
 # Development retrieval capture
 
+The test-only `ann_self` diagnostic reopens one exact retained DEV publication
+through `open_collection_for_diagnostics`, with recovery disabled. It never
+opens an encoder, reads live source text, indexes, rebuilds or mutates graph
+records. It may read retained artifact text/metadata while verifying the exact
+indexed source roster. Typed CurrentHead, ModelObjectSet, original capture hash,
+source roster and current reader token bind the input and delivery.
+
+The Retrieval `test-support` helper decodes authenticated records through the
+owning codec and compares actual ANN search to actual all-live-ID exact subset
+search for every stored vector as a self query, at fixed limits10 and64. It
+retains full IDs/distances and partial/read disclosures, exact ID-intersection
+recall, zero/cutoff tie groups and strictly-closer omissions. Equal-distance
+ties are not false self-ID failures. Two tiny independent controls cover unit
+vector distances, stable ties, invalid/dead/reserved slots and17identical
+vectors whose exact top10 legitimately excludes some self IDs. The actual
+ignored diagnostic requires a separately owned original60second/1GiB process;
+its internal deadline begins before input decoding. It establishes only the
+exercised self-vector graph behavior, not human-query recall or quality.
+
 `development` is a separate test-only owner for the reviewed private DEV64
 experiment. The original205 entry, source2772 assertion, inputs and grader remain
 unchanged. This is direct Kernel evidence, not CLI, MCP, Service or Workbench
@@ -71,3 +90,27 @@ fixture preparation does not authorize neural execution or prove quality.
 Root's explicit resource release follows the actual pre-outcome freeze. The
 original failed205 experiment and DEV64 sources/graders remain separate and
 unchanged; no FINAL outcomes may choose checkpoints, calibration or recipes.
+
+The per-probe authenticated raw-record cache is diagnostic only. It retains
+the exact original CurrentRead reader, authenticates every allocated record
+(including reserved/dead records) once through that reader, and uses the
+existing Core record validator and Retrieval codec without transformation.
+Cached records and metadata are immutable; every cached read checks the retained
+reader's counts/scope/liveness. Native token/head/model/indexed-source fences
+still surround the whole cache population and all queries. This is not a
+production cache, alternate graph, metric or search algorithm.
+
+Cached ANN and exact search execute the same owning MutableDiskIndex APIs as
+direct reads. Read counters report logical requests, not physical proof I/O;
+cache timings do not qualify product latency. Independent tiny fixtures compare
+complete direct/cache ANN and exact outputs and cover missing/malformed source
+records, owning authentication refusal and source-authority revocation. The
+17-identical-vector control retains explicit cutoff/self ties.
+
+Flushed trace rows contain only closed static phase names and numeric ordinals.
+No source text, question, label or exception text is emitted. The full fixed
+378-self-query population at limits10 and64 and original60second/1GiB owned
+bound are unchanged. A separate actual-reader first-live localization test
+uses the original five-second bound, one exact-self subset and ordinary ANN10;
+it makes no all-live recall claim. The historical uninstrumented timeout remains
+a failed run with no metrics, not evidence of an ANN defect.

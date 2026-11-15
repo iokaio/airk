@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: Apache-2.0
+//! PRIVATE draft: Kernel inference_owner::evaluation_tests::ann_self.
+//! No encoder owner/model opens or live source text reads; only existing retained publication.
+use super::*;
+use airk_core::model_objects::ModelObjectSet;
+use airk_store::current::CurrentHead;
+use serde::{Deserialize, Serialize};
+use std::{fs::OpenOptions, io::Write, time::Duration};
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProbeInput {
+    source_root: PathBuf,
+    data_root: PathBuf,
+    collection: String,
+    expected_head: CurrentHead,
+    expected_model: ModelObjectSet,
+    expected_indexed_sources: BTreeMap<String, (u64, String)>,
+    expected_live_nodes: u64,
+    retained_capture: PathBuf,
+    retained_capture_sha256: Sha256Digest,
+}
+
+#[test]
+#[ignore = "read-only native metadata preparation for one exact retained candidate DEV publication; no encoder"]
+fn emit_retained_dev_graph_self_probe_typed_input() -> Result<()> {
+    let started = Instant::now();
+    let capture = PathBuf::from(
+        std::env::var_os("AIRK_ANN_SELF_CAPTURE").context("missing retained DEV capture")?,
+    );
+    let capture_pin: Sha256Digest =
+        "9aec2ccc46b1d278db426da62183078702496879dd826442f5b3fb8f999caeb9".parse()?;
+    let capture_bytes = sealed(&capture, capture_pin)?;
+    let record: Value = serde_json::from_slice(&capture_bytes)?;
+    ensure!(
+        record["schema"] == "airk.native-development-retrieval-family/1"
+            && record["family"] == "visible-prefix-mining-r1-u8"
+            && record["complete"] == true
+            && record["evaluation"] == true
+            && record["release_qualified"] == false,
+        "exact complete unqualified DEV capture required"
+    );
+    let collections = record["collections"]
+        .as_array()
+        .context("capture collection roster missing")?;
+    ensure!(
+        collections.len() == 1,
+        "exact cross-document DEV collection required"
+    );
+    let collection = &collections[0];
+    let source = PathBuf::from(
+        collection["source_root"]
+            .as_str()
+            .context("capture root missing")?,
+    );
+    let publication: airk_core::evidence::RevisionEnvelope =
+        serde_json::from_value(collection["publication"].clone())?;
+    let data = PathBuf::from(
+        std::env::var_os("AIRK_ANN_SELF_DATA_ROOT")
+            .context("missing original existing index data root")?,
+    );
+    ensure!(
+        source.is_dir()
+            && data.is_dir()
+            && source.canonicalize()? == source
+            && data.canonicalize()? == data,
+        "canonical existing original roots required"
+    );
+    let kernel = crate::Kernel::open_collection_for_diagnostics(
+        &source,
+        Some(data.clone()),
+        &publication.collection,
+    )?;
+    let read = kernel.current_reader()?;
+    ensure!(
+        crate::current::runtime::envelope(&read)? == publication,
+        "capture publication differs from current head"
+    );
+    let model = read
+        .collection_state()?
+        .context("published state missing")?
+        .configuration
+        .model
+        .context("published model missing")?;
+    ensure!(
+        serde_json::to_value(model.pipeline_digest)? == collection["pipeline_digest"]
+            && collection["pipeline_digest"] == record["pipeline_digest"],
+        "capture pipeline differs"
+    );
+    let model_json = model
+        .assets
+        .get(&airk_core::model_objects::ModelAssetName::ModelJson)
+        .context("published model.json missing")?;
+    ensure!(
+        serde_json::to_value(model_json.sha256)? == collection["model_json_sha256"]
+            && collection["model_json_sha256"] == record["model_json_sha256"],
+        "capture model differs"
+    );
+    let snapshot = kernel
+        .load_optional()?
+        .context("published source roster absent")?;
+    let sources: BTreeMap<_, _> = snapshot
+        .artifacts
+        .iter()
+        .map(|(path, artifact)| {
+            (
+                path.clone(),
+                (artifact.bytes as u64, artifact.content_hash.clone()),
+            )
+        })
+        .collect();
+    let source_sha = Sha256Digest::from_bytes(Sha256::digest(serde_json::to_vec(&sources)?).into());
+    ensure!(
+        serde_json::to_value(source_sha)? == collection["indexed_source_roster_sha256"],
+        "capture indexed source roster differs"
+    );
+    ensure!(
+        kernel.current_reader()?.head() == read.head(),
+        "publication changed during preparation"
+    );
+    sealed(&capture, capture_pin)?;
+    let input = ProbeInput {
+        source_root: source,
+        data_root: data,
+        collection: publication.collection,
+        expected_head: read.head().clone(),
+        expected_model: model,
+        expected_indexed_sources: sources,
+        expected_live_nodes: read.head().graph_head.live_nodes,
+        retained_capture: capture,
+        retained_capture_sha256: capture_pin,
+    };
+    let output = PathBuf::from(
+        std::env::var_os("AIRK_ANN_SELF_INPUT").context("missing fresh typed input output")?,
+    );
+    ensure!(
+        output.is_absolute()
+            && output
+                .parent()
+                .context("output parent absent")?
+                .canonicalize()?
+                == output.parent().unwrap()
+            && !output.starts_with(&input.source_root)
+            && !output.starts_with(&input.data_root),
+        "canonical output parent outside original roots required"
+    );
+    ensure!(
+        started.elapsed() < Duration::from_secs(60),
+        "original preparation deadline exceeded"
+    );
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    file.write_all(&serde_json::to_vec_pretty(&input)?)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "explicit retained DEV publication only; zero encoder forwards; external 60s/1GiB owned process required"]
+fn retained_dev_graph_self_vectors_compare_actual_ann_to_exact_all_live_ids() -> Result<()> {
+    run_self_probe(false)
+}
+
+#[test]
+#[ignore = "one exact retained actual graph reader; external five-second/1GiB localization only; zero encoder"]
+fn retained_dev_graph_first_live_reader_query_is_observed_without_new_inference() -> Result<()> {
+    run_self_probe(true)
+}
+
+fn phase(name: &'static str, ordinal: u64) -> Result<()> {
+    eprintln!("{}", json!({"ann_probe_phase":name,"ordinal":ordinal}));
+    std::io::stderr().flush()?;
+    Ok(())
+}
+
+fn run_self_probe(smoke: bool) -> Result<()> {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(if smoke { 5 } else { 60 });
+    phase("input_verify_start", 0)?;
+    let path = PathBuf::from(
+        std::env::var_os("AIRK_ANN_SELF_INPUT").context("missing primary-reviewed graph pins")?,
+    );
+    let pin: Sha256Digest = std::env::var("AIRK_ANN_SELF_INPUT_SHA256")?.parse()?;
+    let bytes = sealed(&path, pin)?;
+    let input: ProbeInput = serde_json::from_slice(&bytes)?;
+    sealed(&input.retained_capture, input.retained_capture_sha256)?;
+    phase("input_verify_done", 0)?;
+    ensure!(
+        input.source_root.is_absolute()
+            && input.data_root.is_absolute()
+            && input.source_root.is_dir()
+            && input.data_root.is_dir(),
+        "existing absolute retained roots required"
+    );
+    ensure!(
+        input.source_root.canonicalize()? == input.source_root
+            && input.data_root.canonicalize()? == input.data_root,
+        "canonical retained roots required"
+    );
+    ensure!(
+        !input.source_root.starts_with(&input.data_root)
+            && !input.data_root.starts_with(&input.source_root),
+        "source/data isolation required"
+    );
+    ensure!(
+        !input.expected_indexed_sources.is_empty() && input.expected_live_nodes > 0,
+        "nonempty frozen original publication required"
+    );
+    let output = PathBuf::from(
+        std::env::var_os("AIRK_ANN_SELF_OUTPUT").context("missing fresh private output")?,
+    );
+    let parent = output.parent().context("output parent missing")?;
+    ensure!(
+        parent.canonicalize()? == parent
+            && !output.exists()
+            && std::fs::symlink_metadata(&output)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        "fresh output and canonical existing parent required"
+    );
+    ensure!(
+        output.is_absolute()
+            && !output.starts_with(&input.source_root)
+            && !output.starts_with(&input.data_root),
+        "output outside retained roots required"
+    );
+    phase("diagnostics_open_start", 0)?;
+    let kernel = crate::Kernel::open_collection_for_diagnostics(
+        &input.source_root,
+        Some(input.data_root.clone()),
+        &input.collection,
+    )?;
+    phase("diagnostics_open_done", 0)?;
+    ensure!(
+        kernel.collection() == input.collection && kernel.current_scope()?.is_some(),
+        "no new or foreign collection permitted"
+    );
+    phase("current_reader_start", 0)?;
+    let read = kernel.current_reader()?;
+    phase("current_reader_done", 0)?;
+    ensure!(
+        read.head() == &input.expected_head,
+        "exact original published head required"
+    );
+    let model = read
+        .collection_state()?
+        .context("published model missing")?
+        .configuration
+        .model
+        .context("published model absent")?;
+    ensure!(
+        model == input.expected_model,
+        "exact published model/pipeline required"
+    );
+    ensure!(
+        read.head().graph_head.live_nodes == input.expected_live_nodes,
+        "frozen live node count changed"
+    );
+    phase("load_optional_start", 0)?;
+    let snapshot = kernel
+        .load_optional()?
+        .context("published source roster missing")?;
+    phase("load_optional_done", 0)?;
+    let actual: BTreeMap<_, _> = snapshot
+        .artifacts
+        .iter()
+        .map(|(path, artifact)| {
+            (
+                path.clone(),
+                (artifact.bytes as u64, artifact.content_hash.clone()),
+            )
+        })
+        .collect();
+    ensure!(
+        actual == input.expected_indexed_sources,
+        "exact original indexed source roster required"
+    );
+    phase("reader_token_start", 0)?;
+    let token = read.token()?;
+    phase("reader_token_done", 0)?;
+    let mut trace = |name, ordinal| phase(name, ordinal);
+    let result = if smoke {
+        airk_retrieval::vector::mutable::self_probe::first_live_reader_smoke(
+            read.clone(),
+            384,
+            model.pipeline_digest,
+            deadline,
+            &mut trace,
+        )?
+    } else {
+        airk_retrieval::vector::mutable::self_probe::compare_self_vectors_traced(
+            read.clone(),
+            384,
+            model.pipeline_digest,
+            deadline,
+            &mut trace,
+        )?
+    };
+    phase("post_token_start", 0)?;
+    read.require_token(&token)?;
+    ensure!(
+        kernel.current_reader()?.head() == &input.expected_head,
+        "publication changed before diagnostic delivery"
+    );
+    phase("post_token_done", 0)?;
+    ensure!(
+        Instant::now() < deadline,
+        "original diagnostic deadline exceeded"
+    );
+    sealed(&path, pin)?;
+    sealed(&input.retained_capture, input.retained_capture_sha256)?;
+    let result = json!({"schema":"airk.private-ann-self-probe/1","complete":true,"evaluation":true,"release_qualified":false,"input_sha256":pin,"retained_capture_sha256":input.retained_capture_sha256,"binary_sha256":format!("{:x}",Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"published_head":read.head(),"model":model,"source_roster_sha256":format!("{:x}",Sha256::digest(serde_json::to_vec(&actual)?)),"elapsed_seconds":started.elapsed().as_secs_f64(),"result":result});
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    file.write_all(&serde_json::to_vec_pretty(&result)?)?;
+    file.sync_all()?;
+    phase("output_complete", 0)?;
+    Ok(())
+}
