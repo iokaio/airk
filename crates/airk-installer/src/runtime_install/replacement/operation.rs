@@ -734,6 +734,7 @@ pub(super) fn resume(mut plan: Plan) -> Result<serde_json::Value> {
         .as_ref()
         .filter(|control| control.join("service-1.4.sqlite3").exists())
     {
+        let registry_owner = saved.indexes.recover_stopped()?;
         ensure!(
             IndexLocations::capture_control(control)
                 .context("replacement_resume_control_unproven")?
@@ -743,6 +744,7 @@ pub(super) fn resume(mut plan: Plan) -> Result<serde_json::Value> {
         if !saved.frozen {
             Operation::freeze(&mut plan)?;
         }
+        drop(registry_owner);
     } else {
         ensure!(
             saved.frozen,

@@ -364,6 +364,26 @@ impl IndexLocations {
         Self::capture_control(&control)
     }
 
+    /// Process/image exclusion precedes this exact native registry recovery.
+    /// Keep the lease through recapture/freeze, then release it before moves.
+    fn recover_stopped(&self) -> Result<Option<airk_store::service::ServiceLease>> {
+        let Some(control) = &self.control else {
+            ensure!(
+                self.namespace.is_none(),
+                "replacement control identity missing"
+            );
+            return Ok(None);
+        };
+        let namespace = self.namespace.context("replacement namespace missing")?;
+        let owner = airk_store::service::ServiceLease::acquire(control)
+            .context("replacement registry still has a native owner")?;
+        airk_store::service::registry::ServiceRegistry::recover_existing_after_stop(
+            &owner, namespace,
+        )
+        .context("replacement stopped registry recovery failed")?;
+        Ok(Some(owner))
+    }
+
     fn capture_control(control: &Path) -> Result<Self> {
         let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
         let namespace = registry.incarnation()?;
@@ -1159,11 +1179,13 @@ fn apply_plan_pipeline(
         );
     }
     require_owned(&plan)?;
+    let registry_owner = plan.index_locations.recover_stopped()?;
     ensure!(
         IndexLocations::capture(&plan.install)? == plan.index_locations,
         "remove_installation_refused: index ownership or source roster changed after review"
     );
     Operation::freeze(&mut plan)?;
+    drop(registry_owner);
     let retired_images = before_move(&mut plan)?;
     for attempt in 0..5 {
         let mut remaining = Vec::new();

@@ -1755,3 +1755,120 @@ fn a_concurrent_replacement_is_refused_before_any_side_effect() -> Result<()> {
     );
     Ok(())
 }
+
+/// SQLite itself produces this interrupted write; restoring its exact live
+/// DB/journal image after rollback models process death without killing a test.
+fn interrupt_registry_transaction(control: &Path) -> Result<()> {
+    let database = control.join("service-1.4.sqlite3");
+    let journal = control.join("service-1.4.sqlite3-journal");
+    let connection = rusqlite::Connection::open(&database)?;
+    connection.execute_batch("PRAGMA cache_size=1; BEGIN IMMEDIATE; CREATE TABLE interrupted_replacement_fixture(payload BLOB); INSERT INTO interrupted_replacement_fixture VALUES(zeroblob(131072));")?;
+    let database_bytes = fs::read(&database)?;
+    let journal_bytes = fs::read(&journal)?;
+    assert_eq!(
+        &journal_bytes[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    connection.execute_batch("ROLLBACK;")?;
+    drop(connection);
+    fs::write(database, database_bytes)?;
+    fs::write(journal, journal_bytes)?;
+    Ok(())
+}
+
+#[test]
+fn replacement_recovers_stopped_hot_journal_before_roster_freeze_and_moves() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let (install, state) = installation(&base, "hot-install")?;
+    let source = base.join("original.txt");
+    fs::write(&source, b"source survives native rollback and removal")?;
+    let control = state.join("control");
+    let token = "7".repeat(64);
+    let mut plan = plan_for_operation(&install, &"b".repeat(64), CANDIDATE, Some(&token), None)?;
+    Operation::begin(&mut plan)?;
+    let result = apply_plan_effects(
+        plan,
+        Duration::ZERO,
+        &mut |from, to| fs::rename(from, to),
+        &mut |_| {
+            interrupt_registry_transaction(&control)
+                .err()
+                .map(|error| format!("{error:#}"))
+        },
+        &mut |path| fs::remove_dir_all(path),
+    )?;
+    assert_eq!(result["replaced"], true);
+    assert!(!install.exists() && !state.exists());
+    assert_eq!(
+        fs::read(source)?,
+        b"source survives native rollback and removal"
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_live_registry_owner_refuses_recovery_before_any_move_or_purge() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let (install, state) = installation(&base, "held-install")?;
+    let source = base.join("original.txt");
+    fs::write(&source, b"source remains on recovery refusal")?;
+    let control = state.join("control");
+    let token = "8".repeat(64);
+    let candidate = "b".repeat(64);
+    let mut plan = plan_for_operation(&install, &candidate, CANDIDATE, Some(&token), None)?;
+    Operation::begin(&mut plan)?;
+    interrupt_registry_transaction(&control)?;
+    fn directories(root: &Path, current: &Path) -> Result<std::collections::BTreeSet<PathBuf>> {
+        let mut names = std::collections::BTreeSet::new();
+        for entry in fs::read_dir(current)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                names.insert(entry.path().strip_prefix(root)?.to_path_buf());
+                names.extend(directories(root, &entry.path())?);
+            }
+        }
+        Ok(names)
+    }
+    // Windows denies reading a byte-locked lease file even to its owning
+    // process. Compare every file before acquisition and after release rather
+    // than excluding the lock from the preservation observation.
+    let before = (file_snapshot(&base)?, directories(&base, &base)?);
+    let lease = airk_store::service::ServiceLease::acquire(&control)?;
+    let failure = apply_plan_effects(
+        plan,
+        Duration::ZERO,
+        &mut |_, _| panic!("recovery refusal must precede every move"),
+        &mut |_| None,
+        &mut |_| panic!("recovery refusal must precede every purge"),
+    )
+    .unwrap_err();
+    assert!(format!("{failure:#}").contains("replacement registry still has a native owner"));
+    drop(lease);
+    assert_eq!((file_snapshot(&base)?, directories(&base, &base)?), before);
+    assert_eq!(pending_operation(&install, &candidate)?, Some(token));
+    Ok(())
+}
+
+#[test]
+fn replacement_resume_recovers_unfrozen_hot_journal_and_preserves_source() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let (install, state) = installation(&base, "resume-hot-install")?;
+    let source = base.join("original.txt");
+    fs::write(&source, b"original survives resumed recovery")?;
+    let token = "9".repeat(64);
+    let candidate = "b".repeat(64);
+    let mut plan = plan_for_operation(&install, &candidate, CANDIDATE, Some(&token), None)?;
+    Operation::begin(&mut plan)?;
+    interrupt_registry_transaction(&state.join("control"))?;
+    assert!(
+        airk_store::service::registry::ServiceRegistry::open_saved(&state.join("control")).is_err()
+    );
+    let result = apply(&install, &candidate, Some(&token), None)?;
+    assert_eq!(result["replaced"], true);
+    assert!(!install.exists() && !state.exists());
+    assert_eq!(fs::read(source)?, b"original survives resumed recovery");
+    Ok(())
+}
