@@ -2105,6 +2105,16 @@ The extension packager validates the captured runtime bytes against this exact
 source producer before staging; its two named host modules add no second
 browser validator. Complete original native replies remain copy/export authority.
 
+Ranked-origin display decoding preserves native Open attribution as an empty
+`project_ids` array through publication-reference restoration, combined rows and
+file-specific follow-up selectors. Empty attribution creates no Project and
+grants no read or editor authority. Existing exact index/source-root/path,
+publication, bounded unique Project IDs and original receipt checks remain;
+the host still requires an actual retained explicit Open selection before a
+projectless source read or editor effect. Workbench plan admission retains its
+separate nonempty Project requirement. Regression controls live in
+`packages/vscode/src/test/nativeOpenOrigins.test.ts`.
+
 
 Windows owned-process receipts additionally retain bounded diagnostic PID/image
 observations (at most 128 identities and 1,024 image characters each), queried

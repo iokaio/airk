@@ -211,7 +211,7 @@ export function evidenceRows(envelope:Value):Value[] {
             const member=memberPath&&Array.isArray(value.members)?object(value.members[Number(memberPath[1])]):undefined;
             if(!member||member.index_id!==rank.index_id||member.outcome!=='complete')return [];
             if(typeof origin.index_id!=='string'||!/^idx_[0-9a-f]{32}$/.test(origin.index_id)||origin.index_id!==rank.index_id
-                ||!Array.isArray(origin.project_ids)||!origin.project_ids.length||origin.project_ids.length>32
+                ||!Array.isArray(origin.project_ids)||origin.project_ids.length>32
                 ||origin.project_ids.some(id=>typeof id!=='string'||!/^prj_[0-9a-f]{32}$/.test(id)))return [];
             return [{...row,step,origin,publication:object(origin.publication).token,result_pointer:rank.result_pointer}];
         });

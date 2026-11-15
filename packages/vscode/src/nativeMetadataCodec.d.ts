@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Generated from packages/ui/src/nativeMetadataCodec.ts; source-sha256:83aac071d032cdd1bb3bee48e55bc1b35784dffee90a7891e2bb5edf835eada2
+// Generated from packages/ui/src/nativeMetadataCodec.ts; source-sha256:426a1c7be3a9618f76ec578cb092187aa5edb0a33764aeb2bcbc45486997c226
 /** Single browser-safe lossless native metadata owner. Hashing is injected; raw native responses remain authoritative. */
 export type Value = Record<string, unknown>;
 export type CapabilityFieldDisplay = {

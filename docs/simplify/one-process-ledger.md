@@ -4221,3 +4221,107 @@ stopping on the first failure. The S8 candidate completed naturally168.183s,
 in progress. Private preparations,20pure refusal controls and65pins/stage are in
 `artifacts/advanced-split/models/corrected-graph-matched-dev-r54-sid1012-r1/`.
 No gradients or FINAL execution is released by this DEV comparison.
+
+### 2026-11-15 — matched DEV result, real Workbench correction and replacement recovery
+
+The corrected-graph matched DEV batch completed allfive fresh stages naturally
+plus the retained R54U8 run. Fresh elapsed seconds: candidateS8 168.183,
+shippedU8 149.062, mixedU8 140.792, shippedS8 133.315, mixedS8 152.993. All retain
+one owned native process, exact source/model/input seals, no forced termination,
+zero remaining members, all64 original queries and20eligible/44refused grading.
+Six-role capture manifest SHA `c17832c272bf0b2e3df39cda7b1a3f4a6a47846e175256451fc86abd4ead15ca`.
+Unchanged grading3.749s/44,421,120bytes reports ALLsix at11/12mean evidence recall
+and17/20complete: candidate paired gain is ZERO against both unsigned controls.
+Identity audit confirms six distinct model/pipeline digests and exact installed
+weights; ranked baseline bodies differ on63or64/64 queries, while evidence-gold
+coverage fractions coincide. No numerical-score equality is claimed. This is
+not candidate improvement, FINAL qualification or promotion. Evidence remains
+under `models/corrected-graph-matched-dev-r54-sid1012-r1/`.
+
+Reviewed UI milestone `a70197a9` is committed with the configured human identity
+and DCO and pushed only to the authorized branch. Fresh matched debug pair R3
+built194.756s at that source, preserving its exact identity. Receipt
+`artifacts/advanced-split/receipts/runtime-r60/build-pair.json`; runtime
+`artifacts/advanced-split/runtime-current-context-r3`. Real16-file/two-project
+client+model preflight passes149.759s, source bytes preserved and managed Stop
+complete. Embedded ORT1.30.0/model smoke passes; no user installation changed.
+
+Actual Workbench first stopped before execution on default Node24.21.0; pinned
+Node24.15.0 then reproduced an Open Answer file_info decoding failure. Original
+raw responses and fixture are retained in `runtime-r60/native-fixtures/`.
+The shared metadata/publication decoder, combined Search rows and Workbench
+rows incorrectly required nonempty Project attribution, contrary to native Open
+origins. Primary reviewed the full three-decoder fix: empty `project_ids` is
+attribution only, never new authority; all malformed/root/path/publication and
+host explicit-selection fences remain. Independent Open fixtures and unchanged
+actual-packet replay pass, including complete source receipts and raw bytes.
+
+The actual Workbench/current frontend/R3 reused-pair journey now passes1/1:
+16complete-result comparisons,13observations and both Answer source opens.
+Receipt `receipts/workbench-open-r63/`,44.320s. R3 is NOT relabeled as containing
+new frontend bytes. The general receipt runner's current-source runtime binding
+refused that reuse before execution; the Workbench owner instead validates the
+pair against its actual original build source and before/after artifact roster.
+The VS Code host/editor effect is injected: this is actual native session/adapter
+qualification, not installed-editor acceptance.
+
+Pinned24.15.0 frontend compile passes15.531s; full extension1,120pass/1,122selected
+(two existing native-fixture skips). Full Admin's first209-case run exposed a
+race: static Sources prose was mistaken for delivered catalog UI. The revised
+harness observes exact enabled controls and actual callback states, explicitly
+unmounts previous Search and uses owned loopback WebCrypto. Cheap held-catalog
+reproduction precedes focused2/2DOM and revised209/209passes. Receipts
+`receipts/open-ui-r64/`; original failure retained. Current Admin JS237791b9 is
+rebuilt and sealed under pinned Node24.15.0/npm11.12.1:
+inventory `dc54323d5e5c1fc50051328b82b8bee4a17ede2af935c39118d25b082185a1b0`,
+bundle `aeb397e3d7f203deee3e4748cb714dfb37fc60c83d31adb3a607efcf9623f345`,
+seal `artifacts/advanced-split/admin-source-r64/admin-assets.json`.
+
+R62 workspace all-target/all-feature Clippy passes41.560s. Exact workspace Cargo
+tests then stop350.155s at206selected/205pass/1failure: same-build replacement
+can forcibly stop the exact predecessor during a SQLite transaction, leaving
+a hot rollback journal; subsequent read-only recapture gets SQLite776. Retained
+fixture originals are untouched. Copied DB/journal diagnostic reproduces the
+readonly refusal and native RW rollback, proving this is production recovery.
+Contract-first Store+Installer repair adds exclusive stopped-owner recovery,
+privately previews exact bounded copies to validate actual SQL namespace/schema
+before any original write, rechecks native file IDs/bytes, then performs owning
+SQLite rollback. Complete source/data/control rosters must still match before
+freeze/moves. Live owner, missing/foreign/aliased inputs refuse. Both initial and
+unfrozen resume are covered; no format/digest/wire or migration change.
+
+Primary reviewed the implementation independently and required the foreign hot
+DB under matching pathname-owner preservation control. R65 scoped Clippy passes;
+its first8control batch runs5:4pass/1failure/3unrun because a test reads a held
+Windows lease byte range. The repaired observation compares every file byte and
+all directory names before acquisition/after release without excluding lock
+files; held-owner no-move/purge/pending-receipt assertions remain. R66 scoped
+Clippy5.877s and all8controls pass(.447s/14.907scommand), then3actualCLI replacement/
+refusal/replay tests pass39.181s/68.212scommand, including original failed case.
+Receipts `receipts/replacement-recovery-r65/` and `replacement-recovery-r66/`.
+Root caught/fixed one missing test EOF brace during formatting before compiler
+checks; no assertion was removed.
+
+VSIX actual packaging first exposes four missing exact runtime module entries.
+The reviewed4module closure fix has4focused passes and refuses unapproved imports.
+Packaging still requires a genuinely qualified publication_catalog bootstrap
+capture. Its absence is a real prerequisite; no release proof was fabricated,
+no qualifier was mocked in an actual package run, and no VSIX pass is claimed.
+
+Encoder recovery prerequisites are separate from actual TRAIN. First tiny CUDA
+attempt refuses before Torch because the old runtime closure has one added and
+three changed current files; original failure/seal remain. After independent
+review of the exact additive amendment (no removed pins, unchanged execution
+owner/algorithm), CUDA R2 passes6/6 bit-exact loss/gradient/None/tie/RNG controls.
+Natural two-process closure82.804s, peak host2,392,625,152bytes and CUDA allocator
+69,251,584bytes, no forced/remaining process. Proof SHA
+`dee5b2378ca8206b66f8b0a39a02e6611fa94df0870fa13753cbd53592919136` in
+`models/encoder-recovery-preparation-r1/`; no encoder weights/task data or actual
+TRAIN gradients used. Separate synthetic BERT resource proof and actual TRAIN
+remain unreleased at this entry. Optional no-gradient TRAIN feature recovery
+preparation has23pure controls and independent current49,137-file/8.26GB runtime
+verification291.829s under `models/context-action-feature-pilot-sid1012-r1/`.
+No optional-model feature/gradient/refit, new CAL or FINAL execution occurred.
+Original four unsupported CAL results and independent semantic-annotation needs
+remain explicit blockers. Full workspace remainder/doctests, new artifact/client,
+installed/platform/model and publication gates remain unfinished.

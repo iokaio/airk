@@ -28,7 +28,7 @@ export function combinedRows(payload: Value): { row: Value; origin: QualifiedOri
         const origin = obj(row.origin);
         if (typeof origin.index_id !== 'string' || !/^idx_[0-9a-f]{32}$/.test(origin.index_id)
             || typeof origin.source_root_id !== 'string' || !/^src_[0-9a-f]{32}$/.test(origin.source_root_id)
-            || !Array.isArray(origin.project_ids) || !origin.project_ids.length || origin.project_ids.length > 32
+            || !Array.isArray(origin.project_ids) || origin.project_ids.length > 32
             || new Set(origin.project_ids).size !== origin.project_ids.length || origin.project_ids.some(id => typeof id !== 'string' || !/^prj_[0-9a-f]{32}$/.test(id))
             || typeof origin.source_relative_path !== 'string' || typeof obj(origin.publication).token !== 'string') {
             throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'The combined citation has no complete originating member identity.'));

@@ -1,8 +1,8 @@
 {
   "files": {
-    "app.af082ab2.js": {
+    "app.237791b9.js": {
       "content_type": "text/javascript; charset=utf-8",
-      "sha256": "af082ab28c60a5a4003fe396db7c52cfc40073925b643001d152ba890ce7b7ad"
+      "sha256": "237791b99b1d43c658f619bad2cdd7ff284aa8d6bf5bd7c55f18947e01d5eafd"
     },
     "app.b0d17939.css": {
       "content_type": "text/css; charset=utf-8",
@@ -10,11 +10,11 @@
     },
     "index.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "31be600b686ab0ad92f7450bd3b0df6648a4356fc0cfa66a587819455033b8e7"
+      "sha256": "47fc908e79a4746db80efb8d2ab39e33bf638dfb7021885b8489952e288ba002"
     },
     "launch.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "31be600b686ab0ad92f7450bd3b0df6648a4356fc0cfa66a587819455033b8e7"
+      "sha256": "47fc908e79a4746db80efb8d2ab39e33bf638dfb7021885b8489952e288ba002"
     }
   },
   "schema": "airk-admin-assets/1"

@@ -398,6 +398,46 @@ class VsixContracts(unittest.TestCase):
     @mock.patch.object(package, "verify_metadata_runtime")
     @mock.patch.object(package, "verify_bootstrap_runtime")
     @mock.patch.object(package, "verify_bootstrap_release_runtime")
+    def test_shared_evidence_modules_are_required_and_cannot_expand_the_stage(self, _release, _bootstrap, _metadata):
+        # This independent graph reproduces the new host-to-pure-module edges;
+        # deriving expected names from MODULES would miss an omitted module.
+        required = {"nativeMessageLimits.js", "explorerEvidenceCore.js", "explorerReviewCore.js", "explorerStrategyRunnerCore.js"}
+        self.assertTrue(required.issubset(package.MODULES))
+        edges = {
+            "mcpStdioSession.js": 'require("./nativeMessageLimits");',
+            "explorerEvidence.js": 'require("./explorerEvidenceCore");',
+            "explorerReview.js": 'require("./explorerReviewCore");',
+            "explorerStrategyRunner.js": 'require("./explorerStrategyRunnerCore");',
+            "explorerReviewCore.js": 'require("./explorerEvidenceCore"); require("./nativeMessageLimits");',
+            "explorerStrategyRunnerCore.js": 'require("./explorerEvidenceCore"); require("./nativeMessageLimits");',
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            compiled = Path(directory) / "compiled"
+            for name in package.MODULES:
+                target = compiled / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(edges.get(name, '"use strict";\n'), encoding="utf-8")
+            (compiled / "uiPilotRuntime.js").write_bytes((
+                "/* SPDX-License-Identifier: Apache-2.0 */\n/* AIRK UI pilot runtime source-sha256: "
+                + package.pilot_runtime_source_seal() + " */\nexports.createNativePilot=function(){};\n").encode("utf-8"))
+            stage = Path(directory) / "stage"
+            package.stage_runtime_modules(compiled, stage)
+            for name in required:
+                self.assertEqual((stage / name).read_bytes(), (compiled / name).read_bytes())
+            # A plausible future module's presence does not grant packaging authority.
+            (compiled / "futureEvidence.js").write_text("exports.extra = true;", encoding="utf-8")
+            for source in sorted(required):
+                original = (compiled / source).read_bytes()
+                (compiled / source).write_text('require("./futureEvidence");', encoding="utf-8")
+                rejected = Path(directory) / "rejected"
+                with self.subTest(source=source), self.assertRaisesRegex(ValueError, "Runtime import outside allowlisted stage"):
+                    package.stage_runtime_modules(compiled, rejected)
+                self.assertFalse(rejected.exists())
+                (compiled / source).write_bytes(original)
+
+    @mock.patch.object(package, "verify_metadata_runtime")
+    @mock.patch.object(package, "verify_bootstrap_runtime")
+    @mock.patch.object(package, "verify_bootstrap_release_runtime")
     def test_runtime_import_closure_includes_controls_without_test_extras(self, verify_release, verify_bootstrap, verify_metadata):
         with tempfile.TemporaryDirectory() as directory:
             compiled = Path(directory) / "compiled"

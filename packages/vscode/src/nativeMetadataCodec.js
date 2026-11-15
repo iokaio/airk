@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Generated from packages/ui/src/nativeMetadataCodec.ts; source-sha256:83aac071d032cdd1bb3bee48e55bc1b35784dffee90a7891e2bb5edf835eada2
+// Generated from packages/ui/src/nativeMetadataCodec.ts; source-sha256:426a1c7be3a9618f76ec578cb092187aa5edb0a33764aeb2bcbc45486997c226
 
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -325,7 +325,7 @@ function createNativeMetadataCodec(sha256) {
     const ranking = Array.isArray(combined.ranking) ? combined.ranking.map((raw) => {
       const rank = object(raw), origin = object(rank.origin);
       if (!Object.hasOwn(origin, "publication_ref")) return raw;
-      if (!indexId(rank.index_id) || origin.index_id !== rank.index_id || !ids.includes(rank.index_id) || !exact(origin, "index_id,project_ids,publication_ref,source_relative_path,source_root_id") || typeof origin.source_root_id !== "string" || !/^src_[0-9a-f]{32}$/.test(origin.source_root_id) || !Array.isArray(origin.project_ids) || !origin.project_ids.length || origin.project_ids.length > 32 || new Set(origin.project_ids).size !== origin.project_ids.length || origin.project_ids.some((id) => typeof id !== "string" || !/^prj_[0-9a-f]{32}$/.test(id)) || typeof origin.source_relative_path !== "string" || !origin.source_relative_path || origin.source_relative_path.startsWith("/") || /[\\:\u0000]/.test(origin.source_relative_path) || utf8(origin.source_relative_path).length > 4096 || origin.source_relative_path.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("Ranked publication reference crosses index scope.");
+      if (!indexId(rank.index_id) || origin.index_id !== rank.index_id || !ids.includes(rank.index_id) || !exact(origin, "index_id,project_ids,publication_ref,source_relative_path,source_root_id") || typeof origin.source_root_id !== "string" || !/^src_[0-9a-f]{32}$/.test(origin.source_root_id) || !Array.isArray(origin.project_ids) || origin.project_ids.length > 32 || new Set(origin.project_ids).size !== origin.project_ids.length || origin.project_ids.some((id) => typeof id !== "string" || !/^prj_[0-9a-f]{32}$/.test(id)) || typeof origin.source_relative_path !== "string" || !origin.source_relative_path || origin.source_relative_path.startsWith("/") || /[\\:\u0000]/.test(origin.source_relative_path) || utf8(origin.source_relative_path).length > 4096 || origin.source_relative_path.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("Ranked publication reference crosses index scope.");
       const restored2 = { ...origin, publication: structuredClone(publication(combined, origin.publication_ref, rank.index_id)) };
       delete restored2.publication_ref;
       return { ...rank, origin: restored2 };
