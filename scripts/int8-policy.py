@@ -2,6 +2,7 @@
 """Consume the native-owned trained model policy; never invent model pins."""
 import json
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "fixtures/models/model-policy.json"
@@ -24,6 +25,32 @@ def validate_catalog(value):
     # refusal cases. Exact parsed equality preserves every native policy field.
     if value != REFERENCE:
         raise ValueError("Model catalog differs from reviewed native trained policy")
+
+
+def approved_profile(identifier):
+    profiles = [profile for profile in catalog()["profiles"] if profile["id"] == identifier]
+    if len(profiles) != 1:
+        raise ValueError("Unknown native-approved model profile")
+    return profiles[0]
+
+
+def approved_engine(identifier):
+    # Rust's approved runtime is engine/version/backend; consume its engine
+    # prefix rather than keeping another version pin in Python callers.
+    return approved_profile(identifier)["runtime"].rsplit("/", 1)[0]
+
+
+def verify_model_smoke(report):
+    profile = approved_profile(report.get("profile"))
+    if (type(report.get("schema")) is not int or report["schema"] != 1
+            or report.get("source") != "embedded"
+            or report.get("engine") != profile["runtime"].rsplit("/", 1)[0]
+            or type(report.get("dimensions")) is not int or report["dimensions"] != profile["manifest"]["dimensions"]
+            or report.get("repeat_equal") is not True
+            or any(not isinstance(report.get(field), str) or not re.fullmatch("[0-9a-f]{64}", report[field])
+                   for field in ("legacy_identity", "pipeline_digest"))):
+        raise ValueError("Approved embedded MiniLM pipeline receipt missing")
+    return report
 
 
 def verify_embedded(report):

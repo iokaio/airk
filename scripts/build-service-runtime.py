@@ -366,10 +366,39 @@ def digest(path):
 
 
 # Admin/UI production inputs embedded in airk (split §10.5.4): sources, manifests, locks,
-# the build script, generated contracts and the operations table build.mjs reads. The sealed
-# bundle crates/airk-cli/admin-assets is already under "crates". No Node toolchain pin file
+# the build script, generated contracts and the operations table build.mjs reads. Exact
+# VSCode rows include the transitive shared-presentation/type closure and metadata
+# codec browser alias, generated Node/declaration bytes and their canonical producer.
+# The sealed bundle crates/airk-cli/admin-assets is already under "crates". No Node toolchain pin file
 # exists (the pin is the workflow node-version); receipts record the Node/npm actually used.
 FRONTEND_INPUTS = ("packages/admin", "packages/ui", "packages/contracts-gen",
+                   "packages/vscode/package-lock.json",
+                   "packages/vscode/package.json",
+                   "packages/vscode/scripts/build-metadata-codec.cjs",
+                   "packages/vscode/src/explorerContracts.ts",
+                   "packages/vscode/src/explorerDrafts.ts",
+                   "packages/vscode/src/explorerErrors.ts",
+                   "packages/vscode/src/explorerEvidenceCore.ts",
+                   "packages/vscode/src/explorerFacts.ts",
+                   "packages/vscode/src/explorerFeatures.ts",
+                   "packages/vscode/src/explorerPlanFiles.ts",
+                   "packages/vscode/src/explorerReviewCore.ts",
+                   "packages/vscode/src/explorerRoutes.ts",
+                   "packages/vscode/src/explorerSearch.ts",
+                   "packages/vscode/src/explorerStrategies.ts",
+                   "packages/vscode/src/explorerStrategyDrafts.ts",
+                   "packages/vscode/src/explorerStrategyPlanner.ts",
+                   "packages/vscode/src/explorerStrategyRunnerCore.ts",
+                   "packages/vscode/src/generated/arbiter.d.ts",
+                   "packages/vscode/src/indexingCatalog.ts",
+                   "packages/vscode/src/nativeMessageLimits.ts",
+                   "packages/vscode/src/nativeMetadataCodec.d.ts",
+                   "packages/vscode/src/nativeMetadataCodec.js",
+                   "packages/vscode/src/publications.ts",
+                   "packages/vscode/src/sourceVerification.ts",
+                   "packages/vscode/src/workbenchAnswerNavigation.ts",
+                   "packages/vscode/src/workbenchContracts.ts",
+                   "packages/vscode/src/workbenchRender.ts",
                    "packages/vscode/src/uiPilotContract.ts", "packages/vscode/src/adminUiContract.ts", "packages/vscode/src/generated/i2.ts",
                    "fixtures/split/i3/admin_operations.json", "scripts/build-admin-assets.py",
                    "scripts/split_receipts.py", "scripts/standalone-installer-contract.py")

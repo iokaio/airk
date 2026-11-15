@@ -381,9 +381,13 @@ def inference_worker_clean_exit(fixture):
         result = fixture.service_run("--verify-model-smoke", check=False, timeout=120, selector=False)
         assert result.returncode == 0, "Embedded inference probe failed or aborted during exit"
         report = json.loads(result.stdout)
-        assert report["schema"] == 1 and report["source"] == "embedded"
-        assert report["engine"] == "onnxruntime-cpu/1.22.1" and report["dimensions"] == 384
-        assert report["repeat_equal"] is True
+        specification = importlib.util.spec_from_file_location("client_native_model_policy", Path(__file__).with_name("int8-policy.py"))
+        policy = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(policy)
+        try:
+            policy.verify_model_smoke(report)
+        except ValueError as error:
+            raise AssertionError("Approved embedded MiniLM pipeline receipt missing") from error
         assert not fixture.binary.with_name("airk-embed.exe" if os.name == "nt" else "airk-embed").exists()
         fixture.assert_alive()
         return report

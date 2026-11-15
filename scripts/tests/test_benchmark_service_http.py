@@ -651,11 +651,15 @@ class SemanticLoadContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "airk-runtime.json").write_text('{"schema":2}')
-            smoke = {"source":"embedded","engine":"onnxruntime-cpu/1.22.1","dimensions":384,
-                     "repeat_equal":True,"profile":"minilm-l6-v2-u8-v1","pipeline_digest":self.pipeline,"legacy_identity":"ef"*32}
+            native_policy = json.loads((Path(__file__).resolve().parents[2] / 'fixtures/models/model-policy.json').read_bytes())
+            profile = native_policy['catalog']['profiles'][0]
+            smoke = {"schema":1,"source":"embedded","engine":profile['runtime'].rsplit('/',1)[0],"dimensions":profile['manifest']['dimensions'],
+                     "repeat_equal":True,"profile":profile['id'],"pipeline_digest":self.pipeline,"legacy_identity":"ef"*32}
             (root / "airk-build.json").write_text(json.dumps({"embedded_model_smoke":smoke}))
             self.assertEqual(SERVICE.semantic_pipeline(root),self.pipeline)
-            for key, value in (("source","ambient"),("profile","foreign"),("pipeline_digest","invalid"),("repeat_equal",False)):
+            (root / 'airk-runtime.json').write_text('{"schema":3}')
+            self.assertEqual(SERVICE.semantic_pipeline(root),self.pipeline)
+            for key, value in (("source","ambient"),("engine","historical-unapproved-engine"),("profile","foreign"),("pipeline_digest","invalid"),("repeat_equal",False)):
                 (root / "airk-build.json").write_text(json.dumps({"embedded_model_smoke":{**smoke,key:value}}))
                 with self.subTest(key=key), self.assertRaises(AssertionError):
                     SERVICE.semantic_pipeline(root)

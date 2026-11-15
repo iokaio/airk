@@ -271,14 +271,13 @@ def retained_snapshot(fixture, journal, phase, include_processes=False):
 
 def semantic_pipeline(runtime):
     receipt = json.loads((runtime / "airk-runtime.json").read_text())
-    assert receipt.get("schema") == 2, "Semantic shared-owner measurement requires the modern single image"
+    assert type(receipt.get("schema")) is int and receipt["schema"] in (2, 3), "Semantic shared-owner measurement requires a modern single service image or split pair"
     smoke = json.loads((runtime / "airk-build.json").read_text()).get("embedded_model_smoke", {})
     pipeline = smoke.get("pipeline_digest")
-    assert (smoke.get("source") == "embedded" and smoke.get("engine") == "onnxruntime-cpu/1.22.1"
-            and smoke.get("dimensions") == 384 and smoke.get("repeat_equal") is True
-            and smoke.get("profile") in int8_policy.APPROVED
-            and isinstance(smoke.get("legacy_identity"), str) and re.fullmatch("[0-9a-f]{64}", smoke["legacy_identity"])
-            and isinstance(pipeline, str) and re.fullmatch("[0-9a-f]{64}", pipeline)), "Approved embedded MiniLM pipeline receipt missing"
+    try:
+        int8_policy.verify_model_smoke(smoke)
+    except ValueError as error:
+        raise AssertionError("Approved embedded MiniLM pipeline receipt missing") from error
     return pipeline
 
 

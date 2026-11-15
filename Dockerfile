@@ -58,6 +58,49 @@ ENV LIBONNXRUNTIME_NO_PKG_CONFIG=1 ORT_SKIP_DOWNLOAD=1 ORT_PREFER_DYNAMIC_LINK=0
     ORT_LIB_LOCATION=/build/static-onnx-runtime/b ORT_LIB_PROFILE=Release
 COPY third_party/licenses ./third_party/licenses
 
+# Exact transitive Admin and generated metadata inputs.
+COPY packages/admin/src/ReviewScreen.tsx ./packages/admin/src/ReviewScreen.tsx
+COPY packages/admin/src/EvidenceToolsScreen.tsx ./packages/admin/src/EvidenceToolsScreen.tsx
+COPY packages/admin/src/SearchScreen.tsx ./packages/admin/src/SearchScreen.tsx
+COPY packages/admin/src/StrategiesScreen.tsx ./packages/admin/src/StrategiesScreen.tsx
+COPY packages/admin/src/browserReview.ts ./packages/admin/src/browserReview.ts
+COPY packages/admin/src/evidenceExports.ts ./packages/admin/src/evidenceExports.ts
+COPY packages/admin/src/guidedEvidence.ts ./packages/admin/src/guidedEvidence.ts
+COPY packages/admin/src/strategyRunner.ts ./packages/admin/src/strategyRunner.ts
+COPY packages/admin/src/strategyWorkspace.ts ./packages/admin/src/strategyWorkspace.ts
+COPY packages/ui/src/answerPresentation.ts ./packages/ui/src/answerPresentation.ts
+COPY packages/ui/src/evidenceCore.ts ./packages/ui/src/evidenceCore.ts
+COPY packages/ui/src/nativeMetadataCodec.ts ./packages/ui/src/nativeMetadataCodec.ts
+COPY packages/ui/src/review.ts ./packages/ui/src/review.ts
+COPY packages/ui/src/strategies.ts ./packages/ui/src/strategies.ts
+COPY packages/vscode/package-lock.json ./packages/vscode/package-lock.json
+COPY packages/vscode/package.json ./packages/vscode/package.json
+COPY packages/vscode/scripts/build-metadata-codec.cjs ./packages/vscode/scripts/build-metadata-codec.cjs
+COPY packages/vscode/src/explorerContracts.ts ./packages/vscode/src/explorerContracts.ts
+COPY packages/vscode/src/explorerDrafts.ts ./packages/vscode/src/explorerDrafts.ts
+COPY packages/vscode/src/explorerErrors.ts ./packages/vscode/src/explorerErrors.ts
+COPY packages/vscode/src/explorerEvidenceCore.ts ./packages/vscode/src/explorerEvidenceCore.ts
+COPY packages/vscode/src/explorerFacts.ts ./packages/vscode/src/explorerFacts.ts
+COPY packages/vscode/src/explorerFeatures.ts ./packages/vscode/src/explorerFeatures.ts
+COPY packages/vscode/src/explorerPlanFiles.ts ./packages/vscode/src/explorerPlanFiles.ts
+COPY packages/vscode/src/explorerReviewCore.ts ./packages/vscode/src/explorerReviewCore.ts
+COPY packages/vscode/src/explorerRoutes.ts ./packages/vscode/src/explorerRoutes.ts
+COPY packages/vscode/src/explorerSearch.ts ./packages/vscode/src/explorerSearch.ts
+COPY packages/vscode/src/explorerStrategies.ts ./packages/vscode/src/explorerStrategies.ts
+COPY packages/vscode/src/explorerStrategyDrafts.ts ./packages/vscode/src/explorerStrategyDrafts.ts
+COPY packages/vscode/src/explorerStrategyPlanner.ts ./packages/vscode/src/explorerStrategyPlanner.ts
+COPY packages/vscode/src/explorerStrategyRunnerCore.ts ./packages/vscode/src/explorerStrategyRunnerCore.ts
+COPY packages/vscode/src/generated/arbiter.d.ts ./packages/vscode/src/generated/arbiter.d.ts
+COPY packages/vscode/src/indexingCatalog.ts ./packages/vscode/src/indexingCatalog.ts
+COPY packages/vscode/src/nativeMessageLimits.ts ./packages/vscode/src/nativeMessageLimits.ts
+COPY packages/vscode/src/nativeMetadataCodec.d.ts ./packages/vscode/src/nativeMetadataCodec.d.ts
+COPY packages/vscode/src/nativeMetadataCodec.js ./packages/vscode/src/nativeMetadataCodec.js
+COPY packages/vscode/src/publications.ts ./packages/vscode/src/publications.ts
+COPY packages/vscode/src/sourceVerification.ts ./packages/vscode/src/sourceVerification.ts
+COPY packages/vscode/src/workbenchAnswerNavigation.ts ./packages/vscode/src/workbenchAnswerNavigation.ts
+COPY packages/vscode/src/workbenchContracts.ts ./packages/vscode/src/workbenchContracts.ts
+COPY packages/vscode/src/workbenchRender.ts ./packages/vscode/src/workbenchRender.ts
+
 # Exact external test inputs are reviewed in scripts/container-inputs.json.
 COPY fixtures/split/arbiter/public_answer_cases.json ./fixtures/split/arbiter/public_answer_cases.json
 COPY fixtures/split/arbiter/context_action_cases.json ./fixtures/split/arbiter/context_action_cases.json

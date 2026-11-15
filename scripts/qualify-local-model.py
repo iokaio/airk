@@ -8,6 +8,20 @@ from pathlib import Path
 import sys
 
 
+def expected_native_identity(identifier, manifest):
+    specification = importlib.util.spec_from_file_location("qualification_native_model_policy", Path(__file__).with_name("int8-policy.py"))
+    policy = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(policy)
+    profile = policy.approved_profile(identifier)
+    if manifest != profile["manifest"]:
+        raise ValueError("Model manifest differs from native-approved profile")
+    # Preserve the existing native identity algorithm. The authenticated catalog
+    # supplies the runtime and canonical manifest order, even if input JSON keys
+    # were reordered by a caller.
+    return hashlib.sha256(profile["runtime"].encode() +
+        json.dumps(profile["manifest"], separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, required=True)
@@ -28,8 +42,7 @@ def main():
     if args.native_result.stat().st_size > 1_048_576:
         raise ValueError("qualification report exceeds 1 MiB")
     native = json.loads(args.native_result.read_text(encoding="utf-8-sig"))
-    identity = hashlib.sha256(b"onnxruntime-cpu/1.22.1/airk-int8-b1-1" +
-        json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    identity = expected_native_identity(profile["id"], manifest)
     if native["model"]["identity"] != identity:
         raise ValueError("native report identity differs from the pinned model/tokenizer/runtime specification")
     if not native["documents"] or not native["cases"] or native["total"] != len(native["cases"]):

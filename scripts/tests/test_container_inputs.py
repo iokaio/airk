@@ -106,6 +106,16 @@ def relative_frontend_inputs(root):
     must exist and remain under the repository. This is not a JS parser.
     """
     pending = list((root / "packages/admin/src").rglob("*.ts*"))
+    # esbuild uses this package's browser map, while tsc consumes the generated
+    # declaration. Seal both products plus their single canonical producer.
+    codec = root / "packages/vscode/src/nativeMetadataCodec"
+    codec_inputs = (
+        "packages/vscode/package.json", "packages/vscode/package-lock.json",
+        "packages/vscode/scripts/build-metadata-codec.cjs",
+        "packages/vscode/src/nativeMetadataCodec.js",
+        "packages/vscode/src/nativeMetadataCodec.d.ts",
+        "packages/ui/src/nativeMetadataCodec.ts",
+    )
     found = set()
     pattern = re.compile(r"\b(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)[\"'](\.[^\"']+)[\"']")
     while pending:
@@ -120,7 +130,16 @@ def relative_frontend_inputs(root):
             continue
         for match in pattern.finditer(path.read_text(encoding="utf-8")):
             base = path.parent / match[1]
-            candidates = [base, *(Path(str(base) + suffix) for suffix in (".ts", ".tsx", ".json", ".css")), base / "index.ts", base / "index.tsx"]
+            if base.resolve() in (codec.resolve(), Path(str(codec) + ".js").resolve()):
+                package = json.loads((root / codec_inputs[0]).read_text(encoding="utf-8"))
+                if package.get("browser") != {"./src/nativeMetadataCodec.js": "../ui/src/nativeMetadataCodec.ts"}:
+                    raise AssertionError("Unreviewed metadata codec browser alias")
+                for dependency in codec_inputs:
+                    if not (root / dependency).is_file():
+                        raise AssertionError("Metadata codec input is missing: " + dependency)
+                    pending.append(root / dependency)
+                continue
+            candidates = [base, *(Path(str(base) + suffix) for suffix in (".ts", ".tsx", ".d.ts", ".json", ".css", ".js")), base / "index.ts", base / "index.tsx"]
             resolved = next((candidate for candidate in candidates if candidate.is_file()), None)
             if resolved is None:
                 raise AssertionError("Admin local import is missing: " + name + " -> " + match[1])
@@ -129,6 +148,53 @@ def relative_frontend_inputs(root):
 
 
 class ContainerInputInventoryTests(unittest.TestCase):
+    def test_metadata_alias_keeps_generated_declaration_runtime_and_source_closure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            files = {
+                "packages/admin/src/main.ts": "import type {Codec} from '../../vscode/src/nativeMetadataCodec';",
+                "packages/vscode/package.json": json.dumps({"browser": {"./src/nativeMetadataCodec.js": "../ui/src/nativeMetadataCodec.ts"}}),
+                "packages/vscode/package-lock.json": "{}",
+                "packages/vscode/scripts/build-metadata-codec.cjs": "// synthetic producer",
+                "packages/vscode/src/nativeMetadataCodec.js": "exports.value = 1;",
+                "packages/vscode/src/nativeMetadataCodec.d.ts": "export interface Codec {}",
+                "packages/ui/src/nativeMetadataCodec.ts": "export const value = 1;",
+            }
+            for name, content in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            self.assertEqual(relative_frontend_inputs(root), set(files))
+            owner = root / "packages/ui/src/nativeMetadataCodec.ts"
+            owner.write_text("import './missing';")
+            with self.assertRaisesRegex(AssertionError, "local import is missing"):
+                relative_frontend_inputs(root)
+            owner.write_text("export const value = 1;")
+            (root / "packages/vscode/src/nativeMetadataCodec.d.ts").unlink()
+            with self.assertRaisesRegex(AssertionError, "codec input is missing"):
+                relative_frontend_inputs(root)
+            (root / "packages/vscode/src/nativeMetadataCodec.d.ts").write_text("")
+            (root / "packages/vscode/package.json").write_text(json.dumps({"browser": {"./src/nativeMetadataCodec.js": "../ui/src/foreign.ts"}}))
+            with self.assertRaisesRegex(AssertionError, "Unreviewed metadata codec browser alias"):
+                relative_frontend_inputs(root)
+
+    def test_frontend_javascript_imports_remain_transitive_and_cannot_escape(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / "repository"
+            source = root / "packages/admin/src/main.ts"
+            source.parent.mkdir(parents=True)
+            source.write_text("import './runtime.js';")
+            runtime = source.with_name("runtime.js")
+            runtime.write_text("require('./missing');")
+            with self.assertRaisesRegex(AssertionError, "local import is missing"):
+                relative_frontend_inputs(root)
+            runtime.write_text("require('../../../../outside.js');")
+            outside = root.parent / "outside.js"
+            outside.write_text("")
+            # The resolver checks repository containment before admitting inputs.
+            with self.assertRaisesRegex(AssertionError, "escapes the repository"):
+                relative_frontend_inputs(root)
+
     def test_static_inference_stage_copies_the_complete_current_producer_helpers(self):
         expected = {'scripts/provision-static-onnx-runtime.py','scripts/static-onnx-runtime-lock.json',
                     'scripts/provision-static-onnx-tools.py','scripts/static-onnx-tools-lock.json',
