@@ -4,7 +4,7 @@ title: Search indexed evidence
 route: search/query
 area: explorer
 aliases: find text, lexical search, semantic search, hybrid search, vector search, grep the index
-related_airk_help: search, tool-selection
+related_airk_help: search, tool-selection, models, arbiter
 ---
 # Search indexed evidence
 
@@ -27,3 +27,9 @@ Results display twenty at a time with **Previous** and **Next**. The limit contr
 - Open source requests a dated native saved-source check against the citation and current source policy, then observes unsaved editor state. A past match does not establish continued freshness. Workbench retains the complete source-open observation separately from the original query and offers JSON copy/export.
 
 Page changes announce the retained result range. Previous/Next use the same controls as Review Changes.
+
+## MiniLM, Focus and Context
+
+MiniLM supplies reusable vectors for candidate retrieval. The approved **Arbiter Focus** stage uses Qwen3-Reranker-0.6B to rerank a bounded retrieved set; it cannot find evidence omitted by candidate retrieval. Focus is designed to run independently with **Arbiter Context** off. Context Compact (Qwen3-1.7B) and Large (Qwen3-4B) add evidence assessment and bounded follow-up reads. Relevance scores do not prove evidence sufficiency.
+
+Check the actual service's supported and qualified stages before enabling them; new stage controls are still being introduced in this source candidate. They require explicit stage/index consent and resource admission. Ordinary search remains available with explicit not-applied reasons when optional work is unavailable. Full provenance, publication identity, errors and any disclosed reordering or omissions remain part of the native result.

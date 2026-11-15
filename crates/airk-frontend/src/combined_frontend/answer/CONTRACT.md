@@ -28,3 +28,13 @@ unperformed/unknown checks; Require fails. No budget is raised, native evidence
 trimmed, or successful source claim invented. Full native member and outer
 unknown fields remain retained; rendering updates the matching text/structured
 copies together. The original final delivery fences remain mandatory.
+
+The original one-Context-slot byte admission remains unchanged when stages are
+off. An eligible combined child reserves its actual additional Focus binding
+before NN and final packing inside the existing child allocation. The frontend
+collects both stage facts with Core's canonical packet extractor, checks body
+plus extra Focus metadata against that same allocation, and never reclaims
+those metadata bytes for another member. No frame or native Work/Resources
+budget meaning changes. Unknown Focus work holds the entire partition and its
+assessment ordinals, just as unknown Context work does; it is never known zero
+work or spare optional capacity.

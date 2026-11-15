@@ -62,6 +62,7 @@ impl LexicalIndex {
             }
         }
         let mut response = SearchResponse {
+            focus: None,
             execution: None,
             publication: None,
             semantic_readiness: None,

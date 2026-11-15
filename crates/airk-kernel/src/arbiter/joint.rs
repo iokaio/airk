@@ -237,6 +237,7 @@ impl crate::Kernel {
     ) -> Result<ContextResponseV2> {
         request.validate()?;
         require_live()?;
+        self.with_focus_parent_budget(request.budget.clone(), deadline)?;
         let started = Instant::now();
         let deadline = deadline.min(
             started
@@ -257,6 +258,7 @@ impl crate::Kernel {
         );
         let publication = self.arbiter_publication()?;
         let application = observed_application(context, &publication, None)?;
+        self.bind_initial_context_readiness(application.availability == Availability::Ready)?;
         let scope = application.scope.clone();
         ensure!(
             scope.index_id == context.authority.index_id
@@ -350,6 +352,8 @@ impl crate::Kernel {
             #[cfg(feature = "local-inference")]
             if !gather.output.records.is_empty()
                 && !joint.blocked
+                && gather.optional_failure.is_none()
+                && self.optional_work_available()?
                 && joint.history.len() < joint.ordinals.len()
                 && gather.output.work.input_tokens < joint.token_limit
                 && Instant::now() < deadline
@@ -413,14 +417,18 @@ impl crate::Kernel {
                                     && fresh.availability == Availability::Ready
                                     && fresh.profile == gather.output.applications[0].profile;
                                 match returned {
-                                    Ok(Some(advice)) => joint.apply(
-                                        &mut gather,
-                                        roster,
-                                        ordinal,
-                                        advice,
-                                        Instant::now(),
-                                        can_actuate,
-                                    )?,
+                                    Ok(Some(advice)) => {
+                                        self.observe_context_work(advice.observed_input_tokens)?;
+                                        joint.apply(
+                                            &mut gather,
+                                            roster,
+                                            ordinal,
+                                            advice,
+                                            Instant::now(),
+                                            can_actuate,
+                                        )?;
+                                        self.observe_optional_history(&joint.history)?;
+                                    }
                                     Ok(None) => {
                                         joint.blocked = true;
                                         joint.invalidate(AssessmentUnavailable::TaskUnsupported);
@@ -432,6 +440,7 @@ impl crate::Kernel {
                                         return Err(error);
                                     }
                                     Err(_) => {
+                                        self.observe_context_work(None)?;
                                         gather.optional_failure=Some("Optional joint action was not applied: native outcome and work may be unknown; no replay occurred.".into());
                                         joint.lost(ordinal, &scope, &roster)
                                     }
@@ -465,7 +474,24 @@ impl crate::Kernel {
             }
             require_live()?;
             let result = reader(dispatch.tool, &dispatch.arguments, Some(&dispatch.revision));
+            if let Ok(body) = &result {
+                self.observe_optional_source_reply(dispatch.tool, body)?;
+            }
             gather.observe(result, Instant::now())?;
+            let focus = airk_core::arbiter::focus::observed_focus_work(
+                &gather.output.records,
+                &request.budget,
+            )?;
+            if focus.work_unknown || focus.failed_token_overrun {
+                joint.invalidate(if focus.failed_token_overrun {
+                    AssessmentUnavailable::TokenBudget
+                } else {
+                    AssessmentUnavailable::Unavailable
+                });
+                if focus.failed_token_overrun {
+                    joint.terminal = Some(PartitionTermination::Budget);
+                }
+            }
         }
         require_live()?;
         ensure!(
@@ -523,7 +549,11 @@ impl crate::Kernel {
                 .transpose()?
                 .as_ref(),
             request.budget.max_bytes,
+            context.partition.is_some(),
         )?;
+        let focus_overrun =
+            airk_core::arbiter::focus::observed_focus_work(&response.records, &request.budget)?
+                .failed_token_overrun;
         if Instant::now() >= deadline {
             response.paragraphs.retain(|paragraph| {
                 !organized.iter().any(|group| {
@@ -537,10 +567,18 @@ impl crate::Kernel {
                     event.applicability = AssessmentApplicability::HistoricalAfterRead;
                 }
             }
-            response.stop = PartitionTermination::Deadline;
+            response.stop = if focus_overrun {
+                PartitionTermination::Budget
+            } else {
+                PartitionTermination::Deadline
+            };
             response.assessment.termination = response.stop;
             response.assessment.coverage = PartitionCoverage::Unassessed {
-                reason: AssessmentUnavailable::Deadline,
+                reason: if focus_overrun {
+                    AssessmentUnavailable::TokenBudget
+                } else {
+                    AssessmentUnavailable::Deadline
+                },
             };
             response.gaps = vec![Gap::Unsupported];
         }
@@ -712,8 +750,31 @@ fn organize(response: &ContextResponseV2) -> Result<Vec<GroundedParagraph>> {
     Ok(paragraphs)
 }
 
-fn pack(response: &mut ContextResponseV2, scope: Option<&Value>, maximum: usize) -> Result<()> {
+fn pack(
+    response: &mut ContextResponseV2,
+    scope: Option<&Value>,
+    maximum: usize,
+    reserve_outer_focus: bool,
+) -> Result<()> {
+    let maximum = if reserve_outer_focus {
+        maximum
+            .checked_sub(crate::combined_reads::context_packet_focus_binding_bytes(
+                response,
+            )?)
+            .context(
+                "mandatory Focus outer delivery metadata cannot fit the original packet allocation",
+            )?
+    } else {
+        maximum
+    };
     let organized = organize(response)?;
+    let focus_custody = response
+        .records
+        .iter()
+        .map(charged_focus_record)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .any(|charged| charged);
     let active_ordinal = response
         .assessment_history
         .last()
@@ -740,11 +801,41 @@ fn pack(response: &mut ContextResponseV2, scope: Option<&Value>, maximum: usize)
         {
             break;
         }
+        if focus_custody && !response.paragraphs.is_empty() {
+            // Presentation may be shortened, but an actual/unknown native
+            // scoring receipt cannot disappear from outer delivery custody.
+            response.paragraphs.pop();
+            for event in &mut response.assessment_history {
+                if event.applicability == AssessmentApplicability::Current {
+                    event.applicability = AssessmentApplicability::BasisOmitted;
+                }
+            }
+            response.assessment.coverage = PartitionCoverage::Unassessed {
+                reason: AssessmentUnavailable::BasisOmitted,
+            };
+            response.stop = PartitionTermination::Budget;
+            response.assessment.termination = response.stop;
+            response.gaps = vec![Gap::Unsupported];
+            continue;
+        }
         ensure!(
             response.records.len() > 1,
             "joint mandatory initial receipt/metadata does not fit native packet"
         );
-        let omitted = response.records.pop().unwrap().id;
+        let omitted_position = if focus_custody {
+            let mut position = None;
+            for index in (1..response.records.len()).rev() {
+                if !charged_focus_record(&response.records[index])? {
+                    position = Some(index);
+                    break;
+                }
+            }
+            position
+                .context("joint mandatory Focus custody cannot fit the original reply budget")?
+        } else {
+            response.records.len() - 1
+        };
+        let omitted = response.records.remove(omitted_position).id;
         response.omitted_count += 1;
         response
             .paragraphs
@@ -761,7 +852,7 @@ fn pack(response: &mut ContextResponseV2, scope: Option<&Value>, maximum: usize)
                 invalidated |= Some(event.ordinal) == active_ordinal;
             }
         }
-        if invalidated {
+        if invalidated || focus_custody {
             response.paragraphs.retain(|paragraph| {
                 !organized.iter().any(|group| {
                     group.text == paragraph.text
@@ -779,6 +870,17 @@ fn pack(response: &mut ContextResponseV2, scope: Option<&Value>, maximum: usize)
     }
     Ok(())
 }
+
+fn charged_focus_record(record: &EvidenceRecord) -> Result<bool> {
+    Ok(airk_core::arbiter::focus::observed_focus_work(
+        std::slice::from_ref(record),
+        &airk_core::arbiter::focus::validation_budget(),
+    )?
+    .has_native_receipt)
+}
+
+#[cfg(test)]
+mod focus_pack_tests;
 
 #[cfg(all(test, feature = "local-inference"))]
 mod tests;

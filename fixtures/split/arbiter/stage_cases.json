@@ -1,0 +1,1160 @@
+{
+  "cases": [
+    {
+      "configuration": {
+        "catalog": "02020202020202020202020202020202",
+        "context": {
+          "enabled": false,
+          "indexes": [],
+          "selected_profile": null
+        },
+        "focus": {
+          "enabled": false,
+          "indexes": [],
+          "selected_profile": null
+        },
+        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+        "revision": 1,
+        "schema": "airk.arbiter.configuration/3"
+      },
+      "expected_context_eligible": false,
+      "expected_focus_eligible": false,
+      "id": "both_disabled",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "focus": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration": {
+        "catalog": "02020202020202020202020202020202",
+        "context": {
+          "enabled": false,
+          "indexes": [],
+          "selected_profile": null
+        },
+        "focus": {
+          "enabled": true,
+          "indexes": [
+            {
+              "index_id": "idx_05050505050505050505050505050505",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+        "revision": 1,
+        "schema": "airk.arbiter.configuration/3"
+      },
+      "expected_context_eligible": false,
+      "expected_focus_eligible": true,
+      "id": "focus_only",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "focus": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "unqualified",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration": {
+        "catalog": "02020202020202020202020202020202",
+        "context": {
+          "enabled": true,
+          "indexes": [
+            {
+              "index_id": "idx_05050505050505050505050505050505",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "enabled": false,
+          "indexes": [],
+          "selected_profile": null
+        },
+        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+        "revision": 1,
+        "schema": "airk.arbiter.configuration/3"
+      },
+      "expected_context_eligible": true,
+      "expected_focus_eligible": false,
+      "id": "context_only",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+          },
+          "focus": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "unqualified",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration": {
+        "catalog": "02020202020202020202020202020202",
+        "context": {
+          "enabled": true,
+          "indexes": [
+            {
+              "index_id": "idx_05050505050505050505050505050505",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "enabled": true,
+          "indexes": [
+            {
+              "index_id": "idx_05050505050505050505050505050505",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+        "revision": 1,
+        "schema": "airk.arbiter.configuration/3"
+      },
+      "expected_context_eligible": true,
+      "expected_focus_eligible": true,
+      "id": "both_enabled",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+          },
+          "focus": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "unqualified",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "unqualified",
+          "profiles": [
+            {
+              "availability": "unqualified",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "id": "missing_assets",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+          },
+          "focus": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "missing_assets",
+          "profiles": [
+            {
+              "availability": "missing_assets",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "missing_assets",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "missing_assets",
+          "profiles": [
+            {
+              "availability": "missing_assets",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "id": "constrained",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+          },
+          "focus": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "constrained",
+          "profiles": [
+            {
+              "availability": "constrained",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "constrained",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "constrained",
+          "profiles": [
+            {
+              "availability": "constrained",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "id": "failed",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+          },
+          "focus": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "failed",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "failed",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "id": "draining",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+          },
+          "focus": {
+            "enabled": true,
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "draining",
+          "profiles": [
+            {
+              "availability": "draining",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "draining",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808"
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "draining",
+          "profiles": [
+            {
+              "availability": "draining",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration_writable": false,
+      "id": "initialization_missing",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "focus": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "initialization": {
+          "reason": "No current configuration is installed"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration_writable": false,
+      "id": "initialization_legacy",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "focus": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "initialization": {
+          "actual_legacy_digest": "3232323232323232323232323232323232323232323232323232323232323232",
+          "reason": "Retained legacy configuration observed"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration_writable": false,
+      "id": "initialization_ambiguous",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "focus": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "initialization": {
+          "reason": "Ambiguous retained configuration; native initialization may refuse"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    },
+    {
+      "configuration_writable": false,
+      "id": "initialization_corrupt",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "focus": {
+            "enabled": false,
+            "indexes": [],
+            "selected_profile": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/3"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "disabled",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-17b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            },
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-context-qwen3-4b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 0,
+          "selected_profile": null
+        },
+        "focus": {
+          "active_profile": "0707070707070707070707070707070707070707070707070707070707070707",
+          "availability": "draining",
+          "profiles": [
+            {
+              "availability": "failed",
+              "download_bytes": null,
+              "memory_reservation_bytes": null,
+              "model": "arbiter-focus-qwen3-reranker-06b",
+              "profile": null,
+              "reason": "Synthetic structural fixture; no model or platform qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ]
+            }
+          ],
+          "queued": 2,
+          "reason": "Synthetic structural fixture; no model execution",
+          "running": 1,
+          "selected_profile": null
+        },
+        "initialization": {
+          "reason": "Current configuration could not be decoded"
+        },
+        "schema": "airk.arbiter.status/2"
+      }
+    }
+  ],
+  "context_core_policy": "5689b523fa9ce42317582c8809023582659c754c166cc6ca53150519e4b3a2c7",
+  "current_models": [
+    "arbiter-focus-qwen3-reranker-06b",
+    "arbiter-context-qwen3-17b",
+    "arbiter-context-qwen3-4b"
+  ],
+  "focus_core_policy": "b1c081af432a667feea344ad726bf62170142ddb8148ebfee3ae49c10a734f65",
+  "management_requests": [
+    {
+      "enabled": true,
+      "expected_revision": 1,
+      "indexes": [
+        {
+          "index_id": "idx_05050505050505050505050505050505",
+          "tasks": [
+            "airk.focus_rank.v1"
+          ]
+        }
+      ],
+      "operation": "configure",
+      "selected_profile": "0707070707070707070707070707070707070707070707070707070707070707",
+      "stage": "focus"
+    },
+    {
+      "enabled": true,
+      "expected_revision": 1,
+      "indexes": [
+        {
+          "index_id": "idx_05050505050505050505050505050505",
+          "tasks": [
+            "airk.context_action.v1"
+          ]
+        }
+      ],
+      "operation": "configure",
+      "selected_profile": "0808080808080808080808080808080808080808080808080808080808080808",
+      "stage": "context"
+    },
+    {
+      "expected_revision": 1,
+      "operation": "cancel",
+      "stage": "focus"
+    },
+    {
+      "expected_revision": 1,
+      "operation": "recover",
+      "stage": "context"
+    },
+    {
+      "expected_legacy_configuration": null,
+      "operation": "initialize"
+    }
+  ],
+  "qualification": false,
+  "schema": "airk.arbiter.stage-semantic-cases/1"
+}

@@ -21,6 +21,8 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value};
 use std::{path::Path, sync::Arc};
 
+pub(super) mod singleton_focus;
+
 /// Decode a supplied original parent before any scope/backend work. None is
 /// the current standalone default, minted once here rather than after selection.
 pub(super) fn read_context(
@@ -251,9 +253,12 @@ pub(super) async fn selection_read(
     client: airk_core::usage::ClientFamily,
     context: ReadAttemptContext,
 ) -> std::result::Result<Value, SelectionRead> {
-    let context = admit_context(&tool, &arguments, context).map_err(SelectionRead::Failed)?;
+    let mut context = admit_context(&tool, &arguments, context).map_err(SelectionRead::Failed)?;
     require_live(&context).map_err(SelectionRead::Failed)?;
-    if matches!(tool.as_str(), "answer" | "airk_answer") {
+    if matches!(
+        tool.as_str(),
+        "answer" | "airk_answer" | "search" | "airk_search"
+    ) {
         super::source_delivery::retain_selection(state, &context, grant.selection_ref)
             .map_err(SelectionRead::Failed)?;
     }
@@ -263,6 +268,15 @@ pub(super) async fn selection_read(
                 Ok(arguments) => arguments,
                 Err(refusal) => return Ok(refusal),
             };
+            context = singleton_focus::admit(
+                state,
+                &tool,
+                &arguments,
+                context,
+                grant.scope_identity,
+                &grant.selection.index_ids,
+            )
+            .map_err(SelectionRead::Failed)?;
             (
                 single_selection_backend(state, grant, *index_id, client).await?,
                 arguments,

@@ -129,7 +129,7 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
         builder = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(builder)
         report = {"schema": 1, "source": "embedded", "engine": "onnxruntime-cpu/1.30.0", "dimensions": 384,
-                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v2", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
+                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v3", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
         for field, value in ((None, None), ("schema", True), ("source", "directory"), ("engine", "onnxruntime-cpu/1.22.1"),
                              ("dimensions", 383), ("repeat_equal", 1), ("profile", "fp32"), ("profile", "minilm-l6-v2-u8-v1"), ("pipeline_digest", "incomplete")):
             candidate = {**report, **({field: value} if field else {})}

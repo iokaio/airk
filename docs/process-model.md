@@ -31,6 +31,12 @@ its own service, so a machine with two installations has two services.
 | PDF parser child | Isolated extraction of one PDF document. | At most one for the whole service, described below. |
 | `airkctl tools shell` | Interactive terminal tool. | Opened and closed by the user. |
 
+Synchronous optional-model control callbacks use the project owner's existing
+multithread runtime through its blocking boundary. Outside-runtime and
+current-thread callers use local or joined scoped IO drivers; they do not add
+resident processes, permanent per-session runtimes or detached work. All callback
+requests preserve their original authority, attempt and absolute deadline.
+
 Project owners, cleanup owners and the source watcher run on service threads.
 Each project owner has its own runtime, lock and execution scope. The
 per-project query endpoint keeps its name and protocol and is served by the

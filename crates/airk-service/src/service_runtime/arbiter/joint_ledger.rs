@@ -13,10 +13,20 @@ use std::collections::BTreeMap;
 const MAX_ACTIVE_ATTEMPTS: usize = 1024;
 const MAX_INPUT_TOKENS: usize = 2048;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Slot {
+    Context(u8),
+    Focus(IndexId, u8),
+}
+#[derive(Clone, Copy)]
+pub(super) struct FocusInvocation {
+    pub index_id: IndexId,
+    pub ordinal: u8,
+}
 #[derive(Clone, Copy)]
 pub(super) struct Ticket {
     attempt: Incarnation,
-    ordinal: u8,
+    slot: Slot,
     expires_ns: u64,
 }
 impl Ticket {
@@ -36,7 +46,7 @@ struct Attempt {
     selection: Option<Sha256Digest>,
     ceiling: usize,
     parent_budget: Vec<u8>,
-    charges: BTreeMap<u8, Charge>,
+    charges: BTreeMap<Slot, Charge>,
     partitions: BTreeMap<IndexId, (Vec<u8>, usize)>,
 }
 #[derive(Default)]
@@ -55,14 +65,65 @@ impl Ledger {
         partition: Option<&PartitionAllowance>,
         now_ns: u64,
     ) -> Result<Ticket> {
+        self.reserve_slot(
+            attempt,
+            parent_budget,
+            Slot::Context(ordinal),
+            requested,
+            partition,
+            now_ns,
+        )
+    }
+    pub(super) fn reserve_focus(
+        &mut self,
+        attempt: ReadAttemptBudget,
+        parent_budget: &Budget,
+        invocation: FocusInvocation,
+        requested: usize,
+        partition: Option<&PartitionAllowance>,
+        now_ns: u64,
+    ) -> Result<Ticket> {
+        let FocusInvocation { index_id, ordinal } = invocation;
+        if let Some(part) = partition {
+            ensure!(
+                part.index_id == index_id,
+                "Focus reservation uses a foreign partition"
+            );
+        }
+        self.reserve_slot(
+            attempt,
+            parent_budget,
+            Slot::Focus(index_id, ordinal),
+            requested,
+            partition,
+            now_ns,
+        )
+    }
+    fn reserve_slot(
+        &mut self,
+        attempt: ReadAttemptBudget,
+        parent_budget: &Budget,
+        slot: Slot,
+        requested: usize,
+        partition: Option<&PartitionAllowance>,
+        now_ns: u64,
+    ) -> Result<Ticket> {
         parent_budget.validate()?;
         let parent_bytes = serde_json::to_vec(parent_budget)?;
         let budget_window_ns = parent_budget
             .deadline_ms
             .min(30_000)
             .saturating_mul(1_000_000);
+        let valid_slot = match slot {
+            Slot::Context(ordinal) => {
+                (1..=parent_budget.rounds.min(3)).contains(&usize::from(ordinal))
+            }
+            Slot::Focus(_, ordinal) => {
+                (1..=parent_budget.calls.min(12)).contains(&usize::from(ordinal))
+            }
+        };
         ensure!(
-            (1..=parent_budget.rounds.min(3)).contains(&usize::from(ordinal))
+            valid_slot
                 && (1..=parent_budget.input_tokens.min(MAX_INPUT_TOKENS)).contains(&requested),
             "invalid joint NN reservation"
         );
@@ -80,8 +141,10 @@ impl Ledger {
                 "joint NN partition parent budget changed"
             );
             ensure!(
-                part.assessment_ordinals.contains(&ordinal)
-                    && requested <= part.resources.input_tokens,
+                (match slot {
+                    Slot::Context(ordinal) => part.assessment_ordinals.contains(&ordinal),
+                    Slot::Focus(_, _) => part.resources.calls > 0,
+                }) && requested <= part.resources.input_tokens,
                 "joint NN partition allowance exceeded"
             );
         }
@@ -127,9 +190,33 @@ impl Ledger {
             .expiry
             .min(now_ns.saturating_add(attempt.remaining_ns.min(budget_window_ns)));
         ensure!(
-            !state.charges.contains_key(&ordinal),
+            !state.charges.contains_key(&slot),
             "joint NN ordinal already used"
         );
+        if matches!(slot, Slot::Focus(_, _)) {
+            let calls = state
+                .charges
+                .keys()
+                .filter(|slot| matches!(slot, Slot::Focus(_, _)))
+                .count();
+            ensure!(
+                calls < parent_budget.calls,
+                "Focus parent invocation budget exhausted"
+            );
+            if let Some(part) = partition {
+                let calls = state
+                    .charges
+                    .iter()
+                    .filter(|(slot, charge)| {
+                        matches!(slot, Slot::Focus(_, _)) && charge.partition == Some(part.index_id)
+                    })
+                    .count();
+                ensure!(
+                    calls < part.resources.calls,
+                    "Focus partition invocation budget exhausted"
+                );
+            }
+        }
         let used: usize = state.charges.values().map(|charge| charge.tokens).sum();
         ensure!(
             used.checked_add(requested)
@@ -161,7 +248,7 @@ impl Ledger {
                 .or_insert((bytes, part.resources.input_tokens));
         }
         state.charges.insert(
-            ordinal,
+            slot,
             Charge {
                 tokens: requested,
                 compiled: None,
@@ -170,7 +257,7 @@ impl Ledger {
         );
         Ok(Ticket {
             attempt: attempt.request_id,
-            ordinal,
+            slot,
             expires_ns: state.expiry,
         })
     }
@@ -179,7 +266,7 @@ impl Ledger {
         let charge = self
             .attempts
             .get_mut(&ticket.attempt)
-            .and_then(|state| state.charges.get_mut(&ticket.ordinal))
+            .and_then(|state| state.charges.get_mut(&ticket.slot))
             .context("joint NN reservation unavailable")?;
         ensure!(
             tokens > 0 && tokens <= charge.tokens,
@@ -192,12 +279,42 @@ impl Ledger {
         charge.compiled = Some(tokens);
         Ok(())
     }
+    /// A Focus prefix reports monotonic aggregate receipts for distinct native
+    /// pairs. Unknown later work keeps the entire original reservation.
+    pub(super) fn compiled_prefix(&mut self, ticket: Ticket, tokens: usize) -> Result<()> {
+        ensure!(
+            matches!(ticket.slot, Slot::Focus(_, _)),
+            "Only Focus has pair-prefix accounting"
+        );
+        let charge = self
+            .attempts
+            .get_mut(&ticket.attempt)
+            .and_then(|state| state.charges.get_mut(&ticket.slot))
+            .context("Focus reservation unavailable")?;
+        ensure!(
+            tokens > 0
+                && tokens <= charge.tokens
+                && charge.compiled.is_none_or(|previous| previous <= tokens),
+            "Focus pair receipts exceed or regress the reservation"
+        );
+        charge.compiled = Some(tokens);
+        Ok(())
+    }
+    pub(super) fn completed_prefix(&mut self, ticket: Ticket, tokens: usize) -> Result<()> {
+        self.compiled_prefix(ticket, tokens)?;
+        self.attempts
+            .get_mut(&ticket.attempt)
+            .and_then(|state| state.charges.get_mut(&ticket.slot))
+            .context("Focus reservation unavailable")?
+            .tokens = tokens;
+        Ok(())
+    }
     /// Only observed native completion may refund unused token reservation.
     pub(super) fn completed(&mut self, ticket: Ticket, tokens: usize) -> Result<()> {
         self.compiled(ticket, tokens)?;
         self.attempts
             .get_mut(&ticket.attempt)
-            .and_then(|state| state.charges.get_mut(&ticket.ordinal))
+            .and_then(|state| state.charges.get_mut(&ticket.slot))
             .context("joint NN reservation unavailable")?
             .tokens = tokens;
         Ok(())

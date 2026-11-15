@@ -177,6 +177,17 @@ pub enum ControlMethod {
     ArbiterContextAction {
         request: Box<crate::native_context_action::NativeContextActionRequest>,
     },
+    ArbiterFocusApplication {
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: crate::evidence::RevisionEnvelope,
+    },
+    ArbiterFocusRank {
+        request: Box<crate::native_focus::NativeFocusRequest>,
+    },
+    ArbiterImport {
+        request: Box<crate::native_offline_import::NativeOfflineImportRequest>,
+    },
     PrepareUpgradeCheckpoint {
         operation_id: Incarnation,
         candidate_execution_sha256: Sha256Digest,
@@ -785,7 +796,7 @@ impl ControlMethod {
             Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
                 return Some("console_private_setup_forbidden");
             }
-            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } => {
+            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } => {
                 return Some("console_private_setup_forbidden");
             }
             Self::Connect { .. } | Self::ConnectScoped { .. } => {
@@ -1244,7 +1255,10 @@ impl ControlMethod {
     /// service writer and the client reader apply it.
     pub fn response_frame_budget(&self) -> usize {
         match self {
-            Self::Arbiter { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
+            Self::Arbiter { .. }
+            | Self::ArbiterFocusApplication { .. }
+            | Self::ArbiterFocusRank { .. }
+            | Self::ArbiterImport { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
             Self::AdminNativeCall { .. } | Self::AdminNativeRead { .. } => {
                 crate::native_admin::CHUNK_FRAME_BYTES
             }
@@ -1264,7 +1278,10 @@ impl ControlMethod {
         match self {
             Self::Arbiter { .. }
             | Self::ArbiterNextRead { .. }
-            | Self::ArbiterContextAction { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
+            | Self::ArbiterContextAction { .. }
+            | Self::ArbiterFocusApplication { .. }
+            | Self::ArbiterFocusRank { .. }
+            | Self::ArbiterImport { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             Self::AdminNativeCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             // JSON escaping can grow the 16 KiB input; M3's budget covers it.
             Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
@@ -1373,6 +1390,17 @@ pub enum ControlResponse {
     ArbiterContextActionAdvice {
         #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
         advice: Option<Box<crate::arbiter::context_action::ContextActionAdvice>>,
+    },
+    ArbiterFocusApplication {
+        #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+        application: Option<Box<crate::arbiter::FocusApplication>>,
+    },
+    ArbiterFocusRank {
+        #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+        response: Option<Box<crate::native_focus::NativeFocusResponse>>,
+    },
+    ArbiterImport {
+        observation: Box<crate::arbiter::Status>,
     },
     UpgradeCheckpoint {
         observation: Box<crate::service_checkpoint::UpgradeCheckpointObservation>,

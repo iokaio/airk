@@ -170,3 +170,169 @@ fn embedded_mutation_rejects_foreign_data_namespace_before_registry_promotion() 
     assert_eq!(fs::read(source.join("memo.md"))?, b"original harbor");
     Ok(())
 }
+
+#[test]
+fn same_runtime_retired_weights_arm_the_shared_semantic_upgrade_fence() -> Result<()> {
+    use airk_core::{
+        identity::Sha256Digest,
+        model_objects::{ModelAssetName, ModelObjectRef},
+    };
+    use sha2::{Digest, Sha256};
+    let owner = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let store = FileStore::new(owner.path().join("collection"));
+    let metadata = store.directory().join("objects/models");
+    fs::create_dir_all(&metadata)?;
+    let selected = airk_retrieval::model_catalog::selected_profile()?;
+    let retain = |manifest: &airk_retrieval::model::OnnxManifest| -> Result<ModelObjectSet> {
+        let raw = serde_json::to_vec(manifest)?;
+        let mut refs = std::collections::BTreeMap::new();
+        for (name, digest) in [
+            (ModelAssetName::ModelOnnx, &manifest.model_sha256),
+            (ModelAssetName::TokenizerJson, &manifest.tokenizer_sha256),
+            (ModelAssetName::License, &manifest.license_sha256),
+        ] {
+            refs.insert(
+                name,
+                ModelObjectRef {
+                    sha256: digest.parse()?,
+                    bytes: selected
+                        .assets
+                        .iter()
+                        .find(|asset| asset.name == name.filename())
+                        .context("known catalog asset absent")?
+                        .bytes,
+                },
+            );
+        }
+        let pin = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
+        fs::write(metadata.join(pin.to_string()), &raw)?;
+        refs.insert(
+            ModelAssetName::ModelJson,
+            ModelObjectRef {
+                sha256: pin,
+                bytes: raw.len() as u64,
+            },
+        );
+        airk_retrieval::model::plan_from_asset_references(&raw, refs)
+    };
+    let active = retain(&selected.manifest)?;
+    assert!(!semantic_upgrade_pending(&store, Some(&active))?);
+    let mut retired = selected.manifest;
+    retired.model_sha256 = "02".repeat(32);
+    let old = retain(&retired)?;
+    let a = descriptor(&store, &active)?;
+    let b = descriptor(&store, &old)?;
+    assert_eq!(a.inference, b.inference, "test must preserve exact runtime");
+    assert_ne!(a.identity()?, b.identity()?);
+    assert!(semantic_upgrade_pending(&store, Some(&old))?);
+    assert!(
+        open_model(&store, &old).is_err(),
+        "retired metadata must not authorize model execution"
+    );
+    assert!(
+        !metadata
+            .join(old.assets[&ModelAssetName::ModelOnnx].sha256.to_string())
+            .exists(),
+        "metadata fence read weights"
+    );
+    Ok(())
+}
+
+#[test]
+fn missing_retired_shared_metadata_is_pending_but_missing_active_metadata_stays_error() -> Result<()>
+{
+    use airk_core::{
+        identity::Sha256Digest,
+        model_objects::{ModelAssetName, ModelObjectRef},
+    };
+    use sha2::{Digest, Sha256};
+    let owner = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    let runtime = owner.path().join("runtime");
+    for path in [&source, &data, &runtime] {
+        fs::create_dir(path)?;
+    }
+    fs::write(source.join("memo.md"), b"original source remains unchanged")?;
+    let profile = airk_retrieval::model_catalog::selected_profile()?;
+    let build =
+        |manifest: &airk_retrieval::model::OnnxManifest| -> Result<(Vec<u8>, ModelObjectSet)> {
+            let raw = serde_json::to_vec(manifest)?;
+            let mut refs = BTreeMap::new();
+            for (name, digest) in [
+                (ModelAssetName::ModelOnnx, &manifest.model_sha256),
+                (ModelAssetName::TokenizerJson, &manifest.tokenizer_sha256),
+                (ModelAssetName::License, &manifest.license_sha256),
+            ] {
+                let bytes = profile
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == name.filename())
+                    .context("known native asset absent")?
+                    .bytes;
+                refs.insert(
+                    name,
+                    ModelObjectRef {
+                        sha256: digest.parse()?,
+                        bytes,
+                    },
+                );
+            }
+            refs.insert(
+                ModelAssetName::ModelJson,
+                ModelObjectRef {
+                    sha256: Sha256Digest::from_bytes(Sha256::digest(&raw).into()),
+                    bytes: raw.len() as u64,
+                },
+            );
+            let set = airk_retrieval::model::plan_from_asset_references(&raw, refs)?;
+            Ok((raw, set))
+        };
+    let (raw, active) = build(&profile.manifest)?;
+    let mut old_manifest = profile.manifest;
+    old_manifest.model_sha256 = "03".repeat(32);
+    let (_, old) = build(&old_manifest)?;
+    let assets = Arc::new(MetadataSource {
+        assets: BTreeMap::from([(ModelAssetName::ModelJson, raw)]),
+        reads: Mutex::new(Vec::new()),
+    });
+    let kernel = Kernel::open_service_collection(&source, Some(data), "fixture")?
+        .with_embedded_service_models(&runtime, active.clone(), assets.clone())?;
+    let current = kernel
+        .store
+        .embedded_default_reference()?
+        .context("active embedded reference absent")?;
+    assert!(!semantic_upgrade_pending(&kernel.store, Some(&current))?);
+    let old = old.shared_with(airk_store::service::model_files::model_scope(&runtime)?)?;
+    assert!(
+        kernel.store.shared_model_source(&old).is_err(),
+        "fixture unexpectedly installed historical assets"
+    );
+    assert!(semantic_upgrade_pending(&kernel.store, Some(&old))?);
+    let missing_active = kernel.store.clone().with_service_models(&runtime, active)?;
+    assert!(
+        semantic_upgrade_pending(&missing_active, Some(&current)).is_err(),
+        "missing active metadata must not become a success-shaped pending result"
+    );
+    let foreign = old
+        .local_set()
+        .shared_with(Sha256Digest::from_bytes([9; 32]))?;
+    assert!(
+        semantic_upgrade_pending(&kernel.store, Some(&foreign)).is_err(),
+        "foreign owner hidden by missing-retired fallback"
+    );
+    assert!(!runtime.join("model-files-1.4").exists());
+    assert_eq!(
+        fs::read(source.join("memo.md"))?,
+        b"original source remains unchanged"
+    );
+    assert!(
+        assets
+            .reads
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|name| *name == ModelAssetName::ModelJson)
+    );
+    Ok(())
+}

@@ -13,8 +13,147 @@ use std::{
     time::Instant,
 };
 
+/// Drive a synchronous control callback without nesting an async runtime entry.
+/// The factory, including timers/IO resources, is created inside the selected
+/// driver. No callback is retried and no work outlives the synchronous caller.
+fn drive_control<F, Fut, T>(factory: F) -> Result<T>
+where
+    F: FnOnce() -> Fut + Send,
+    Fut: std::future::Future<Output = Result<T>>,
+    T: Send,
+{
+    fn local<F, Fut, T>(factory: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("Arbiter control IO driver unavailable")?;
+        runtime.block_on(async move { factory().await })
+    }
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle)
+            if matches!(
+                handle.runtime_flavor(),
+                tokio::runtime::RuntimeFlavor::MultiThread
+            ) =>
+        {
+            // Production project owners have a two-worker multithread runtime.
+            // Yield this worker's async duties while borrowing that SAME driver.
+            tokio::task::block_in_place(|| handle.block_on(async move { factory().await }))
+        }
+        Ok(_) => std::thread::scope(|scope| {
+            // block_in_place is forbidden on a current-thread runtime. A joined
+            // scoped IO driver needs no ambient reactor and cannot detach work.
+            let thread = std::thread::Builder::new()
+                .name("airk-arbiter-control".into())
+                .spawn_scoped(scope, move || local(factory))
+                .context("Arbiter scoped control driver unavailable")?;
+            match thread.join() {
+                Ok(result) => result,
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }),
+        Err(_) => local(factory),
+    }
+}
+
 struct Controller(PathBuf);
 impl NativeController for Controller {
+    fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+        let clock = if cfg!(windows) {
+            airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+        } else {
+            airk_core::read_attempt::ReadClock::UnixMonotonic
+        };
+        Ok(Some((clock, airk_process::monotonic::now_ns()?)))
+    }
+    fn focus_application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<FocusApplication>> {
+        let response = drive_control(|| async {
+            airk_installer::control_client::request_for_version_and_instance_once(
+                &self.0,
+                ControlMethod::ArbiterFocusApplication {
+                    worker,
+                    authority,
+                    publication: publication.clone(),
+                },
+                env!("CARGO_PKG_VERSION"),
+                worker.service,
+            )
+            .await
+        })?;
+        match response {
+            ControlResponse::ArbiterFocusApplication { application } => {
+                Ok(application.map(|application| *application))
+            }
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            _ => anyhow::bail!("Arbiter Focus native application unavailable"),
+        }
+    }
+    fn focus_rank(
+        &self,
+        mut request: airk_core::native_focus::NativeFocusRequest,
+        deadline: Instant,
+    ) -> Result<Option<airk_core::native_focus::NativeFocusResponse>> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        request.remaining_ms = request
+            .remaining_ms
+            .min(remaining.as_millis().min(30_000) as u64);
+        ensure!(
+            request.remaining_ms > 0,
+            "Focus original deadline exhausted"
+        );
+        let clock = if cfg!(windows) {
+            airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+        } else {
+            airk_core::read_attempt::ReadClock::UnixMonotonic
+        };
+        let original = request
+            .read_attempt
+            .remaining_at(clock, airk_process::monotonic::now_ns()?)?;
+        request.read_attempt.remaining_ns = request
+            .read_attempt
+            .remaining_ns
+            .min(original.as_nanos().min(remaining.as_nanos()) as u64);
+        ensure!(
+            request.read_attempt.remaining_ns > 0,
+            "Focus original attempt expired"
+        );
+        let worker = request.worker;
+        let response = drive_control(|| async {
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                airk_installer::control_client::request_for_version_and_instance_once(
+                    &self.0,
+                    ControlMethod::ArbiterFocusRank {
+                        request: Box::new(request),
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    worker.service,
+                ),
+            )
+            .await
+            .context("Focus original deadline exhausted in native transport")?
+        })?;
+        match response {
+            ControlResponse::ArbiterFocusRank { response } => {
+                Ok(response.map(|response| *response))
+            }
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            _ => anyhow::bail!("Arbiter Focus native ranking unavailable"),
+        }
+    }
     fn context_action(
         &self,
         mut request: airk_core::native_context_action::NativeContextActionRequest,
@@ -47,7 +186,7 @@ impl NativeController for Controller {
             "joint original attempt expired"
         );
         let worker = request.worker;
-        let response = tokio::runtime::Handle::current().block_on(async {
+        let response = drive_control(|| async {
             tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
                 airk_installer::control_client::request_for_version_and_instance_once(
@@ -78,7 +217,7 @@ impl NativeController for Controller {
         authority: ScopedReadRef,
         publication: &airk_core::evidence::RevisionEnvelope,
     ) -> Result<IndexApplication> {
-        let response = tokio::runtime::Handle::current().block_on(
+        let response = drive_control(|| async {
             airk_installer::control_client::request_for_version_and_instance(
                 &self.0,
                 ControlMethod::ArbiterApplication {
@@ -88,8 +227,9 @@ impl NativeController for Controller {
                 },
                 env!("CARGO_PKG_VERSION"),
                 worker.service,
-            ),
-        )?;
+            )
+            .await
+        })?;
         match response {
             ControlResponse::ArbiterApplication { application } => Ok(*application),
             ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
@@ -129,7 +269,7 @@ impl NativeController for Controller {
             native_retry_expires_monotonic_ns: None,
         });
         let worker = request.worker;
-        let response = tokio::runtime::Handle::current().block_on(async {
+        let response = drive_control(|| async {
             tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
                 airk_installer::control_client::request_for_version_and_instance_once(
@@ -161,3 +301,6 @@ pub(super) fn controller(root: &Path) -> Result<Option<Arc<dyn NativeController>
         .context("Arbiter control root unavailable")?;
     Ok(Some(Arc::new(Controller(root))))
 }
+
+#[cfg(test)]
+mod tests;

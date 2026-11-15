@@ -23,7 +23,7 @@ impl AssetSource for Source {
             .read(asset)
     }
 }
-impl Owner {
+impl StageOwner {
     pub(super) fn execution_profile(
         &self,
         manifest: airk_core::identity::Sha256Digest,

@@ -1,0 +1,419 @@
+{
+  "budget": {
+    "calls": 8,
+    "candidates": 32,
+    "deadline_ms": 30000,
+    "fanout": 8,
+    "input_tokens": 2048,
+    "max_bytes": 262144,
+    "rounds": 3
+  },
+  "cases": [
+    {
+      "id": "complete_prefix",
+      "receipt": {
+        "applied": true,
+        "availability": "ready",
+        "candidate_count": 4,
+        "identity": {
+          "calibration": "0909090909090909090909090909090909090909090909090909090909090909",
+          "compiler": "0808080808080808080808080808080808080808080808080808080808080808",
+          "profile": "0707070707070707070707070707070707070707070707070707070707070707",
+          "runtime": "onnxruntime-cpu/1.30.0",
+          "task_policy": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+        },
+        "input_digest": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+        "observed_input_tokens": 90,
+        "omitted_count": 1,
+        "original_order": [
+          "1414141414141414141414141414141414141414141414141414141414141414",
+          "1515151515151515151515151515151515151515151515151515151515151515",
+          "1616161616161616161616161616161616161616161616161616161616161616",
+          "1717171717171717171717171717171717171717171717171717171717171717"
+        ],
+        "presentations": [
+          {
+            "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+            "source_bytes": 10,
+            "utf8_end": 5,
+            "utf8_start": 0
+          },
+          {
+            "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+            "source_bytes": 10,
+            "utf8_end": 5,
+            "utf8_start": 0
+          },
+          {
+            "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+            "source_bytes": 10,
+            "utf8_end": 5,
+            "utf8_start": 0
+          }
+        ],
+        "presented_count": 3,
+        "ranked_order": [
+          "1616161616161616161616161616161616161616161616161616161616161616",
+          "1414141414141414141414141414141414141414141414141414141414141414",
+          "1515151515151515151515151515151515151515151515151515151515151515",
+          "1717171717171717171717171717171717171717171717171717171717171717"
+        ],
+        "reason": "Synthetic complete prefix ranking; no model qualification",
+        "reserved_input_tokens": 100,
+        "schema": "airk.arbiter.focus.ranking/1",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        },
+        "scored_count": 3,
+        "scores": [
+          {
+            "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+            "no_logit": 0.0,
+            "relevance": 0.7310585975646973,
+            "yes_logit": 1.0
+          },
+          {
+            "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+            "no_logit": 0.0,
+            "relevance": 0.5,
+            "yes_logit": 0.0
+          },
+          {
+            "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+            "no_logit": 0.0,
+            "relevance": 0.8807970285415649,
+            "yes_logit": 2.0
+          }
+        ],
+        "work": {
+          "bytes": 0,
+          "calls": 0,
+          "candidates": 3,
+          "compile_us": 1,
+          "fanout": 0,
+          "inference_us": 2,
+          "input_tokens": 90,
+          "policy_us": null,
+          "queue_us": null,
+          "rounds": 0
+        }
+      }
+    },
+    {
+      "id": "failed_atomic_fallback",
+      "receipt": {
+        "applied": false,
+        "availability": "failed",
+        "candidate_count": 4,
+        "identity": {
+          "calibration": "0909090909090909090909090909090909090909090909090909090909090909",
+          "compiler": "0808080808080808080808080808080808080808080808080808080808080808",
+          "profile": "0707070707070707070707070707070707070707070707070707070707070707",
+          "runtime": "onnxruntime-cpu/1.30.0",
+          "task_policy": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+        },
+        "input_digest": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+        "observed_input_tokens": 90,
+        "omitted_count": 1,
+        "original_order": [
+          "1414141414141414141414141414141414141414141414141414141414141414",
+          "1515151515151515151515151515151515151515151515151515151515151515",
+          "1616161616161616161616161616161616161616161616161616161616161616",
+          "1717171717171717171717171717171717171717171717171717171717171717"
+        ],
+        "presentations": [
+          {
+            "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+            "source_bytes": 10,
+            "utf8_end": 5,
+            "utf8_start": 0
+          },
+          {
+            "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+            "source_bytes": 10,
+            "utf8_end": 5,
+            "utf8_start": 0
+          },
+          {
+            "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+            "source_bytes": 10,
+            "utf8_end": 5,
+            "utf8_start": 0
+          }
+        ],
+        "presented_count": 3,
+        "ranked_order": [
+          "1414141414141414141414141414141414141414141414141414141414141414",
+          "1515151515151515151515151515151515151515151515151515151515151515",
+          "1616161616161616161616161616161616161616161616161616161616161616",
+          "1717171717171717171717171717171717171717171717171717171717171717"
+        ],
+        "reason": "Synthetic complete prefix ranking; no model qualification",
+        "reserved_input_tokens": 100,
+        "schema": "airk.arbiter.focus.ranking/1",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        },
+        "scored_count": 3,
+        "scores": [
+          {
+            "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+            "no_logit": 0.0,
+            "relevance": 0.7310585975646973,
+            "yes_logit": 1.0
+          },
+          {
+            "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+            "no_logit": 0.0,
+            "relevance": 0.5,
+            "yes_logit": 0.0
+          },
+          {
+            "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+            "no_logit": 0.0,
+            "relevance": 0.8807970285415649,
+            "yes_logit": 2.0
+          }
+        ],
+        "work": {
+          "bytes": 0,
+          "calls": 0,
+          "candidates": 3,
+          "compile_us": 1,
+          "fanout": 0,
+          "inference_us": 2,
+          "input_tokens": 90,
+          "policy_us": null,
+          "queue_us": null,
+          "rounds": 0
+        }
+      }
+    }
+  ],
+  "compact_not_applied": {
+    "availability": "failed",
+    "candidate_count": 4,
+    "kind": "not_applied",
+    "reason": "Original native scope or clock unavailable before dispatch",
+    "work_unknown": false
+  },
+  "focus_core_policy": "b1c081af432a667feea344ad726bf62170142ddb8148ebfee3ae49c10a734f65",
+  "nested_allocation": {
+    "cases": [
+      {
+        "allowance_tokens": 1024,
+        "cumulative_focus_tokens": 0,
+        "id": "context_ready_initial",
+        "initial_context_ready": true,
+        "local_parent_tokens": 2048,
+        "shared_remaining_tokens": 2048
+      },
+      {
+        "allowance_tokens": 512,
+        "cumulative_focus_tokens": 512,
+        "id": "context_ready_later_round",
+        "initial_context_ready": true,
+        "local_parent_tokens": 2048,
+        "shared_remaining_tokens": 1536
+      },
+      {
+        "allowance_tokens": 0,
+        "cumulative_focus_tokens": 1024,
+        "id": "context_ready_exhausted",
+        "initial_context_ready": true,
+        "local_parent_tokens": 2048,
+        "shared_remaining_tokens": 1024
+      },
+      {
+        "allowance_tokens": 2048,
+        "cumulative_focus_tokens": 0,
+        "id": "context_not_ready",
+        "initial_context_ready": false,
+        "local_parent_tokens": 2048,
+        "shared_remaining_tokens": 2048
+      },
+      {
+        "allowance_tokens": 512,
+        "cumulative_focus_tokens": 0,
+        "id": "actual_local_partition",
+        "initial_context_ready": true,
+        "local_parent_tokens": 1024,
+        "shared_remaining_tokens": 2048
+      },
+      {
+        "allowance_tokens": 512,
+        "cumulative_focus_tokens": 0,
+        "id": "shared_remainder",
+        "initial_context_ready": true,
+        "local_parent_tokens": 2048,
+        "shared_remaining_tokens": 700
+      },
+      {
+        "allowance_tokens": 0,
+        "cumulative_focus_tokens": 0,
+        "id": "no_whole_pair",
+        "initial_context_ready": true,
+        "local_parent_tokens": 1023,
+        "shared_remaining_tokens": 1023
+      }
+    ],
+    "context_roster_fit_guaranteed": false,
+    "limits": {
+      "max_candidates": 8,
+      "max_input_tokens": 2048,
+      "pair_input_tokens": 512
+    }
+  },
+  "observation_receipt": {
+    "kind": "receipt",
+    "receipt": {
+      "applied": true,
+      "availability": "ready",
+      "candidate_count": 4,
+      "identity": {
+        "calibration": "0909090909090909090909090909090909090909090909090909090909090909",
+        "compiler": "0808080808080808080808080808080808080808080808080808080808080808",
+        "profile": "0707070707070707070707070707070707070707070707070707070707070707",
+        "runtime": "onnxruntime-cpu/1.30.0",
+        "task_policy": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+      },
+      "input_digest": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "observed_input_tokens": 90,
+      "omitted_count": 1,
+      "original_order": [
+        "1414141414141414141414141414141414141414141414141414141414141414",
+        "1515151515151515151515151515151515151515151515151515151515151515",
+        "1616161616161616161616161616161616161616161616161616161616161616",
+        "1717171717171717171717171717171717171717171717171717171717171717"
+      ],
+      "presentations": [
+        {
+          "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+          "source_bytes": 10,
+          "utf8_end": 5,
+          "utf8_start": 0
+        },
+        {
+          "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+          "source_bytes": 10,
+          "utf8_end": 5,
+          "utf8_start": 0
+        },
+        {
+          "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+          "source_bytes": 10,
+          "utf8_end": 5,
+          "utf8_start": 0
+        }
+      ],
+      "presented_count": 3,
+      "ranked_order": [
+        "1616161616161616161616161616161616161616161616161616161616161616",
+        "1414141414141414141414141414141414141414141414141414141414141414",
+        "1515151515151515151515151515151515151515151515151515151515151515",
+        "1717171717171717171717171717171717171717171717171717171717171717"
+      ],
+      "reason": "Synthetic complete prefix ranking; no model qualification",
+      "reserved_input_tokens": 100,
+      "schema": "airk.arbiter.focus.ranking/1",
+      "scope": {
+        "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+        "catalog": "02020202020202020202020202020202",
+        "configuration_revision": 1,
+        "index_id": "idx_05050505050505050505050505050505",
+        "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+        "publication": {
+          "collection": "fixture",
+          "generation": 1,
+          "incarnation": "03030303030303030303030303030303",
+          "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+          "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+        }
+      },
+      "scored_count": 3,
+      "scores": [
+        {
+          "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+          "no_logit": 0.0,
+          "relevance": 0.7310585975646973,
+          "yes_logit": 1.0
+        },
+        {
+          "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+          "no_logit": 0.0,
+          "relevance": 0.5,
+          "yes_logit": 0.0
+        },
+        {
+          "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+          "no_logit": 0.0,
+          "relevance": 0.8807970285415649,
+          "yes_logit": 2.0
+        }
+      ],
+      "work": {
+        "bytes": 0,
+        "calls": 0,
+        "candidates": 3,
+        "compile_us": 1,
+        "fanout": 0,
+        "inference_us": 2,
+        "input_tokens": 90,
+        "policy_us": null,
+        "queue_us": null,
+        "rounds": 0
+      }
+    }
+  },
+  "ordinary_allocation": {
+    "budget": {
+      "calls": 1,
+      "candidates": 10,
+      "deadline_ms": 30000,
+      "fanout": 1,
+      "input_tokens": 2048,
+      "max_bytes": 65536,
+      "rounds": 1
+    },
+    "input_attempt": {
+      "clock": "unix_monotonic",
+      "expires_monotonic_ns": 30000000100,
+      "remaining_ns": 30000000000,
+      "request_id": "09090909090909090909090909090909",
+      "schema": 1
+    },
+    "limits": {
+      "max_candidates": 10,
+      "max_input_tokens": 2048,
+      "pair_input_tokens": 128
+    },
+    "now_ns": 100,
+    "remaining_frame_bytes": 100000,
+    "requested_limit": 100,
+    "returned_count": 100
+  },
+  "qualification": false,
+  "schema": "airk.arbiter.focus-semantic-cases/1"
+}

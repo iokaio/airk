@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Actual in-process completion journal; file I/O stays off the warm path.
+use super::*;
+use crate::service_runtime::arbiter::warm_observer::Observer;
+use std::io::Write;
+pub(super) struct Recorder {
+    observer: Observer,
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<Result<()>>,
+}
+impl Recorder {
+    pub fn from_env(work: &Path) -> Result<Option<Self>> {
+        match std::env::var("AIRK_NATIVE_WARM_OBSERVER") {
+            Ok(value) if value == "true" => {}
+            Ok(value) if value == "false" => return Ok(None),
+            Err(std::env::VarError::NotPresent) => return Ok(None),
+            _ => bail!("private warm observer requires explicit true/false"),
+        }
+        let (observer, mut receiver) = Observer::channel()?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(work.join("warm-completions.jsonl"))?;
+        let (stop, mut stopped) = tokio::sync::oneshot::channel();
+        let observed = observer.clone();
+        let work = work.to_owned();
+        let task = tokio::spawn(async move {
+            let mut records = 0usize;
+            let mut bytes = 0usize;
+            let mut last = 0u64;
+            let result = async {
+                let mut finishing = false;
+                loop {
+                    let record = tokio::select! {biased;
+                        record=receiver.recv()=>record,
+                        _=&mut stopped,if !finishing=>{finishing=true;receiver.close();continue;},
+                    };
+                    let Some(record) = record else { break };
+                    ensure!(
+                        record.schema == "airk.private.arbiter-warm-completion/1"
+                            && record.observer_id == observed.id()
+                            && record.sequence > last
+                            && record.outcome == record.classify(),
+                        "invalid native warm observation"
+                    );
+                    let mut raw = serde_json::to_vec(&record)?;
+                    raw.push(b'\n');
+                    records += 1;
+                    bytes = bytes
+                        .checked_add(raw.len())
+                        .context("warm journal size overflow")?;
+                    ensure!(
+                        records <= 128 && raw.len() <= 65536 && bytes <= 8 * 1024 * 1024,
+                        "bounded warm journal exceeded"
+                    );
+                    last = record.sequence;
+                    file.write_all(&raw)?;
+                    file.flush()?;
+                }
+                ensure!(
+                    observed.dropped() == 0,
+                    "warm observer dropped completion; no complete proof"
+                );
+                file.sync_all()?;
+                Ok::<(), anyhow::Error>(())
+            }
+            .await;
+            write(
+                &work,
+                "warm-completions.closed.json",
+                &serde_json::json!({
+                    "schema":"airk.private.arbiter-warm-recorder/1","observer_id":observed.id(),
+                    "complete":result.is_ok()&&observed.dropped()==0,"evaluation":true,"release_qualified":false,
+                    "dropped":observed.dropped(),"records":records,"bytes":bytes,"last_sequence":last,
+                    "error":result.as_ref().err().map(|error|format!("{error:#}"))
+                }),
+            )?;
+            result
+        });
+        Ok(Some(Self {
+            observer,
+            stop,
+            task,
+        }))
+    }
+    pub fn observer(&self) -> Observer {
+        self.observer.clone()
+    }
+    pub fn id(&self) -> airk_core::identity::Incarnation {
+        self.observer.id()
+    }
+    pub async fn finish(self) -> Result<()> {
+        self.observer.seal_and_wait().await;
+        let _ = self.stop.send(());
+        self.task.await.context("warm recorder did not finish")?
+    }
+}

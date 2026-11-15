@@ -62,3 +62,115 @@ async fn actual_outer_write_checks_live_nonce_even_when_native_generation_did_no
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn singleton_focus_actual_outer_write_refuses_original_grant_revocation_without_replacing_result()
+-> Result<()> {
+    use airk_core::{
+        arbiter::Budget,
+        combined_context::{ALLOWANCE_SCHEMA, PartitionAllowance, Resources},
+        index_catalog::IndexId,
+    };
+    use tokio::io::AsyncReadExt;
+    for mode in ["nonce", "mutation", "cancellation"] {
+        let service = Incarnation::from_bytes([31; 16]);
+        let namespace = Incarnation::from_bytes([32; 16]);
+        let gate = NativeCatalogAdmission::new(service, namespace, CatalogRevision::INITIAL, 1)?;
+        let selection = SelectionScopeRef {
+            owner: SelectionOwnerKind::Admin,
+            grant_nonce: Incarnation::from_bytes([33; 16]),
+            service_instance: service,
+            scope_identity: Sha256Digest::from_bytes([34; 32]),
+            catalog_revision: CatalogRevision::INITIAL,
+        };
+        gate.register_selection(&selection)?;
+        let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+        let context =
+            ReadAttemptContext::new(Instant::now() + Duration::from_secs(5), Default::default())
+                .with_request_id(Incarnation::from_bytes([35; 16]))?;
+        let original = airk_host::read_attempt::encode(&context, context.request_id().unwrap())?;
+        let budget = Budget {
+            calls: 1,
+            rounds: 1,
+            fanout: 1,
+            input_tokens: 2048,
+            candidates: 4,
+            max_bytes: 65536,
+            deadline_ms: 1000,
+        };
+        let allocation = PartitionAllowance {
+            schema: ALLOWANCE_SCHEMA.into(),
+            attempt: original.request_id,
+            selection: selection.scope_identity,
+            index_id: IndexId::from_identity(Incarnation::from_bytes([36; 16])),
+            resources: Resources::budget(&budget),
+            parent_budget: budget,
+            assessment_ordinals: vec![],
+        };
+        assert!(allocation.is_ordinary_focus());
+        let context = context
+            .capture_transport_attempt(original)?
+            .with_context_partition(allocation)?;
+        context.retain_source_delivery_guard(Arc::new(SourceDelivery {
+            gate: gate.clone(),
+            issue,
+            selection: Some(selection),
+            identity: Sha256Digest::from_bytes([37; 32]),
+        }))?;
+        let original_result = ControlResponse::ToolResult {
+            result: serde_json::json!({"content":[{"type":"text","text":"complete original source evidence"}],"structuredContent":{"future_original":{"kept":true},"focus":"synthetic-not-qualified"}}),
+        };
+        let cancellation = context.cancellation().clone();
+        let original_bytes = serde_json::to_vec(&original_result)?;
+        let (mut reader, mut raw) = tokio::io::duplex(1);
+        let writing = tokio::spawn(async move {
+            let mut writer = crate::service_runtime::policy_writer::PolicyWriter {
+                inner: &mut raw,
+                context: &context,
+            };
+            airk_ipc::endpoint::write_message(&mut writer, &original_result, Duration::from_secs(5))
+                .await
+        });
+        let mut first = [0u8; 1];
+        reader.read_exact(&mut first).await?;
+        match mode {
+            "nonce" => {
+                assert!(gate.revoke_selection(&[selection.grant_nonce])?.is_empty());
+                gate.check_issue(issue)?;
+            }
+            "mutation" => {
+                let request = airk_core::catalog_management::CatalogRequest {
+                    caller: Incarnation::from_bytes([38; 16]),
+                    key: airk_core::service::RequestKey {
+                        namespace,
+                        epoch: 1,
+                        nonce: Incarnation::from_bytes([39; 16]),
+                    },
+                    expected_catalog_revision: CatalogRevision::INITIAL,
+                    operation: airk_core::catalog_management::CatalogOperation::RevokeGrant {
+                        id: airk_core::index_catalog::GrantId::from_identity(
+                            Incarnation::from_bytes([40; 16]),
+                        ),
+                        expected_revision: CatalogRevision::INITIAL,
+                    },
+                };
+                gate.close_request_admission(&request)?;
+                assert!(gate.check_issue(issue).is_err());
+            }
+            _ => cancellation.cancel(),
+        }
+        let mut remainder = Vec::new();
+        reader.read_to_end(&mut remainder).await?;
+        assert!(writing.await?.is_err());
+        assert!(
+            1 + remainder.len() < 4,
+            "revoked original nonce must suppress the partial native frame, not emit fallback"
+        );
+        assert!(
+            original_bytes
+                .windows(b"complete original source evidence".len())
+                .any(|bytes| bytes == b"complete original source evidence")
+        );
+    }
+    Ok(())
+}

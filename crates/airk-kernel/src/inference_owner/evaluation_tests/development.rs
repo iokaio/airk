@@ -131,6 +131,9 @@ fn dev_source_closure(
 #[test]
 #[ignore = "one matched six-family DEV64 native run; no final promotion; explicit reviewed inputs"]
 fn native_dev64_questions_use_current_kernel_with_fixed20_quality_mask() -> Result<()> {
+    super::native_parent_bag::private_base(
+        std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE").as_deref(),
+    )?;
     let corpus_path = PathBuf::from(
         std::env::var_os("AIRK_NATIVE_DEV64_CORPUS").context("missing fixed DEV corpus")?,
     );
@@ -228,7 +231,7 @@ fn native_dev64_questions_use_current_kernel_with_fixed20_quality_mask() -> Resu
     let binary = std::env::current_exe()?;
     let binary_sha256 = Sha256Digest::from_bytes(Sha256::digest(std::fs::read(&binary)?).into());
     sealed(&input.directory.join("model.json"), input.model_json_sha256)?;
-    let control = tempfile::tempdir()?;
+    let control = super::native_parent_bag::private_control()?;
     let lease = Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
     let owner = NativeInferenceOwner::admit(lease)?;
     let expected_model = owner.run_encoder_evaluation(input.model_json_sha256, || {

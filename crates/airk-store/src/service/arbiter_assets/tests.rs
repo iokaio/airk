@@ -4,11 +4,12 @@ use airk_core::arbiter::*;
 fn profile() -> Profile {
     let digest = Sha256Digest::from_bytes(Sha256::digest(b"asset-data").into());
     Profile {
-        task_policies: Default::default(),
+        task_policies: std::collections::BTreeMap::from([(Task::ContextAction, digest)]),
         qualified_targets: vec![],
         cpu_fit: None,
         downloads: vec![],
-        model: ModelChoice::SmallIntern,
+        stage: Some(Stage::Context),
+        model: ModelChoice::ContextQwenCompact,
         profile_id: "fixture".into(),
         manifest: Sha256Digest::from_bytes([3; 32]),
         runtime: RUNTIME.into(),
@@ -16,18 +17,36 @@ fn profile() -> Profile {
         calibration: digest,
         policy: digest,
         qualification: None,
-        tasks: std::collections::BTreeSet::from([Task::ContextNextRead]),
+        tasks: std::collections::BTreeSet::from([Task::ContextAction]),
         abi: ScoreAbi {
             readout: Readout::DecisionSymbol,
-            inputs: vec![TensorContract {
-                name: "input_ids".into(),
-                element: TensorType::Int64,
-                axes: vec!["tokens".into()],
-            }],
+            inputs: [
+                ("input_ids", TensorType::Int64, vec!["batch_1", "tokens"]),
+                (
+                    "attention_mask",
+                    TensorType::Int64,
+                    vec!["batch_1", "tokens"],
+                ),
+                ("position_ids", TensorType::Int64, vec!["batch_1", "tokens"]),
+                ("decision_positions", TensorType::Int64, vec!["batch_1"]),
+                (
+                    "candidate_positions",
+                    TensorType::Int64,
+                    vec!["batch_1", "options"],
+                ),
+                ("option_mask", TensorType::Bool, vec!["batch_1", "options"]),
+            ]
+            .into_iter()
+            .map(|(name, element, axes)| TensorContract {
+                name: name.into(),
+                element,
+                axes: axes.into_iter().map(str::to_owned).collect(),
+            })
+            .collect(),
             output: TensorContract {
                 name: "scores".into(),
                 element: TensorType::Float32,
-                axes: vec!["options".into()],
+                axes: vec!["batch_1".into(), "options".into()],
             },
         },
         max_tokens: 128,
@@ -63,6 +82,120 @@ fn fixture() -> Result<(tempfile::TempDir, Arc<AssetStore>, Profile)> {
     )?;
     Ok((root, store, profile()))
 }
+
+fn offline_source(profile: &Profile) -> Result<tempfile::TempDir> {
+    let source = tempfile::tempdir()?;
+    for asset in &profile.assets {
+        std::fs::write(source.path().join(&asset.name), b"asset-data")?;
+    }
+    Ok(source)
+}
+#[test]
+fn offline_bundle_import_uses_real_custody_and_never_changes_source_bytes() -> Result<()> {
+    let (_root, store, profile) = fixture()?;
+    let source = offline_source(&profile)?;
+    let bundle = OfflineBundle::open(&profile, source.path(), || Ok(()))?;
+    bundle.import(&store, &profile, 1, || Ok(()))?;
+    assert_eq!(store.phase(&profile)?, Some(Phase::Ready));
+    let pinned = store.pin(&profile)?;
+    for asset in &profile.assets {
+        assert_eq!(pinned.read(asset)?, b"asset-data");
+        assert_eq!(
+            std::fs::read(source.path().join(&asset.name))?,
+            b"asset-data"
+        );
+    }
+    Ok(())
+}
+#[test]
+fn offline_invalid_hash_extra_entry_or_alias_refuses_before_destination_effects() -> Result<()> {
+    for defect in ["hash", "extra", "alias"] {
+        let (root, _store, profile) = fixture()?;
+        let source = offline_source(&profile)?;
+        let first = source.path().join(&profile.assets[0].name);
+        match defect {
+            "hash" => std::fs::write(&first, b"wrong-data")?,
+            "extra" => std::fs::write(source.path().join("profile.json"), b"untrusted metadata")?,
+            "alias" => {
+                let outside = source.path().with_extension("alias");
+                std::fs::hard_link(&first, &outside)?;
+                let refused = OfflineBundle::open(&profile, source.path(), || Ok(())).is_err();
+                std::fs::remove_file(outside)?;
+                assert!(refused);
+            }
+            _ => unreachable!(),
+        }
+        if defect != "alias" {
+            assert!(OfflineBundle::open(&profile, source.path(), || Ok(())).is_err());
+        }
+        assert!(!root.path().join("arbiter-v3").exists());
+        assert!(first.exists());
+    }
+    Ok(())
+}
+#[test]
+fn offline_cancellation_after_observed_publication_preserves_source_and_recovery() -> Result<()> {
+    let (root, store, profile) = fixture()?;
+    let source = offline_source(&profile)?;
+    let bundle = OfflineBundle::open(&profile, source.path(), || Ok(()))?;
+    let published = root
+        .path()
+        .join("arbiter-v3/assets")
+        .join(profile.manifest.to_string())
+        .join(&profile.assets[0].name);
+    assert!(
+        bundle
+            .import(&store, &profile, 1, || {
+                ensure!(
+                    !published.exists(),
+                    "injected cancellation after observed first publication"
+                );
+                Ok(())
+            })
+            .is_err()
+    );
+    assert_eq!(store.phase(&profile)?, Some(Phase::Canceled));
+    for asset in &profile.assets {
+        assert_eq!(
+            std::fs::read(source.path().join(&asset.name))?,
+            b"asset-data"
+        );
+    }
+    assert!(store.pin(&profile).is_err());
+    Ok(())
+}
+
+#[test]
+fn new_asset_root_does_not_adopt_or_modify_retained_v2_custody() -> Result<()> {
+    let (root, store, profile) = fixture()?;
+    let old = root.path().join("arbiter-v2/assets/retained");
+    std::fs::create_dir_all(&old)?;
+    std::fs::write(old.join("receipt.json"), b"original unfinished v2 custody")?;
+    std::fs::write(old.join("weights.bin"), b"original old-model bytes")?;
+    assert_eq!(store.phase(&profile)?, None);
+    assert!(!root.path().join("arbiter-v3").exists());
+    assert_eq!(
+        std::fs::read(old.join("receipt.json"))?,
+        b"original unfinished v2 custody"
+    );
+    assert_eq!(
+        std::fs::read(old.join("weights.bin"))?,
+        b"original old-model bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_historical_profile_cannot_create_new_stage_asset_custody() -> Result<()> {
+    let (root, store, _) = fixture()?;
+    let historical: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    assert!(historical.declared_stage().is_none());
+    assert!(store.begin(&historical, 1).is_err());
+    assert!(!root.path().join("arbiter-v3").exists());
+    Ok(())
+}
 fn populate(store: &Arc<AssetStore>, profile: &Profile) -> Result<()> {
     let transaction = store.begin(profile, 1)?;
     for asset in &profile.assets {
@@ -77,7 +210,7 @@ fn populate(store: &Arc<AssetStore>, profile: &Profile) -> Result<()> {
 fn absent_asset_status_does_not_create_optional_directories() -> Result<()> {
     let (root, store, profile) = fixture()?;
     assert_eq!(store.phase(&profile)?, None);
-    assert!(!root.path().join("arbiter-v2").exists());
+    assert!(!root.path().join("arbiter-v3").exists());
     Ok(())
 }
 #[test]
@@ -108,7 +241,7 @@ fn partial_or_wrong_digest_never_publishes_and_explicit_recovery_keeps_original_
     assert!(store.pin(&profile).is_err());
     let directory = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string());
     assert_eq!(
         std::fs::read(directory.join("stage-1/asset-0.bin"))?,
@@ -139,7 +272,7 @@ fn foreign_existing_final_file_is_preserved_not_adopted_or_deleted() -> Result<(
     let transaction = store.begin(&profile, 1)?;
     let path = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string())
         .join(&profile.assets[0].name);
     std::fs::write(&path, b"foreign-data")?;
@@ -154,7 +287,7 @@ fn foreign_existing_final_file_is_preserved_not_adopted_or_deleted() -> Result<(
 fn linked_optional_asset_directory_is_refused_without_touching_target() -> Result<()> {
     let (root, store, profile) = fixture()?;
     let outside = tempfile::tempdir()?;
-    std::os::unix::fs::symlink(outside.path(), root.path().join("arbiter-v2"))?;
+    std::os::unix::fs::symlink(outside.path(), root.path().join("arbiter-v3"))?;
     assert!(store.begin(&profile, 1).is_err());
     assert!(std::fs::read_dir(outside.path())?.next().is_none());
     Ok(())
@@ -179,7 +312,7 @@ fn interrupted_receipt_stage_is_preserved_and_explicit_recovery_uses_fresh_revis
     let transaction = store.begin(&profile, 1)?;
     let directory = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string());
     std::fs::write(
         directory.join("receipt-2.part"),
@@ -203,7 +336,7 @@ fn reserved_transaction_names_refuse_before_any_optional_write() -> Result<()> {
     let (root, store, mut profile) = fixture()?;
     profile.assets[0].name = "receipt.json".into();
     assert!(store.begin(&profile, 1).is_err());
-    assert!(!root.path().join("arbiter-v2").exists());
+    assert!(!root.path().join("arbiter-v3").exists());
     Ok(())
 }
 
@@ -229,7 +362,7 @@ fn tampered_cleanup_receipt_identity_and_path_are_refused_without_source_mutatio
     populate(&store, &profile)?;
     let path = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string())
         .join(RECEIPT);
     let original = std::fs::read(&path)?;
@@ -255,7 +388,7 @@ fn incomplete_owned_removal_is_discovered_by_original_configuration_without_repr
     populate(&store, &profile)?;
     let asset = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string())
         .join(&profile.assets[0].name);
     std::fs::write(&asset, b"foreign-data")?;
@@ -285,7 +418,7 @@ fn explicit_remove_cleans_only_exact_sealed_canceled_partial_bytes() -> Result<(
     transaction.cancel()?;
     let stage = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string())
         .join("stage-1");
     assert_eq!(
@@ -313,7 +446,7 @@ fn hard_interruption_without_partial_receipt_is_preserved_and_removal_stays_pend
     let transaction = store.begin(&profile, 1)?;
     let stage = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string())
         .join("stage-1");
     std::fs::write(stage.join(&profile.assets[0].name), b"unproven partial")?;
@@ -337,7 +470,7 @@ fn removal_preserves_foreign_alternate_streams_and_changed_default_bytes() -> Re
     populate(&store, &profile)?;
     let directory = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string());
     let asset = directory.join(&profile.assets[0].name);
     let stream = std::path::PathBuf::from(format!("{}:foreign", asset.display()));
@@ -360,7 +493,7 @@ fn same_removal_handle_blocks_mutation_after_hash_through_disposition() -> Resul
     populate(&store, &profile)?;
     let directory = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string());
     let asset = directory.join(&profile.assets[0].name);
     let raw = airk_process::directory::OpenedDirectory::open(&directory)?;
@@ -406,7 +539,7 @@ fn same_bytes_replaced_object_is_not_adopted_pinned_or_removed() -> Result<()> {
     populate(&store, &profile)?;
     let directory = root
         .path()
-        .join("arbiter-v2/assets")
+        .join("arbiter-v3/assets")
         .join(profile.manifest.to_string());
     let target = directory.join(&profile.assets[0].name);
     let preserved = root.path().join("original-retained-object");

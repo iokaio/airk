@@ -363,3 +363,56 @@ fn emit_native_context_action_cases() -> Result<()> {
     assert_eq!(value, expected);
     Ok(())
 }
+#[test]
+fn ordinary_focus_only_allowance_never_authorizes_context_assessment() -> Result<()> {
+    let mut original = request()?;
+    let parent = crate::arbiter::Budget {
+        calls: 1,
+        rounds: 1,
+        fanout: 1,
+        input_tokens: 512,
+        candidates: 4,
+        max_bytes: 65536,
+        deadline_ms: 1000,
+    };
+    original.parent_budget = parent.clone();
+    original.remaining_input_tokens = 512;
+    original.remaining_ms = 1000;
+    let mut allowance = PartitionAllowance {
+        schema: crate::combined_context::ALLOWANCE_SCHEMA.into(),
+        attempt: original.read_attempt.request_id,
+        selection: digest(8),
+        index_id: original.scope.index_id,
+        parent_budget: parent,
+        resources: crate::combined_context::Resources {
+            calls: 1,
+            input_tokens: 512,
+            candidates: 4,
+            bytes: 65536,
+        },
+        assessment_ordinals: vec![],
+    };
+    allowance.validate()?;
+    assert!(allowance.is_ordinary_focus());
+    original.partition = Some(allowance.clone());
+    assert!(
+        original
+            .validate(
+                original.worker,
+                original.authority,
+                ReadClock::UnixMonotonic,
+                100
+            )
+            .is_err()
+    );
+    allowance.assessment_ordinals = vec![1];
+    assert!(!allowance.is_ordinary_focus());
+    original.partition = Some(allowance);
+    original.validate(
+        original.worker,
+        original.authority,
+        ReadClock::UnixMonotonic,
+        100,
+    )?;
+    Ok(())
+}

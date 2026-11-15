@@ -297,7 +297,14 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
     ) -> Result<SearchResponse> {
-        self.search_response_on_read(query, mode, snippet_bytes, filters, self.current_reader()?)
+        let response = self.search_response_on_read(
+            query,
+            mode,
+            snippet_bytes,
+            filters,
+            self.current_reader()?,
+        )?;
+        self.focus_search(query, response)
     }
 
     /// Search and automatic definition pointers retain the same sealed reader.
@@ -312,6 +319,15 @@ impl Kernel {
         let evidence =
             self.search_response_on_read(query, mode, snippet_bytes, filters, read.clone())?;
         let definitions = super::search::definition_hints(&self.store, &read, query, filters)?;
+        let evidence = self.focus_search_with_metadata(
+            query,
+            evidence,
+            if definitions.is_empty() {
+                0
+            } else {
+                serde_json::to_vec(&definitions)?.len().saturating_add(16)
+            },
+        )?;
         Ok(super::SearchWithDefinitionsResponse {
             evidence,
             definitions,
@@ -356,7 +372,8 @@ impl Kernel {
                 filters,
             },
         )?;
-        Ok(SearchResponse {
+        let response = SearchResponse {
+            focus: None,
             execution: Some(evidence.execution),
             publication: Some(RevisionEnvelope::new(
                 self.collection.clone(),
@@ -368,7 +385,8 @@ impl Kernel {
             collection: evidence.collection,
             hits: evidence.hits,
             truncated: evidence.truncated,
-        })
+        };
+        Ok(response)
     }
 
     pub(crate) fn current_artifact(
@@ -465,6 +483,7 @@ impl Kernel {
             };
             if let Some((start, end, location, text, truncated)) = selected {
                 return Ok(SearchResponse {
+                    focus: None,
                     execution: None,
                     publication: Some(envelope(read)?),
                     semantic_readiness: None,

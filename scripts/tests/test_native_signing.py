@@ -5,8 +5,9 @@ from pathlib import Path
 import sys
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("native_signing",Path(__file__).parents[1]/"sign-native.py")
 signing = importlib.util.module_from_spec(spec)
@@ -434,8 +435,173 @@ class SigningIdentityFile(unittest.TestCase):
         self.assertIn(f'IDENTITY = "{macos["identity"]}"', sign)
         self.assertIn(f'TEAM = "{macos["team_id"]}"', sign)
         self.assertIn(f'CERTIFICATE_SHA256 = "{macos["certificate_sha256"]}"', sign)
-        for name in ("scripts/check-macos-direct-runtime.py", "scripts/package-standalone-macos.py"):
-            self.assertIn(f'TEAM = "{macos["team_id"]}"', (ROOT / name).read_text(encoding="utf-8"))
+        self.assertIn(f'TEAM = "{macos["team_id"]}"', (ROOT / "scripts/check-macos-direct-runtime.py").read_text(encoding="utf-8"))
+        specification = importlib.util.spec_from_file_location("test_macos_packaging_policy", ROOT / "scripts/package-standalone-macos.py")
+        owner = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(owner)
+        self.assertEqual(owner.TEAM, macos["team_id"])
+        self.assertEqual(owner.CERTIFICATE_SHA256, macos["certificate_sha256"])
+
+
+class LocalPairSigning(unittest.TestCase):
+    """Actual receipt and pair byte checks; OS verification alone is injected."""
+    def pair(self, root):
+        target = "x86_64-pc-windows-msvc"
+        source, output, runtime, receipt = SplitPairSigning().pair(root, target)
+        fixture = json.loads((ROOT / "fixtures/split/receipts/native-signing-local.json").read_bytes())["base"]
+        receipt.update(schema="airk-service-pair-signing-local/1", provenance="local", commit="a" * 40)
+        for name, previous in list(receipt["components"].items()):
+            component = json.loads(json.dumps(fixture))
+            component.update(source_sha256=previous["source_sha256"], binary_sha256=previous["binary_sha256"],
+                             commit="a" * 40, cargo_lock_sha256="b" * 64)
+            receipt["components"][name] = component
+        (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+        return source, output, runtime, receipt
+
+    def test_local_pair_is_explicit_and_reverifies_both_os_signatures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output, runtime, receipt = self.pair(Path(directory))
+            with patch.object(signing, "verify", side_effect=lambda _binary, component, _tool: component["verification"]) as verify:
+                with self.assertRaisesRegex(ValueError, "Pair signing receipt differs"):
+                    signing.read_verified_pair(output, source, receipt["target"], "a" * 40, "b" * 64)
+                verify.assert_not_called()
+                actual, observed = signing.read_verified_pair(output, source, receipt["target"], "a" * 40, "b" * 64, allow_local=True)
+                self.assertEqual(actual, runtime)
+                self.assertEqual(observed["schema"], "airk-service-pair-signing-local/1")
+                self.assertEqual(observed["provenance"], "local")
+                self.assertEqual({call.args[0].name for call in verify.call_args_list}, {"airk.exe", "airkctl.exe"})
+                self.assertEqual(verify.call_count, 2)
+
+    def test_local_pair_rejects_mixed_origins_wrong_client_policy_and_lost_timestamp(self):
+        mutations = [
+            lambda r: r["components"]["airk.exe"].update(schema="airk-native-signing/1"),
+            lambda r: r.update(provenance="hosted"),
+            lambda r: r["components"]["airk.exe"]["local_signing"]["client"].update(dlib_sha256="1" * 64),
+            lambda r: r["components"]["airk.exe"]["azure"].update(publisher="unreviewed publisher"),
+            lambda r: r["components"]["airk.exe"]["verification"].update(timestamp_present=False),
+            lambda r: r["components"]["airk.exe"].update(commit="c" * 40),
+            lambda r: r["components"]["airk.exe"].update(source_sha256="d" * 64),
+        ]
+        for change in mutations:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                source, output, _runtime, receipt = self.pair(Path(directory))
+                change(receipt)
+                (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+                with patch.object(signing, "verify") as verify:
+                    with self.assertRaises(ValueError):
+                        signing.read_verified_pair(output, source, receipt["target"], "a" * 40, "b" * 64, allow_local=True)
+                    verify.assert_not_called()
+
+    def test_local_pair_still_rejects_changed_images_and_unrelated_payload(self):
+        for name in ("airk.exe", "airkctl.exe", "LICENSE"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                source, output, runtime, receipt = self.pair(Path(directory))
+                (runtime / name).write_bytes(b"changed bytes")
+                if name == "LICENSE":
+                    manifest = json.loads((runtime / "airk-install.json").read_bytes())
+                    manifest["files"][name] = signing.digest(runtime / name)
+                    (runtime / "airk-install.json").write_text(json.dumps(manifest), encoding="utf-8")
+                    receipt["install_manifest_sha256"] = signing.digest(runtime / "airk-install.json")
+                    (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+                def verify(binary, component, _tool):
+                    if signing.digest(binary) != component["binary_sha256"]:
+                        raise ValueError("changed signature bytes")
+                    return component["verification"]
+                with patch.object(signing, "verify", side_effect=verify):
+                    with self.assertRaises(ValueError):
+                        signing.read_verified_pair(output, source, receipt["target"], "a" * 40, "b" * 64, allow_local=True)
+
+    def test_local_cli_does_not_take_hosted_identity_or_apple_options(self):
+        base = ["sign-native.py", "--target", "x86_64-pc-windows-msvc", "--runtime-dir", "fixture", "--output", "fixture-out", "--local-artifact-signing"]
+        with patch.object(signing.platform, "system", return_value="Windows"), patch.object(signing, "sign_local_pair") as local:
+            with patch.object(sys, "argv", base):
+                signing.main()
+            self.assertEqual(local.call_count, 1)
+            for extra in (["--identity", "a" * 40], ["--timestamp-url", "https://unreviewed.invalid"], ["--notarize"]):
+                local.reset_mock()
+                with patch.object(sys, "argv", base + extra), patch("sys.stderr"), self.assertRaises(SystemExit):
+                    signing.main()
+                local.assert_not_called()
+
+    def test_local_finish_seals_metadata_and_never_relabels_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output, runtime, receipt = self.pair(Path(directory))
+            target = receipt["target"]
+            pair = {"schema": 3, "version": "1.8.24", "os": "windows", "arch": "x86_64",
+                    "airk_sha256": signing.digest(source / "airk.exe"),
+                    "airkctl_sha256": signing.digest(source / "airkctl.exe"),
+                    "i1_protocol": 1, "i2_contract": 1, "admin_inventory_sha256": "3" * 64}
+            (runtime / "airk-install.json").write_bytes((source / "airk-install.json").read_bytes())
+            for parent in (source, runtime):
+                (parent / "airk-runtime.json").write_text(json.dumps(pair), encoding="utf-8")
+                (parent / "airk-build.json").write_text(json.dumps({"schema": 2, "source": "c" * 64, "runtime": pair}), encoding="utf-8")
+            package = signing.pair_package()
+            before = package.inventory(source)
+            (output / "pair-signing.pending.json").write_text(json.dumps(
+                {"schema": 1, "source": str(source), "target": target,
+                 "source_install_sha256": before["airk-install.json"]}), encoding="utf-8")
+            (output / "signing.json").unlink()
+            with patch.object(signing, "pair_package", return_value=package), \
+                    patch.object(package, "validate_runtime", side_effect=lambda root, *_: (package.inventory(root), ("airk.exe", "airkctl.exe"))), \
+                    patch.object(signing, "verify", side_effect=lambda _path, component, _tool: component["verification"]) as verify, patch("builtins.print"):
+                signing.finish_pair(source, output, target, receipt["components"], "a" * 40, "b" * 64, local=True)
+            self.assertEqual(verify.call_count, 2)
+            written = json.loads((output / "signing.json").read_bytes())
+            signing.signing_receipts().validate_service_pair_signing_local(written)
+            self.assertEqual((written["schema"], written["provenance"]), ("airk-service-pair-signing-local/1", "local"))
+            self.assertEqual(written["source_install_sha256"], before["airk-install.json"])
+            self.assertEqual(written["install_manifest_sha256"], signing.digest(runtime / "airk-install.json"))
+            actual = json.loads((runtime / "airk-runtime.json").read_bytes())
+            for name, field in (("airk.exe", "airk_sha256"), ("airkctl.exe", "airkctl_sha256")):
+                self.assertEqual(actual[field], signing.digest(runtime / name))
+            self.assertEqual(json.loads((runtime / "airk-build.json").read_bytes())["runtime"], actual)
+            self.assertEqual(package.inventory(source), before)
+
+    def test_local_signing_uses_existing_adapter_once_and_seals_only_after_both_verified(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory:
+                source, output, runtime, receipt = self.pair(Path(directory))
+                (output / "signing.json").unlink()
+                def sign(original, destination, target, commit, lock_digest, **options):
+                    self.assertEqual(options, {"dlib": "checked-client", "signtool": Path("signtool-fixture")})
+                    if failed and original.name == "airkctl.exe":
+                        raise RuntimeError("second signature refused")
+                    destination.parent.mkdir()
+                    destination.write_bytes(b"new signed " + original.read_bytes())
+                    component = dict(receipt["components"][original.name],
+                                     binary_sha256=signing.digest(destination), cargo_lock_sha256=lock_digest)
+                    return component
+                adapter = SimpleNamespace(provision=Mock(return_value="checked-client"), sign=Mock(side_effect=sign),
+                                          signtool_path=Mock(return_value=Path("signtool-fixture")))
+                specification = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
+                package = SimpleNamespace(runtime_builder=lambda: SimpleNamespace(signing_names=lambda *_: ("airk.exe", "airkctl.exe")))
+                args = SimpleNamespace(output=output, runtime_dir=source, target=receipt["target"], signtool="signtool")
+                # Load receipt validators before injecting only the adapter import.
+                validators = signing.signing_receipts()
+                with patch.object(signing.platform, "system", return_value="Windows"), \
+                        patch("importlib.util.spec_from_file_location", return_value=specification), \
+                        patch("importlib.util.module_from_spec", return_value=adapter), \
+                        patch.object(signing, "signing_receipts", return_value=validators), \
+                        patch.object(signing, "prepare_pair", return_value=(source, runtime, (), {})), \
+                        patch.object(signing, "pair_package", return_value=package), \
+                        patch.object(signing, "run", return_value="a" * 40) as run, \
+                        patch.object(signing, "verify", side_effect=lambda _path, component, _tool: component["verification"]) as verify, \
+                        patch.object(signing, "finish_pair") as finish:
+                    if failed:
+                        with self.assertRaisesRegex(RuntimeError, "second signature refused"):
+                            signing.sign_local_pair(args)
+                        finish.assert_not_called()
+                        self.assertFalse((output / "signing.json").exists())
+                    else:
+                        signing.sign_local_pair(args)
+                        finish.assert_called_once()
+                        self.assertEqual(finish.call_args.kwargs, {"local": True})
+                        self.assertEqual(set(finish.call_args.args[3]), {"airk.exe", "airkctl.exe"})
+                        self.assertEqual(verify.call_count, 2)
+                        for name in ("airk.exe", "airkctl.exe"):
+                            self.assertEqual((runtime / name).read_bytes(), (output / (name + ".signature") / name).read_bytes())
+                    adapter.provision.assert_called_once_with()
+                    run.assert_called_once_with(["git", "rev-parse", "HEAD"])
 
 
 if __name__ == "__main__":

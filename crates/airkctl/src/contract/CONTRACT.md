@@ -278,3 +278,22 @@ AdminCall. A zero or negative floor uses the existing not-sent
 session_deadline_exceeded path; it never grants a minimum1ms after exhaustion.
 A changed compiled SDK requires a new scientific protocol/input freeze. Earlier
 calls, samples and unknown failures remain immutable under their old identities.
+
+
+Arbiter management consumes Core configuration/3 and status/2. Configure files
+carry one explicit stage and complete native per-stage choices/enrollments.
+Cancel and Recover require `--stage focus|context` and the actual common expected
+revision; profile-bound Provision/Remove derive the stage from native admitted
+profile or original retained custody. `arbiter initialize` is explicit and
+accepts `--expected-legacy-configuration SHA` when retained legacy configuration
+exists; omission means actual absence, never permission to migrate or overwrite.
+Status/startup never initializes optional state or enables/downloads a model.
+
+
+`arbiter import --expected-revision N --profile SHA --directory ABSOLUTE` uses
+only the private native ArbiterImport request and required typed status response.
+The CLI passes the exact original UTF-8 native absolute directory string through
+Core validation; it never pre-canonicalizes alias/traversal evidence. The owning
+service opens and verifies that local bundle read-only against the actual
+compiled qualified profile. A caller path supplies no profile/code/consent or
+network authority. This operation has no public Admin management counterpart.

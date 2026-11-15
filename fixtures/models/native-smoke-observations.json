@@ -1,0 +1,39 @@
+{
+  "schema": "airk.retained-native-model-smoke-observations/1",
+  "historical_r2": {
+    "retained_build_receipt": "artifacts/advanced-split/runtime-debug-r2/airk-build.json",
+    "build_receipt_sha256": "ed92c568dfc0b71a3093048005a077ab5b8b5349cb1406c7782c7a50fc903ba9",
+    "build_source": {
+      "sha256": "cfadcad864a72448843e3650815c8565a96c712fa0d92736be7a14aaa13de6a0",
+      "files": 1672
+    },
+    "observation": {
+      "dimensions": 384,
+      "engine": "onnxruntime-cpu/1.30.0",
+      "legacy_identity": "3e97f788b02fb5a578dc106628ecc7e3791b576dd60ed334401018893f9d0784",
+      "pipeline_digest": "80aea601ebf0f8ec94d1df52bfb9a44df4bffbccc85dc4a22ec7522785efa065",
+      "profile": "minilm-l6-v2-u8-v2",
+      "repeat_equal": true,
+      "schema": 1,
+      "source": "embedded"
+    }
+  },
+  "current_r104": {
+    "retained_build_receipt": "artifacts/advanced-split/runtime-selected-baseline-r104/airk-build.json",
+    "build_receipt_sha256": "c4f989d9e703fa44eeaff2b57588e93d4df4d8f4786fefd4e1ac764b741e4078",
+    "build_source": {
+      "sha256": "aca9c740e07656cfbffd1af188c54091767d3e8f9f30a4f123fab6d5df616b75",
+      "files": 1851
+    },
+    "observation": {
+      "dimensions": 384,
+      "engine": "onnxruntime-cpu/1.30.0",
+      "legacy_identity": "fdd2d44dffa5715eecdb78546870009abf78f1abac0ee5cca9a6f6b2fea8b64c",
+      "pipeline_digest": "cb2166f2f648aa44cb4ee87f6b58b1e5c8007720d24fa4426234b65058e2b638",
+      "profile": "minilm-l6-v2-u8-v3",
+      "repeat_equal": true,
+      "schema": 1,
+      "source": "embedded"
+    }
+  }
+}

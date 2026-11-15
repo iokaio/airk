@@ -22,3 +22,28 @@ observes the exact code/detail on native preflight and both execution paths, the
 restores its original bytes before asserting. Source bytes and publication stay
 unchanged. No wire shape, persisted format, retry allowance or job identity is
 changed.
+
+## Synchronous optional-control callbacks and async IO
+
+Focus application/ranking and Context application/action/next-read callbacks
+are synchronous Kernel interfaces over the existing native control client.
+They can be invoked from the project owner's async driver as well as a blocking
+worker. Direct ambient Handle::block_on inside an entered runtime is forbidden.
+Every sibling callback uses one shared driver bridge; callback-specific request,
+instance/worker/authority checks, single-attempt transport, original absolute
+deadlines and typed source refusals remain unchanged.
+
+The production project owner has a two-worker multithread Tokio runtime. The
+bridge yields its async worker through block_in_place and drives the callback on
+that same runtime handle. A caller outside Tokio uses a local current-thread IO
+driver. An entered current-thread caller uses one joined scoped IO-driver thread;
+block_in_place is never attempted there. Factories construct timers/IO futures
+inside the selected driver, and no work detaches or outlives the synchronous
+callback. No permanent per-session runtime/thread, process, global queue, retry,
+new request budget or authority is introduced. Existing admission bounds callers.
+
+The direct embedding-pool connector's Score/load/status/settlement operations
+already use their own bounded airk-pool-client communication thread/runtime and
+remain unchanged. Runtime bundle/work observations remain async. Native model
+execution, lease/reservations and completion/drain stay under their existing
+owning service; this transport bridge creates no inference owner.

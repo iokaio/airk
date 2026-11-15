@@ -447,3 +447,143 @@ fn context_byte_admission_charges_closed_envelope_escaping_and_original_metadata
     );
     Ok(())
 }
+
+#[test]
+fn context_stage_binding_sizing_preserves_baseline_and_reserves_both_stages_at_byte_boundary()
+-> Result<()> {
+    use airk_core::arbiter::Stage;
+    let (request, _, summary) = context_fixture()?;
+    let allowances = summary
+        .members
+        .iter()
+        .map(|member| member.allowance.clone())
+        .collect::<Vec<_>>();
+    let mut budget = summary.budget;
+    let attachment = 1024;
+    let baseline = context_admission_skeleton(&request, &budget, &allowances, false)?;
+    let dual = context_admission_skeleton(&request, &budget, &allowances, true)?;
+    let baseline_bindings = &baseline.context.as_ref().unwrap().delivery_bindings;
+    let dual_bindings = &dual.context.as_ref().unwrap().delivery_bindings;
+    assert_eq!(
+        baseline_bindings
+            .iter()
+            .map(|binding| (binding.scope.index_id, binding.stage))
+            .collect::<Vec<_>>(),
+        vec![(index(1), Stage::Context), (index(2), Stage::Context)]
+    );
+    assert_eq!(
+        dual_bindings
+            .iter()
+            .map(|binding| (binding.scope.index_id, binding.stage))
+            .collect::<Vec<_>>(),
+        vec![
+            (index(1), Stage::Context),
+            (index(1), Stage::Focus),
+            (index(2), Stage::Context),
+            (index(2), Stage::Focus)
+        ]
+    );
+    let mut expected_extra = 0;
+    for binding in baseline_bindings {
+        // Independent wire value: default Context omits stage; Focus must add it.
+        let row = json!({"stage":"focus","scope":binding.scope,"profile":binding.profile});
+        expected_extra += serde_json::to_vec(&row)?.len() + 1;
+    }
+    assert_eq!(
+        serde_json::to_vec(&dual)?.len() - serde_json::to_vec(&baseline)?.len(),
+        expected_extra
+    );
+    // Account for the budget field's own decimal width at the boundary.
+    for _ in 0..4 {
+        budget.max_bytes = serde_json::to_vec(&context_admission_skeleton(
+            &request,
+            &budget,
+            &allowances,
+            false,
+        )?)?
+        .len()
+            + context_delivery_receipt_reserve()?
+            + attachment
+            + 3 * 1024;
+    }
+    assert_eq!(
+        context_payload_admission(&request, &budget, &allowances, attachment)?,
+        1024
+    );
+    assert!(
+        context_payload_admission_with_focus(&request, &budget, &allowances, attachment)? < 1024
+    );
+    budget.max_bytes += expected_extra;
+    assert_eq!(
+        context_payload_admission_with_focus(&request, &budget, &allowances, attachment)?,
+        1024
+    );
+    budget.max_bytes -= 1;
+    assert_eq!(
+        context_payload_admission_with_focus(&request, &budget, &allowances, attachment)?,
+        1023
+    );
+    Ok(())
+}
+
+#[test]
+fn context_worst_roster_sizes_sixty_four_inert_stage_bindings() -> Result<()> {
+    use airk_core::arbiter::Stage;
+    let (mut request, _, summary) = context_fixture()?;
+    let template = request.selection.members[0].clone();
+    request.selection.members = (1..=32)
+        .map(|number| {
+            let mut member = template.clone();
+            member.index_id = index(number);
+            for membership in &mut member.memberships {
+                membership.membership.index_id = member.index_id;
+            }
+            member
+        })
+        .collect();
+    let allowances = vec![None; 32];
+    let sizing = context_admission_skeleton(&request, &summary.budget, &allowances, true)?;
+    let bindings = &sizing.context.as_ref().unwrap().delivery_bindings;
+    assert_eq!(bindings.len(), 64);
+    for number in 1..=32 {
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|binding| binding.scope.index_id == index(number))
+                .map(|binding| binding.stage)
+                .collect::<Vec<_>>(),
+            vec![Stage::Context, Stage::Focus]
+        );
+    }
+    assert_eq!(
+        context_payload_admission_with_focus(&request, &summary.budget, &allowances, 0)?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn actual_focus_outer_binding_is_not_reclaimed_at_exact_child_boundary() -> Result<()> {
+    let (_, _, summary) = context_fixture()?;
+    let scope = &summary.delivery_bindings[0].scope;
+    let profile = summary.delivery_bindings[0].profile;
+    let expected =
+        serde_json::to_vec(&json!({"stage":"focus","scope":scope,"profile":profile}))?.len() + 1;
+    assert_eq!(context_focus_binding_bytes(scope, profile)?, expected);
+    let body = 1024;
+    assert_eq!(
+        context_reclaimable_body_bytes(body, 0, body, 0)?,
+        0,
+        "both-off keeps its fitting original body"
+    );
+    assert!(context_reclaimable_body_bytes(body + expected - 1, 0, body, expected).is_err());
+    assert_eq!(
+        context_reclaimable_body_bytes(body + expected, 0, body, expected)?,
+        0
+    );
+    assert_eq!(
+        context_reclaimable_body_bytes(body + expected + 1, 0, body, expected)?,
+        1
+    );
+    Ok(())
+}

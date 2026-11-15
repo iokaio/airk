@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit private qualification, never part of release profile admission.
+mod context;
+mod focus;
+
 use super::*;
 use airk_core::arbiter::{Asset, ModelChoice, Profile};
 use serde::Deserialize;

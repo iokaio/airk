@@ -279,9 +279,13 @@ async fn response_inner(
             return refused(agent_scope::SCOPE_UNAVAILABLE);
         }
     };
+    let mut context = context;
     let mut arguments = call.arguments;
-    if matches!(call.tool.as_str(), "answer" | "airk_answer")
-        && let Err(error) = super::source_delivery::retain_selection(state, &context, selection_ref)
+    if matches!(
+        call.tool.as_str(),
+        "answer" | "airk_answer" | "search" | "airk_search"
+    ) && let Err(error) =
+        super::source_delivery::retain_selection(state, &context, selection_ref)
     {
         return tools_call::failed(&error);
     }
@@ -290,6 +294,12 @@ async fn response_inner(
         arguments = match tools_call::single_index_arguments(arguments) {
             Ok(arguments) => arguments,
             Err(result) => return ControlResponse::ToolResult { result },
+        };
+        context = match tools_call::singleton_focus::admit(
+            state, &call.tool, &arguments, context, identity, &index_ids,
+        ) {
+            Ok(context) => context,
+            Err(error) => return tools_call::failed(&error),
         };
     }
     let backend = match index_ids.as_slice() {

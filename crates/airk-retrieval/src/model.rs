@@ -1101,6 +1101,53 @@ impl airk_core::EmbeddingProvider for EmbeddingModel {
     }
 }
 
+/// Metadata-only active-catalog fence. Historical descriptors stay readable but
+/// cannot advertise usable vectors merely because their ORT version is current.
+pub fn onnx_asset_metadata_uses_active_catalog(
+    source: &dyn ModelAssetSource,
+    set: &ModelObjectSet,
+) -> Result<bool> {
+    let descriptor = descriptor_from_asset_metadata(source, set)?;
+    if !onnx_descriptor_uses_current_runtime(&descriptor) {
+        return Ok(false);
+    }
+    let bytes = source.read_asset(ModelAssetName::ModelJson, 16384)?;
+    let reference = &set.assets[&ModelAssetName::ModelJson];
+    ensure!(
+        bytes.len() as u64 == reference.bytes
+            && Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == reference.sha256,
+        "active model metadata changed after descriptor authentication"
+    );
+    let (manifest, _) = onnx_manifest(&bytes)?;
+    #[cfg(all(feature = "local-inference", feature = "test-support"))]
+    if crate::native_inference::evaluation_model_lease(&bytes).is_some() {
+        // Only the existing actual owner/thread-local exact-manifest scope;
+        // no request field, environment role or unowned metadata grants this.
+        return Ok(true);
+    }
+    let active = crate::model_catalog::contains_active_manifest(&manifest)?;
+    if active {
+        ensure!(
+            crate::model_catalog::contains_active_asset_references(set)?,
+            "active model asset lengths or digests differ from the catalog"
+        );
+    }
+    Ok(active)
+}
+
+pub fn onnx_object_metadata_uses_active_catalog(
+    collection: &Path,
+    set: &ModelObjectSet,
+) -> Result<bool> {
+    onnx_asset_metadata_uses_active_catalog(&ObjectAssets { collection, set }, set)
+}
+
+/// Refusal-only metadata classification after a genuine missing shared model.
+/// True is never admission: full authenticated model.json remains required.
+pub fn onnx_asset_references_may_be_active(set: &ModelObjectSet) -> Result<bool> {
+    crate::model_catalog::contains_active_asset_references(set)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

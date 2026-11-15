@@ -518,6 +518,45 @@ pub fn context_payload_admission(
     allowances: &[Option<airk_core::combined_context::PartitionAllowance>],
     attachment_reserve: usize,
 ) -> Result<usize> {
+    context_payload_admission_stages(request, budget, allowances, attachment_reserve, false)
+}
+
+/// Conservative two-stage sizing, without observing eligibility or granting work.
+/// The ordinary owner uses baseline admission and charges actual Focus custody
+/// inside each child before scoring, so disabled stages preserve their budget.
+pub fn context_payload_admission_with_focus(
+    request: &CompositionRequest,
+    budget: &airk_core::arbiter::Budget,
+    allowances: &[Option<airk_core::combined_context::PartitionAllowance>],
+    attachment_reserve: usize,
+) -> Result<usize> {
+    context_payload_admission_stages(request, budget, allowances, attachment_reserve, true)
+}
+
+fn context_payload_admission_stages(
+    request: &CompositionRequest,
+    budget: &airk_core::arbiter::Budget,
+    allowances: &[Option<airk_core::combined_context::PartitionAllowance>],
+    attachment_reserve: usize,
+    focus: bool,
+) -> Result<usize> {
+    let skeleton = context_admission_skeleton(request, budget, allowances, focus)?;
+    let receipt_bytes = context_delivery_receipt_reserve()?;
+    let reserved = serde_json::to_vec(&skeleton)?
+        .len()
+        .checked_add(receipt_bytes)
+        .and_then(|bytes| bytes.checked_add(attachment_reserve))
+        .context("context admission byte overflow")?;
+    let maximum = budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES);
+    Ok(maximum.saturating_sub(reserved) / 3)
+}
+
+fn context_admission_skeleton(
+    request: &CompositionRequest,
+    budget: &airk_core::arbiter::Budget,
+    allowances: &[Option<airk_core::combined_context::PartitionAllowance>],
+    focus: bool,
+) -> Result<CombinedReadResult> {
     use airk_core::{arbiter::ScopeBinding, combined_context::*, identity::Incarnation};
     budget.validate()?;
     request.selection.validate()?;
@@ -553,9 +592,17 @@ pub fn context_payload_admission(
             publication: publication.clone(),
         };
         bindings.push(ContextDeliveryBinding {
-            scope,
+            stage: airk_core::arbiter::Stage::Context,
+            scope: scope.clone(),
             profile: Some(token.revision),
         });
+        if focus {
+            bindings.push(ContextDeliveryBinding {
+                stage: airk_core::arbiter::Stage::Focus,
+                scope,
+                profile: Some(token.revision),
+            });
+        }
         let mut allowance = allowance.clone();
         if let Some(allowed) = &mut allowance {
             allowed.resources = max_resources.clone();
@@ -619,14 +666,60 @@ pub fn context_payload_admission(
                 .collect(),
         }),
     };
-    let receipt_bytes = context_delivery_receipt_reserve()?;
-    let reserved = serde_json::to_vec(&skeleton)?
-        .len()
-        .checked_add(receipt_bytes)
-        .and_then(|bytes| bytes.checked_add(attachment_reserve))
-        .context("context admission byte overflow")?;
-    let maximum = budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES);
-    Ok(maximum.saturating_sub(reserved) / 3)
+    Ok(skeleton)
+}
+
+/// Extra outer roster syntax beyond the existing Context slot. This inert byte
+/// charge includes a separator even when the actual roster needs none.
+pub fn context_focus_binding_bytes(
+    scope: &airk_core::arbiter::ScopeBinding,
+    profile: Option<Sha256Digest>,
+) -> Result<usize> {
+    serde_json::to_vec(&airk_core::combined_context::ContextDeliveryBinding {
+        stage: airk_core::arbiter::Stage::Focus,
+        scope: scope.clone(),
+        profile,
+    })?
+    .len()
+    .checked_add(1)
+    .context("Focus delivery byte overflow")
+}
+
+pub fn context_packet_focus_binding_bytes(
+    packet: &airk_core::arbiter::context_action::ContextResponseV2,
+) -> Result<usize> {
+    airk_core::combined_context::packet_delivery_bindings(packet)?
+        .into_iter()
+        .filter(|binding| binding.stage == airk_core::arbiter::Stage::Focus)
+        .try_fold(0usize, |total, binding| {
+            total
+                .checked_add(context_focus_binding_bytes(
+                    &binding.scope,
+                    binding.profile,
+                )?)
+                .context("Focus delivery roster byte overflow")
+        })
+}
+
+/// Keep actual outer Focus custody out of the pool available to another body.
+/// This does not change native Work or Resources accounting meanings.
+pub fn context_reclaimable_body_bytes(
+    reserved: usize,
+    native_work_bytes: usize,
+    body_bytes: usize,
+    focus_binding_bytes: usize,
+) -> Result<usize> {
+    ensure!(
+        body_bytes
+            .checked_add(focus_binding_bytes)
+            .is_some_and(|bytes| bytes <= reserved),
+        "unreserved native context body or Focus delivery overhead"
+    );
+    Ok(reserved.saturating_sub(
+        native_work_bytes
+            .max(body_bytes)
+            .saturating_add(focus_binding_bytes),
+    ))
 }
 
 /// Exact worst-width current native final-delivery attachment, including key syntax.

@@ -1,0 +1,22 @@
+{
+  "control_method": {
+    "arbiter_import": {
+      "request": {
+        "directory": "D:\\AIRK Models\\verified bundle",
+        "expected_revision": 7,
+        "profile": "0808080808080808080808080808080808080808080808080808080808080808"
+      }
+    }
+  },
+  "metadata_relay_refusal": "console_private_setup_forbidden",
+  "public_management_schema_contains_native_import": false,
+  "qualification": false,
+  "request": {
+    "directory": "D:\\AIRK Models\\verified bundle",
+    "expected_revision": 7,
+    "profile": "0808080808080808080808080808080808080808080808080808080808080808"
+  },
+  "request_frame_budget": 131072,
+  "response_frame_budget": 4194304,
+  "schema": "airk.native-offline-import-cases/1"
+}

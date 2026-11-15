@@ -7,6 +7,14 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
 };
 
+/// Native test-support observation only. The sink is attached before exact
+/// same-lease/same-gate fixture composition; no wire value attaches it.
+pub type ContextObservationSink = Arc<
+    dyn Fn(&airk_core::native_context_action::NativeContextActionRequest, &Profile) -> Result<()>
+        + Send
+        + Sync,
+>;
+
 #[derive(serde::Serialize)]
 pub struct EvaluationResult<T> {
     evaluation: bool,
@@ -55,13 +63,41 @@ impl EvaluationOwner {
         let mut owner = Owner::new(ownership, gate)?;
         let configuration = owner.configuration()?;
         ensure!(
-            !configuration.enabled
-                && configuration.indexes.is_empty()
-                && configuration.selected_profile.is_none(),
+            ![&configuration.focus, &configuration.context]
+                .into_iter()
+                .any(|stage| stage.enabled
+                    || !stage.indexes.is_empty()
+                    || stage.selected_profile.is_some()),
             "Private evaluation requires an isolated unconfigured owner"
         );
-        owner.evaluation = Some(catalog);
+        owner.focus.evaluation = Some(catalog.clone());
+        owner.context.evaluation = Some(catalog);
         Ok(Self { owner })
+    }
+    /// Observe an already admitted request without dispatching Context scoring.
+    /// Source/configuration/deadline postchecks still decide the canonical reply.
+    /// Separate compiler census/recording work is not a deployed-model timing.
+    pub fn observe_context(mut self, sink: ContextObservationSink) -> Self {
+        self.owner.context.context_observer = Some(sink);
+        self
+    }
+    /// Observation only; actual service composition still checks the SAME native lease/gate.
+    pub fn observe_execution(
+        mut self,
+        observer: airk_inference::inference_engine::pool::arbiter::execution_observer::Observer,
+    ) -> Self {
+        self.owner.focus.execution_observer = Some(observer.clone());
+        self.owner.context.execution_observer = Some(observer);
+        self
+    }
+    #[cfg(test)]
+    pub(in crate::service_runtime) fn observe_warm(
+        self,
+        observer: super::warm_observer::Observer,
+    ) -> Result<Self> {
+        super::lifecycle::observe_warm(&self.owner.focus.lifecycle, observer.clone())?;
+        super::lifecycle::observe_warm(&self.owner.context.lifecycle, observer)?;
+        Ok(self)
     }
     pub fn configuration(&self) -> Result<EvaluationResult<Configuration>> {
         Ok(EvaluationResult::new(self.owner.configuration()?))
@@ -74,7 +110,7 @@ impl EvaluationOwner {
         manifest: Sha256Digest,
         source: &mut dyn FnMut(&Asset) -> Result<File>,
     ) -> Result<EvaluationResult<()>> {
-        let execution = self.owner.execution_profile(manifest)?;
+        let execution = self.owner.context.execution_profile(manifest)?;
         ensure!(
             execution.evaluation() && !execution.release_qualified(),
             "Private seed requires an opaque evaluation capability"
@@ -116,10 +152,12 @@ impl EvaluationOwner {
         supervisor: &airk_supervisor::project_supervisor::Supervisor,
     ) -> Result<EvaluationResult<Status>> {
         let mut status = self.owner.manage(request, supervisor, None).await?;
-        status.reason = format!(
-            "Private evaluation only; candidate is not release-qualified. {}",
-            status.reason
-        );
+        for stage in [&mut status.focus, &mut status.context] {
+            stage.reason = bounded_reason(format!(
+                "Private evaluation only; candidate is not release-qualified. {}",
+                stage.reason
+            ));
+        }
         Ok(EvaluationResult::new(status))
     }
     pub fn application(
@@ -142,5 +180,52 @@ impl EvaluationOwner {
         Ok(EvaluationResult::new(
             self.owner.next_read(request, supervisor).await?,
         ))
+    }
+}
+
+#[cfg(test)]
+mod execution_observer_tests {
+    use super::*;
+    #[test]
+    fn private_execution_observer_attachment_still_requires_actual_startup_lease_and_gate()
+    -> Result<()> {
+        use airk_catalog_control::catalog_admission::NativeCatalogAdmission;
+        use airk_core::{identity::Incarnation, index_catalog::CatalogRevision};
+        let root = tempfile::tempdir()?;
+        let other = tempfile::tempdir()?;
+        let lease = Arc::new(airk_store::service::ServiceLease::acquire(root.path())?);
+        let foreign = Arc::new(airk_store::service::ServiceLease::acquire(other.path())?);
+        let gate = NativeCatalogAdmission::new(
+            Incarnation::from_bytes([81; 16]),
+            Incarnation::from_bytes([82; 16]),
+            CatalogRevision::INITIAL,
+            1,
+        )?;
+        for variant in [0, 1, 2] {
+            let(observer,_)=airk_inference::inference_engine::pool::arbiter::execution_observer::Observer::channel(16)?;
+            // Attachment itself grants no execution catalog; actual score routing separately requires it.
+            let owner = EvaluationOwner {
+                owner: Owner::new(lease.clone(), gate.clone())?,
+            }
+            .observe_execution(observer);
+            assert!(
+                owner.owner.focus.execution_observer.is_some()
+                    && owner.owner.context.execution_observer.is_some()
+            );
+            let supplied = if variant == 0 { &foreign } else { &lease };
+            let other_gate = NativeCatalogAdmission::new(
+                Incarnation::from_bytes([81; 16]),
+                Incarnation::from_bytes([82; 16]),
+                CatalogRevision::INITIAL,
+                1,
+            )?;
+            assert_eq!(
+                owner
+                    .into_owner_for(supplied, if variant == 1 { &other_gate } else { &gate })
+                    .is_ok(),
+                variant == 2
+            );
+        }
+        Ok(())
     }
 }

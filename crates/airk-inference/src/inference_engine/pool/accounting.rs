@@ -15,7 +15,7 @@ struct Counts {
     deliveries: u64,
     engine_barrier: bool,
     cached_model: bool,
-    cached_arbiter: bool,
+    cached_arbiter: u64,
     arbiter_active: bool,
     operation: Option<(Incarnation, Vec<WorkerIdentity>)>,
     workers: BTreeMap<Incarnation, (u64, u64, u64)>,
@@ -43,7 +43,7 @@ impl Accounting {
             delivery_outstanding: state.deliveries,
             model_references_outstanding: state.running
                 + u64::from(state.cached_model)
-                + u64::from(state.cached_arbiter),
+                + state.cached_arbiter,
             failure: None,
         };
         status.validate()?;
@@ -55,8 +55,13 @@ impl Accounting {
         }
     }
     pub(super) fn arbiter_cached(&self, cached: bool) {
+        self.arbiter_cached_count(usize::from(cached));
+    }
+    pub(super) fn arbiter_cached_count(&self, count: usize) {
         if let Ok(mut state) = self.0.lock() {
-            state.cached_arbiter = cached;
+            // Supported native targets have at most 64-bit usize. A future
+            // wider host conservatively retains a nonzero completion barrier.
+            state.cached_arbiter = u64::try_from(count).unwrap_or(u64::MAX);
         }
     }
     pub(super) fn begin_arbiter(&self) {
@@ -190,7 +195,7 @@ impl Accounting {
             && state.running == 0
             && state.deliveries == 0
             && !state.cached_model;
-        let complete = complete && !state.arbiter_active && !state.cached_arbiter;
+        let complete = complete && !state.arbiter_active && state.cached_arbiter == 0;
         let observation = CompletionObservation {
             completion_basis: airk_core::inference_provider::CompletionBasis::NativeEngineBarrier,
             schema: 1,
@@ -207,7 +212,7 @@ impl Accounting {
             delivery_outstanding: state.deliveries,
             model_references_outstanding: state.running
                 + u64::from(state.cached_model)
-                + u64::from(state.cached_arbiter),
+                + state.cached_arbiter,
             completion_ledger: None,
             state: if complete {
                 CompletionState::Complete

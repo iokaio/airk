@@ -123,3 +123,58 @@ fn actual_service_receipt_projection_preserves_known_overrun_and_core_counter_co
     );
     Ok(())
 }
+
+#[test]
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+fn private_observation_is_known_zero_dispatch_not_lost_work_or_a_decision() -> Result<()> {
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/split/arbiter/native_context_action_cases.json"
+    ))?;
+    let structural: NativeContextActionRequest =
+        serde_json::from_value(cases["cases"][0]["input"].clone())?;
+    // Core semantic cases establish structural/source authority shapes, not
+    // the current Retrieval constructor's task policy or roster digest.
+    let mut request = structural.clone();
+    let eligible = structural
+        .roster
+        .basis
+        .read_choices_scored
+        .iter()
+        .copied()
+        .collect();
+    request.roster = airk_retrieval::arbiter::context_action::build_roster_with_eligible(
+        &structural.question,
+        &structural.scope,
+        &structural.records,
+        &structural.choices,
+        &eligible,
+    )?;
+    let policy = airk_retrieval::arbiter::context_action::policy_digest()?;
+    assert_eq!(request.roster.policy, policy);
+    // Only the owner-generated roster changes. Keep every actual source,
+    // authority, original attempt, clock/allowance and choice field untouched.
+    let original = serde_json::to_value(&structural)?;
+    let mut preserved = serde_json::to_value(&request)?;
+    preserved["roster"] = original["roster"].clone();
+    assert_eq!(preserved, original);
+    let profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    // This historical Profile is inert receipt metadata only: no current ABI,
+    // model execution, qualification or capability is inferred from this unit.
+    assert!(
+        captured_without_dispatch(&structural, &profile, policy).is_err(),
+        "a structurally valid Core fixture must not bypass the owning task policy"
+    );
+    let before = serde_json::to_value(&request)?;
+    let value = captured_without_dispatch(&request, &profile, policy)?;
+    assert_eq!(value.observed_input_tokens, Some(0));
+    assert_eq!(value.work, Work::default());
+    assert_eq!(value.reserved_input_tokens, request.remaining_input_tokens);
+    assert!(matches!(value.outcome, Outcome::Unavailable { .. }));
+    assert_eq!(value.scope, request.scope);
+    assert_eq!(value.task_policy, request.roster.policy);
+    assert_eq!(serde_json::to_value(&request)?, before);
+    value.validate()?;
+    Ok(())
+}

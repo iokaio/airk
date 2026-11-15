@@ -64,10 +64,12 @@ COPY packages/admin/src/EvidenceToolsScreen.tsx ./packages/admin/src/EvidenceToo
 COPY packages/admin/src/SearchScreen.tsx ./packages/admin/src/SearchScreen.tsx
 COPY packages/admin/src/StrategiesScreen.tsx ./packages/admin/src/StrategiesScreen.tsx
 COPY packages/admin/src/browserReview.ts ./packages/admin/src/browserReview.ts
+COPY packages/admin/src/browserEvidenceRoutes.ts ./packages/admin/src/browserEvidenceRoutes.ts
 COPY packages/admin/src/evidenceExports.ts ./packages/admin/src/evidenceExports.ts
 COPY packages/admin/src/guidedEvidence.ts ./packages/admin/src/guidedEvidence.ts
 COPY packages/admin/src/strategyRunner.ts ./packages/admin/src/strategyRunner.ts
 COPY packages/admin/src/strategyWorkspace.ts ./packages/admin/src/strategyWorkspace.ts
+COPY packages/admin/src/workflowLifetime.ts ./packages/admin/src/workflowLifetime.ts
 COPY packages/ui/src/answerPresentation.ts ./packages/ui/src/answerPresentation.ts
 COPY packages/ui/src/evidenceCore.ts ./packages/ui/src/evidenceCore.ts
 COPY packages/ui/src/nativeMetadataCodec.ts ./packages/ui/src/nativeMetadataCodec.ts

@@ -1,0 +1,163 @@
+{
+  "domain": "airk.arbiter.focus.input/2",
+  "original": {
+    "authority": {
+      "fingerprint": "0606060606060606060606060606060606060606060606060606060606060606",
+      "grant_id": "grt_15151515151515151515151515151515",
+      "grant_revision": 1,
+      "index_id": "idx_05050505050505050505050505050505",
+      "lease_generation": 1,
+      "schema": 1
+    },
+    "candidates": [
+      {
+        "hit": {
+          "citation": {
+            "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+            "end_line": 1,
+            "location": {
+              "Lines": {
+                "end": 1,
+                "start": 1
+              }
+            },
+            "path": "policy.md",
+            "start_line": 1
+          },
+          "text": "defined here",
+          "truncated": false
+        },
+        "id": "94a0f2956eb16cfb78ee726e5cdb28ce4b428d50835fdc5dbd5014888c944524",
+        "window": {
+          "utf8_end": 12,
+          "utf8_start": 0
+        }
+      }
+    ],
+    "order_digest": "9a32076bc56f27987a36096171e322603415bb68d370700b913687abe13d2bf6",
+    "ordinal": 1,
+    "parent_budget": {
+      "calls": 8,
+      "candidates": 32,
+      "deadline_ms": 30000,
+      "fanout": 8,
+      "input_tokens": 2048,
+      "max_bytes": 262144,
+      "rounds": 3
+    },
+    "partition": null,
+    "question": "Where is this defined?",
+    "read_attempt": {
+      "clock": "unix_monotonic",
+      "expires_monotonic_ns": 30000000100,
+      "remaining_ns": 30000000000,
+      "request_id": "16161616161616161616161616161616",
+      "schema": 1
+    },
+    "remaining_input_tokens": 2048,
+    "remaining_ms": 30000,
+    "scope": {
+      "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+      "catalog": "02020202020202020202020202020202",
+      "configuration_revision": 1,
+      "index_id": "idx_05050505050505050505050505050505",
+      "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+      "publication": {
+        "collection": "fixture",
+        "generation": 1,
+        "incarnation": "03030303030303030303030303030303",
+        "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+        "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+      }
+    },
+    "score_count": 1,
+    "worker": {
+      "fencing_generation": 1,
+      "project": "1919191919191919191919191919191919191919191919191919191919191919",
+      "service": "17171717171717171717171717171717",
+      "worker": "18181818181818181818181818181818"
+    }
+  },
+  "qualification": false,
+  "schema": "airk.native-focus-input-digest-cases/2",
+  "semantic_digest": "2424ca7e7c0f36b69f79f8191d2572bb86a8567f15a3dcee7ca27c1f5fc1e0f0",
+  "shortened": {
+    "authority": {
+      "fingerprint": "0606060606060606060606060606060606060606060606060606060606060606",
+      "grant_id": "grt_15151515151515151515151515151515",
+      "grant_revision": 1,
+      "index_id": "idx_05050505050505050505050505050505",
+      "lease_generation": 1,
+      "schema": 1
+    },
+    "candidates": [
+      {
+        "hit": {
+          "citation": {
+            "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+            "end_line": 1,
+            "location": {
+              "Lines": {
+                "end": 1,
+                "start": 1
+              }
+            },
+            "path": "policy.md",
+            "start_line": 1
+          },
+          "text": "defined here",
+          "truncated": false
+        },
+        "id": "94a0f2956eb16cfb78ee726e5cdb28ce4b428d50835fdc5dbd5014888c944524",
+        "window": {
+          "utf8_end": 12,
+          "utf8_start": 0
+        }
+      }
+    ],
+    "order_digest": "9a32076bc56f27987a36096171e322603415bb68d370700b913687abe13d2bf6",
+    "ordinal": 1,
+    "parent_budget": {
+      "calls": 8,
+      "candidates": 32,
+      "deadline_ms": 30000,
+      "fanout": 8,
+      "input_tokens": 2048,
+      "max_bytes": 262144,
+      "rounds": 3
+    },
+    "partition": null,
+    "question": "Where is this defined?",
+    "read_attempt": {
+      "clock": "unix_monotonic",
+      "expires_monotonic_ns": 30000000100,
+      "remaining_ns": 1000000000,
+      "request_id": "16161616161616161616161616161616",
+      "schema": 1
+    },
+    "remaining_input_tokens": 2048,
+    "remaining_ms": 1000,
+    "scope": {
+      "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+      "catalog": "02020202020202020202020202020202",
+      "configuration_revision": 1,
+      "index_id": "idx_05050505050505050505050505050505",
+      "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+      "publication": {
+        "collection": "fixture",
+        "generation": 1,
+        "incarnation": "03030303030303030303030303030303",
+        "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+        "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+      }
+    },
+    "score_count": 1,
+    "worker": {
+      "fencing_generation": 1,
+      "project": "1919191919191919191919191919191919191919191919191919191919191919",
+      "service": "17171717171717171717171717171717",
+      "worker": "18181818181818181818181818181818"
+    }
+  },
+  "shortened_semantic_digest": "2424ca7e7c0f36b69f79f8191d2572bb86a8567f15a3dcee7ca27c1f5fc1e0f0"
+}

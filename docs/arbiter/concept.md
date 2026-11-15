@@ -4,6 +4,13 @@ Original concept: 10 November 2026 · @Tyler Jensen
 
 Revised: 12 November 2026 · proposal only; no implementation or model qualification is claimed.
 
+Historical proposal: the four-model roster below was superseded by the user's
+15 November selection of independent Arbiter Focus (Qwen3-Reranker-0.6B) and
+Arbiter Context Compact/Large (Qwen3-1.7B/4B). The [active plan](../split/codex-plan.md)
+and [operator guide](user-guide.md) describe current choices and requirements.
+This retained proposal does not establish current model availability or
+qualification.
+
 AIRK keeps MiniLM INT8 built into its installer and service executable for semantic indexing and retrieval. The first model-improvement priority is better training of that embedded encoder, followed by export and qualification of the INT8 artifacts. Semantic indexing remains available independently of Arbiter and requires no optional model download.
 
 AIRK Arbiter is a separate, optional capability inside the same service, turned off by default. It scores bounded retrieval choices and evidence relevance, returning typed advice or abstaining. Its target catalog contains four additional models: two smaller choices and two larger choices. Users explicitly choose the indexes that may use it and a model that passes both system-requirement qualification and current resource-availability checks. The service downloads only the selected model's missing data assets and runs it inside its existing process.

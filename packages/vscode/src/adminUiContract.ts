@@ -59,6 +59,7 @@ export const OPS = {
   serviceStop: 'service.stop',
   serviceRestart: 'service.restart',
   arbiterStatus: 'arbiter.status',
+  arbiterInitialize: 'arbiter.initialize',
   arbiterConfigure: 'arbiter.configure',
   arbiterProvision: 'arbiter.provision',
   arbiterCancel: 'arbiter.cancel',

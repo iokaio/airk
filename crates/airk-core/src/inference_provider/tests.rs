@@ -152,3 +152,82 @@ fn cumulative_completion_is_bounded_and_crosses_no_native_identity() {
     plain.completion_ledger = Some(ledger());
     assert!(plain.validate().is_err());
 }
+
+#[test]
+fn resident_reference_bound_preserves_actual_idle_running_and_complete_observations() {
+    let mut completion = observation();
+    completion.state = CompletionState::Pending;
+    completion.admitted_high_water = 0;
+    let mut status = ProviderStatus {
+        schema: 1,
+        kind: ProviderKind::InProcess,
+        provider: completion.provider,
+        admission_open: false,
+        admitted_high_water: 0,
+        queued_outstanding: 0,
+        running_outstanding: 0,
+        callback_outstanding: 0,
+        delivery_outstanding: 0,
+        model_references_outstanding: 0,
+        failure: None,
+    };
+    // Independent literal expectations: two optional caches, then all three
+    // named caches, then two running owners plus those three caches.
+    for (running, references) in [(0, 2), (0, 3), (2, 5)] {
+        completion.admitted_high_water = running;
+        completion.running_outstanding = running;
+        completion.model_references_outstanding = references;
+        completion.validate().unwrap();
+        status.admitted_high_water = running;
+        status.running_outstanding = running;
+        status.model_references_outstanding = references;
+        status.validate().unwrap();
+        completion.model_references_outstanding = references + 1;
+        status.model_references_outstanding = references + 1;
+        if references == 3 || references == 5 {
+            assert!(completion.validate().is_err());
+            assert!(status.validate().is_err());
+        }
+    }
+    completion.running_outstanding = 0;
+    completion.model_references_outstanding = 3;
+    completion.state = CompletionState::Complete;
+    assert!(completion.validate().is_err());
+    completion.completion_basis = CompletionBasis::NativeFactoryNeverAllocated;
+    completion.admitted_high_water = 0;
+    assert!(completion.validate().is_err());
+    completion.model_references_outstanding = 0;
+    completion.validate().unwrap();
+    completion.completion_basis = CompletionBasis::NativeEngineBarrier;
+    completion.state = CompletionState::Pending;
+    completion.running_outstanding = u64::MAX;
+    completion.admitted_high_water = u64::MAX;
+    completion.model_references_outstanding = u64::MAX;
+    completion.validate().unwrap();
+    completion.queued_outstanding = 1;
+    assert!(completion.validate().is_err());
+    status.running_outstanding = u64::MAX;
+    status.admitted_high_water = u64::MAX;
+    status.model_references_outstanding = u64::MAX;
+    status.validate().unwrap();
+    status.queued_outstanding = 1;
+    assert!(status.validate().is_err());
+}
+
+#[test]
+fn resident_caches_never_expand_queued_callback_or_delivery_admission() {
+    let mut value = observation();
+    value.state = CompletionState::Pending;
+    value.admitted_high_water = 0;
+    value.model_references_outstanding = 2;
+    for change in [
+        |value: &mut CompletionObservation| value.queued_outstanding = 1,
+        |value: &mut CompletionObservation| value.running_outstanding = 1,
+        |value: &mut CompletionObservation| value.callback_outstanding = 1,
+        |value: &mut CompletionObservation| value.delivery_outstanding = 1,
+    ] {
+        let mut invalid = value.clone();
+        change(&mut invalid);
+        assert!(invalid.validate().is_err());
+    }
+}

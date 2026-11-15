@@ -460,7 +460,9 @@
       "enum": [
         "intern_single_choice_v1",
         "strands_single_choice_v1",
-        "kev_single_choice_v1"
+        "kev_single_choice_v1",
+        "qwen_single_choice_v1",
+        "qwen_rerank_yes_no_v1"
       ],
       "type": "string"
     },
@@ -470,14 +472,11 @@
         "catalog": {
           "$ref": "#/$defs/Incarnation"
         },
-        "enabled": {
-          "type": "boolean"
+        "context": {
+          "$ref": "#/$defs/StageConfiguration"
         },
-        "indexes": {
-          "items": {
-            "$ref": "#/$defs/Enrollment"
-          },
-          "type": "array"
+        "focus": {
+          "$ref": "#/$defs/StageConfiguration"
         },
         "installation": {
           "$ref": "#/$defs/Sha256Digest"
@@ -489,16 +488,6 @@
         },
         "schema": {
           "type": "string"
-        },
-        "selected_profile": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            {
-              "type": "null"
-            }
-          ]
         }
       },
       "required": [
@@ -506,8 +495,8 @@
         "installation",
         "catalog",
         "revision",
-        "enabled",
-        "indexes"
+        "focus",
+        "context"
       ],
       "type": "object"
     },
@@ -1210,6 +1199,329 @@
       ],
       "type": "string"
     },
+    "FocusApplication": {
+      "additionalProperties": false,
+      "properties": {
+        "application": {
+          "$ref": "#/$defs/IndexApplication"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocusIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocusProfileLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "application"
+      ],
+      "type": "object"
+    },
+    "FocusApplicationReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability"
+        },
+        "candidate_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocusIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "observed_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "omitted_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "original_order": {
+          "description": "Complete canonical returned candidate order, including the unscored tail.",
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "presentations": {
+          "description": "Exact source windows prepared for scoring, not proof of successful FFI.",
+          "items": {
+            "$ref": "#/$defs/FocusPresentation"
+          },
+          "type": "array"
+        },
+        "presented_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ranked_order": {
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reserved_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        },
+        "scored_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scores": {
+          "description": "Scored candidates MUST be the exact original prefix, in original order.",
+          "items": {
+            "$ref": "#/$defs/FocusScore"
+          },
+          "type": "array"
+        },
+        "work": {
+          "$ref": "#/$defs/Work"
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "availability",
+        "reason",
+        "applied",
+        "input_digest",
+        "original_order",
+        "ranked_order",
+        "scores",
+        "presentations",
+        "presented_count",
+        "candidate_count",
+        "scored_count",
+        "omitted_count",
+        "reserved_input_tokens",
+        "work"
+      ],
+      "type": "object"
+    },
+    "FocusIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "calibration": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "profile": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "profile",
+        "runtime",
+        "compiler",
+        "calibration",
+        "task_policy"
+      ],
+      "type": "object"
+    },
+    "FocusObservation": {
+      "description": "Only the canonical Search field carries this observation. A compact notice\nis known pre-dispatch absence, never a substitute for unknown native work.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "receipt",
+              "type": "string"
+            },
+            "receipt": {
+              "$ref": "#/$defs/FocusApplicationReceipt"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "availability": {
+              "$ref": "#/$defs/Availability"
+            },
+            "candidate_count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "not_applied",
+              "type": "string"
+            },
+            "order_digest": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Sha256Digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "work_unknown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "availability",
+            "reason",
+            "candidate_count",
+            "work_unknown"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "FocusPresentation": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "source_bytes": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "utf8_end": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "utf8_start": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidate",
+        "utf8_start",
+        "utf8_end",
+        "source_bytes"
+      ],
+      "type": "object"
+    },
+    "FocusProfileLimits": {
+      "additionalProperties": false,
+      "description": "Facts from an actual authenticated qualified profile, never caller authority.",
+      "properties": {
+        "max_candidates": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pair_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_candidates",
+        "pair_input_tokens",
+        "max_input_tokens"
+      ],
+      "type": "object"
+    },
+    "FocusScore": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "no_logit": {
+          "format": "float",
+          "type": "number"
+        },
+        "relevance": {
+          "description": "Publisher two-logit normalization; not calibrated sufficiency/confidence.",
+          "format": "float",
+          "type": "number"
+        },
+        "yes_logit": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "candidate",
+        "no_logit",
+        "yes_logit",
+        "relevance"
+      ],
+      "type": "object"
+    },
     "Gap": {
       "enum": [
         "sufficient",
@@ -1283,6 +1595,28 @@
     "IndexId": {
       "pattern": "^idx_[0-9a-f]{32}$",
       "type": "string"
+    },
+    "InitializationStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_legacy_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
     },
     "JointAssetBinding": {
       "additionalProperties": false,
@@ -1405,6 +1739,29 @@
         {
           "additionalProperties": false,
           "properties": {
+            "expected_legacy_configuration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Sha256Digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operation": {
+              "const": "initialize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
             "enabled": {
               "type": "boolean"
             },
@@ -1432,11 +1789,15 @@
                   "type": "null"
                 }
               ]
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
             }
           },
           "required": [
             "operation",
             "expected_revision",
+            "stage",
             "enabled",
             "indexes"
           ],
@@ -1476,11 +1837,15 @@
             "operation": {
               "const": "cancel",
               "type": "string"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
             }
           },
           "required": [
             "operation",
-            "expected_revision"
+            "expected_revision",
+            "stage"
           ],
           "type": "object"
         },
@@ -1518,11 +1883,15 @@
             "operation": {
               "const": "recover",
               "type": "string"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
             }
           },
           "required": [
             "operation",
-            "expected_revision"
+            "expected_revision",
+            "stage"
           ],
           "type": "object"
         }
@@ -1533,7 +1902,10 @@
         "arbiter-small-intern-08b",
         "arbiter-small-strands-2b",
         "arbiter-large-intern-4b",
-        "arbiter-large-kev-4b"
+        "arbiter-large-kev-4b",
+        "arbiter-focus-qwen3-reranker-06b",
+        "arbiter-context-qwen3-17b",
+        "arbiter-context-qwen3-4b"
       ],
       "type": "string"
     },
@@ -1798,6 +2170,16 @@
         "runtime": {
           "type": "string"
         },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "task_policies": {
           "additionalProperties": false,
           "properties": {
@@ -1814,6 +2196,9 @@
               "$ref": "#/$defs/Sha256Digest"
             },
             "airk.evidence_role.v1": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "airk.focus_rank.v1": {
               "$ref": "#/$defs/Sha256Digest"
             },
             "airk.recipe_choice.v1": {
@@ -1860,6 +2245,16 @@
         "availability": {
           "$ref": "#/$defs/Availability"
         },
+        "cpu_fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CpuFit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "download_bytes": {
           "format": "uint64",
           "minimum": 0,
@@ -1888,6 +2283,12 @@
               "type": "null"
             }
           ]
+        },
+        "qualified_targets": {
+          "items": {
+            "$ref": "#/$defs/QualifiedTarget"
+          },
+          "type": "array"
         },
         "reason": {
           "type": "string"
@@ -1931,7 +2332,8 @@
     "Readout": {
       "enum": [
         "decision_symbol",
-        "pointer_head"
+        "pointer_head",
+        "focus_yes_no"
       ],
       "type": "string"
     },
@@ -2045,7 +2447,43 @@
       ],
       "type": "string"
     },
-    "Status": {
+    "Stage": {
+      "enum": [
+        "focus",
+        "context"
+      ],
+      "type": "string"
+    },
+    "StageConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "indexes": {
+          "items": {
+            "$ref": "#/$defs/Enrollment"
+          },
+          "type": "array"
+        },
+        "selected_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "indexes"
+      ],
+      "type": "object"
+    },
+    "StageStatus": {
       "additionalProperties": false,
       "properties": {
         "active_profile": {
@@ -2060,9 +2498,6 @@
         },
         "availability": {
           "$ref": "#/$defs/Availability"
-        },
-        "configuration": {
-          "$ref": "#/$defs/Configuration"
         },
         "profiles": {
           "items": {
@@ -2083,9 +2518,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "schema": {
-          "type": "string"
-        },
         "selected_profile": {
           "anyOf": [
             {
@@ -2098,13 +2530,46 @@
         }
       },
       "required": [
-        "schema",
-        "configuration",
         "availability",
         "reason",
         "queued",
         "running",
         "profiles"
+      ],
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "$ref": "#/$defs/Configuration"
+        },
+        "context": {
+          "$ref": "#/$defs/StageStatus"
+        },
+        "focus": {
+          "$ref": "#/$defs/StageStatus"
+        },
+        "initialization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InitializationStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Presence marks configuration as a non-writable disabled placeholder."
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "configuration",
+        "focus",
+        "context"
       ],
       "type": "object"
     },
@@ -2130,7 +2595,8 @@
         "airk.evidence_role.v1",
         "airk.context_next_read.v1",
         "airk.context_gap.v1",
-        "airk.context_action.v1"
+        "airk.context_action.v1",
+        "airk.focus_rank.v1"
       ],
       "type": "string"
     },
@@ -2244,9 +2710,15 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "arbiter_contract": 1,
+  "arbiter_contract": 2,
   "roots": [
     "Configuration",
+    "StageConfiguration",
+    "StageStatus",
+    "FocusApplicationReceipt",
+    "FocusObservation",
+    "FocusApplication",
+    "FocusProfileLimits",
     "Profile",
     "CompilerProfile",
     "ContextRequest",

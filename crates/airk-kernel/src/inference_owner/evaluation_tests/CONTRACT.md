@@ -169,3 +169,85 @@ Grading reuses the unchanged source-span/alternative coverage owner with its
 original20-question denominator and44 refusals. A changed graph/publication does
 not satisfy the old same-index bridge; a single-U8 before/after DEV diagnostic
 does not claim matched multi-model baselines, FINAL success or model promotion.
+
+`native_parent_bag` is a separate test-only owner for the preselected epoch1
+weak native-parent-bag candidate. Its exact U8/S8 ONNX assets, independent
+12-case masked B1 oracle, actual CPU export execution seal and successful TRAIN
+receipt precede typed Rust `OnnxManifest` emission. The new family identities
+are `native-parent-bag-r1-u8` and `native-parent-bag-r1-s8`; old descriptors,
+weights, candidate captures and the separate original FINAL experiment remain
+unchanged. Source ancestry is recorded without claiming unmodified upstream
+weights. The exported LICENSE retains admitted TRAIN group attribution.
+
+The actual training population is99parent-bag rows:96QASPER positive-parent
+rows from68unique questions plus3Requests tasks, with216refusals among315rows.
+These are weak parent bags, never fragment-positive/sufficiency annotations.
+The single epoch was preselected; DEV/FINAL results cannot choose it.
+
+Native emission validates the owning typed manifest through the existing
+NativeInferenceOwner evaluation path and proves ordinary product admission
+continues to refuse these development assets. Native numerical admission checks
+both exact profiles against all12independent32/64/128/256 masked cases, exact
+token IDs/masks/types, same-graph component error<=1e-5, quantized-to-FP32
+cosine>=.995/L2<=.1 and serial mixed-length equality. The separate CPU eager
+BERT reference must match FP32 ONNX within1e-5. No Python native DTO is emitted.
+
+The new DEV capture preserves all64original requests, the original20quality/
+44alignment-refusal mask,366source closure and native vector top10/32768/full
+results. It uses ordinary fresh Kernel indexing with the new weights and current
+graph owner, followed by one family per bounded actual native stage. Same-image
+numeric proof precedes DEV. The required comparison is exactly the two new
+families and both original unsigned controls; old S8 baseline diagnostics are
+outside this batch. Unchanged source-span/alternative grading remains DEV-only,
+with no checkpoint search, FINAL or model-promotion claim. Partial/errors remain
+retained; no retry/refill/unknown-as-zero is allowed.
+
+CPU export retains600seconds/8GiB/two-process limits. Each native stage retains
+its1800second/8GiB/two-slot ceiling; grading retains60seconds/256MiB and one BLAS
+thread. Actual source/artifact identities, original request/result bytes,
+pre/post seals and natural owned-process closure remain required evidence.
+
+Cheap identity control after the source is compiled:
+`parent_bag_identity_gate_retains_all64_including44_refusals` (one selected).
+The three ignored entries separately own typed emission, both-profile numeric
+admission and one-family DEV capture; compilation alone executes none of them.
+
+
+The parent-bag emission, numerical and DEV entries require
+`AIRK_PARENT_BAG_PRIVATE_BASE` before output/state work. The supplied path must
+be absolute, existing, canonicalizable and free of symlink/reparse ancestry;
+missing/relative/aliased paths refuse without creating a default control root.
+Each entry creates its control directory with `tempdir_in` beneath this base.
+On Unix the base and native child retain mode 0700 and the child's observed
+native owner equals the base owner. An environment UID is never authority.
+
+The reviewed Windows launcher creates a fresh per-stage external anchor using
+the existing current-SID DACL-only producer. It pins the actual helper, observer,
+bridge and PowerShell image, then observes current SID ownership, protected
+current-SID-only inheritable FullControl, exact canonical path and unaliased
+ancestry before execution, while the native child is suspended and after its
+owned process settles. Changed or unavailable proof fails the stage; partial
+process evidence is retained. A path or launcher proof does not replace the
+actual `Arc<ServiceLease>` used by native inference admission. No Kernel-to-Host
+dependency, replacement lease or new public contract is introduced.
+
+The same control-root prerequisite applies to both mandatory original unsigned
+DEV controls through the existing `development` entry. That entry still selects
+only the named original role. Its descriptor's historical six rows are metadata,
+not permission to execute six models or reopen the separate old FINAL205 path.
+The original FINAL entry is unchanged.
+
+Cheap controls select exactly the original 64-request/44-refusal identity test
+and the new missing/relative/file/alias/private-mode refusal test (two selected).
+They execute no model. Actual compiler identity, typed emission, both twelve-case
+native numerical profiles and four separately bounded same-image DEV captures
+remain prerequisites; preparation and parser controls prove none of those runs.
+
+
+## Retained original S8 native numerical proof
+
+The separate original_s8 child selects exactly original-shipped-s8-ort130-evaluation, descriptor333b6b and exact original4278337f graph23,026,053bytes, independent padded-input oracle97ec355d and Root retention decisioncef9af82. A pure control refuses empty/duplicate/foreign family/result/manifest input before any model load. No closed six-family or old205 entry is invoked.
+
+All12 exact original named cases and32/64/128/256 buckets must match full native IDs/masks/types. Fixed SAMEgraph component error stays<=1e-5; 384 finite normalized components and exact serialB1 mixed-length ordering remain required. Actual original-FP32 cosine/L2/component deltas are retained as observations, without imposing or claiming the trained-candidate .995/.1 admission floor. This does not promote trained weights.
+
+The actual native_parent_bag::private_control requires the reviewed current-SID-only protected anchor, then real ServiceLease and NativeInferenceOwner::run_encoder_evaluation retain actual native compute/evaluation authority throughout load, all forwards and cleanup. No serialized flag, fake role or generic temporary directory supplies ownership. The existing1800second/8GiB native job/phase bound and current anchor producer/observer/bridge remain unchanged. Root alone builds/releases/runs. Full pre/post source/model/oracle/runtime seals, natural process settlement and partial failure receipts remain required. Numeric preparation proves no task quality, composed admission, final platform/resource or release outcome.

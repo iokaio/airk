@@ -4,7 +4,7 @@
 
 Start with [native installation](service-installation.md), [CLI-only onboarding](agent-integration.md#standalone-onboarding-without-vs-code), the generated [CLI reference](cli-reference.md), [agent setup](agent-integration.md), [Admin pages](admin-pages.md) and [process ownership](process-model.md). AIRK Service works without VS Code; the extension is a separate client. Verified portable setup and same-request recovery use `airkctl service setup --portable --program` and `service setup --resume`. Product Help and the static Help site consume the same generated native/UI catalog.
 
-Optional Arbiter source follows the [approved P10 boundaries](split/codex-plan.md): off by default, explicit immutable-index enrollment, supported verified profiles and in-process native ownership. The [earlier concept](arbiter/concept.md) is historical design, including its superseded sidecar proposal. Use `airkctl arbiter status` and the actual generated schemas for current controls; implemented model paths do not establish independent task/device/platform qualification.
+Optional Arbiter source follows the [approved P10 boundaries](split/codex-plan.md): off by default, explicit immutable-index enrollment, supported verified profiles and in-process native ownership. The [earlier concept](arbiter/concept.md) is historical design, including its superseded sidecar proposal. Use `airkctl arbiter status` and the actual generated schemas for current controls; implemented model paths do not establish independent task/device/platform qualification. The [Arbiter operator guide](arbiter/user-guide.md) explains the approved Focus/Context stages, model roles, requirements and recovery.
 
 <details>
 <summary>Historical development notices and earlier candidate checkpoints</summary>

@@ -475,3 +475,211 @@ fn context_delivery_known_cannot_hide_unknown_work_or_actual_charged_ordinal() {
         "Unknown native work cannot be relabeled ordinary Known"
     );
 }
+#[test]
+fn focus_delivery_extraction_is_canonical_staged_and_ignores_arbitrary_metadata()
+-> anyhow::Result<()> {
+    use crate::arbiter::{
+        Stage,
+        stage_tests::{digest, scope},
+    };
+    let record = crate::arbiter::focus::tests::search_record(scope())?;
+    let search = record.canonical_result;
+    let bindings = context_delivery_bindings(&search)?;
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].stage, Stage::Focus);
+    assert_eq!(bindings[0].profile, Some(digest(7)));
+    let text = json!({"content":[{"type":"text","text":search.to_string()}]});
+    assert_eq!(context_delivery_bindings(&text)?, bindings);
+    assert!(context_delivery_bindings(&json!({"metadata":search.clone()}))?.is_empty());
+    let mut changed = search.clone();
+    changed["generation"] = 2.into();
+    assert!(context_delivery_bindings(&changed).is_err());
+    let mut changed = search.clone();
+    changed["focus"]["receipt"]["presentations"][0]["source_bytes"] = 11.into();
+    assert!(context_delivery_bindings(&changed).is_err());
+    let mut future = search;
+    future.as_object_mut().unwrap().remove("focus");
+    future["hits"][0]["text"] = serde_json::to_value(&text)?.to_string().into();
+    assert!(context_delivery_bindings(&future)?.is_empty());
+    Ok(())
+}
+#[test]
+fn legacy_context_delivery_bytes_omit_default_stage_and_focus_is_explicit() -> anyhow::Result<()> {
+    use crate::arbiter::{
+        Stage,
+        stage_tests::{digest, scope},
+    };
+    let context = ContextDeliveryBinding {
+        stage: Stage::Context,
+        scope: scope(),
+        profile: Some(digest(7)),
+    };
+    let expected = format!(
+        "{{\"scope\":{},\"profile\":\"{}\"}}",
+        serde_json::to_string(&scope())?,
+        digest(7)
+    );
+    assert_eq!(serde_json::to_string(&context)?, expected);
+    let prior: ContextDeliveryBinding = serde_json::from_str(&expected)?;
+    assert_eq!(prior, context);
+    let focus = ContextDeliveryBinding {
+        stage: Stage::Focus,
+        ..context
+    };
+    assert_eq!(serde_json::to_value(focus)?["stage"], "focus");
+    Ok(())
+}
+#[test]
+fn same_index_may_bind_both_stages_but_duplicate_stage_is_refused() -> anyhow::Result<()> {
+    use crate::arbiter::{
+        Stage,
+        stage_tests::{digest, scope},
+    };
+    let mut value = summary();
+    let mut source = scope();
+    source.index_id = ids(2)[0];
+    let focus = ContextDeliveryBinding {
+        stage: Stage::Focus,
+        scope: source.clone(),
+        profile: Some(digest(7)),
+    };
+    let context = ContextDeliveryBinding {
+        stage: Stage::Context,
+        scope: source,
+        profile: Some(digest(8)),
+    };
+    value.delivery_bindings = vec![focus.clone(), context];
+    value.validate(&ids(2))?;
+    value.delivery_bindings.push(focus);
+    assert!(value.validate(&ids(2)).is_err());
+    Ok(())
+}
+#[test]
+fn staged_delivery_native_fixture_emitter() -> anyhow::Result<()> {
+    use crate::arbiter::{
+        Stage,
+        stage_tests::{digest, scope},
+    };
+    let bindings = vec![
+        ContextDeliveryBinding {
+            stage: Stage::Focus,
+            scope: scope(),
+            profile: Some(digest(7)),
+        },
+        ContextDeliveryBinding {
+            stage: Stage::Context,
+            scope: scope(),
+            profile: Some(digest(8)),
+        },
+    ];
+    validate_stage_roster(&bindings)?;
+    let document = json!({"schema":"airk.stage-delivery-bindings/1","qualification":false,"bindings":bindings,
+        "maximum_bindings":MAX_DELIVERY_BINDINGS,"legacy_context_bytes":serde_json::to_string(&bindings[1])?});
+    if let Some(path) = std::env::var_os("AIRK_WRITE_STAGE_DELIVERY_CASES") {
+        std::fs::write(path, serde_json::to_vec_pretty(&document)?)?;
+    }
+    Ok(())
+}
+fn ordinary_focus_allowance() -> PartitionAllowance {
+    PartitionAllowance {
+        schema: ALLOWANCE_SCHEMA.into(),
+        attempt: Incarnation::from_bytes([9; 16]),
+        selection: Sha256Digest::from_bytes([8; 32]),
+        index_id: ids(1)[0],
+        parent_budget: Budget {
+            calls: 1,
+            rounds: 1,
+            fanout: 1,
+            input_tokens: 512,
+            candidates: 4,
+            max_bytes: 65536,
+            deadline_ms: 1000,
+        },
+        resources: Resources {
+            calls: 1,
+            input_tokens: 512,
+            candidates: 4,
+            bytes: 65536,
+        },
+        assessment_ordinals: vec![],
+    }
+}
+#[test]
+fn ordinary_focus_allowance_exact_purpose_preserves_existing_context_and_zero_work_rules()
+-> anyhow::Result<()> {
+    let focus = ordinary_focus_allowance();
+    assert!(focus.is_ordinary_focus());
+    focus.validate()?;
+    let mut context = focus.clone();
+    context.assessment_ordinals = vec![1];
+    assert!(!context.is_ordinary_focus());
+    context.validate()?;
+    let mut known_zero = context.clone();
+    known_zero.assessment_ordinals.clear();
+    known_zero.resources.input_tokens = 0;
+    assert!(!known_zero.is_ordinary_focus());
+    known_zero.validate()?;
+    assert_eq!(
+        serde_json::from_slice::<PartitionAllowance>(&serde_json::to_vec(&context)?)?
+            .assessment_ordinals,
+        [1]
+    );
+    assert_eq!(
+        serde_json::to_string(&context)?,
+        r#"{"schema":"airk.context-partition-allowance/1","attempt":"09090909090909090909090909090909","selection":"0808080808080808080808080808080808080808080808080808080808080808","index_id":"idx_01010101010101010101010101010101","parent_budget":{"calls":1,"rounds":1,"fanout":1,"input_tokens":512,"candidates":4,"max_bytes":65536,"deadline_ms":1000},"resources":{"calls":1,"input_tokens":512,"candidates":4,"bytes":65536},"assessment_ordinals":[1]}"#
+    );
+    Ok(())
+}
+#[test]
+fn ordinary_focus_allowance_does_not_infer_purpose_from_empty_ordinals_or_widen_bounds()
+-> anyhow::Result<()> {
+    let good = ordinary_focus_allowance();
+    for name in ["calls", "rounds", "fanout"] {
+        let mut raw = serde_json::to_value(&good)?;
+        raw["parent_budget"][name] = 2.into();
+        let bad: PartitionAllowance = serde_json::from_value(raw)?;
+        assert!(!bad.is_ordinary_focus());
+        assert!(bad.validate().is_err());
+    }
+    for (name, too_large) in [
+        ("calls", 2),
+        ("input_tokens", 513),
+        ("candidates", 5),
+        ("bytes", 65537),
+    ] {
+        let mut raw = serde_json::to_value(&good)?;
+        raw["resources"][name] = too_large.into();
+        let bad: PartitionAllowance = serde_json::from_value(raw)?;
+        assert!(!bad.is_ordinary_focus());
+        assert!(bad.validate().is_err());
+    }
+    let mut malformed = good.clone();
+    malformed.schema = "foreign".into();
+    assert!(!malformed.is_ordinary_focus());
+    assert!(malformed.validate().is_err());
+    let ordinary_context = allocations(1).remove(0).unwrap();
+    assert!(!ordinary_context.is_ordinary_focus());
+    ordinary_context.validate()?;
+    Ok(())
+}
+#[test]
+fn native_focus_only_allowance_fixture_emitter() -> anyhow::Result<()> {
+    let focus = ordinary_focus_allowance();
+    focus.validate()?;
+    let mut context = focus.clone();
+    context.assessment_ordinals = vec![1];
+    context.validate()?;
+    let mut zero = context.clone();
+    zero.resources.input_tokens = 0;
+    zero.assessment_ordinals.clear();
+    zero.validate()?;
+    let document = json!({"schema":"airk.focus-only-allowance-cases/1","qualification":false,
+        "ordinary_focus":{"allowance":focus,"is_ordinary_focus":true,"canonical_tool":"search"},
+        "context":{"allowance":context,"is_ordinary_focus":false,"canonical_tool":"answer"},
+        "zero_optional_work":{"allowance":zero,"is_ordinary_focus":false,"canonical_tool":"answer"},
+        "ordinary_focus_requires_own_outer_delivery_guard":true});
+    if let Some(path) = std::env::var_os("AIRK_WRITE_FOCUS_ONLY_ALLOWANCE_CASES") {
+        std::fs::write(path, serde_json::to_vec_pretty(&document)?)?;
+    }
+    Ok(())
+}

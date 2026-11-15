@@ -688,7 +688,7 @@ impl Kernel {
                         .and_then(|state| state.configuration.model.as_ref())
                 )
                 .context(Stage("vector_settings"))?,
-                "semantic_upgrade_required: retained vectors belong to an older native runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
+                "semantic_upgrade_required: retained vectors belong to a retired native model or runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
             );
         }
         let (reviewed_writer, reviewed_controls) = if let Some((project, request)) = reviewed {

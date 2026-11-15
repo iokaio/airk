@@ -4,7 +4,7 @@ title: Work with an AI agent
 route:
 area: guidance
 aliases: AI agent, MCP, explorer assistance tools, template discovery, validation, proposals, navigation, setup, codex, claude, copilot
-related_airk_help: explorer, roles, agent-setup, mcp, workflows
+related_airk_help: explorer, roles, agent-setup, mcp, workflows, arbiter
 ---
 # Work with an AI agent
 
@@ -41,3 +41,9 @@ The attachment uses the configured project's canonical root to find a matching t
 New entries use the discovered HTTPS endpoint and the native credential/trust flow. Stdio MCP and the stable launcher are retired. The one-shot airkctl agents credential helper supplies credentials where the supported agent requires it; tokens remain native-held. Reads never create an index or expand a grant. Use airkctl agents --help and the actual native reports for headless setup and repair. Agent-choice changes apply to later calls, but a client may need to refresh its cached tools list.
 
 A status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.
+
+## Questions and contextual evidence
+
+The `answer` tool gathers a bounded cited evidence packet for a question; `context` expands neighboring indexed lines at a specific location. The assistant can use the packet's organized source-backed evidence, assessments, gaps and stop reason when composing its response. These are read-only operations within the connection's native scope.
+
+The approved optional design has independent Arbiter Focus ranking plus Arbiter Context Compact/Large gathering. Focus can assist ordinary retrieval with Context off; neither stage grants an agent extra index permissions. Availability depends on actual implemented controls, verified profiles, explicit stage/index enrollment and current resources. Inspect native Arbiter Help and status; a selected or downloaded model does not establish active readiness or completed model qualification.

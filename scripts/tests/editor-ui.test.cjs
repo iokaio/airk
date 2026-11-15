@@ -259,8 +259,10 @@ function fixture(specs){
     const context=vm.createContext({document:{querySelectorAll:()=>[button]},Node:{TEXT_NODE:3},HTMLInputElement:Input,HTMLSelectElement:Select,Event:class{constructor(type){this.type=type;}}});
     return {run:expression=>vm.runInContext(expression,context),inputs,writes,events};
 }
-test('actual setup labels remain aligned with renderer; exact reviewed locations are preserved',()=>{
-    const source=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/explorerWebview/indexing.tsx'),'utf8');assert.ok(source.includes(label));
+test('historical setup driver labels preserve exact reviewed locations without submitting',()=>{
+    // Superseded installed-editor repair: generic historical driver semantics,
+    // not current Admin setup qualification.
+    const source=fs.readFileSync(path.resolve(__dirname,'../editor-ui.cjs'),'utf8');assert.ok(source.includes(label));
     const values={[label]:'/owned/index-storage','New collection name':'fixture-a'};
     const f=fixture(Object.keys(values).map(label=>({label}))),e=formFillExpressions('Review new index',values);
     assert.equal(f.run(e.ready),true);assert.equal(f.run(e.apply),true);assert.equal(f.run(e.readback),true);
@@ -302,7 +304,7 @@ test('Apply waits for the exact current review receipt, preserving nonce/digest/
 });
 test('current checkbox selection sets every row exactly before a separate Apply dispatch',()=>{
     const source=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/explorerWebview/indexing.tsx'),'utf8');
-    for(const label of ['Apply selection','Index sets','Create index set','Include indexes'])assert.ok(source.includes(label));
+    for(const label of ['Apply selection','Index sets','Indexes','Save as index set'])assert.ok(source.includes(label));
     const f=checkboxFixture([{legend:'Indexes',names:['Index A','Index B']},{legend:'Index sets',names:['Shared A','Shared B']}]);
     f.fields[0].labels[0].node.flag=true;const e=checkboxFillExpressions('Apply selection',[{legend:'Indexes',names:[]},{legend:'Index sets',names:['Shared B']}]);
     assert.equal(f.run(e.ready),true);assert.equal(f.run(e.apply),true);assert.equal(f.run(e.readback),true);
@@ -331,13 +333,16 @@ test('child environment isolates inherited editor role/cache/IPC without changin
 });
 
 const exactUsage={index:'idx_'+'a'.repeat(32),collection:'fixture-b'};
-test('usage administration explicitly chooses exact native combined Index before observing report',async()=>{
+test('historical usage driver chooses exact native combined Index before observing report',async()=>{
     const calls=[],result={text:'qualified entire-Index report'};
     const actual=await openUsageAdministration(exactUsage,{open:async()=>calls.push('open'),choose:async(id,title)=>calls.push({id,title}),observe:async()=>{calls.push('observe');return result;}});
     assert.equal(actual,result);assert.deepEqual(calls,['open',{id:exactUsage.index,title:'Choose an index for administration'},'observe']);
-    const host=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/serviceExtension.ts'),'utf8');assert.ok(host.includes("title:'Choose an index for administration'"));
-    const driver=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/test/installedEditor.ts'),'utf8');assert.ok(driver.includes("ui('usageAdmin',{index:target.index,collection:target.backing.collection})"));
-    assert.ok(driver.includes('value?.administrative_scope?.index_id===target.index'),'actual generated native report still checks exact Index');
+    // Retired installedEditor integration is not current qualification. The
+    // surviving generic driver still delegates its exact scoped action.
+    const driver=fs.readFileSync(path.resolve(__dirname,'../editor-ui.cjs'),'utf8');
+    assert.ok(driver.includes("if(request.action==='usageAdmin')return openUsageAdministration(request,{open:()=>reportClick(scoped,'openIndexAdministration'),choose:quickPick,observe:async()=>{"));
+    assert.ok(driver.includes("const scoped=\"document.visibilityState==='visible'&&document.body.innerText.includes('Usage requires Index administration')\";"));
+    assert.ok(driver.includes("const admin=\"document.visibilityState==='visible'&&document.body.innerText.includes('Entire Index history and shared data-root totals')"));
 });
 test('invalid usage selection refuses before any UI action',async()=>{
     for(const request of [{collection:'fixture-b'},{index:'fixture-b',collection:'fixture-b'},{index:exactUsage.index,collection:''}]){

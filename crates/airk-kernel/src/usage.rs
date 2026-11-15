@@ -1276,6 +1276,7 @@ mod tests {
             })
             .collect();
         let baseline = airk_core::SearchResponse {
+            focus: None,
             execution: None,
             publication: None,
             semantic_readiness: None,
@@ -1313,6 +1314,7 @@ mod tests {
             document.chunks[0].location = airk_core::DocumentLocation::Block { number: 1 };
             hits[0].citation.location = document.chunks[0].location.clone();
             let doc_baseline = airk_core::SearchResponse {
+                focus: None,
                 hits: hits.clone(),
                 ..baseline.clone()
             };

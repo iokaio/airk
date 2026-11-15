@@ -6,17 +6,18 @@ fn retained_disabled_configuration_bytes_are_independent_and_identity_bound() ->
     let bytes = include_bytes!("../../../../fixtures/arbiter/configuration-disabled-v2.json");
     let installation = Sha256Digest::from_bytes([1; 32]);
     let catalog = Incarnation::from_bytes([2; 16]);
-    let configuration = Configuration::decode(bytes, installation, catalog)?;
-    assert!(!configuration.enabled && configuration.indexes.is_empty());
-    assert_eq!(configuration.canonical_bytes()?, bytes);
+    assert!(Configuration::decode(bytes, installation, catalog).is_err());
+    let configuration = Configuration::disabled(installation, catalog);
+    assert!(!configuration.focus.enabled && !configuration.context.enabled);
+    let current = configuration.canonical_bytes()?;
     assert_eq!(
-        Configuration::disabled(installation, catalog).canonical_bytes()?,
-        bytes
+        Configuration::decode(&current, installation, catalog)?,
+        configuration
     );
-    assert!(Configuration::decode(bytes, Sha256Digest::from_bytes([3; 32]), catalog).is_err());
-    assert!(Configuration::decode(bytes, installation, Incarnation::from_bytes([3; 16])).is_err());
-    // Historical unpublished prototype bytes remain retained and cannot be
-    // interpreted as a new SHA-256 installation identity.
+    assert!(Configuration::decode(&current, Sha256Digest::from_bytes([3; 32]), catalog).is_err());
+    assert!(
+        Configuration::decode(&current, installation, Incarnation::from_bytes([3; 16])).is_err()
+    );
     assert!(
         Configuration::decode(
             include_bytes!("../../../../fixtures/arbiter/configuration-disabled-v1.json"),
@@ -36,29 +37,29 @@ fn enablement_never_enrolls_new_or_recreated_indexes() -> Result<()> {
     );
     let selected = IndexId::from_identity(Incarnation::from_bytes([3; 16]));
     let recreated = IndexId::from_identity(Incarnation::from_bytes([4; 16]));
-    configuration.enabled = true;
+    configuration.context.enabled = true;
     assert!(configuration.validate().is_err());
-    configuration.selected_profile = Some(Sha256Digest::from_bytes([5; 32]));
+    configuration.context.selected_profile = Some(Sha256Digest::from_bytes([5; 32]));
     assert!(configuration.validate().is_err());
-    configuration.indexes.push(Enrollment {
+    configuration.context.indexes.push(Enrollment {
         index_id: selected,
-        tasks: BTreeSet::from([Task::EvidenceRelevance]),
+        tasks: BTreeSet::from([Task::ContextAction]),
     });
     configuration.validate()?;
-    assert!(configuration.eligible(selected, Task::EvidenceRelevance));
+    assert!(configuration.eligible(selected, Task::ContextAction));
     assert!(!configuration.eligible(selected, Task::ContextGap));
-    assert!(!configuration.eligible(recreated, Task::EvidenceRelevance));
-    configuration.enabled = false;
-    assert!(!configuration.eligible(selected, Task::EvidenceRelevance));
+    assert!(!configuration.eligible(recreated, Task::ContextAction));
+    configuration.context.enabled = false;
+    assert!(!configuration.eligible(selected, Task::ContextAction));
     Ok(())
 }
 
 #[test]
 fn noncanonical_unknown_and_duplicate_enrollment_state_refuses() -> Result<()> {
-    let bytes = include_bytes!("../../../../fixtures/arbiter/configuration-disabled-v2.json");
     let installation = Sha256Digest::from_bytes([1; 32]);
     let catalog = Incarnation::from_bytes([2; 16]);
-    let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let bytes = Configuration::disabled(installation, catalog).canonical_bytes()?;
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
     value["download_on_read"] = true.into();
     assert!(Configuration::decode(&serde_json::to_vec(&value)?, installation, catalog).is_err());
     assert!(
@@ -71,16 +72,16 @@ fn noncanonical_unknown_and_duplicate_enrollment_state_refuses() -> Result<()> {
     );
     let enrollment = Enrollment {
         index_id: IndexId::from_identity(Incarnation::from_bytes([3; 16])),
-        tasks: BTreeSet::from([Task::ContextNextRead]),
+        tasks: BTreeSet::from([Task::ContextAction]),
     };
     let mut configuration = Configuration::disabled(installation, catalog);
-    configuration.indexes = vec![enrollment.clone(), enrollment];
+    configuration.context.indexes = vec![enrollment.clone(), enrollment];
     assert!(configuration.validate().is_err());
     Ok(())
 }
 
 #[test]
-fn task_and_four_choice_catalogs_are_independently_fixed() -> Result<()> {
+fn current_tasks_and_retained_model_ids_are_independently_fixed() -> Result<()> {
     for (json, task) in [
         ("airk.request_supported.v1", Task::RequestSupported),
         ("airk.retrieval_route.v1", Task::RetrievalRoute),
@@ -90,6 +91,7 @@ fn task_and_four_choice_catalogs_are_independently_fixed() -> Result<()> {
         ("airk.context_next_read.v1", Task::ContextNextRead),
         ("airk.context_gap.v1", Task::ContextGap),
         ("airk.context_action.v1", Task::ContextAction),
+        ("airk.focus_rank.v1", Task::FocusRank),
     ] {
         assert_eq!(serde_json::to_value(task)?, json);
     }
@@ -98,6 +100,12 @@ fn task_and_four_choice_catalogs_are_independently_fixed() -> Result<()> {
         ("arbiter-small-strands-2b", ModelChoice::SmallStrands),
         ("arbiter-large-intern-4b", ModelChoice::LargeIntern),
         ("arbiter-large-kev-4b", ModelChoice::LargeKev),
+        (
+            "arbiter-focus-qwen3-reranker-06b",
+            ModelChoice::FocusQwenReranker06B,
+        ),
+        ("arbiter-context-qwen3-17b", ModelChoice::ContextQwenCompact),
+        ("arbiter-context-qwen3-4b", ModelChoice::ContextQwenLarge),
     ] {
         assert_eq!(serde_json::to_value(model)?, json);
     }
@@ -362,5 +370,57 @@ fn explicit_cpu24_tier_is_distinct_and_refuses_all_mixed_prior_tiers() -> Result
     arbitrary.minimum_physical_cores = 20;
     arbitrary.intra_threads = 20;
     assert!(arbitrary.validate().is_err());
+    Ok(())
+}
+
+#[test]
+fn explicit_cpu4_tier_preserves_closed_execution_rules_and_emits_native_cases() -> Result<()> {
+    let fit = CpuFit {
+        minimum_physical_cores: 4,
+        intra_threads: 4,
+        inter_threads: 1,
+        sequential: true,
+        spinning: false,
+    };
+    fit.validate()?;
+    assert_eq!(
+        fit.runtime_identity()?,
+        "onnxruntime-cpu/1.30.0/physical4/intra4/inter1/sequential/spinning0"
+    );
+    let mut cases = vec![serde_json::json!({"id":"cpu4","fit":fit,"valid":true,
+        "runtime_identity":fit.runtime_identity()?})];
+    for (id, cores, intra, inter, sequential, spinning) in [
+        ("mixed_minimum", 1, 4, 1, true, false),
+        ("mixed_intra", 4, 1, 1, true, false),
+        ("mixed_eight", 4, 8, 1, true, false),
+        ("unapproved_six", 6, 6, 1, true, false),
+        ("parallel_inter", 4, 4, 2, true, false),
+        ("parallel_execution", 4, 4, 1, false, false),
+        ("spinning", 4, 4, 1, true, true),
+    ] {
+        let invalid = CpuFit {
+            minimum_physical_cores: cores,
+            intra_threads: intra,
+            inter_threads: inter,
+            sequential,
+            spinning,
+        };
+        assert!(invalid.validate().is_err(), "{id}");
+        assert!(invalid.runtime_identity().is_err(), "{id}");
+        cases.push(serde_json::json!({"id":id,"fit":invalid,"valid":false}));
+    }
+    for prior in [1, 8, 16, 24] {
+        CpuFit {
+            minimum_physical_cores: prior,
+            intra_threads: prior,
+            ..fit.clone()
+        }
+        .validate()?;
+    }
+    if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_CPU4_CASES") {
+        let document = serde_json::json!({"schema":"airk.arbiter.cpu-four-cases/1",
+            "qualification":false,"cases":cases});
+        std::fs::write(path, serde_json::to_vec_pretty(&document)?)?;
+    }
     Ok(())
 }

@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Optional, bounded compute lane inside the actual inference owner.
 use super::*;
-use airk_core::arbiter::{Configuration, ScopeBinding, Task};
+use airk_core::arbiter::{Configuration, ScopeBinding, Stage, Task};
 use airk_retrieval::arbiter::{
     compiler::Candidate,
     runtime::{AssetSource, ExecutionProfile, Scorer},
 };
-use std::{collections::VecDeque, sync::Condvar};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Condvar,
+};
+
+#[cfg(feature = "test-support")]
+pub mod execution_observer;
 
 /// Native admission owner retains the memory reservation until actual FFI
 /// completion. A disconnected delivery never releases this reservation early.
@@ -53,6 +59,7 @@ pub struct CompiledReceipt {
 /// Fixed-size, private native measurements after an actual score call returns.
 /// This is not a wire response or evidence/source authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "test-support", derive(serde::Serialize, serde::Deserialize))]
 pub struct ScoreReceipt {
     pub input_digest: Sha256Digest,
     pub input_tokens: usize,
@@ -175,6 +182,11 @@ struct Job {
     admission: airk_kernel::service_resources::OptionalReuse,
     reply: oneshot::Sender<Result<Scored>>,
     compiled: Option<oneshot::Sender<CompiledReceipt>>,
+    #[cfg(feature = "test-support")]
+    observer: Option<execution_observer::Observer>,
+    // Last field: actual original work/delivery/permit drops precede settlement observation.
+    #[cfg(feature = "test-support")]
+    observation: Option<execution_observer::Witness>,
 }
 /// Field drop order is part of the native lifetime contract: actual scorer
 /// teardown completes before the exact authenticated asset-source pins release.
@@ -189,6 +201,7 @@ impl<S> std::ops::Deref for ResidentSession<S> {
     }
 }
 struct Warm {
+    stage: Stage,
     profile: ExecutionProfile,
     source: Box<dyn AssetSource + Send>,
     _reservation: Reservation,
@@ -201,14 +214,15 @@ struct Queue {
     closed: bool,
     configuration: Option<Configuration>,
     jobs: VecDeque<Job>,
-    warm: Option<Warm>,
+    warm: VecDeque<Warm>,
     last_index: Option<airk_core::index_catalog::IndexId>,
     running_index: Option<airk_core::index_catalog::IndexId>,
-    active_profile: Option<Sha256Digest>,
-    joint_calibration:
-        Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
-    resident: std::sync::Weak<Reservation>,
-    warming_profile: Option<Sha256Digest>,
+    active_profiles: BTreeMap<Stage, Sha256Digest>,
+    joint_calibrations:
+        BTreeMap<Stage, Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
+    residents: BTreeMap<Stage, std::sync::Weak<Reservation>>,
+    warming_profile: Option<(Stage, Sha256Digest)>,
+    running_stage: Option<Stage>,
     release_profiles: std::collections::BTreeSet<Sha256Digest>,
 }
 struct Shared {
@@ -233,11 +247,13 @@ impl Drop for LaneCompleted {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         queue.closed = true;
         queue.jobs.clear();
-        queue.warm = None;
-        queue.active_profile = None;
-        queue.joint_calibration = None;
+        queue.warm.clear();
+        queue.active_profiles.clear();
+        queue.joint_calibrations.clear();
         queue.warming_profile = None;
         queue.running_index = None;
+        queue.running_stage = None;
+        queue.residents.clear();
         self.0.running.store(0, Ordering::Release);
         self.0.accounting.arbiter_cached(false);
         self.0.accounting.mark_arbiter_barrier();
@@ -250,16 +266,42 @@ pub(super) struct Lane {
     pub handle: Handle,
     thread: Option<std::thread::JoinHandle<Result<()>>>,
 }
+fn stage_for_task(task: Task) -> Stage {
+    if task == Task::FocusRank {
+        Stage::Focus
+    } else {
+        Stage::Context
+    }
+}
+fn selected_profile(configuration: &Configuration, stage: Stage) -> Option<Sha256Digest> {
+    let selected = configuration.stage(stage);
+    (selected.enabled && !selected.indexes.is_empty())
+        .then_some(selected.selected_profile)
+        .flatten()
+}
+fn retains_resident(
+    configuration: Option<&Configuration>,
+    stage: Stage,
+    manifest: Sha256Digest,
+    released: &std::collections::BTreeSet<Sha256Digest>,
+) -> bool {
+    configuration.is_some_and(|config| selected_profile(config, stage) == Some(manifest))
+        && !released.contains(&manifest)
+}
 fn permitted(configuration: Option<&Configuration>, job: &Job, profile: Sha256Digest) -> bool {
     configuration.is_some_and(|config| {
-        config.enabled
+        config.stage(stage_for_task(job.task)).enabled
             && config.installation == job.scope.installation
             && config.catalog == job.scope.catalog
             && config.revision == job.scope.configuration_revision
-            && config.selected_profile == Some(profile)
-            && config.indexes.iter().any(|index| {
-                index.index_id == job.scope.index_id && index.tasks.contains(&job.task)
-            })
+            && config.stage(stage_for_task(job.task)).selected_profile == Some(profile)
+            && config
+                .stage(stage_for_task(job.task))
+                .indexes
+                .iter()
+                .any(|index| {
+                    index.index_id == job.scope.index_id && index.tasks.contains(&job.task)
+                })
     }) && Instant::now() < job.deadline
 }
 impl Handle {
@@ -272,8 +314,25 @@ impl Handle {
             let changed = self.0.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let state = self.observation()?;
-            if state.active_profile != Some(profile) && state.warming_profile != Some(profile) {
+            let released = {
+                let queue = self
+                    .0
+                    .queue
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
+                !queue
+                    .active_profiles
+                    .values()
+                    .any(|value| *value == profile)
+                    && !queue
+                        .warming_profile
+                        .is_some_and(|(_, value)| value == profile)
+                    && !queue
+                        .warm
+                        .iter()
+                        .any(|warm| warm.profile.description().manifest == profile)
+            };
+            if released {
                 return Ok(());
             }
             tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), changed)
@@ -282,6 +341,9 @@ impl Handle {
         }
     }
     pub fn observation(&self) -> Result<Observation> {
+        self.observation_for(Stage::Context)
+    }
+    pub fn observation_for(&self, stage: Stage) -> Result<Observation> {
         let queue = self
             .0
             .queue
@@ -292,10 +354,18 @@ impl Handle {
                 .configuration
                 .as_ref()
                 .map(|configuration| configuration.revision),
-            active_profile: queue.active_profile,
-            warming_profile: queue.warming_profile,
-            queued: queue.jobs.len() + usize::from(queue.warm.is_some()),
-            running: self.0.running.load(Ordering::Acquire),
+            active_profile: queue.active_profiles.get(&stage).copied(),
+            warming_profile: queue
+                .warming_profile
+                .filter(|(warming, _)| *warming == stage)
+                .map(|(_, profile)| profile),
+            queued: queue
+                .jobs
+                .iter()
+                .filter(|job| stage_for_task(job.task) == stage)
+                .count()
+                + queue.warm.iter().filter(|warm| warm.stage == stage).count(),
+            running: usize::from(queue.running_stage == Some(stage)),
         })
     }
     /// Revoke queued work and ask the owned compute lane to drop this session
@@ -307,20 +377,10 @@ impl Handle {
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
         queue.release_profiles.insert(profile);
-        if queue
+        queue
             .warm
-            .as_ref()
-            .is_some_and(|warm| warm.profile.description().manifest == profile)
-        {
-            queue.warm = None;
-        }
-        if queue
-            .configuration
-            .as_ref()
-            .is_some_and(|config| config.selected_profile == Some(profile))
-        {
-            queue.jobs.clear();
-        }
+            .retain(|warm| warm.profile.description().manifest != profile);
+        queue.jobs.retain(|job| job.resident.profile != profile);
         self.0.wake.notify_one();
         self.0.changed.notify_waiters();
         Ok(())
@@ -349,23 +409,17 @@ impl Handle {
             );
         }
         queue.configuration = Some(configuration);
-        if queue.warm.as_ref().is_some_and(|warm| {
-            !queue.configuration.as_ref().is_some_and(|config| {
-                config.enabled
-                    && config.selected_profile == Some(warm.profile.description().manifest)
-            })
-        }) {
-            queue.warm = None;
-        }
-        // Revocation discards queued source bytes without compiling them.
-        let profile = queue
-            .configuration
-            .as_ref()
-            .and_then(|config| config.selected_profile);
         let configuration = queue.configuration.clone();
-        queue.jobs.retain(|job| {
-            profile.is_some_and(|profile| permitted(configuration.as_ref(), job, profile))
+        queue.warm.retain(|warm| {
+            configuration.as_ref().is_some_and(|config| {
+                selected_profile(config, warm.stage) == Some(warm.profile.description().manifest)
+            })
         });
+        // Revocation discards queued source bytes before compilation, separately
+        // for each stage. The common revision still fences composed delivery.
+        queue
+            .jobs
+            .retain(|job| permitted(configuration.as_ref(), job, job.resident.profile));
         self.0.wake.notify_one();
         self.0.changed.notify_waiters();
         Ok(())
@@ -393,25 +447,35 @@ impl Handle {
             !queue.closed && !self.0.closing.load(Ordering::Acquire),
             "Arbiter admission closed"
         );
+        let stage = profile
+            .description()
+            .declared_stage()
+            .context("Native warm requires an explicit stage profile")?;
         ensure!(
             queue
                 .configuration
                 .as_ref()
-                .is_some_and(|config| config.enabled
-                    && config.selected_profile == Some(profile.description().manifest)),
-            "Arbiter profile is not enabled"
+                .is_some_and(|config| selected_profile(config, stage)
+                    == Some(profile.description().manifest)),
+            "Arbiter profile is not enabled for its stage"
         );
-        ensure!(queue.warm.is_none(), "Arbiter warm already queued");
         ensure!(
-            queue.warming_profile.is_none(),
-            "Arbiter native warm still running"
+            queue.warm.len() < 2 && !queue.warm.iter().any(|warm| warm.stage == stage),
+            "Arbiter stage warm already queued"
+        );
+        ensure!(
+            !queue
+                .warming_profile
+                .is_some_and(|(warming, _)| warming == stage),
+            "Arbiter stage native warm still running"
         );
         queue
             .release_profiles
             .remove(&profile.description().manifest);
         let (compute, delivery) = self.0.accounting.admit(self.0.service)?;
         let (reply, response) = oneshot::channel();
-        queue.warm = Some(Warm {
+        queue.warm.push_back(Warm {
+            stage,
             profile,
             source,
             _reservation: reservation,
@@ -431,13 +495,22 @@ impl Handle {
             .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
         ensure!(
             !queue.closed
-                && queue.active_profile == Some(profile)
+                && queue
+                    .active_profiles
+                    .values()
+                    .any(|active| *active == profile)
                 && !queue.release_profiles.contains(&profile),
             "Arbiter resident profile unavailable"
         );
+        let stage = queue
+            .active_profiles
+            .iter()
+            .find_map(|(stage, active)| (*active == profile).then_some(*stage))
+            .context("Arbiter stage resident unavailable")?;
         let reservation = queue
-            .resident
-            .upgrade()
+            .residents
+            .get(&stage)
+            .and_then(std::sync::Weak::upgrade)
             .context("Arbiter native resident charge unavailable")?;
         Ok(ResidentPermit {
             profile,
@@ -457,16 +530,45 @@ impl Handle {
             .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
         ensure!(
             !queue.closed
-                && queue.active_profile == Some(profile)
+                && queue
+                    .active_profiles
+                    .values()
+                    .any(|active| *active == profile)
                 && !queue.release_profiles.contains(&profile),
             "joint resident profile unavailable"
         );
         queue
-            .joint_calibration
-            .clone()
+            .active_profiles
+            .iter()
+            .find_map(|(stage, active)| {
+                if *active == profile {
+                    queue.joint_calibrations.get(stage).cloned()
+                } else {
+                    None
+                }
+            })
             .context("resident has no authenticated joint calibration")
     }
     pub fn score(&self, request: ScoreRequest) -> Result<PendingScore> {
+        self.score_inner(
+            request,
+            #[cfg(feature = "test-support")]
+            None,
+        )
+    }
+    #[cfg(feature = "test-support")]
+    pub fn score_observed(
+        &self,
+        request: ScoreRequest,
+        observer: execution_observer::Observer,
+    ) -> Result<PendingScore> {
+        self.score_inner(request, Some(observer))
+    }
+    fn score_inner(
+        &self,
+        request: ScoreRequest,
+        #[cfg(feature = "test-support")] observer: Option<execution_observer::Observer>,
+    ) -> Result<PendingScore> {
         let ScoreRequest {
             worker,
             scope,
@@ -513,19 +615,17 @@ impl Handle {
                     < 2,
             "Arbiter queue constrained"
         );
+        let stage = stage_for_task(task);
         ensure!(
-            !queue
-                .configuration
-                .as_ref()
-                .and_then(|config| config.selected_profile)
-                .is_some_and(|profile| queue.release_profiles.contains(&profile)),
+            !queue.release_profiles.contains(&resident.profile),
             "Arbiter profile is draining"
         );
         ensure!(
-            queue.active_profile == Some(resident.profile)
+            queue.active_profiles.get(&stage) == Some(&resident.profile)
                 && queue
-                    .resident
-                    .upgrade()
+                    .residents
+                    .get(&stage)
+                    .and_then(std::sync::Weak::upgrade)
                     .is_some_and(|actual| Arc::ptr_eq(&actual, &resident.reservation)),
             "Arbiter resident session changed before score admission"
         );
@@ -537,6 +637,10 @@ impl Handle {
             queued_at: Instant::now(),
             max_input_tokens,
             compiled: Some(compiled),
+            #[cfg(feature = "test-support")]
+            observer,
+            #[cfg(feature = "test-support")]
+            observation: None,
             scope,
             task,
             deadline,
@@ -551,11 +655,7 @@ impl Handle {
             reply,
         };
         ensure!(
-            queue
-                .configuration
-                .as_ref()
-                .and_then(|config| config.selected_profile)
-                .is_some_and(|profile| permitted(queue.configuration.as_ref(), &job, profile)),
+            permitted(queue.configuration.as_ref(), &job, job.resident.profile),
             "Arbiter scope is not enrolled or live"
         );
         queue.jobs.push_back(job);
@@ -574,7 +674,7 @@ impl Handle {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         queue.closed = true;
         queue.jobs.clear();
-        queue.warm = None;
+        queue.warm.clear();
         self.0.wake.notify_one();
         self.0.changed.notify_waiters();
     }
@@ -623,8 +723,8 @@ impl Lane {
                     // Declared before resident resources: its final observation
                     // follows actual scorer teardown on return or unwind.
                     let _completed = LaneCompleted(shared.clone());
-                    let mut resident_reservation: Option<Arc<Reservation>> = None;
-                    let mut scorer: Option<ResidentSession<Scorer>> = None;
+                    // Tuple declaration order preserves scorer/source teardown before its charge.
+                    let mut residents: BTreeMap<Stage, (ResidentSession<Scorer>, Arc<Reservation>)> = BTreeMap::new();
                     loop {
                         let mut queue = shared
                             .queue
@@ -633,27 +733,20 @@ impl Lane {
                         if queue.closed {
                             break;
                         }
-                        if !queue
-                            .configuration
-                            .as_ref()
-                            .is_some_and(|config| config.enabled && !config.indexes.is_empty())
-                            || scorer.as_ref().is_some_and(|scorer| {
-                                queue.release_profiles.contains(&scorer.profile().manifest)
-                            })
-                        {
-                            scorer = None;
-                            queue.active_profile = None;
-                            queue.joint_calibration = None;
-                            queue.resident=std::sync::Weak::new();
-                            resident_reservation = None;
-                            shared.accounting.arbiter_cached(false);
-                            shared.changed.notify_waiters();
-                        }
-                        if let Some(mut warm) = queue.warm.take() {
+                        residents.retain(|stage, (scorer, _)| {
+                            retains_resident(queue.configuration.as_ref(), *stage, scorer.profile().manifest, &queue.release_profiles)
+                        });
+                        queue.active_profiles.retain(|stage, _| residents.contains_key(stage));
+                        queue.joint_calibrations.retain(|stage, _| residents.contains_key(stage));
+                        queue.residents.retain(|stage, _| residents.contains_key(stage));
+                        shared.accounting.arbiter_cached_count(residents.len());
+                        shared.changed.notify_waiters();
+                        if let Some(mut warm) = queue.warm.pop_front() {
                             warm._compute.running();
                             shared.running.store(1, Ordering::Release);
                             shared.changed.notify_waiters();
-                            queue.warming_profile = Some(warm.profile.description().manifest);
+                            queue.warming_profile = Some((warm.stage, warm.profile.description().manifest));
+                            queue.running_stage = Some(warm.stage);
                             drop(queue);
                             let loaded = Scorer::open(warm.profile, warm.source.as_ref());
                             let mut queue = shared
@@ -663,28 +756,27 @@ impl Lane {
                             let result = match loaded {
                                 Ok(loaded)
                                     if !queue.closed
-                                        && !queue
-                                            .release_profiles
-                                            .contains(&loaded.profile().manifest)
-                                        && queue.configuration.as_ref().is_some_and(|config| {
-                                            config.enabled
-                                                && config.selected_profile
-                                                    == Some(loaded.profile().manifest)
-                                        }) =>
+                                        && !queue.release_profiles.contains(&loaded.profile().manifest)
+                                        && queue.configuration.as_ref().is_some_and(|config| selected_profile(config, warm.stage) == Some(loaded.profile().manifest)) =>
                                 {
-                                    queue.joint_calibration=loaded.joint_calibration();
-                                    scorer = Some(ResidentSession {scorer:loaded,_source:warm.source});
-                                    queue.active_profile =
-                                        scorer.as_ref().map(|scorer| scorer.profile().manifest);
-                                    resident_reservation = Some(Arc::new(warm._reservation));
-                                    queue.resident=Arc::downgrade(resident_reservation.as_ref().unwrap());
-                                    shared.accounting.arbiter_cached(true);
+                                    let manifest = loaded.profile().manifest;
+                                    if let Some(calibration) = loaded.joint_calibration() {
+                                        queue.joint_calibrations.insert(warm.stage, calibration);
+                                    } else {
+                                        queue.joint_calibrations.remove(&warm.stage);
+                                    }
+                                    let charge = Arc::new(warm._reservation);
+                                    queue.residents.insert(warm.stage, Arc::downgrade(&charge));
+                                    residents.insert(warm.stage, (ResidentSession { scorer: loaded, _source: warm.source }, charge));
+                                    queue.active_profiles.insert(warm.stage, manifest);
+                                    shared.accounting.arbiter_cached_count(residents.len());
                                     Ok(())
                                 }
                                 Ok(_) => Err(anyhow::anyhow!("Arbiter warm revoked")),
                                 Err(error) => Err(error),
                             };
                             queue.warming_profile = None;
+                            queue.running_stage = None;
                             drop(queue);
                             shared.running.store(0, Ordering::Release);
                             shared.changed.notify_waiters();
@@ -700,25 +792,28 @@ impl Lane {
                             let mut job = queue.jobs.remove(position).unwrap();
                             queue.last_index = Some(job.scope.index_id);
                             queue.running_index = Some(job.scope.index_id);
-                            let allowed = scorer.as_ref().is_some_and(|scorer| {
+                            let stage = stage_for_task(job.task);
+                            queue.running_stage = Some(stage);
+                            let allowed = residents.get(&stage).is_some_and(|(scorer, charge)| {
                                 permitted(
                                     queue.configuration.as_ref(),
                                     &job,
                                     scorer.profile().manifest,
                                 ) && job.resident.profile==scorer.profile().manifest
-                                    && resident_reservation.as_ref().is_some_and(|resident|Arc::ptr_eq(resident,&job.resident.reservation))
+                                    && Arc::ptr_eq(charge,&job.resident.reservation)
                                     && scorer.profile().tasks.contains(&job.task)
                                     && !queue.release_profiles.contains(&scorer.profile().manifest)
                             });
                             drop(queue);
                             if !allowed || job.reply.is_closed() || !(job.authority)(&job.scope) {
                                 shared.queue.lock().map_err(|_|anyhow::anyhow!("Arbiter queue unavailable"))?.running_index=None;
+                                shared.queue.lock().map_err(|_|anyhow::anyhow!("Arbiter queue unavailable"))?.running_stage=None;
                                 continue;
                             }
                             job.compute.running();
                             shared.running.store(1, Ordering::Release);
                             shared.changed.notify_waiters();
-                            let scorer = scorer.as_ref().unwrap();
+                            let scorer = &residents.get(&stage).unwrap().0;
                             let queue_us = job.queued_at.elapsed().as_micros().min(u64::MAX as u128) as u64;
                             let compile_started=Instant::now();
                             let result = scorer.compile(&job.state, &job.question, &job.candidates).and_then(|input| {
@@ -737,8 +832,15 @@ impl Lane {
                                 let started=Instant::now();
                                 ensure!(airk_kernel::service_resource_observations::available_memory().is_some_and(|available|available>=job.resident.reservation.bytes().saturating_add(256<<20)),"optional native score has no fresh OS headroom");
                                 job.admission.validate(&job.resident.reservation)?;
+                                #[cfg(feature = "test-support")]
+                                let prepared_observation=job.observer.as_ref().and_then(|observer|observer.prepare(&job,&receipt));
                                 dispatch_before_original_deadline(job.deadline,Instant::now,||job.reply.is_closed(),|| {
-                                    observed_score_call(&receipt, started, Instant::now, || scorer.score(&input))
+                                    #[cfg(feature = "test-support")]
+                                    { job.observation=prepared_observation.map(|prepared|prepared.admitted()); }
+                                    let scored=observed_score_call(&receipt, started, Instant::now, || scorer.score(&input));
+                                    #[cfg(feature = "test-support")]
+                                    if let Some(observation)=&mut job.observation {observation.returned(&scored);}
+                                    scored
                                 })
                             });
                             let source_live = (job.authority)(&job.scope);
@@ -746,6 +848,7 @@ impl Lane {
                                 .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))
                                 .and_then(|mut queue| {
                                     queue.running_index=None;
+                                    queue.running_stage=None;
                                     ensure!(source_live && !queue.closed
                                         && !queue.release_profiles.contains(&scorer.profile().manifest)
                                         && permitted(queue.configuration.as_ref(), &job, scorer.profile().manifest),
@@ -766,16 +869,17 @@ impl Lane {
                                 .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?,
                         );
                     }
-                    drop(scorer);
-                    drop(resident_reservation);
+                    drop(residents);
                     {
                         let mut queue = shared
                             .queue
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        queue.active_profile = None;
-                        queue.joint_calibration = None;
+                        queue.active_profiles.clear();
+                        queue.joint_calibrations.clear();
+                        queue.residents.clear();
                         queue.warming_profile = None;
+                        queue.running_stage = None;
                     }
                     shared.accounting.arbiter_cached(false);
                     shared.accounting.mark_arbiter_barrier();

@@ -24,8 +24,36 @@ pub(crate) fn semantic_upgrade_pending(
     {
         return Ok(false);
     }
-    let descriptor = descriptor(store, objects)?;
-    Ok(!airk_retrieval::model::onnx_descriptor_uses_current_runtime(&descriptor))
+    let observed = if objects.shared.is_some() {
+        store.shared_model_source(objects).and_then(|source| {
+            airk_retrieval::model::onnx_asset_metadata_uses_active_catalog(&source, objects)
+        })
+    } else {
+        airk_retrieval::model::onnx_object_metadata_uses_active_catalog(store.directory(), objects)
+    };
+    match observed {
+        Ok(active) => Ok(!active),
+        Err(error) => {
+            let absent = error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+            });
+            if absent && let Some(shared) = &objects.shared {
+                let runtime = store
+                    .shared_model_runtime()
+                    .context("shared model runtime is not bound")?;
+                ensure!(
+                    shared.owner == airk_store::service::model_files::model_scope(runtime)?,
+                    "shared model belongs to another runtime"
+                );
+                if !airk_retrieval::model::onnx_asset_references_may_be_active(objects)? {
+                    return Ok(true);
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 pub(crate) fn open_model(store: &FileStore, objects: &ModelObjectSet) -> Result<EmbeddingModel> {

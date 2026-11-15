@@ -1213,6 +1213,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::ArbiterApplication { .. }
         | ControlMethod::ArbiterNextRead { .. }
         | ControlMethod::ArbiterContextAction { .. }
+        | ControlMethod::ArbiterFocusApplication { .. }
+        | ControlMethod::ArbiterFocusRank { .. }
+        | ControlMethod::ArbiterImport { .. }
         | ControlMethod::Resources
         | ControlMethod::Workers { .. }
         | ControlMethod::Worker { .. }

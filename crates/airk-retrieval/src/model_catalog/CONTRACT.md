@@ -1,35 +1,81 @@
-# Native model catalog and trained-v2 decision
+# Native MiniLM catalog: original baseline on the current provider
 
-Owner: `airk-retrieval`. Decision recorded 14 November 2026 before consumers.
+Owner: airk-retrieval. Root recorded the original-baseline retention decision
+after the preselected epoch1 candidate and both original unsigned controls tied
+on the complete matched DEV suite. No epoch1 promotion or further model bakeoff
+is selected. The former checkpoint515… trained-v2 catalog was unqualified and
+is not evidence of a qualified retained baseline.
 
-The active `/2` catalog contains exactly the separately identified trained
-`minilm-l6-v2-u8-v2` and `minilm-l6-v2-s8-v2` candidates. Their graph hashes,
-tokenizer, retained notices, trained-checkpoint origin, explicit mixed-precision
-policy and ONNX Runtime 1.30 pipeline identity are immutable. Six FFN output
-matrices and embeddings remain FP32; 7,077,888 of 10,616,832 constant linear
-parameters are quantized. This is not an all-linear-INT8 export. Signed weights
-and zero points are an exact -128 recoding of the unsigned export; the standard
-ONNX low7/high1 two-pass lowering avoids saturating AVX2 pair products.
+The current schema2 catalog contains exactly minilm-l6-v2-u8-v3 and
+minilm-l6-v2-s8-v3. They restore the exact original publisher U8 and S8 graphs,
+tokenizer, OnnxManifest ABI and Apache license bytes from the retained native
+v1 catalog. Graph hashes are b941bf19…0fd21 and4278337f…02474. Precision is
+uint8/int8 and quantization is absent, rather than a false trained/mixed policy.
+The existing ORT1.30 provider implementation identity/options are unchanged;
+its historical opaque name is not model training provenance. Profile IDs are
+new catalog identities; weights and runtime are separately authenticated.
 
-The graph is derived trained content; the manifest's upstream source/revision
-identifies its base, not a URL hosting these derived bytes. Active asset URLs
-are null: assets are bundled or explicitly provisioned from authenticated local
-build inputs. No fabricated upstream URL or implicit download is permitted.
-The provisioner hashes the actual copied bytes before publishing a manifest.
-Native full205, resource and installed-platform gates remain pending; empty
-verified-platform lists must not be described as qualified shipment evidence.
+Only the native Rust owner constructs/captures the ModelCatalog, OnnxManifest
+and airk.minilm.native-policy/2 files. Actual original asset hashes/lengths and
+base metadata are strict. Assets use null URLs and authenticated local/offline
+provisioning; no implicit runtime download is introduced. CPU selection remains
+unsigned for ordinary x86_64 and signed for VNNI x86_64/aarch64, with serial B1
+per-text dynamic activation semantics. Actual signed/platform execution must be
+qualified independently; a graph filename or architecture observation is not a
+platform qualification result.
 
-`model_catalog_v1.json` retains exact original catalog bytes, profile IDs, graph
-hashes and runtime 1.22.1. It is compatibility metadata only. Old object sets
-remain readable as retained metadata after exact historical descriptor proof;
-they cannot execute through the new encoder or advertise semantic readiness.
-The existing explicit regeneration/rebuild workflow owns migration. Existing
-airk-state/1, ModelObjectSet and I4 bytes do not change.
+Qualification begins with verified_platforms empty. Exact original U8 native
+DEV and numerical observations remain their original scoped evidence. Task,
+signed-profile numerical, general-document/language, resource, regeneration,
+installed-platform/package/offline and final release gates are separate. Neither
+Ready backend state nor source/catalog restoration populates platform proof.
+The pure draft emitter executes no inference and activates no product model.
+
+model_catalog_v1.json remains exact historical metadata under its original
+ORT1.22.1 identity. Restoring its graph bytes does not relabel old vectors as
+current runtime output. Authenticated old model references remain readable for
+retirement/regeneration, while opening/reusing their graph requires the exact
+current pipeline. Existing airk-state/1, ModelObjectSet and I4 bytes do not change.
+
+Upgrade detection checks the complete current active manifest, not only the ORT
+version. Both active precisions remain valid independently of current CPU default
+for retained metadata. New product setup continues to enforce the exact CPU
+selection. Retired same-runtime weights must become upgrade-pending before any
+semantic query or incremental update can mix old/new vectors or cache keys.
+Bounded authenticated ModelJson metadata supplies this check without reading
+weights, tokenizer, graph or live sources. The existing actual native owner and
+exact thread-local sealed-manifest lease remain the only private evaluation
+exception; no serialized role or environment value authorizes execution.
+
+For a genuinely missing retired shared ModelJson, the ordinary metadata path
+first exposes an io::NotFound chain. Only a captured set with a still-verifiable
+matching runtime owner and graph/tokenizer/license references that cannot match
+either active profile may then be classified Pending. This refusal-only fallback
+keeps lexical evidence available. Missing possibly-active assets, corrupt or
+hash-changed metadata, aliases, foreign owners and other failures stay errors.
+
+The owning service ModelSetup/Kernel upgrade path atomically replaces retired
+graph/cache using retained extracted evidence, preserving source bytes, original
+locations/text/facts and publication authority. Bounded vector turns resume
+recomputation under the new pipeline. Backend availability, data coverage and
+release qualification remain distinct; setup completion is not semantic Ready.
+Full source rebuild/replacement uses the existing reviewed maintenance owner
+when retained evidence is unavailable, without a silent destructive fallback.
+
+Before CAL/A6, the actual native Service VectorDraft emitter binds the selected
+original profile's inspect_object_plan pipeline, current runtime/model metadata,
+source/index/publication scope and readiness. Fitted genericRead/calibration and
+all four A6 conditions bind that same chosen MiniLM plus actual Focus/Context
+profiles and frozen data/rubric/source/budget closure. Changed-pipeline calibration
+does not transfer, and no old FINAL205 experiment is reopened.
 
 
-Lazy shared metadata uses the already authenticated ModelObjectSet legacy identity
-and recognizes the descriptor's retained runtime/platform inference digest. It
-must not regenerate the current runtime identity merely because the current
-binary parses an older manifest. This read-only metadata path never opens
-weights or admits historical execution; semantic upgrade/rebuild and active
-product catalog fences remain unchanged.
+An authenticated active ONNX manifest also requires the captured graph, tokenizer
+and license reference lengths and digests to match that same active catalog
+closure. A contradictory declared length is a metadata error, not Ready or a
+retired-model Pending result. This comparison reads only bounded authenticated
+ModelJson and compiled catalog metadata; it never opens model/tokenizer/license
+payloads. The existing exact owner/thread-local evaluation lease remains the
+separate private exception. Independent controls use the owning metadata planner
+and shared-set sealer to recompute legitimate set identities with wrong neural
+lengths; metadata descriptor equality alone cannot establish active eligibility.

@@ -1,0 +1,109 @@
+[
+  {
+    "arbiter_focus_application": {
+      "worker": {
+        "service": "17171717171717171717171717171717",
+        "worker": "18181818181818181818181818181818",
+        "project": "1919191919191919191919191919191919191919191919191919191919191919",
+        "fencing_generation": 1
+      },
+      "authority": {
+        "schema": 1,
+        "lease_generation": 1,
+        "index_id": "idx_05050505050505050505050505050505",
+        "grant_id": "grt_15151515151515151515151515151515",
+        "grant_revision": 1,
+        "fingerprint": "0606060606060606060606060606060606060606060606060606060606060606"
+      },
+      "publication": {
+        "collection": "fixture",
+        "incarnation": "03030303030303030303030303030303",
+        "generation": 1,
+        "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+        "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+      }
+    }
+  },
+  {
+    "arbiter_focus_rank": {
+      "request": {
+        "read_attempt": {
+          "schema": 1,
+          "request_id": "16161616161616161616161616161616",
+          "clock": "unix_monotonic",
+          "expires_monotonic_ns": 30000000100,
+          "remaining_ns": 30000000000
+        },
+        "parent_budget": {
+          "calls": 8,
+          "rounds": 3,
+          "fanout": 8,
+          "input_tokens": 2048,
+          "candidates": 32,
+          "max_bytes": 262144,
+          "deadline_ms": 30000
+        },
+        "worker": {
+          "service": "17171717171717171717171717171717",
+          "worker": "18181818181818181818181818181818",
+          "project": "1919191919191919191919191919191919191919191919191919191919191919",
+          "fencing_generation": 1
+        },
+        "authority": {
+          "schema": 1,
+          "lease_generation": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "grant_id": "grt_15151515151515151515151515151515",
+          "grant_revision": 1,
+          "fingerprint": "0606060606060606060606060606060606060606060606060606060606060606"
+        },
+        "scope": {
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "catalog": "02020202020202020202020202020202",
+          "index_id": "idx_05050505050505050505050505050505",
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "configuration_revision": 1,
+          "publication": {
+            "collection": "fixture",
+            "incarnation": "03030303030303030303030303030303",
+            "generation": 1,
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        },
+        "question": "Where is this defined?",
+        "candidates": [
+          {
+            "id": "94a0f2956eb16cfb78ee726e5cdb28ce4b428d50835fdc5dbd5014888c944524",
+            "hit": {
+              "citation": {
+                "path": "policy.md",
+                "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                "start_line": 1,
+                "end_line": 1,
+                "location": {
+                  "Lines": {
+                    "start": 1,
+                    "end": 1
+                  }
+                }
+              },
+              "text": "defined here",
+              "truncated": false
+            },
+            "window": {
+              "utf8_start": 0,
+              "utf8_end": 12
+            }
+          }
+        ],
+        "order_digest": "9a32076bc56f27987a36096171e322603415bb68d370700b913687abe13d2bf6",
+        "score_count": 1,
+        "ordinal": 1,
+        "partition": null,
+        "remaining_ms": 30000,
+        "remaining_input_tokens": 2048
+      }
+    }
+  }
+]

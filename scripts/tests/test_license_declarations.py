@@ -17,10 +17,7 @@ SPEC.loader.exec_module(MODULE)
 class DeclarationTests(unittest.TestCase):
     def test_trained_model_notices_retain_all_four_companions_and_exact_catalog(self):
         root = Path(__file__).resolve().parents[2]
-        expected = {'minilm-v2-LICENSE.txt':'LICENSE',
-                    'minilm-v2-TRAINING-NOTICES.md':'TRAINING-NOTICES.md',
-                    'minilm-v2-provenance.json':'training-provenance.json',
-                    'CC-BY-4.0.txt':'CC-BY-4.0.txt'}
+        expected = {'minilm-LICENSE.txt':'LICENSE'}
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)/'notices'
             MODULE.stage_model_notices(root, output)
@@ -30,12 +27,11 @@ class DeclarationTests(unittest.TestCase):
                 self.assertEqual((staged/destination).read_bytes(),(root/'third_party/models'/source).read_bytes())
             self.assertEqual((staged/'provenance.json').read_bytes(),
                              (root/'crates/airk-retrieval/src/model_catalog.json').read_bytes())
-            self.assertIn(b'Requests', (staged/'LICENSE').read_bytes())
+            self.assertEqual(hashlib.sha256((staged/'LICENSE').read_bytes()).hexdigest(), 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30')
 
     def test_any_mutated_companion_refuses_before_model_notice_output(self):
         root = Path(__file__).resolve().parents[2]
-        for changed in ['minilm-v2-LICENSE.txt','minilm-v2-TRAINING-NOTICES.md',
-                        'minilm-v2-provenance.json','CC-BY-4.0.txt']:
+        for changed in ['minilm-LICENSE.txt']:
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
                 fixture = Path(temporary)/'source'
                 models = fixture/'third_party/models'

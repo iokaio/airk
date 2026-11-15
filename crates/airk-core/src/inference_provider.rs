@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 pub const MAX_COMPLETION_WORKERS: usize = 128;
 pub const MAX_COMPLETION_BYTES: usize = 64 * 1024;
 pub const MAX_COMPLETION_LEDGER_BYTES: usize = 2048;
+/// Fixed native caches: bundled MiniLM, one Focus and one Context session.
+/// This count is not queue admission or permission to cache other models.
+pub const MAX_CACHED_MODEL_RESIDENT_SLOTS: u64 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,7 +85,10 @@ impl ProviderStatus {
             total <= self.admitted_high_water
                 && self.callback_outstanding <= self.admitted_high_water
                 && self.delivery_outstanding <= self.admitted_high_water
-                && self.model_references_outstanding <= self.admitted_high_water.saturating_add(1),
+                && self.model_references_outstanding
+                    <= self
+                        .running_outstanding
+                        .saturating_add(MAX_CACHED_MODEL_RESIDENT_SLOTS),
             "inference provider counts exceed admitted work"
         );
         crate::index_catalog::encoded_size(self, MAX_COMPLETION_BYTES)?;
@@ -199,7 +205,10 @@ impl CompletionObservation {
             queued_running <= self.admitted_high_water
                 && self.callback_outstanding <= self.admitted_high_water
                 && self.delivery_outstanding <= self.admitted_high_water
-                && self.model_references_outstanding <= self.admitted_high_water.saturating_add(1),
+                && self.model_references_outstanding
+                    <= self
+                        .running_outstanding
+                        .saturating_add(MAX_CACHED_MODEL_RESIDENT_SLOTS),
             "inference completion counts exceed admitted work"
         );
         if self.state == CompletionState::Complete {

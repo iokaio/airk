@@ -203,3 +203,124 @@ fn captured_small_parent_budget_cannot_be_enlarged_by_later_callback() {
             .is_err()
     );
 }
+
+#[test]
+fn focus_and_context_share_tokens_but_not_ordinal_slots() {
+    let mut ledger = Ledger::default();
+    let index_id = partition(3, 1, 2048).index_id;
+    let focus = ledger
+        .reserve_focus(
+            attempt(),
+            &Budget::default(),
+            FocusInvocation {
+                index_id,
+                ordinal: 1,
+            },
+            1536,
+            None,
+            100,
+        )
+        .unwrap();
+    // Unknown pair completion holds the entire prefix maximum.
+    ledger.compiled_prefix(focus, 512).unwrap();
+    assert!(
+        ledger
+            .reserve_default(attempt(), 1, 513, None, 101)
+            .is_err()
+    );
+    // Actual aggregate settlement can release unused tokens. The distinct
+    // Context assessment slot 1 remains available, but Focus slot 1 cannot replay.
+    ledger.completed_prefix(focus, 512).unwrap();
+    ledger
+        .reserve_default(attempt(), 1, 1536, None, 102)
+        .unwrap();
+    assert!(
+        ledger
+            .reserve_focus(
+                attempt(),
+                &Budget::default(),
+                FocusInvocation {
+                    index_id,
+                    ordinal: 1
+                },
+                1,
+                None,
+                103
+            )
+            .is_err()
+    );
+    assert!(ledger.compiled_prefix(focus, 511).is_err());
+}
+
+#[test]
+fn focus_uses_captured_call_caps_and_never_context_assessment_ordinals() {
+    let parent = Budget {
+        calls: 2,
+        ..Default::default()
+    };
+    let mut part = partition(3, 3, 1024);
+    part.parent_budget = parent.clone();
+    part.resources.calls = 1;
+    let mut ledger = Ledger::default();
+    ledger
+        .reserve_focus(
+            attempt(),
+            &parent,
+            FocusInvocation {
+                index_id: part.index_id,
+                ordinal: 1,
+            },
+            512,
+            Some(&part),
+            100,
+        )
+        .unwrap();
+    assert!(
+        ledger
+            .reserve_focus(
+                attempt(),
+                &parent,
+                FocusInvocation {
+                    index_id: part.index_id,
+                    ordinal: 2
+                },
+                1,
+                Some(&part),
+                101
+            )
+            .is_err()
+    );
+    let mut other = partition(4, 2, 1024);
+    other.parent_budget = parent.clone();
+    other.resources.calls = 1;
+    ledger
+        .reserve_focus(
+            attempt(),
+            &parent,
+            FocusInvocation {
+                index_id: other.index_id,
+                ordinal: 1,
+            },
+            512,
+            Some(&other),
+            102,
+        )
+        .unwrap();
+    let mut third = partition(5, 1, 1024);
+    third.parent_budget = parent.clone();
+    assert!(
+        ledger
+            .reserve_focus(
+                attempt(),
+                &parent,
+                FocusInvocation {
+                    index_id: third.index_id,
+                    ordinal: 1
+                },
+                1,
+                Some(&third),
+                103
+            )
+            .is_err()
+    );
+}

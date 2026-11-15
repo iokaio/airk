@@ -32,6 +32,12 @@ pub fn document() -> serde_json::Value {
     let mut generator = SchemaSettings::draft2020_12().into_generator();
     let mut roots = Vec::new();
     root::<Configuration>(&mut generator, &mut roots);
+    root::<StageConfiguration>(&mut generator, &mut roots);
+    root::<StageStatus>(&mut generator, &mut roots);
+    root::<FocusApplicationReceipt>(&mut generator, &mut roots);
+    root::<FocusObservation>(&mut generator, &mut roots);
+    root::<FocusApplication>(&mut generator, &mut roots);
+    root::<FocusProfileLimits>(&mut generator, &mut roots);
     root::<Profile>(&mut generator, &mut roots);
     root::<CompilerProfile>(&mut generator, &mut roots);
     root::<ContextRequest>(&mut generator, &mut roots);
@@ -50,7 +56,7 @@ pub fn document() -> serde_json::Value {
         .collect();
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
-        "title":"AIRK Arbiter Core contract","arbiter_contract":1,
+        "title":"AIRK Arbiter Core contract","arbiter_contract":2,
         "roots":roots,"$defs":definitions,
     })
 }

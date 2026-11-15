@@ -23,3 +23,33 @@ index as a positive control, then the pure metadata projection with an
 independently retained specification1 recipe and a malformed record width.
 It checks existing Unavailable fields and a disabled-model control. It does not
 forge an authenticated old store or establish transport/platform qualification.
+
+## Active-model replacement at the same runtime
+
+The current original MiniLM catalog restores exact publisher graph bytes under
+new v3 profile identities and the unchanged current ORT1.30 provider/options.
+The former checkpoint515… trained-v2 candidate is not a qualified baseline.
+
+The shared upgrade-pending predicate checks complete active-catalog manifest
+admission as well as runtime identity. Both active precisions remain recognized;
+new setup still enforces CPU-selected product defaults. A retired same-runtime
+manifest cannot advertise Ready or enter semantic search/incremental enrichment.
+Bounded authenticated model metadata is sufficient; readiness never opens
+weights/tokenizer/graph or reads live sources. The exact actual-owner evaluation
+lease remains limited to its normal thread-local sealed manifest.
+
+Only genuine io::NotFound for a captured shared model with a verified matching
+runtime owner and sealed graph/tokenizer/license closure that cannot be active
+may become Pending when old embedded metadata is absent. Missing possibly-active
+metadata, malformed/hash-changed content, aliases, foreign scope and other errors
+remain errors. This fallback grants no inference authority or success coverage.
+
+Service ModelSetup calls upgrade_service_semantics/replace_semantic_state:
+retained text/facts/locations survive one atomic new graph/cache publication;
+forced vector recomputation resumes in existing bounded service turns. Sources
+remain read-only, disabled policy remains disabled, and retired vectors/cache
+keys cannot mix with the new pipeline. When retained state is unavailable, the
+existing reviewed full-rebuild owner handles replacement; no automatic destructive
+fallback is added. Backend availability, current data coverage and release/platform
+qualification are independent facts. CAL/A6 requires the actual selected new
+pipeline and observed full readiness before capture or fitting.

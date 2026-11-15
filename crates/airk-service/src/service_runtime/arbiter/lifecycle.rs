@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(super) struct State {
     serial: u64,
+    accepted_configure_revision: u64,
     busy: bool,
     profile: Option<Sha256Digest>,
     phase: Availability,
@@ -17,11 +18,14 @@ pub(super) struct State {
     cancel: CancellationToken,
     handle: Option<Handle>,
     pending: Option<PreparedLaunch>,
+    #[cfg(all(test, feature = "test-support"))]
+    warm_observer: Option<super::warm_observer::Observer>,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
             serial: 0,
+            accepted_configure_revision: 0,
             busy: false,
             profile: None,
             phase: Availability::Disabled,
@@ -29,6 +33,8 @@ impl Default for State {
             cancel: CancellationToken::new(),
             handle: None,
             pending: None,
+            #[cfg(all(test, feature = "test-support"))]
+            warm_observer: None,
         }
     }
 }
@@ -45,7 +51,7 @@ fn phase(shared: &Arc<Mutex<State>>, serial: u64, value: Availability, reason: &
         "Arbiter activation was canceled"
     );
     state.phase = value;
-    state.reason = reason.chars().take(1024).collect();
+    state.reason = bounded_reason(reason);
     Ok(())
 }
 fn start(
@@ -91,56 +97,149 @@ fn complete(shared: &Arc<Mutex<State>>, serial: u64, result: &Result<()>) {
             } else {
                 Availability::Failed
             };
-            state.reason = format!("{error:#}").chars().take(1024).collect();
+            state.reason = bounded_reason(format!("{error:#}"));
         }
     }
+}
+fn cancel_current(state: &mut State) {
+    state.pending = None;
+    if state.busy {
+        state.cancel.cancel();
+        // A download/import has no native completion barrier. The actual
+        // warm/remove owner sets Draining when it starts a native release;
+        // cancellation must retain that already-owned unknown outcome.
+        if state.phase != Availability::Draining {
+            state.phase = Availability::Requested;
+        }
+        state.reason = "Cancellation requested; the original operation must settle. Actual native drains retain their owned completion proof.".into();
+    }
+}
+fn stage_snapshot(
+    configuration: &airk_store::service::arbiter::ConfigurationStore,
+    expected: &Configuration,
+    stage: Stage,
+) -> Result<Configuration> {
+    let current = configuration.load()?;
+    ensure!(
+        current.installation == expected.installation
+            && current.catalog == expected.catalog
+            && current.revision >= expected.revision
+            && current.stage(stage) == expected.stage(stage),
+        "Arbiter stage configuration changed during operation"
+    );
+    Ok(current)
+}
+fn management_snapshot(
+    configuration: &airk_store::service::arbiter::ConfigurationStore,
+    expected: &Configuration,
+    stage: Stage,
+    cancel: &CancellationToken,
+) -> Result<Configuration> {
+    ensure!(!cancel.is_cancelled(), "Arbiter operation canceled");
+    stage_snapshot(configuration, expected, stage)
 }
 fn current(
     configuration: &airk_store::service::arbiter::ConfigurationStore,
     expected: &Configuration,
+    stage: Stage,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    ensure!(!cancel.is_cancelled(), "Arbiter operation canceled");
-    ensure!(
-        configuration.load()? == *expected,
-        "Arbiter configuration changed during operation"
-    );
-    Ok(())
+    management_snapshot(configuration, expected, stage, cancel).map(|_| ())
 }
 fn admitted_current(
     configuration: &airk_store::service::arbiter::ConfigurationStore,
     expected: &Configuration,
+    stage: Stage,
     cancel: &CancellationToken,
     admission: Option<&DeferredAdmission>,
 ) -> Result<()> {
-    current(configuration, expected, cancel)?;
+    current(configuration, expected, stage, cancel)?;
     if let Some(admission) = admission {
         admission(expected)?;
     }
-    current(configuration, expected, cancel)
+    current(configuration, expected, stage, cancel)
+}
+
+/// Called while the own-stage lifecycle guard remains held, before the new
+/// cached continuation is prepared. Even identical fields are a fresh intent.
+fn commit_configure(
+    state: &mut State,
+    configuration: &airk_store::service::arbiter::ConfigurationStore,
+    expected_revision: u64,
+    candidate: &Configuration,
+    check: impl Fn() -> Result<()>,
+) -> Result<Configuration> {
+    let selected = configuration.apply_checked(expected_revision, candidate, check)?;
+    state.accepted_configure_revision = selected.revision;
+    state.cancel.cancel();
+    state.pending = None;
+    Ok(selected)
+}
+/// Lifecycle -> Store is the existing Configure order. Keep the intent guard
+/// through the rollback CAS, so an accepted same-stage Configure cannot race
+/// between the check and persisted restoration. Other-stage revisions remain
+/// eligible because they never alter this stage's accepted intent marker.
+fn rollback_current_intent(
+    shared: &Arc<Mutex<State>>,
+    serial: u64,
+    configuration: &airk_store::service::arbiter::ConfigurationStore,
+    expected: &Configuration,
+    prior: &Configuration,
+    stage: Stage,
+) -> Result<Option<Configuration>> {
+    let state = shared
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+    if state.serial != serial || state.accepted_configure_revision > expected.revision {
+        return Ok(None);
+    }
+    rollback(configuration, expected, prior, stage)
+}
+
+fn restore_cancellation(
+    state: &mut State,
+    serial: u64,
+    restored_revision: u64,
+    profile: Sha256Digest,
+) -> Result<CancellationToken> {
+    ensure!(
+        state.serial == serial && state.accepted_configure_revision <= restored_revision,
+        "Arbiter rollback operation superseded by accepted Configure"
+    );
+    let cancel = CancellationToken::new();
+    state.cancel = cancel.clone();
+    state.profile = Some(profile);
+    Ok(cancel)
 }
 
 fn rollback(
     configuration: &airk_store::service::arbiter::ConfigurationStore,
     expected: &Configuration,
     prior: &Configuration,
+    stage: Stage,
 ) -> Result<Option<Configuration>> {
-    if configuration.load()? != *expected {
+    let current = configuration.load()?;
+    if current.installation != expected.installation
+        || current.catalog != expected.catalog
+        || current.revision < expected.revision
+        || current.stage(stage) != expected.stage(stage)
+    {
         return Ok(None);
     }
-    let mut restored = prior.clone();
-    restored.revision = expected
+    let mut restored = current.clone();
+    *restored.stage_mut(stage) = prior.stage(stage).clone();
+    restored.revision = current
         .revision
         .checked_add(1)
         .context("Arbiter rollback revision exhausted")?;
-    Ok(Some(configuration.apply(expected.revision, &restored)?))
+    Ok(Some(configuration.apply(current.revision, &restored)?))
 }
-fn release_disabled(handle: &Handle, configuration: &Configuration) -> Result<()> {
-    let observation = handle.observation()?;
+fn release_disabled(handle: &Handle, configuration: &Configuration, stage: Stage) -> Result<()> {
+    let observation = handle.observation_for(stage)?;
     let mut profiles = [
         observation.active_profile,
         observation.warming_profile,
-        configuration.selected_profile,
+        configuration.stage(stage).selected_profile,
     ]
     .into_iter()
     .flatten()
@@ -153,6 +252,7 @@ fn release_disabled(handle: &Handle, configuration: &Configuration) -> Result<()
     Ok(())
 }
 struct WarmContext<'a> {
+    stage: Stage,
     expected: &'a Configuration,
     configuration: &'a Arc<airk_store::service::arbiter::ConfigurationStore>,
     management: &'a ArbiterManagement,
@@ -182,7 +282,11 @@ async fn warm(
     source: Box<dyn airk_retrieval::arbiter::runtime::AssetSource + Send>,
     context: WarmContext<'_>,
 ) -> Result<()> {
+    #[cfg(all(test, feature = "test-support"))]
+    let mut observation = WarmCapture::capture(&context, profile.description().manifest);
+    let result = async {
     let WarmContext {
+        stage,
         expected,
         configuration,
         management,
@@ -195,26 +299,37 @@ async fn warm(
         admission,
     } = context;
     let manifest = profile.description().manifest;
-    admitted_current(configuration, expected, cancel, admission)?;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
     ensure!(
-        expected.enabled && expected.selected_profile == Some(manifest),
+        configuration.load()? == *expected,
+        "Native warm snapshot changed before admission"
+    );
+    ensure!(
+        expected.stage(stage).enabled && expected.stage(stage).selected_profile == Some(manifest),
         "Arbiter warm requires the exact enabled selection"
     );
     let existing = management.existing().await.ok();
-    admitted_current(configuration, expected, cancel, admission)?;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
     if let Some(handle) = &existing {
         handle.configure(expected.clone())?;
-        if handle.observation()?.active_profile == Some(manifest)
+        let retained_observation = handle.observation_for(stage)?;
+        if retained_observation.active_profile == Some(manifest)
             && handle.resident(manifest).is_ok()
         {
-            admitted_current(configuration, expected, cancel, admission)?;
+            admitted_current(configuration, expected, stage, cancel, admission)?;
             let mut state = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
             ensure!(state.serial == serial, "Arbiter operation superseded");
             state.handle = Some(handle.clone());
             drop(state);
-            admitted_current(configuration, expected, cancel, admission)?;
+            admitted_current(configuration, expected, stage, cancel, admission)?;
+            #[cfg(all(test, feature = "test-support"))]
+            if let Some(observation) = observation.as_mut() {
+                observation.activation_path = super::warm_observer::ActivationPath::RetainedResident;
+                observation.native_profile = retained_observation.active_profile;
+                observation.native_revision = retained_observation.configuration_revision;
+            }
             return phase(
                 shared,
                 serial,
@@ -235,18 +350,18 @@ async fn warm(
     {
         Ok(reservation) => reservation,
         Err(original) => {
-            admitted_current(configuration, expected, cancel, admission)?;
+            admitted_current(configuration, expected, stage, cancel, admission)?;
             let handle = existing
                 .as_ref()
                 .context("Arbiter warm has no prior resident to drain")?;
-            let old=handle.observation()?.active_profile.filter(|old|*old!=manifest)
+            let old=handle.observation_for(stage)?.active_profile.filter(|old|*old!=manifest)
                 .context("Arbiter warm cannot fit its new charge and has no distinct resident to release")?;
             let rollback = rollback_profile
                 .filter(|profile| profile.manifest == old)
                 .context("Arbiter prior disk rollback is unproven; its resident was preserved")?;
             // Keep the old verified files pinned through new activation/rollback.
             rollback_pins.push(store.pin(rollback)?);
-            admitted_current(configuration, expected, cancel, admission)?;
+            admitted_current(configuration, expected, stage, cancel, admission)?;
             let release = handle.resident(old)?.reservation().release_observer();
             phase(
                 shared,
@@ -262,7 +377,7 @@ async fn warm(
                 Availability::Requested,
                 "Prior native session and its actual final charge were released; admitting the selected cached warm.",
             )?;
-            admitted_current(configuration, expected, cancel, admission)?;
+            admitted_current(configuration, expected, stage, cancel, admission)?;
             management
                 .reserve(profile.description().memory_reservation_bytes)
                 .await
@@ -270,9 +385,9 @@ async fn warm(
         }
     };
     let release = reservation.release_observer();
-    admitted_current(configuration, expected, cancel, admission)?;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
     let handle = management.ensure(expected.clone()).await?;
-    admitted_current(configuration, expected, cancel, admission)?;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
     handle.configure(expected.clone())?;
     {
         let mut state = shared
@@ -287,14 +402,23 @@ async fn warm(
         Availability::Warming,
         "Loading verified Arbiter bytes inside the existing native inference owner.",
     )?;
-    admitted_current(configuration, expected, cancel, admission)?;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
     let receiver = handle.warm(profile, source, reservation)?;
+    #[cfg(all(test, feature = "test-support"))]
+    if let Some(observation) = observation.as_mut() { observation.activation_path = super::warm_observer::ActivationPath::NativeWarmAdmitted; }
     let result=async {
         tokio::select!{biased;_ = cancel.cancelled()=>anyhow::bail!("Arbiter warm canceled"),value=receiver=>value.context("Arbiter warm delivery closed")??};
-        admitted_current(configuration,expected,cancel,admission)?;
-        let observed=handle.observation()?;
+        admitted_current(configuration,expected,stage,cancel,admission)?;
+        ensure!(configuration.load()? == *expected,"Native warm configuration changed before activation");
+        let observed=handle.observation_for(stage)?;
+        #[cfg(all(test, feature = "test-support"))]
+        if let Some(observation) = observation.as_mut() {
+            observation.native_profile=observed.active_profile;
+            observation.native_revision=observed.configuration_revision;
+        }
         ensure!(observed.active_profile==Some(manifest)&&observed.configuration_revision==Some(expected.revision),"Arbiter native activation not observed");
-        admitted_current(configuration,expected,cancel,admission)?;
+        admitted_current(configuration,expected,stage,cancel,admission)?;
+        ensure!(configuration.load()? == *expected,"Native warm configuration changed before activation");
         phase(shared,serial,Availability::Ready,"Qualified Arbiter profile is active in the owned native compute lane.")
     }.await;
     if let Err(error) = result {
@@ -320,23 +444,54 @@ async fn warm(
         return Err(error);
     }
     Ok(())
+    }.await;
+    #[cfg(all(test, feature = "test-support"))]
+    if let Some(observation) = observation {
+        observation.finish(&result);
+    }
+    result
 }
 
-fn cached_intent_eligible(configuration: &Configuration, phase: Option<Phase>) -> bool {
-    configuration.enabled && !configuration.indexes.is_empty() && phase == Some(Phase::Ready)
+fn cached_intent_eligible(
+    configuration: &Configuration,
+    stage: Stage,
+    phase: Option<Phase>,
+) -> bool {
+    configuration.stage(stage).enabled
+        && !configuration.stage(stage).indexes.is_empty()
+        && phase == Some(Phase::Ready)
+}
+
+fn recovery_removal(
+    pending: &std::collections::BTreeMap<Sha256Digest, Phase>,
+) -> Result<Option<Sha256Digest>> {
+    ensure!(
+        pending.len() <= 1,
+        "Multiple incomplete Arbiter operations require an explicit named Provision, Import or Remove"
+    );
+    match pending.first_key_value() {
+        Some((&manifest, &Phase::Removing)) => Ok(Some(manifest)),
+        Some(_) => anyhow::bail!(
+            "Incomplete asset acquisition requires explicit Provision for the compiled network source, or owner-only Import with the original verified local bundle; Recover never changes acquisition authority"
+        ),
+        None => Ok(None),
+    }
 }
 
 type NativeAssetSource = Box<dyn airk_retrieval::arbiter::runtime::AssetSource + Send>;
 type Restoration = (ExecutionProfile, NativeAssetSource);
 type DeferredAdmission = Box<dyn Fn(&Configuration) -> Result<()> + Send + Sync>;
 struct PreparedLaunch {
+    stage: Stage,
     expected: Configuration,
     manifest: Sha256Digest,
     download: bool,
+    import_directory: Option<std::path::PathBuf>,
     previous: Option<Configuration>,
     execution: ExecutionProfile,
     source: NativeAssetSource,
     restoration: Option<Restoration>,
+    continuation: Option<Restoration>,
     admission: Option<DeferredAdmission>,
     resident_fallback: Option<Profile>,
 }
@@ -350,13 +505,16 @@ struct LaunchContext {
 }
 fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
     let PreparedLaunch {
+        stage,
         expected,
         manifest,
         download,
+        import_directory,
         previous,
         execution,
         source,
         mut restoration,
+        mut continuation,
         admission,
         resident_fallback,
     } = prepared;
@@ -376,11 +534,24 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                 .map(|(profile, _)| profile.description().clone())
         });
         let mut result = async {
-            current(&configuration, &expected, &cancel)?;
+            current(&configuration, &expected, stage, &cancel)?;
             if let Some(admission) = &admission {
                 admission(&expected)?;
             }
 
+            if let Some(directory) = import_directory {
+                phase(&shared, serial, Availability::Verifying, "Verifying and importing the exact compiled local asset bundle; source files remain read-only.")?;
+                let imported_profile = execution.description().clone();
+                let imported_store = store.clone();
+                let imported_configuration = configuration.clone();
+                let imported_expected = expected.clone();
+                let imported_cancel = cancel.clone();
+                tokio::task::spawn_blocking(move || {
+                    let check = || current(&imported_configuration, &imported_expected, stage, &imported_cancel);
+                    let bundle = airk_store::service::arbiter_assets::OfflineBundle::open(&imported_profile, &directory, check)?;
+                    bundle.import(&imported_store, &imported_profile, imported_expected.revision, check)
+                }).await.context("Native local bundle import task closed")??;
+            }
             if download {
                 phase(
                     &shared,
@@ -396,12 +567,17 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                 )
                 .await?;
             }
-            current(&configuration, &expected, &cancel)?;
-            if expected.enabled && expected.selected_profile == Some(manifest) {
-                warm(
+            current(&configuration, &expected, stage, &cancel)?;
+            let expected = management_snapshot(&configuration, &expected, stage, &cancel)?;
+            if expected.stage(stage).enabled
+                && expected.stage(stage).selected_profile == Some(manifest)
+            {
+                let warming_revision = expected.revision;
+                let warmed = warm(
                     execution,
                     source,
                     WarmContext {
+                        stage,
                         expected: &expected,
                         configuration: &configuration,
                         management: &management,
@@ -414,7 +590,49 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                         admission: admission.as_ref(),
                     },
                 )
-                .await?;
+                .await;
+                if let Err(original) = warmed {
+                    // This is one new-input continuation, after warm() has
+                    // observed actual session/charge drain. It cannot download,
+                    // renew cancellation, or retry unchanged failed inputs.
+                    let latest = management_snapshot(&configuration, &expected, stage, &cancel)?;
+                    let drained = shared
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+                        .phase
+                        != Availability::Draining;
+                    if !drained
+                        || cancel.is_cancelled()
+                        || latest.revision <= warming_revision
+                        || latest.stage(stage) != expected.stage(stage)
+                        || latest.installation != expected.installation
+                        || latest.catalog != expected.catalog
+                    {
+                        return Err(original);
+                    }
+                    let (cached, cached_source) = continuation
+                        .take()
+                        .context("No further cached stage continuation is admitted")?;
+                    store.pin(cached.description())?;
+                    warm(
+                        cached,
+                        cached_source,
+                        WarmContext {
+                            stage,
+                            expected: &latest,
+                            configuration: &configuration,
+                            management: &management,
+                            shared: &shared,
+                            serial,
+                            cancel: &cancel,
+                            store: &store,
+                            rollback_profile: rollback_description.as_ref(),
+                            rollback_pins: &mut rollback_pins,
+                            admission: admission.as_ref(),
+                        },
+                    )
+                    .await?;
+                }
             } else {
                 phase(
                     &shared,
@@ -440,29 +658,37 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                 .map(|error| format!("{error:#}"))
                 .unwrap_or_default();
             let restore_result = async {
-                let Some(restored) = rollback(&configuration, &expected, &prior)? else {
+                let Some(restored) = rollback_current_intent(
+                    &shared,
+                    serial,
+                    &configuration,
+                    &expected,
+                    &prior,
+                    stage,
+                )?
+                else {
                     return Ok(());
                 };
-                if restored.enabled {
+                if restored.stage(stage).enabled {
                     let (old, old_source) = restoration.take().context(
                         "Previous profile has no currently verified rollback capability",
                     )?;
-                    let rollback_cancel = CancellationToken::new();
-                    {
+                    let rollback_cancel = {
                         let mut state = shared
                             .lock()
                             .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-                        ensure!(
-                            state.serial == serial,
-                            "Arbiter rollback operation superseded"
-                        );
-                        state.cancel = rollback_cancel.clone();
-                        state.profile = Some(old.description().manifest);
-                    }
+                        restore_cancellation(
+                            &mut state,
+                            serial,
+                            restored.revision,
+                            old.description().manifest,
+                        )?
+                    };
                     warm(
                         old,
                         old_source,
                         WarmContext {
+                            stage,
                             expected: &restored,
                             configuration: &configuration,
                             management: &management,
@@ -477,8 +703,9 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                     )
                     .await?;
                 } else if let Ok(handle) = management.existing().await {
-                    handle.configure(restored.clone())?;
-                    release_disabled(&handle, &restored)?;
+                    let latest = stage_snapshot(&configuration, &restored, stage)?;
+                    handle.configure(latest.clone())?;
+                    release_disabled(&handle, &latest, stage)?;
                 }
                 Ok::<(), anyhow::Error>(())
             }
@@ -494,8 +721,7 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                 ));
             }
         }
-        complete(&shared, serial, &result);
-        resume_pending(store, configuration, shared, management, serial);
+        settle_and_resume(store, configuration, shared, management, serial, &result);
     });
 }
 fn next_pending(
@@ -523,14 +749,23 @@ fn next_pending(
     Ok(Some((prepared, state.serial, state.cancel.clone())))
 }
 
-fn resume_pending(
+fn settle_and_take_pending(
+    shared: &Arc<Mutex<State>>,
+    settled_serial: u64,
+    result: &Result<()>,
+) -> Result<Option<(PreparedLaunch, u64, CancellationToken)>> {
+    complete(shared, settled_serial, result);
+    next_pending(shared, settled_serial)
+}
+fn settle_and_resume(
     store: Arc<AssetStore>,
     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
     shared: Arc<Mutex<State>>,
     management: ArbiterManagement,
     settled_serial: u64,
+    result: &Result<()>,
 ) {
-    let next = next_pending(&shared, settled_serial);
+    let next = settle_and_take_pending(&shared, settled_serial, result);
     match next {
         Ok(Some((prepared, serial, cancel))) => spawn_launch(
             prepared,
@@ -548,36 +783,90 @@ fn resume_pending(
             if let Ok(mut state) = shared.lock() {
                 state.busy = false;
                 state.phase = Availability::Failed;
-                state.reason = format!("Cached latest selection could not be admitted: {error:#}");
+                state.reason = bounded_reason(format!(
+                    "Cached latest selection could not be admitted: {error:#}"
+                ));
             }
         }
     }
 }
 
-impl Owner {
-    pub(super) fn status(&self) -> Result<Status> {
+fn unavailable_stage_status(
+    stage: Stage,
+    phase: Availability,
+    reason: &str,
+    observation: Option<airk_inference::inference_engine::pool::arbiter::Observation>,
+) -> StageStatus {
+    StageStatus {
+        selected_profile: None,
+        active_profile: observation.as_ref().and_then(|value| value.active_profile),
+        availability: if phase == Availability::Draining {
+            Availability::Draining
+        } else {
+            Availability::Failed
+        },
+        reason: bounded_reason(reason),
+        queued: observation.as_ref().map_or(0, |value| value.queued),
+        running: observation.as_ref().map_or(0, |value| value.running),
+        profiles: stage_models(stage)
+            .into_iter()
+            .map(|model| ProfileStatus {
+                cpu_fit: None,
+                qualified_targets: vec![],
+                model,
+                profile: None,
+                availability: Availability::Unqualified,
+                reason: "No stage was enabled or initialized by this status read.".into(),
+                tasks: Default::default(),
+                download_bytes: None,
+                memory_reservation_bytes: None,
+            })
+            .collect(),
+    }
+}
+
+impl StageOwner {
+    pub(super) fn unavailable_status(&self, reason: &str) -> Result<StageStatus> {
+        let state = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Actual Arbiter stage observation is unavailable"))?;
+        let observed = state
+            .handle
+            .as_ref()
+            .map(|handle| handle.observation_for(self.stage))
+            .transpose()?;
+        Ok(unavailable_stage_status(
+            self.stage,
+            state.phase,
+            reason,
+            observed,
+        ))
+    }
+    pub(super) fn status(&self) -> Result<StageStatus> {
         let configuration = self.configuration()?;
         let catalog = self.profile_descriptions()?;
         let state = self
             .lifecycle
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-        let observation = state.handle.as_ref().map(Handle::observation).transpose()?;
+        let observation = state
+            .handle
+            .as_ref()
+            .map(|handle| handle.observation_for(self.stage))
+            .transpose()?;
         let active = observation.as_ref().and_then(|value| value.active_profile);
         let native_revision_matches = observation
             .as_ref()
             .is_some_and(|value| value.configuration_revision == Some(configuration.revision));
         let mut profiles = Vec::new();
-        for model in [
-            ModelChoice::SmallIntern,
-            ModelChoice::SmallStrands,
-            ModelChoice::LargeIntern,
-            ModelChoice::LargeKev,
-        ] {
+        for model in stage_models(self.stage) {
             let profile = catalog
                 .iter()
                 .filter(|profile| profile.model == model)
-                .find(|profile| Some(profile.manifest) == configuration.selected_profile)
+                .find(|profile| {
+                    Some(profile.manifest) == configuration.stage(self.stage).selected_profile
+                })
                 .or_else(|| catalog.iter().find(|profile| profile.model == model));
             let row = if let Some(profile) = profile {
                 let admission = self.execution_profile(profile.manifest);
@@ -623,8 +912,8 @@ impl Owner {
                     (state.phase, state.reason.clone())
                 } else if active == Some(profile.manifest)
                     && native_revision_matches
-                    && configuration.enabled
-                    && configuration.selected_profile == Some(profile.manifest)
+                    && configuration.stage(self.stage).enabled
+                    && configuration.stage(self.stage).selected_profile == Some(profile.manifest)
                 {
                     (
                         Availability::Ready,
@@ -636,10 +925,12 @@ impl Owner {
                     match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)|Some(Phase::Removing)=>(Availability::Failed,"Prior asset operation did not complete. Explicit recovery is required; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
                 };
                 ProfileStatus {
+                    cpu_fit: profile.cpu_fit.clone(),
+                    qualified_targets: profile.qualified_targets.clone(),
                     model,
                     profile: Some(profile.manifest),
                     availability,
-                    reason: format!("{reason} {fit_reason}"),
+                    reason: bounded_reason(format!("{reason} {fit_reason}")),
                     tasks: profile.tasks.clone(),
                     download_bytes: Some(profile.assets.iter().try_fold(
                         0_u64,
@@ -653,6 +944,8 @@ impl Owner {
                 }
             } else {
                 ProfileStatus {
+                    cpu_fit: None,
+                    qualified_targets: vec![],
                     model,
                     profile: None,
                     availability: Availability::Unqualified,
@@ -665,8 +958,8 @@ impl Owner {
             };
             profiles.push(row);
         }
-        let selected = configuration.selected_profile;
-        let (availability, reason) = if !configuration.enabled {
+        let selected = configuration.stage(self.stage).selected_profile;
+        let (availability, reason) = if !configuration.stage(self.stage).enabled {
             if observation.as_ref().is_some_and(|value| {
                 value.active_profile.is_some()
                     || value.warming_profile.is_some()
@@ -711,10 +1004,10 @@ impl Owner {
         #[cfg(feature = "test-support")]
         let reason = if self.evaluation.is_some() {
             for row in &mut profiles {
-                row.reason = format!(
+                row.reason = bounded_reason(format!(
                     "Private evaluation only; candidate is not release-qualified. {}",
                     row.reason
-                );
+                ));
             }
             format!("Private evaluation only; candidate is not release-qualified. {reason}")
         } else {
@@ -724,13 +1017,11 @@ impl Owner {
             self.configuration()? == configuration,
             "Arbiter status configuration changed before delivery"
         );
-        Ok(Status {
-            schema: STATUS_SCHEMA.into(),
-            configuration,
+        Ok(StageStatus {
             selected_profile: selected,
             active_profile: active,
             availability,
-            reason,
+            reason: bounded_reason(reason),
             queued: observation.as_ref().map_or(0, |value| value.queued),
             running: observation.as_ref().map_or(0, |value| value.running),
             profiles,
@@ -740,8 +1031,9 @@ impl Owner {
         let gate = self.gate.clone();
         let ownership = self.ownership.clone();
         let namespace = self.namespace;
+        let stage = self.stage;
         Box::new(move |configuration| {
-            validate_configuration_enrollments(&gate, &ownership, namespace, configuration)
+            validate_configuration_enrollments(&gate, &ownership, namespace, configuration, stage)
         })
     }
     fn resident_description(&self) -> Result<Option<Profile>> {
@@ -752,7 +1044,7 @@ impl Owner {
             .handle
             .clone();
         Ok(handle
-            .and_then(|handle| handle.observation().ok())
+            .and_then(|handle| handle.observation_for(self.stage).ok())
             .and_then(|observation| observation.active_profile)
             .and_then(|manifest| self.execution_profile(manifest).ok())
             .map(|profile| profile.description().clone()))
@@ -767,6 +1059,7 @@ impl Owner {
         effect_check: Option<&airk_https::admin_plane::NativeDispatchCheck>,
     ) -> Result<()> {
         let execution = self.execution_profile(manifest)?;
+        execution.description().validate_stage(self.stage)?;
         ensure!(
             !download || execution.release_qualified(),
             "Private evaluation assets require descriptor seeding, not product downloads"
@@ -774,24 +1067,77 @@ impl Owner {
         let source = self.asset_source(manifest)?;
         let restoration = previous
             .as_ref()
-            .filter(|prior| prior.enabled)
-            .and_then(|prior| prior.selected_profile)
+            .filter(|prior| prior.stage(self.stage).enabled)
+            .and_then(|prior| prior.stage(self.stage).selected_profile)
             .and_then(|old| {
                 self.execution_profile(old)
                     .ok()
                     .zip(self.asset_source(old).ok())
             });
         let resident_fallback = self.resident_description()?;
+        let continuation = Some((
+            self.execution_profile(manifest)?,
+            self.asset_source(manifest)?,
+        ));
         let (serial, cancel) = start(&self.lifecycle, manifest, effect_check)?;
         spawn_launch(
             PreparedLaunch {
+                stage: self.stage,
                 expected,
                 manifest,
                 download,
+                import_directory: None,
                 previous,
                 execution,
                 source,
                 restoration,
+                continuation,
+                admission: Some(self.lifecycle_admission()),
+                resident_fallback,
+            },
+            LaunchContext {
+                store: self.assets.clone(),
+                configuration: self.configuration.clone(),
+                shared: self.lifecycle.clone(),
+                management,
+                serial,
+                cancel,
+            },
+        );
+        Ok(())
+    }
+    pub(super) fn launch_import(
+        &self,
+        expected: Configuration,
+        manifest: Sha256Digest,
+        directory: std::path::PathBuf,
+        management: ArbiterManagement,
+    ) -> Result<()> {
+        let execution = self.execution_profile(manifest)?;
+        ensure!(
+            execution.release_qualified(),
+            "Offline import requires the actual compiled release-qualified profile"
+        );
+        execution.description().validate_stage(self.stage)?;
+        let source = self.asset_source(manifest)?;
+        let continuation = Some((
+            self.execution_profile(manifest)?,
+            self.asset_source(manifest)?,
+        ));
+        let resident_fallback = self.resident_description()?;
+        let (serial, cancel) = start(&self.lifecycle, manifest, None)?;
+        spawn_launch(
+            PreparedLaunch {
+                stage: self.stage,
+                expected,
+                manifest,
+                download: false,
+                import_directory: Some(directory),
+                previous: None,
+                execution,
+                source,
+                restoration: None,
+                continuation,
                 admission: Some(self.lifecycle_admission()),
                 resident_fallback,
             },
@@ -814,6 +1160,7 @@ impl Owner {
         serial: u64,
         cancel: CancellationToken,
     ) -> Result<()> {
+        let stage = self.stage;
         let shared = self.lifecycle.clone();
         let store = self.assets.clone();
         let configuration = self.configuration.clone();
@@ -825,11 +1172,12 @@ impl Owner {
             .clone();
         tokio::spawn(async move {
             let result=async {
-                current(&configuration,&expected,&cancel)?;
+                current(&configuration,&expected,stage,&cancel)?;
                 let handle=match retained {Some(handle)=>Some(handle),None=>management.existing().await.ok()};
                 if let Some(handle)=handle {
-                    handle.configure(expected.clone())?;
-                    if !expected.enabled {release_disabled(&handle,&expected)?;}
+                    let latest = management_snapshot(&configuration, &expected, stage, &cancel)?;
+                    handle.configure(latest.clone())?;
+                    if !latest.stage(stage).enabled {release_disabled(&handle,&latest,stage)?;}
                     let charge = handle.resident(manifest).ok().map(|resident|resident.reservation().release_observer());
                     handle.release_profile(manifest)?;
                     phase(&shared,serial,Availability::Draining,"Waiting for actual native completion before asset removal.")?;
@@ -838,7 +1186,7 @@ impl Owner {
                     if let Some(charge)=charge {tokio::time::timeout_at(tokio::time::Instant::from_std(deadline),charge.wait()).await.context("Removed profile's actual final charge remains draining")??;}
                     phase(&shared,serial,Availability::Verifying,"Native session and final memory charge released; verifying owned disk cleanup.")?;
                 }
-                current(&configuration,&expected,&cancel)?;
+                current(&configuration,&expected,stage,&cancel)?;
                 if store.owned_observation(manifest)?.is_some() {
                     let removal_store = store.clone();
                     tokio::task::spawn_blocking(move||removal_store.remove_owned(manifest,expected.revision)).await.context("Arbiter removal task closed")??;
@@ -846,8 +1194,7 @@ impl Owner {
                 phase(&shared,serial,Availability::MissingAssets,"Declared verified assets removed; interrupted recovery stages remain preserved.")?;
                 Ok(())
             }.await;
-            complete(&shared, serial, &result);
-            resume_pending(store, configuration, shared, management, serial);
+            settle_and_resume(store, configuration, shared, management, serial, &result);
         });
         Ok(())
     }
@@ -856,66 +1203,79 @@ impl Owner {
         request: ManagementRequest,
         supervisor: &Supervisor,
         effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
-    ) -> Result<Status> {
+    ) -> Result<StageStatus> {
         let management = supervisor.arbiter_management();
         match request {
             ManagementRequest::Status => {}
+            ManagementRequest::Initialize { .. } => {
+                anyhow::bail!("Initialization belongs to the common Arbiter owner")
+            }
             ManagementRequest::Configure {
+                stage,
                 expected_revision,
                 enabled,
                 selected_profile,
                 indexes,
             } => {
+                ensure!(stage == self.stage, "Arbiter management stage differs");
                 let previous = self.configuration()?;
                 ensure!(
                     previous.revision == expected_revision,
                     "Arbiter configuration revision changed"
                 );
-                let candidate = Configuration {
-                    revision: expected_revision
-                        .checked_add(1)
-                        .context("Arbiter revision exhausted")?,
+                let mut candidate = previous.clone();
+                candidate.revision = expected_revision
+                    .checked_add(1)
+                    .context("Arbiter revision exhausted")?;
+                *candidate.stage_mut(stage) = StageConfiguration {
                     enabled,
                     selected_profile,
                     indexes,
-                    ..previous.clone()
                 };
                 self.validate_enrollments(&candidate)?;
-                if enabled {
-                    self.execution_profile(selected_profile.context("Arbiter profile missing")?)?;
+                if let Some(profile) = selected_profile {
+                    self.execution_profile(profile)?
+                        .description()
+                        .validate_stage(self.stage)?;
                 }
                 let (selected, handle, busy) = {
                     let mut state = self
                         .lifecycle
                         .lock()
                         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-                    let selected =
-                        self.configuration
-                            .apply_checked(expected_revision, &candidate, || {
-                                super::super::native_admin::check_effect(effect_check.as_ref())
-                            })?;
-                    state.cancel.cancel();
-                    state.pending = None;
+                    let selected = commit_configure(
+                        &mut state,
+                        &self.configuration,
+                        expected_revision,
+                        &candidate,
+                        || super::super::native_admin::check_effect(effect_check.as_ref()),
+                    )?;
                     (selected, state.handle.clone(), state.busy)
                 };
                 if let Some(handle) = handle {
-                    handle.configure(selected.clone())?;
-                    if !selected.enabled {
-                        release_disabled(&handle, &selected)?;
+                    let latest = stage_snapshot(&self.configuration, &selected, self.stage)?;
+                    handle.configure(latest.clone())?;
+                    if !latest.stage(self.stage).enabled {
+                        release_disabled(&handle, &latest, self.stage)?;
                     }
                 }
-                if selected.enabled {
+                if selected.stage(self.stage).enabled {
                     let manifest = selected
+                        .stage(self.stage)
                         .selected_profile
                         .context("Arbiter profile missing")?;
                     let profile = self.execution_profile(manifest)?;
-                    if cached_intent_eligible(&selected, self.assets.phase(profile.description())?)
-                    {
+                    if cached_intent_eligible(
+                        &selected,
+                        self.stage,
+                        self.assets.phase(profile.description())?,
+                    ) {
                         if busy {
                             let source = self.asset_source(manifest)?;
                             let restoration = previous
+                                .stage(self.stage)
                                 .enabled
-                                .then_some(previous.selected_profile)
+                                .then_some(previous.stage(self.stage).selected_profile)
                                 .flatten()
                                 .and_then(|old| {
                                     self.execution_profile(old)
@@ -924,13 +1284,19 @@ impl Owner {
                                 });
                             let resident_fallback = self.resident_description()?;
                             let prepared = PreparedLaunch {
+                                stage: self.stage,
                                 expected: selected.clone(),
                                 manifest,
                                 download: false,
+                                import_directory: None,
                                 previous: Some(previous.clone()),
                                 execution: profile,
                                 source,
                                 restoration,
+                                continuation: Some((
+                                    self.execution_profile(manifest)?,
+                                    self.asset_source(manifest)?,
+                                )),
                                 resident_fallback,
                                 admission: Some(self.lifecycle_admission()),
                             };
@@ -977,7 +1343,9 @@ impl Owner {
                     configuration.revision == expected_revision,
                     "Arbiter configuration revision changed"
                 );
-                self.execution_profile(profile)?;
+                self.execution_profile(profile)?
+                    .description()
+                    .validate_stage(self.stage)?;
                 self.launch(
                     configuration,
                     profile,
@@ -987,14 +1355,22 @@ impl Owner {
                     effect_check.as_ref(),
                 )?;
             }
-            ManagementRequest::Recover { expected_revision } => {
+            ManagementRequest::Recover {
+                expected_revision,
+                stage,
+            } => {
+                ensure!(stage == self.stage, "Arbiter recovery stage differs");
                 let configuration = self.configuration()?;
                 ensure!(
                     configuration.revision == expected_revision,
                     "Arbiter configuration revision changed"
                 );
                 let mut pending = std::collections::BTreeMap::new();
-                for profile in self.profile_descriptions()? {
+                for profile in self
+                    .profile_descriptions()?
+                    .into_iter()
+                    .filter(|profile| profile.declared_stage() == Some(self.stage))
+                {
                     if let Some(observed) = self.assets.observation(&profile)?
                         && matches!(observed.phase, Phase::Downloading | Phase::Failed)
                         && observed.configuration_revision == expected_revision
@@ -1002,34 +1378,23 @@ impl Owner {
                         pending.insert(profile.manifest, observed.phase);
                     }
                 }
-                for manifest in self.assets.pending_owned_removals(expected_revision)? {
+                for manifest in self
+                    .assets
+                    .pending_owned_removals_for(self.stage, expected_revision)?
+                {
                     pending.insert(manifest, Phase::Removing);
                 }
-                ensure!(
-                    pending.len() <= 1,
-                    "Multiple incomplete Arbiter operations require explicit named Provision or Remove"
-                );
-                if let Some((&manifest, &Phase::Removing)) = pending.first_key_value() {
+                if let Some(manifest) = recovery_removal(&pending)? {
                     let (serial, cancel) = start(&self.lifecycle, manifest, effect_check.as_ref())?;
                     self.launch_remove(configuration, manifest, management, serial, cancel)?;
-                } else if let Some((&manifest, _)) = pending.first_key_value() {
-                    self.execution_profile(manifest)?;
-                    self.launch(
-                        configuration,
-                        manifest,
-                        true,
-                        None,
-                        management,
-                        effect_check.as_ref(),
-                    )?;
                 } else {
-                    let manifest = configuration.selected_profile.context(
+                    let manifest = configuration.stage(self.stage).selected_profile.context(
                         "Recovery requires a named prior operation or selected retained profile",
                     )?;
                     let profile = self.execution_profile(manifest)?;
                     ensure!(
                         self.assets.phase(profile.description())? == Some(Phase::Ready),
-                        "No matching unfinished operation or Ready profile; use explicit Provision after cancellation/removal"
+                        "No verified cached profile; use explicit Provision or owner-only Import after incomplete acquisition, cancellation or removal"
                     );
                     self.launch(
                         configuration,
@@ -1041,7 +1406,11 @@ impl Owner {
                     )?;
                 }
             }
-            ManagementRequest::Cancel { expected_revision } => {
+            ManagementRequest::Cancel {
+                expected_revision,
+                stage,
+            } => {
+                ensure!(stage == self.stage, "Arbiter cancellation stage differs");
                 ensure!(
                     self.configuration()?.revision == expected_revision,
                     "Arbiter configuration revision changed"
@@ -1055,14 +1424,11 @@ impl Owner {
                     "Arbiter cancellation revision changed while queued"
                 );
                 super::super::native_admin::check_effect(effect_check.as_ref())?;
-                state.pending = None;
-                if state.busy {
-                    state.cancel.cancel();
-                    state.phase = Availability::Draining;
-                    state.reason="Cancellation requested; original work must settle before recovery or removal.".into();
-                    if let (Some(handle), Some(profile)) = (&state.handle, state.profile) {
-                        handle.release_profile(profile)?;
-                    }
+                cancel_current(&mut state);
+                if state.busy
+                    && let (Some(handle), Some(profile)) = (&state.handle, state.profile)
+                {
+                    handle.release_profile(profile)?;
                 }
             }
             ManagementRequest::Remove {
@@ -1081,16 +1447,21 @@ impl Owner {
                     );
                 }
                 let (serial, cancel) = start(&self.lifecycle, profile, effect_check.as_ref())?;
-                if configuration.enabled && configuration.selected_profile == Some(profile) {
-                    configuration.enabled = false;
+                if configuration.stage(self.stage).enabled
+                    && configuration.stage(self.stage).selected_profile == Some(profile)
+                {
+                    configuration.stage_mut(self.stage).enabled = false;
                     configuration.revision = expected_revision
                         .checked_add(1)
                         .context("Arbiter revision exhausted")?;
                     match self.configuration.apply(expected_revision, &configuration) {
                         Ok(value) => configuration = value,
                         Err(error) => {
-                            complete(
-                                &self.lifecycle,
+                            settle_and_resume(
+                                self.assets.clone(),
+                                self.configuration.clone(),
+                                self.lifecycle.clone(),
+                                management,
                                 serial,
                                 &Err(anyhow::anyhow!("Arbiter removal configuration CAS failed")),
                             );
@@ -1113,21 +1484,18 @@ impl Owner {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.phase = Availability::Failed;
-            state.reason = format!(
+            state.reason = bounded_reason(format!(
                 "Optional Arbiter restore refused; ordinary service remains available: {error:#}"
-            )
-            .chars()
-            .take(1024)
-            .collect();
+            ));
         }
         Ok(())
     }
     async fn try_restore_verified(&self, supervisor: &Supervisor) -> Result<()> {
         let configuration = self.configuration()?;
-        if !configuration.enabled {
+        if !configuration.stage(self.stage).enabled {
             return Ok(());
         }
-        let Some(manifest) = configuration.selected_profile else {
+        let Some(manifest) = configuration.stage(self.stage).selected_profile else {
             return Ok(());
         };
         let Ok(profile) = self.execution_profile(manifest) else {
@@ -1147,7 +1515,7 @@ impl Owner {
         Ok(())
     }
 }
-impl Drop for Owner {
+impl Drop for StageOwner {
     fn drop(&mut self) {
         if let Ok(mut state) = self.lifecycle.lock() {
             state.pending = None;
@@ -1159,9 +1527,233 @@ impl Drop for Owner {
     }
 }
 
+#[cfg(all(test, feature = "test-support"))]
+pub(super) fn observe_warm(
+    shared: &Arc<Mutex<State>>,
+    observer: super::warm_observer::Observer,
+) -> Result<()> {
+    shared
+        .lock()
+        .map_err(|_| anyhow::anyhow!("warm observer lifecycle unavailable"))?
+        .warm_observer = Some(observer);
+    Ok(())
+}
+#[cfg(all(test, feature = "test-support"))]
+struct WarmCapture {
+    observer: super::warm_observer::Observer,
+    stage: Stage,
+    expected: Configuration,
+    manifest: Sha256Digest,
+    serial: u64,
+    shared: Arc<Mutex<State>>,
+    activation_path: super::warm_observer::ActivationPath,
+    native_profile: Option<Sha256Digest>,
+    native_revision: Option<u64>,
+    cancel: CancellationToken,
+    captured_configure_revision: u64,
+    _guard: super::warm_observer::Guard,
+}
+#[cfg(all(test, feature = "test-support"))]
+impl WarmCapture {
+    fn capture(context: &WarmContext<'_>, manifest: Sha256Digest) -> Option<Self> {
+        let state = context.shared.lock().ok()?;
+        let observer = state.warm_observer.clone()?;
+        let captured_configure_revision = state.accepted_configure_revision;
+        drop(state);
+        let guard = observer.begin()?;
+        Some(Self {
+            observer,
+            stage: context.stage,
+            expected: context.expected.clone(),
+            manifest,
+            serial: context.serial,
+            shared: context.shared.clone(),
+            cancel: context.cancel.clone(),
+            activation_path: super::warm_observer::ActivationPath::NotAdmitted,
+            native_profile: None,
+            native_revision: None,
+            captured_configure_revision,
+            _guard: guard,
+        })
+    }
+    fn finish(mut self, result: &Result<()>) {
+        let Ok(state) = self.shared.try_lock() else {
+            return;
+        };
+        let (current, accepted, phase) =
+            (state.serial, state.accepted_configure_revision, state.phase);
+        drop(state);
+        let observed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok());
+        let Some(observed) = observed else { return };
+        self.observer.emit(super::warm_observer::Record {
+            schema: "airk.private.arbiter-warm-completion/1".into(),
+            observer_id: self.observer.id(),
+            sequence: 0,
+            observed_unix_ms: observed,
+            stage: self.stage,
+            profile_manifest: self.manifest,
+            expected_configuration: self.expected,
+            activation_path: self.activation_path,
+            lifecycle_serial: self.serial,
+            current_lifecycle_serial: current,
+            accepted_configure_revision: accepted,
+            phase,
+            captured_configure_revision: self.captured_configure_revision,
+            active_profile: self.native_profile,
+            native_configuration_revision: self.native_revision,
+            canceled: self.cancel.is_cancelled(),
+            operation_succeeded: result.is_ok(),
+            outcome: super::warm_observer::Outcome::Failed,
+            error: result
+                .as_ref()
+                .err()
+                .map(|error| format!("{error:#}").chars().take(1024).collect()),
+        });
+        self._guard.complete();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initialization_status_formatter_retains_actual_native_observation_and_unknown_drain_phase()
+    -> Result<()> {
+        let profile = Sha256Digest::from_bytes([34; 32]);
+        // This exercises metadata projection, not a model/runtime qualification.
+        let observed = airk_inference::inference_engine::pool::arbiter::Observation {
+            configuration_revision: Some(9),
+            active_profile: Some(profile),
+            warming_profile: None,
+            queued: 3,
+            running: 1,
+        };
+        let status = unavailable_stage_status(
+            Stage::Focus,
+            Availability::Draining,
+            &"λ".repeat(1024),
+            Some(observed),
+        );
+        assert_eq!(status.active_profile, Some(profile));
+        assert_eq!((status.queued, status.running), (3, 1));
+        assert_eq!(status.availability, Availability::Draining);
+        assert!(status.selected_profile.is_none());
+        assert_eq!(status.reason.len(), 1024);
+        status.validate(Stage::Focus, &StageConfiguration::default())?;
+        let no_handle = unavailable_stage_status(
+            Stage::Context,
+            Availability::Requested,
+            "No native handle has been created",
+            None,
+        );
+        assert_eq!((no_handle.queued, no_handle.running), (0, 0));
+        assert!(no_handle.active_profile.is_none());
+        assert_eq!(no_handle.availability, Availability::Failed);
+        Ok(())
+    }
+    #[test]
+    fn known_acquisition_cancellation_settles_but_unknown_native_drain_is_retained() -> Result<()> {
+        for actual_drain in [false, true] {
+            let shared = Arc::new(Mutex::new(State::default()));
+            let (serial, original_cancel) =
+                start(&shared, Sha256Digest::from_bytes([33; 32]), None)?;
+            phase(
+                &shared,
+                serial,
+                if actual_drain {
+                    Availability::Draining
+                } else {
+                    Availability::Downloading
+                },
+                "original owned operation",
+            )?;
+            cancel_current(&mut shared.lock().unwrap());
+            assert!(original_cancel.is_cancelled());
+            assert_eq!(shared.lock().unwrap().serial, serial);
+            complete(
+                &shared,
+                serial,
+                &Err(anyhow::anyhow!("original operation returned")),
+            );
+            let settled = shared.lock().unwrap();
+            assert!(!settled.busy);
+            assert_eq!(
+                settled.phase,
+                if actual_drain {
+                    Availability::Draining
+                } else {
+                    Availability::Requested
+                }
+            );
+        }
+        Ok(())
+    }
+    #[test]
+    fn recovery_retains_removal_intent_and_never_promotes_incomplete_acquisition_to_download()
+    -> Result<()> {
+        let profile = Sha256Digest::from_bytes([31; 32]);
+        assert_eq!(
+            recovery_removal(&Default::default())?,
+            None,
+            "no incomplete operation permits only the separately verified cached path"
+        );
+        assert_eq!(
+            recovery_removal(&std::collections::BTreeMap::from([(
+                profile,
+                Phase::Removing
+            )]))?,
+            Some(profile)
+        );
+        for phase in [
+            Phase::Downloading,
+            Phase::Failed,
+            Phase::Canceled,
+            Phase::Removed,
+        ] {
+            assert!(
+                recovery_removal(&std::collections::BTreeMap::from([(profile, phase)])).is_err(),
+                "incomplete/terminal acquisition cannot acquire network authority: {phase:?}"
+            );
+        }
+        assert!(
+            recovery_removal(&std::collections::BTreeMap::from([
+                (profile, Phase::Removing),
+                (Sha256Digest::from_bytes([32; 32]), Phase::Removing)
+            ]))
+            .is_err()
+        );
+        let mut cached = Configuration::disabled(
+            Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        );
+        cached.focus.enabled = true;
+        cached.focus.selected_profile = Some(profile);
+        cached.focus.indexes = vec![Enrollment {
+            index_id: airk_core::index_catalog::IndexId::from_identity(
+                airk_core::identity::Incarnation::from_bytes([3; 16]),
+            ),
+            tasks: std::collections::BTreeSet::from([Task::FocusRank]),
+        }];
+        assert!(cached_intent_eligible(
+            &cached,
+            Stage::Focus,
+            Some(Phase::Ready)
+        ));
+        assert!(!cached_intent_eligible(
+            &cached,
+            Stage::Focus,
+            Some(Phase::Failed)
+        ));
+        assert!(!cached_intent_eligible(
+            &cached,
+            Stage::Context,
+            Some(Phase::Ready)
+        ));
+        Ok(())
+    }
     #[test]
     fn explicit_lifecycle_preserves_original_operation_and_refuses_stale_completion() -> Result<()>
     {
@@ -1181,6 +1773,185 @@ mod tests {
         assert!(!state.lock().unwrap().busy);
         Ok(())
     }
+
+    #[test]
+    fn identical_configure_intent_blocks_old_rollback_before_pending_preparation() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = Arc::new(airk_store::service::arbiter::ConfigurationStore::open(
+            Arc::new(airk_store::service::ServiceLease::acquire(root.path())?),
+            Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        )?);
+        let prior = store.load()?;
+        let state = Arc::new(Mutex::new(State::default()));
+        let mut candidate = prior.clone();
+        candidate.revision = 2;
+        candidate.context.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
+        assert!(
+            commit_configure(
+                &mut state.lock().unwrap(),
+                &store,
+                1,
+                &candidate,
+                || anyhow::bail!("effect revoked")
+            )
+            .is_err()
+        );
+        assert_eq!(store.load()?, prior);
+        assert_eq!(state.lock().unwrap().accepted_configure_revision, 0);
+        assert!(!state.lock().unwrap().cancel.is_cancelled());
+        let selected =
+            commit_configure(&mut state.lock().unwrap(), &store, 1, &candidate, || Ok(()))?;
+        let (serial, original_cancel) = start(&state, Sha256Digest::from_bytes([3; 32]), None)?;
+        let (allow_failure, barrier) = std::sync::mpsc::channel();
+        let old = {
+            let state = state.clone();
+            let store = store.clone();
+            let selected = selected.clone();
+            let prior = prior.clone();
+            std::thread::spawn(move || -> Result<Option<Configuration>> {
+                barrier.recv_timeout(Duration::from_secs(5))?;
+                rollback_current_intent(&state, serial, &store, &selected, &prior, Stage::Context)
+            })
+        };
+        let mut identical = selected.clone();
+        identical.revision = 3;
+        let accepted =
+            commit_configure(&mut state.lock().unwrap(), &store, 2, &identical, || Ok(()))?;
+        assert!(original_cancel.is_cancelled());
+        // Exact vulnerable interval: Configure CAS/cancel has completed but no
+        // pending cached intent exists yet. No sleeps, worker or NN required.
+        assert!(state.lock().unwrap().pending.is_none());
+        allow_failure.send(())?;
+        assert_eq!(
+            old.join()
+                .map_err(|_| anyhow::anyhow!("rollback thread panicked"))??,
+            None
+        );
+        assert_eq!(store.load()?, accepted);
+        complete(
+            &state,
+            serial,
+            &Err(anyhow::anyhow!("original warm canceled")),
+        );
+        let (next, _) = start(&state, Sha256Digest::from_bytes([3; 32]), None)?;
+        let mut other = accepted.clone();
+        other.revision = 4;
+        other.focus.selected_profile = Some(Sha256Digest::from_bytes([4; 32]));
+        let other = store.apply(3, &other)?;
+        let restored =
+            rollback_current_intent(&state, next, &store, &accepted, &prior, Stage::Context)?
+                .context("unrelated-stage advance blocked ordinary rollback")?;
+        assert_eq!(restored.revision, 5);
+        assert_eq!(restored.context, prior.context);
+        assert_eq!(restored.focus, other.focus);
+        let old_profile = state.lock().unwrap().profile;
+        let mut newer = restored.clone();
+        newer.revision = 6;
+        let newer = commit_configure(&mut state.lock().unwrap(), &store, 5, &newer, || Ok(()))?;
+        // A fresh identical Configure between rollback CAS and token renewal
+        // must not have its cancellation replaced by the old restoration.
+        let mut guard = state.lock().unwrap();
+        assert!(guard.cancel.is_cancelled());
+        assert!(
+            restore_cancellation(
+                &mut guard,
+                next,
+                restored.revision,
+                Sha256Digest::from_bytes([9; 32])
+            )
+            .is_err()
+        );
+        assert!(guard.cancel.is_cancelled());
+        assert_eq!(guard.profile, old_profile);
+        drop(guard);
+        assert_eq!(store.load()?, newer);
+        Ok(())
+    }
+
+    #[test]
+    fn pre_spawn_remove_cas_failure_settles_and_admits_one_fresh_cached_intent() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = Arc::new(airk_store::service::arbiter::ConfigurationStore::open(
+            Arc::new(airk_store::service::ServiceLease::acquire(root.path())?),
+            Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        )?);
+        let state = Arc::new(Mutex::new(State::default()));
+        let mut selected = store.load()?;
+        selected.revision = 2;
+        selected.context.enabled = true;
+        selected.context.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
+        selected.context.indexes = vec![Enrollment {
+            index_id: airk_core::index_catalog::IndexId::from_identity(
+                airk_core::identity::Incarnation::from_bytes([7; 16]),
+            ),
+            tasks: std::collections::BTreeSet::from([Task::ContextAction]),
+        }];
+        let selected =
+            commit_configure(&mut state.lock().unwrap(), &store, 1, &selected, || Ok(()))?;
+        let (serial, canceled) = start(&state, Sha256Digest::from_bytes([3; 32]), None)?;
+        let mut removal = selected.clone();
+        removal.revision = 3;
+        removal.context.enabled = false;
+        let (release, waiting) = std::sync::mpsc::channel();
+        let old = {
+            let store = store.clone();
+            let state = state.clone();
+            std::thread::spawn(
+                move || -> Result<Option<(PreparedLaunch, u64, CancellationToken)>> {
+                    waiting.recv_timeout(Duration::from_secs(5))?;
+                    assert!(
+                        store.apply(2, &removal).is_err(),
+                        "new Configure must win original removal CAS"
+                    );
+                    // Exact settlement seam used by the synchronous Remove CAS error,
+                    // where no asynchronous native removal owner was ever spawned.
+                    settle_and_take_pending(
+                        &state,
+                        serial,
+                        &Err(anyhow::anyhow!("original removal CAS failed")),
+                    )
+                },
+            )
+        };
+        let mut next = selected;
+        next.revision = 3;
+        let accepted = commit_configure(&mut state.lock().unwrap(), &store, 2, &next, || Ok(()))?;
+        assert!(canceled.is_cancelled());
+        assert!(cached_intent_eligible(
+            &accepted,
+            Stage::Context,
+            Some(Phase::Ready)
+        ));
+        let mut prepared = pending_fixture(3, 3)?;
+        prepared.expected = accepted.clone();
+        state.lock().unwrap().pending = Some(prepared);
+        release.send(())?;
+        let (prepared, next_serial, next_cancel) = old
+            .join()
+            .map_err(|_| anyhow::anyhow!("removal thread panicked"))??
+            .context("new cached intent stranded after failed removal")?;
+        assert_eq!(prepared.expected, accepted);
+        assert_ne!(next_serial, serial);
+        assert!(!prepared.download);
+        assert!(!next_cancel.is_cancelled());
+        assert!(state.lock().unwrap().pending.is_none());
+        assert!(state.lock().unwrap().busy);
+        assert!(
+            settle_and_take_pending(
+                &state,
+                serial,
+                &Err(anyhow::anyhow!("stale removal completion"))
+            )?
+            .is_none()
+        );
+        assert_eq!(store.load()?, accepted);
+        complete(&state, next_serial, &Ok(()));
+        assert!(!state.lock().unwrap().busy);
+        Ok(())
+    }
+
     #[test]
     fn failed_switch_rollback_uses_actual_configuration_cas_and_preserves_later_choices()
     -> Result<()> {
@@ -1194,18 +1965,101 @@ mod tests {
         let prior = store.load()?;
         let mut selected = prior.clone();
         selected.revision = 2;
-        selected.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
+        selected.stage_mut(Stage::Context).selected_profile =
+            Some(Sha256Digest::from_bytes([3; 32]));
         let selected = store.apply(1, &selected)?;
-        let restored = rollback(&store, &selected, &prior)?.context("rollback missing")?;
+        let restored =
+            rollback(&store, &selected, &prior, Stage::Context)?.context("rollback missing")?;
         assert_eq!(restored.revision, 3);
-        assert_eq!(restored.selected_profile, None);
-        assert!(!restored.enabled);
+        assert_eq!(restored.stage(Stage::Context).selected_profile, None);
+        assert!(!restored.stage(Stage::Context).enabled);
         let mut later = restored.clone();
         later.revision = 4;
-        later.selected_profile = Some(Sha256Digest::from_bytes([4; 32]));
+        later.stage_mut(Stage::Context).selected_profile = Some(Sha256Digest::from_bytes([4; 32]));
         let later = store.apply(3, &later)?;
-        assert_eq!(rollback(&store, &selected, &prior)?, None);
+        assert_eq!(rollback(&store, &selected, &prior, Stage::Context)?, None);
         assert_eq!(store.load()?, later);
+        Ok(())
+    }
+    #[test]
+    fn other_stage_changes_preserve_management_but_rollback_only_its_own_stage() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = airk_store::service::arbiter::ConfigurationStore::open(
+            Arc::new(airk_store::service::ServiceLease::acquire(root.path())?),
+            Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        )?;
+        let prior = store.load()?;
+        let mut selected = prior.clone();
+        selected.revision = 2;
+        selected.context.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
+        let selected = store.apply(1, &selected)?;
+        let mut changed = selected.clone();
+        changed.revision = 3;
+        changed.focus.selected_profile = Some(Sha256Digest::from_bytes([4; 32]));
+        let changed = store.apply(2, &changed)?;
+        let cancel = CancellationToken::new();
+        current(&store, &selected, Stage::Context, &cancel)?;
+        assert!(current(&store, &selected, Stage::Focus, &cancel).is_err());
+        let restored = rollback(&store, &selected, &prior, Stage::Context)?
+            .context("own stage rollback absent")?;
+        assert_eq!(restored.revision, 4);
+        assert_eq!(restored.focus, changed.focus);
+        assert_eq!(restored.context, prior.context);
+        cancel.cancel();
+        assert!(current(&store, &restored, Stage::Context, &cancel).is_err());
+        Ok(())
+    }
+    #[test]
+    fn remove_snapshot_refreshes_after_other_stage_advance_without_changing_original_custody_revision()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = Arc::new(airk_store::service::arbiter::ConfigurationStore::open(
+            Arc::new(airk_store::service::ServiceLease::acquire(root.path())?),
+            Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        )?);
+        let mut expected = store.load()?;
+        expected.revision = 2;
+        expected.context.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
+        let expected = store.apply(1, &expected)?;
+        let (entered, admitted) = std::sync::mpsc::channel();
+        let (release, waiting) = std::sync::mpsc::channel();
+        let removing = {
+            let store = store.clone();
+            let expected = expected.clone();
+            std::thread::spawn(move || -> Result<(Configuration, u64)> {
+                entered.send(())?;
+                waiting.recv_timeout(Duration::from_secs(5))?;
+                // This is the exact native-configuration seam used after the
+                // removal owner's asynchronous existing-handle wait.
+                let latest = management_snapshot(
+                    &store,
+                    &expected,
+                    Stage::Context,
+                    &CancellationToken::new(),
+                )?;
+                Ok((latest, expected.revision))
+            })
+        };
+        admitted.recv_timeout(Duration::from_secs(5))?;
+        let mut changed = store.load()?;
+        changed.revision = 3;
+        changed.focus.selected_profile = Some(Sha256Digest::from_bytes([4; 32]));
+        let changed = store.apply(2, &changed)?;
+        release.send(())?;
+        let (native_snapshot, cleanup_revision) = removing.join().unwrap()?;
+        assert_eq!(native_snapshot, changed);
+        assert_eq!(native_snapshot.context, expected.context);
+        assert_eq!(cleanup_revision, 2);
+        let mut own_change = changed;
+        own_change.revision = 4;
+        own_change.context.selected_profile = None;
+        store.apply(3, &own_change)?;
+        assert!(
+            management_snapshot(&store, &expected, Stage::Context, &CancellationToken::new())
+                .is_err()
+        );
         Ok(())
     }
     #[test]
@@ -1232,24 +2086,31 @@ mod tests {
         ))?;
         profile.manifest = Sha256Digest::from_bytes([byte; 32]);
         profile.qualification = None;
+        profile.stage = Some(Stage::Context);
+        profile.model = ModelChoice::ContextQwenCompact;
+        profile.tasks = std::collections::BTreeSet::from([Task::ContextAction]);
+        let policy = airk_retrieval::arbiter::context_action::policy_digest()?;
+        profile.task_policies = std::collections::BTreeMap::from([(Task::ContextAction, policy)]);
+        profile.abi = super::super::failure_tests::structural_context_abi();
         let execution = ExecutionProfile::for_qualification(profile)?;
-        let expected = Configuration {
-            schema: CONFIGURATION_SCHEMA.into(),
-            installation: Sha256Digest::from_bytes([1; 32]),
-            catalog: airk_core::identity::Incarnation::from_bytes([2; 16]),
-            revision,
-            enabled: true,
-            selected_profile: Some(execution.description().manifest),
-            indexes: vec![],
-        };
+        let mut expected = Configuration::disabled(
+            Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        );
+        expected.revision = revision;
+        expected.context.enabled = true;
+        expected.context.selected_profile = Some(execution.description().manifest);
         Ok(PreparedLaunch {
+            stage: Stage::Context,
             manifest: execution.description().manifest,
             expected,
             execution,
             source: Box::new(Unread),
             download: false,
+            import_directory: None,
             previous: None,
             restoration: None,
+            continuation: None,
             resident_fallback: None,
             admission: None,
         })
@@ -1285,24 +2146,32 @@ mod tests {
         assert!(!state.lock().unwrap().busy);
         let mut configuration = latest.expected;
         assert!(
-            !cached_intent_eligible(&configuration, Some(Phase::Ready)),
+            !cached_intent_eligible(&configuration, Stage::Context, Some(Phase::Ready)),
             "unenrolled selection must not warm"
         );
-        configuration.indexes = vec![Enrollment {
+        configuration.stage_mut(Stage::Context).indexes = vec![Enrollment {
             index_id: airk_core::index_catalog::IndexId::from_identity(
                 airk_core::identity::Incarnation::from_bytes([7; 16]),
             ),
             tasks: std::collections::BTreeSet::from([Task::ContextNextRead]),
         }];
-        assert!(cached_intent_eligible(&configuration, Some(Phase::Ready)));
+        assert!(cached_intent_eligible(
+            &configuration,
+            Stage::Context,
+            Some(Phase::Ready)
+        ));
         assert!(
-            !cached_intent_eligible(&configuration, None),
+            !cached_intent_eligible(&configuration, Stage::Context, None),
             "missing cache never queues a download"
         );
-        assert!(!cached_intent_eligible(&configuration, Some(Phase::Failed)));
-        configuration.enabled = false;
+        assert!(!cached_intent_eligible(
+            &configuration,
+            Stage::Context,
+            Some(Phase::Failed)
+        ));
+        configuration.stage_mut(Stage::Context).enabled = false;
         assert!(
-            !cached_intent_eligible(&configuration, Some(Phase::Ready)),
+            !cached_intent_eligible(&configuration, Stage::Context, Some(Phase::Ready)),
             "off invalidates cached activation"
         );
         let (draining, _) = start(&state, Sha256Digest::from_bytes([5; 32]), None)?;
@@ -1351,14 +2220,32 @@ mod tests {
                     Ok(())
                 });
                 let cancel = CancellationToken::new();
-                admitted_current(&configuration, &expected, &cancel, Some(&admission))?;
+                admitted_current(
+                    &configuration,
+                    &expected,
+                    Stage::Context,
+                    &cancel,
+                    Some(&admission),
+                )?;
                 entered
                     .send(())
                     .map_err(|_| anyhow::anyhow!("barrier observer closed"))?;
                 wait.await?;
-                admitted_current(&configuration, &expected, &cancel, Some(&admission))?;
+                admitted_current(
+                    &configuration,
+                    &expected,
+                    Stage::Context,
+                    &cancel,
+                    Some(&admission),
+                )?;
                 warm.fetch_add(1, Ordering::AcqRel);
-                admitted_current(&configuration, &expected, &cancel, Some(&admission))?;
+                admitted_current(
+                    &configuration,
+                    &expected,
+                    Stage::Context,
+                    &cancel,
+                    Some(&admission),
+                )?;
                 ready.fetch_add(1, Ordering::AcqRel);
                 Ok::<(), anyhow::Error>(())
             })

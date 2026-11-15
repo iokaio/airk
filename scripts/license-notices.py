@@ -10,15 +10,12 @@ from urllib.parse import quote
 
 
 MODEL_COMPANIONS = {
-    'minilm-v2-LICENSE.txt': ('LICENSE', '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd'),
-    'minilm-v2-TRAINING-NOTICES.md': ('TRAINING-NOTICES.md', '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be'),
-    'minilm-v2-provenance.json': ('training-provenance.json', '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81'),
-    'CC-BY-4.0.txt': ('CC-BY-4.0.txt', '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411'),
+    'minilm-LICENSE.txt': ('LICENSE', 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'),
 }
 
 
 def stage_model_notices(root, output):
-    """Retain complete trained-model rights text without any private inputs."""
+    """Retain complete original-model rights text without any private inputs."""
     catalog_path = root / 'crates/airk-retrieval/src/model_catalog.json'
     catalog_bytes = catalog_path.read_bytes()
     catalog = json.loads(catalog_bytes)
@@ -26,10 +23,10 @@ def stage_model_notices(root, output):
     for source_name, (destination, expected) in MODEL_COMPANIONS.items():
         source = root / 'third_party/models' / source_name
         if source.is_symlink() or not source.is_file():
-            raise ValueError('Missing regular trained-model notice: ' + source_name)
+            raise ValueError('Missing regular model notice: ' + source_name)
         content = source.read_bytes()
         if hashlib.sha256(content).hexdigest() != expected:
-            raise ValueError('Trained-model notice digest mismatch: ' + source_name)
+            raise ValueError('Model notice digest mismatch: ' + source_name)
         verified[destination] = content
     license_hash = hashlib.sha256(verified['LICENSE']).hexdigest()
     if not catalog['profiles'] or any(profile['manifest']['license_sha256'] != license_hash

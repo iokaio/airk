@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 
 pub const ALLOWANCE_SCHEMA: &str = "airk.context-partition-allowance/1";
 pub const SUMMARY_SCHEMA: &str = "airk.combined-context/1";
+pub const MAX_DELIVERY_BINDINGS: usize = 2 * MAX_SELECTION;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,11 +65,16 @@ pub fn known_budget_failure(packet: &crate::arbiter::context_action::ContextResp
     use crate::arbiter::context_action::{
         AssessmentResult, PartitionCoverage, PartitionTermination,
     };
-    packet.stop==PartitionTermination::Budget
+    let focus_violation = crate::arbiter::focus::observed_focus_work(
+        &packet.records,
+        &crate::arbiter::focus::validation_budget(),
+    )
+    .is_ok_and(|focus| focus.failed_token_overrun && !focus.work_unknown);
+    packet.stop == PartitionTermination::Budget
         && matches!(packet.assessment.coverage,PartitionCoverage::Unassessed {..})
-        && packet.assessment_history.last().is_some_and(|event|
+        && (focus_violation || packet.assessment_history.last().is_some_and(|event|
             matches!(&event.result,AssessmentResult::Unavailable {advice:Some(advice),work_unknown:false,..}
-                if advice.observed_input_tokens.is_some()))
+                if advice.observed_input_tokens.is_some())))
 }
 fn overflow() -> anyhow::Error {
     anyhow::anyhow!("combined context accounting overflow")
@@ -87,6 +93,21 @@ pub struct PartitionAllowance {
     pub assessment_ordinals: Vec<u8>,
 }
 impl PartitionAllowance {
+    /// Exact ordinary singleton Focus purpose. This is inert applicability,
+    /// not proof of the actual Host selection, native grant or one-use charge.
+    pub fn is_ordinary_focus(&self) -> bool {
+        self.schema == ALLOWANCE_SCHEMA
+            && self.parent_budget.validate().is_ok()
+            && self.assessment_ordinals.is_empty()
+            && self.parent_budget.calls == 1
+            && self.parent_budget.rounds == 1
+            && self.parent_budget.fanout == 1
+            && self.resources.calls == 1
+            && (1..=2048).contains(&self.resources.input_tokens)
+            && (1..=64).contains(&self.resources.candidates)
+            && (1024..=65_536).contains(&self.resources.bytes)
+            && self.resources.fits(&Resources::budget(&self.parent_budget))
+    }
     pub fn validate(&self) -> Result<()> {
         self.parent_budget.validate()?;
         ensure!(
@@ -114,7 +135,8 @@ impl PartitionAllowance {
             "invalid global assessment ordinals"
         );
         ensure!(
-            self.assessment_ordinals.is_empty() == (self.resources.input_tokens == 0),
+            self.is_ordinary_focus()
+                || self.assessment_ordinals.is_empty() == (self.resources.input_tokens == 0),
             "assessment allowance and token allocation disagree"
         );
         Ok(())
@@ -190,6 +212,8 @@ pub enum Termination {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextDeliveryBinding {
+    #[serde(default, skip_serializing_if = "crate::arbiter::Stage::is_context")]
+    pub stage: crate::arbiter::Stage,
     pub scope: crate::arbiter::ScopeBinding,
     #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
     pub profile: Option<Sha256Digest>,
@@ -201,8 +225,12 @@ impl ContextDeliveryBinding {
         use crate::arbiter::context_action::AssessmentResult;
         let actual = packet.assessment_history.iter().any(has_native_receipt);
         if !actual {
+            let focus = crate::arbiter::focus::observed_focus_work(
+                &packet.records,
+                &crate::arbiter::focus::validation_budget(),
+            )?;
             ensure!(
-                packet.work.input_tokens == 0,
+                packet.work.input_tokens == 0 || focus.has_native_receipt,
                 "model work has no native receipt"
             );
             return Ok(None);
@@ -248,6 +276,7 @@ impl ContextDeliveryBinding {
                 "absent profile is not a known no-model observation");
         }
         Ok(Some(Self {
+            stage: crate::arbiter::Stage::Context,
             scope: packet.assessment.scope.clone(),
             profile,
         }))
@@ -415,11 +444,15 @@ impl CombinedContextSummary {
             self.termination != Termination::Complete || complete,
             "incomplete partition roster cannot claim completion"
         );
+        ensure!(
+            self.delivery_bindings.len() <= MAX_DELIVERY_BINDINGS,
+            "context stage delivery roster limit"
+        );
         let mut bound = BTreeSet::new();
         for binding in &self.delivery_bindings {
             ensure!(
                 expected_members.contains(&binding.scope.index_id)
-                    && bound.insert(binding.scope.index_id)
+                    && bound.insert((binding.stage, binding.scope.index_id))
                     && binding.scope.configuration_revision > 0,
                 "invalid context delivery policy binding"
             );
@@ -449,7 +482,22 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
         let has_packets = rows.iter().any(|row| packet_body(&row["result"]).is_some());
         let Some(raw) = body.get("context").filter(|value| !value.is_null()) else {
             ensure!(!has_packets, "combined context summary missing");
-            return Ok(Vec::new());
+            let mut actual = Vec::new();
+            for id in &ids {
+                let full =
+                    crate::combined_reads::shared_values::materialize_combined_member_result(
+                        body, *id,
+                    )?;
+                if let Some(binding) = canonical_search_focus_binding(&full)? {
+                    ensure!(
+                        binding.scope.index_id == *id,
+                        "foreign combined Focus source index"
+                    );
+                    actual.push(binding);
+                }
+            }
+            validate_stage_roster(&actual)?;
+            return Ok(actual);
         };
         let summary: CombinedContextSummary = serde_json::from_value(raw.clone())?;
         summary.validate(&ids)?;
@@ -505,6 +553,11 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
                         ..
                     } => ensure!(
                         Resources::from_packet(&typed)? == *used
+                            && !crate::arbiter::focus::observed_focus_work(
+                                &typed.records,
+                                &budget
+                            )?
+                            .work_unknown
                             && !typed.assessment_history.iter().any(|event| matches!(
                                 &event.result,
                                 crate::arbiter::context_action::AssessmentResult::Unavailable {
@@ -517,9 +570,7 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
                     ),
                     _ => {}
                 }
-                if let Some(binding) = ContextDeliveryBinding::from_packet(&typed)? {
-                    actual.push(binding);
-                }
+                actual.extend(packet_delivery_bindings(&typed)?);
             } else {
                 ensure!(
                     !matches!(
@@ -549,9 +600,10 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
                 deadline_ms: 30000,
             },
         )?;
-        return Ok(ContextDeliveryBinding::from_packet(&typed)?
-            .into_iter()
-            .collect());
+        return packet_delivery_bindings(&typed);
+    }
+    if let Some(binding) = canonical_search_focus_binding(body)? {
+        return Ok(vec![binding]);
     }
     if let Some(content) = body
         .get("content")
@@ -561,17 +613,133 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
     {
         let parsed = serde_json::from_str::<Value>(text);
         if let Ok(parsed) = parsed
-            && matches!(
+            && (matches!(
                 parsed.get("schema").and_then(Value::as_str),
                 Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
                     | Some(crate::combined_reads::COMBINED_READ_SCHEMA)
-            )
+            ) || (parsed.get("focus").is_some()
+                && parsed.get("hits").is_some()
+                && parsed.get("generation").is_some()
+                && parsed.get("collection").is_some()))
         {
             return context_delivery_bindings(&parsed);
         }
     }
     Ok(Vec::new())
 }
+/// Exact stage/index roster, preserving native encounter order and retaining no
+/// duplicate observations with conflicting source/config/profile identities.
+fn validate_stage_roster(bindings: &[ContextDeliveryBinding]) -> Result<()> {
+    ensure!(
+        bindings.len() <= MAX_DELIVERY_BINDINGS,
+        "native stage delivery roster limit"
+    );
+    let mut keys = BTreeSet::new();
+    for binding in bindings {
+        ensure!(
+            binding.scope.configuration_revision > 0
+                && keys.insert((binding.stage, binding.scope.index_id)),
+            "duplicate or unobserved native stage delivery binding"
+        );
+    }
+    Ok(())
+}
+fn focus_receipt_binding(
+    receipt: &crate::arbiter::FocusApplicationReceipt,
+) -> Result<Option<ContextDeliveryBinding>> {
+    receipt.validate(&crate::arbiter::focus::validation_budget())?;
+    let actual = receipt.reserved_input_tokens > 0
+        || receipt.observed_input_tokens.is_none()
+        || receipt.work.input_tokens > 0
+        || !receipt.scores.is_empty();
+    if !actual {
+        return Ok(None);
+    }
+    let identity = receipt
+        .identity
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("actual Focus work identity missing"))?;
+    ensure!(
+        receipt.scope.configuration_revision > 0,
+        "actual Focus work configuration missing"
+    );
+    Ok(Some(ContextDeliveryBinding {
+        stage: crate::arbiter::Stage::Focus,
+        scope: receipt.scope.clone(),
+        profile: Some(identity.profile),
+    }))
+}
+fn canonical_search_focus_binding(
+    value: &serde_json::Value,
+) -> Result<Option<ContextDeliveryBinding>> {
+    let body = value
+        .get("structuredContent")
+        .filter(|body| body.is_object())
+        .unwrap_or(value);
+    if body.get("focus").is_none_or(serde_json::Value::is_null)
+        || !body.get("hits").is_some_and(serde_json::Value::is_array)
+        || !body
+            .get("generation")
+            .is_some_and(serde_json::Value::is_u64)
+        || !body
+            .get("collection")
+            .is_some_and(serde_json::Value::is_string)
+        || !body
+            .get("truncated")
+            .is_some_and(serde_json::Value::is_boolean)
+    {
+        return Ok(None);
+    }
+    let response: crate::SearchResponse = serde_json::from_value(body.clone())?;
+    let Some(observation) = response.focus.clone() else {
+        return Ok(None);
+    };
+    observation.validate(&crate::arbiter::focus::validation_budget())?;
+    let Some(receipt) = observation.receipt() else {
+        return Ok(None);
+    };
+    receipt.validate_search_response(&response, &crate::arbiter::focus::validation_budget())?;
+    ensure!(
+        response.publication.as_ref() == Some(&receipt.scope.publication)
+            && response.collection == receipt.scope.publication.collection
+            && response.generation == receipt.scope.publication.generation
+            && response.hits.len() == receipt.candidate_count,
+        "Focus source result publication/count differs"
+    );
+    focus_receipt_binding(receipt)
+}
+/// One actual partition may carry both stage bindings. Only canonical Search
+/// records provide Focus facts; arbitrary nested payload fields are ignored.
+pub fn packet_delivery_bindings(
+    packet: &crate::arbiter::context_action::ContextResponseV2,
+) -> Result<Vec<ContextDeliveryBinding>> {
+    let mut bindings = Vec::new();
+    for record in &packet.records {
+        let Some(crate::arbiter::FocusObservation::Receipt { receipt }) =
+            crate::arbiter::focus::search_record_observation(record)?
+        else {
+            continue;
+        };
+        if let Some(binding) = focus_receipt_binding(&receipt)? {
+            if let Some(prior) = bindings.iter().find(|prior: &&ContextDeliveryBinding| {
+                prior.stage == binding.stage && prior.scope.index_id == binding.scope.index_id
+            }) {
+                ensure!(
+                    prior == &binding,
+                    "Focus policy/profile changed within one partition"
+                );
+            } else {
+                bindings.push(binding);
+            }
+        }
+    }
+    if let Some(context) = ContextDeliveryBinding::from_packet(packet)? {
+        bindings.push(context);
+    }
+    validate_stage_roster(&bindings)?;
+    Ok(bindings)
+}
+
 fn packet_charged_ordinals(packet: &crate::arbiter::context_action::ContextResponseV2) -> Vec<u8> {
     use crate::arbiter::context_action::AssessmentResult;
     packet

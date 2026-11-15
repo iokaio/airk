@@ -9,6 +9,32 @@ use serde_json::{Map, Value};
 mod identity_tests;
 use std::sync::Mutex;
 
+/// Bound optional receipt bytes in the actual native SDK representation before
+/// scoring. The existing result/envelope ceiling is not widened for Focus.
+pub(crate) fn focus_reply_headroom(
+    response: &airk_core::SearchResponse,
+    scope: Option<&airk_core::scoped_reads::ScopeObservation>,
+    _include_status: bool,
+) -> anyhow::Result<usize> {
+    // The complete status projection is already present in this canonical
+    // response. Session rendering only deduplicates it, so its full size is the
+    // conservative bound for either include_status setting.
+    let mut body = serde_json::to_value(response)?;
+    if let Some(scope) = scope {
+        body["scope_observation"] = serde_json::to_value(scope)?;
+    }
+    let result = rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+        serde_json::to_string(&body)?,
+    )]);
+    let bytes = serde_json::to_vec(&result)?.len();
+    // The same native scope renderer reserves 2048 around its known result.
+    // JSON string embedding can expand receipt bytes at most twofold.
+    Ok(airk_core::MAX_RESPONSE_BYTES
+        .saturating_sub(bytes.saturating_add(2048))
+        .saturating_div(2)
+        .saturating_sub(16))
+}
+
 pub(crate) const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; concepts: airk_search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
 pub fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
@@ -559,8 +585,16 @@ pub(crate) fn terse_envelope(object: &mut Map<String, Value>) {
     if diagnostic_execution(object) || object.contains_key("adapters") {
         return;
     }
-    object.remove("generation");
-    publication_once(object);
+    // Native delivery facts retain their canonical revision identity through
+    // the outer write fence. An invalid fact must also survive for that owner
+    // to refuse it, rather than disappearing in a display transformation.
+    let retain_revision =
+        airk_core::combined_context::context_delivery_bindings(&Value::Object(object.clone()))
+            .map_or(true, |bindings| !bindings.is_empty());
+    if !retain_revision {
+        object.remove("generation");
+        publication_once(object);
+    }
     if let Some(indexing) = object.get_mut("indexing").and_then(Value::as_object_mut) {
         // The selected indexing level remains; its static explanation is in
         // capabilities/Full. Do not erase arbitrary failure or coverage fields.

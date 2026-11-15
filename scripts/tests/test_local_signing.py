@@ -42,18 +42,38 @@ class LocalSigning(unittest.TestCase):
         self.assertNotIn("AzureCliCredential", meta["ExcludeCredentials"])
 
     def test_the_client_lives_outside_the_repository_and_airk_roots(self):
-        with tempfile.TemporaryDirectory() as home, mock.patch.dict("os.environ", {"LOCALAPPDATA": home}):
+        # The qualification runner may place TEMP inside the real checkout.
+        # Model a sibling checkout/cache layout so this test reaches its own boundary.
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict("os.environ", {"LOCALAPPDATA": home}), \
+                mock.patch.object(LOCAL, "ROOT", Path(home) / "repository"):
             root = LOCAL.client_root()
             self.assertEqual(root.parent.name, "airk-artifact-signing-client")
             self.assertNotIn("AIRK", root.parts)
             self.assertNotIn(LOCAL.ROOT, root.parents)
 
     def test_a_package_with_the_wrong_digest_is_refused_before_extraction(self):
-        with tempfile.TemporaryDirectory() as home, mock.patch.dict("os.environ", {"LOCALAPPDATA": home}):
+        # The qualification runner may place TEMP inside the real checkout.
+        # Model a sibling checkout/cache layout so this test reaches its own boundary.
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict("os.environ", {"LOCALAPPDATA": home}), \
+                mock.patch.object(LOCAL, "ROOT", Path(home) / "repository"):
             fake = package({"bin/x64/Azure.CodeSigning.Dlib.dll": b"not the pinned client"})
             with self.assertRaisesRegex(RuntimeError, "digest differs"):
                 LOCAL.provision(download=lambda url: Response(fake), run=lambda *a, **k: "{}")
             self.assertFalse(LOCAL.client_root().exists())
+
+    def test_a_client_inside_the_repository_is_refused_before_download_or_extraction(self):
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict("os.environ", {"LOCALAPPDATA": str(Path(home) / "local")}), \
+                mock.patch.object(LOCAL, "ROOT", Path(home)), \
+                mock.patch.object(LOCAL, "extract") as extract:
+            download = mock.Mock(side_effect=AssertionError("repository cache must refuse before download"))
+            with self.assertRaisesRegex(RuntimeError, "signing client must live outside the repository"):
+                LOCAL.provision(download=download, run=lambda *a, **k: self.fail("must not inspect a client"))
+            download.assert_not_called()
+            extract.assert_not_called()
+            self.assertEqual(list(Path(home).iterdir()), [])
 
     def test_package_entries_cannot_escape_the_client_folder(self):
         with tempfile.TemporaryDirectory() as folder:

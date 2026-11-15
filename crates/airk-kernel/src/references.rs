@@ -470,6 +470,7 @@ impl Kernel {
         let mut position = decode(options.cursor.as_deref(), &binding, options.order)?;
         let first_page = options.cursor.is_none();
         let mut evidence = SearchResponse {
+            focus: None,
             execution: None,
             publication: Some(publication),
             semantic_readiness: if !read.selected_scope_restricts_paths() {

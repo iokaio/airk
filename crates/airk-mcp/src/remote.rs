@@ -837,7 +837,10 @@ async fn call_at_capacity(
         ),
         Err(_) => direct_observation_failure("direct_observation_unavailable"),
     };
-    if matches!(tool.as_str(), "answer" | "airk_answer") {
+    if matches!(
+        tool.as_str(),
+        "answer" | "airk_answer" | "search" | "airk_search"
+    ) {
         context.retain_delivery_for(&value)?;
     }
     let mut result = serde_json::from_value::<CallToolResult>(value).unwrap_or_else(|_| {

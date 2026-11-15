@@ -81,3 +81,42 @@ current canonical publication/hash source checks, and covers exact file-info
 narrowing and foreign Project/index refusal under W4, Catalog and Open. Open
 retains its actual empty Project attribution. Native qualification still needs
 the matched-pair real Workbench rerun after this source is built.
+
+## Ordinary singleton Focus capture
+
+After actual W4/A2 selection or Open-agent resolution and leasing, the Host
+captures an existing typed PartitionAllowance only for canonical singleton
+Search with no explicit combined subset controls. The actual selected-scope
+digest, sole immutable index and original native attempt bind the allocation;
+no public argument can supply them. Canonical singleton argument conversion and
+validation occur before optional allocation. Qualified, enabled and explicitly
+enrolled Focus readiness supplies its native profile limits. Missing or failed
+optional readiness leaves the complete ordinary read unallocated.
+
+Core owns `is_ordinary_focus`: one call/round/fanout, no Context assessment
+ordinals, at most 2048 tokens, 64 candidates and 65536 receipt-metadata bytes,
+intersected with original native frame capacity and exact qualified limits.
+Original Search max_bytes is text-only. Actual source/envelope packing further
+bounds optional metadata before scoring. Capturing preserves the original
+absolute attempt identity/expiry and shared cancellation; a narrower deadline
+never refreshes its parent. Existing partitions are never replaced. N greater
+than one and explicit-subset routes do not infer capacity from a local view.
+
+Search retains the same actual native source-selection delivery guard as
+Answer. Grant revocation, catalog mutation, cancellation or expiry can refuse
+outer delivery; no fallback result replaces a partially written native frame.
+The worker checks original attempt, canonical purpose, installed selection and
+immutable index before storage/backend admission. Private Focus callbacks are
+refused by metadata relays. Focus-only direct reads retain their own outer
+policy guard and are not skipped as combined Context children.
+
+The focused native controls are
+`test(service_runtime::tools_call::singleton_focus::tests::)` and
+`test(singleton_focus_actual_outer_write_)`, with worker admission selectors in
+the Host project-protocol contract. Actual model and transport qualification
+remain separate from these deterministic controls.
+
+
+The ignored selected vector configuration emitter serializes actual Core Vectors, InstallModel and VectorSelection drafts, plus the inspected CPU-selected MiniLM object plan/pipeline identity, before the private fixture starts. It reads no task data, runs no neural session, grants no readiness or qualification and emits only under a fresh native private artifact root. Actual service status and configured native inference must independently match that identity.
+
+The ignored selected synthetic fixture emitter creates fresh authored sources and validates Search, Reference, Read and Answer cases against their actual native MCP types; Resources serializes Core directly. Its separate source/index identities support included/excluded composition checks. It never reads CAL/confirmation data or grants readiness, authority, model fit or quality.

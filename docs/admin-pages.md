@@ -33,6 +33,25 @@ local user (Windows: the connection's owning process; Linux:
 `/proc/net/tcp`). **macOS has no such check yet, so the admin API answers
 `admin_peer_refused` there.**
 
+## Optional Arbiter stages
+
+The approved source design separates **Arbiter Focus** (independent
+Qwen3-Reranker-0.6B ranking) from **Arbiter Context — Compact** (Qwen3-1.7B) and
+**Arbiter Context — Large** (Qwen3-4B) evidence gathering. The new stage controls
+and profiles remain under implementation and qualification; inspect actual
+native support rather than inferring availability from a visible model name.
+
+Review configuration and consent per stage and immutable index. Selection is
+not active readiness: authenticated assets, supported tasks/platform/backend and
+current resource admission are separate requirements. Ordinary search, status
+and Help never approve downloads. Focus can run with Context off; turning both
+off preserves ordinary retrieval. Missing or unavailable stages report their
+reason and retain normal retrieval, including its existing completeness refusals.
+
+Use the [Arbiter operator guide](arbiter/user-guide.md) for model roles, measured
+hardware requirements, offline provisioning, drain/removal and original-request
+recovery. Actual CLI/schema definitions remain authoritative for control inputs.
+
 ## What works in this version
 
 Reads go through the same service handlers as `airkctl`: service health and

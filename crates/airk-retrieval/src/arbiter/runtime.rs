@@ -23,6 +23,37 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod input;
+#[cfg(feature = "test-support")]
+pub mod qualification;
+
+/// Source-policy checks precede asset reads/session construction. New Context
+/// compiler policy is distinct from the whole-card semantic task policy.
+pub(super) fn validate_selected_policies(profile: &Profile) -> Result<()> {
+    let Some(stage) = profile.model.stage() else {
+        return Ok(());
+    };
+    let (task, task_policy, compiler_policy) = match stage {
+        Stage::Focus => {
+            let policy = super::compiler::focus::policy_digest()?;
+            (Task::FocusRank, policy, policy)
+        }
+        Stage::Context => (
+            Task::ContextAction,
+            super::context_action::policy_digest()?,
+            super::compiler::qwen::policy_digest()?,
+        ),
+    };
+    ensure!(
+        profile.stage == Some(stage)
+            && profile.tasks == BTreeSet::from([task])
+            && profile.task_policies == BTreeMap::from([(task, task_policy)])
+            && profile.policy == compiler_policy,
+        "selected model compiler/task source policy is stale or inconsistent"
+    );
+    Ok(())
+}
+
 pub trait AssetSource {
     /// Read exactly this bounded asset. The execution facade authenticates the
     /// actual returned bytes; a path/stat/hash claim never substitutes for them.
@@ -81,6 +112,7 @@ impl ExecutionProfile {
             .context("Arbiter profile is not release-qualified")?;
         description.validate()?;
         description.validate_release_downloads()?;
+        validate_selected_policies(&description)?;
         ensure!(
             description
                 .qualified_targets
@@ -100,6 +132,13 @@ impl ExecutionProfile {
                 description.task_policies.get(&Task::ContextAction)
                     == Some(&super::context_action::policy_digest()?),
                 "Arbiter joint action policy differs from qualified profile"
+            );
+        }
+        if description.tasks.contains(&Task::FocusRank) {
+            ensure!(
+                description.task_policies.get(&Task::FocusRank)
+                    == Some(&super::compiler::focus::policy_digest()?),
+                "Arbiter Focus source policy differs from qualified profile"
             );
         }
         ensure!(
@@ -158,6 +197,7 @@ impl EvaluationCatalog {
         let mut seen = BTreeSet::new();
         for profile in &profiles {
             profile.validate()?;
+            validate_selected_policies(profile)?;
             ensure!(
                 profile.qualification.is_none(),
                 "evaluation cannot mint final qualification"
@@ -196,6 +236,13 @@ impl EvaluationCatalog {
                 "evaluation joint action policy differs from native constructor"
             );
         }
+        if description.tasks.contains(&Task::FocusRank) {
+            ensure!(
+                description.task_policies.get(&Task::FocusRank)
+                    == Some(&super::compiler::focus::policy_digest()?),
+                "evaluation Focus source policy differs from native constructor"
+            );
+        }
         Ok(ExecutionProfile {
             description,
             release: false,
@@ -232,6 +279,7 @@ impl Scorer {
     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
         crate::native_inference::require_service_compute()?;
         profile.description.validate()?;
+        validate_selected_policies(profile.description())?;
         ensure!(
             profile.description.runtime == crate::model::ONNX_RUNTIME_ENGINE,
             "Arbiter runtime differs from native image"
@@ -274,11 +322,30 @@ impl Scorer {
             }
             ModelChoice::SmallStrands => CompilerRecipe::StrandsSingleChoiceV1,
             ModelChoice::LargeKev => CompilerRecipe::KevSingleChoiceV1,
+            ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge => {
+                CompilerRecipe::QwenSingleChoiceV1
+            }
+            ModelChoice::FocusQwenReranker06B => CompilerRecipe::QwenRerankYesNoV1,
         };
         ensure!(
             compiler.recipe() == expected_recipe,
             "Arbiter model/compiler recipe mismatch"
         );
+        if matches!(
+            expected_recipe,
+            CompilerRecipe::QwenSingleChoiceV1 | CompilerRecipe::QwenRerankYesNoV1
+        ) {
+            ensure!(
+                compiler.limits().0 == profile.description.max_tokens,
+                "selected Qwen compiler/profile token ceilings differ"
+            );
+            if expected_recipe == CompilerRecipe::QwenSingleChoiceV1 {
+                ensure!(
+                    compiler.limits().1 == profile.description.max_candidates,
+                    "selected Qwen compiler/profile closed-card ceilings differ"
+                );
+            }
+        }
         let graph = bytes(source, asset(AssetRole::Model)?, 64 << 20)?;
         let external: BTreeMap<_, _> = profile
             .description
@@ -350,14 +417,20 @@ impl Scorer {
         let session = builder
             .commit_from_memory(&graph)
             .context("Arbiter native model load failed")?;
-        let expected = BTreeSet::from([
-            "input_ids",
-            "attention_mask",
-            "position_ids",
-            "decision_positions",
-            "candidate_positions",
-            "option_mask",
-        ]);
+        let focus = profile.description.abi.readout == Readout::FocusYesNo;
+        let output_name = if focus { "logits" } else { "scores" };
+        let expected = if focus {
+            BTreeSet::from(["input_ids", "attention_mask", "position_ids"])
+        } else {
+            BTreeSet::from([
+                "input_ids",
+                "attention_mask",
+                "position_ids",
+                "decision_positions",
+                "candidate_positions",
+                "option_mask",
+            ])
+        };
         ensure!(
             session
                 .inputs
@@ -376,13 +449,26 @@ impl Scorer {
                 .map(|input| input.name.as_str())
                 .collect::<BTreeSet<_>>()
                 == expected
-                && profile.description.abi.output.name == "scores",
+                && profile.description.abi.output.name == output_name
+                && profile.description.abi.output.axes.len() == 2,
             "Arbiter declared ABI differs from supported prefill recipe"
         );
         ensure!(
-            session.outputs.iter().any(|output| output.name == "scores"),
+            session
+                .outputs
+                .iter()
+                .any(|output| output.name == output_name),
             "Arbiter native scores missing"
         );
+        if matches!(
+            expected_recipe,
+            CompilerRecipe::QwenSingleChoiceV1 | CompilerRecipe::QwenRerankYesNoV1
+        ) {
+            ensure!(
+                session.outputs.len() == 1,
+                "selected Qwen production graph must expose only its declared scores"
+            );
+        }
         for input in &session.inputs {
             let ValueType::Tensor { ty, shape, .. } = &input.input_type else {
                 anyhow::bail!("Arbiter input is not a tensor")
@@ -417,17 +503,29 @@ impl Scorer {
                     && shape[0] == 1,
                 "Arbiter native input rank or batch differs"
             );
+            input::selected_graph_shape(
+                &input.name,
+                expected_recipe,
+                profile.description.max_tokens,
+                shape.as_ref(),
+            )?;
         }
         let output = session
             .outputs
             .iter()
-            .find(|output| output.name == "scores")
+            .find(|output| output.name == output_name)
             .unwrap();
         ensure!(
             matches!(&output.output_type,ValueType::Tensor {ty,shape,..}
             if *ty==ort::tensor::TensorElementType::Float32 && shape.len()==2),
             "Arbiter native output ABI differs"
         );
+        if focus {
+            ensure!(
+                matches!(&output.output_type, ValueType::Tensor {shape,..} if shape.as_ref() == [1,2]),
+                "Focus output must be the exact raw no/yes pair"
+            );
+        }
         Ok(Self {
             profile,
             compiler,
@@ -473,41 +571,34 @@ impl Scorer {
         crate::native_inference::require_service_compute()?;
         let tokens = input.input_ids.len();
         let candidates = input.candidate_positions.len();
-        ensure!(
-            tokens > 0
-                && tokens <= self.profile.description.max_tokens
-                && candidates > 0
-                && candidates <= self.profile.description.max_candidates.min(8)
-                && input.input_ids.iter().all(|id| *id >= 0)
-                && input.attention_mask == vec![1; tokens]
-                && input.position_ids.iter().copied().eq(0..tokens as i64)
-                && input.option_mask == vec![true; candidates]
-                && (0..tokens as i64).contains(&input.decision_position),
-            "Arbiter compiled input differs from qualified B1 unpadded profile"
-        );
-        if self.profile.description.abi.readout == Readout::PointerHead {
-            ensure!(
-                input
-                    .candidate_positions
-                    .iter()
-                    .all(|position| (0..tokens as i64).contains(position)),
-                "Arbiter pointer position is outside verified input"
-            );
-        }
+        let focus = self.profile.description.abi.readout == Readout::FocusYesNo;
+        input::validate(
+            input,
+            self.profile.description.abi.readout,
+            self.profile.description.max_tokens,
+            self.profile.description.max_candidates,
+        )?;
+        self.compiler.validate_qwen_readout(input)?;
         let mut session = self
             .session
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
-        let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("scores"));
-        let outputs = session.run_with_options(ort::inputs![
+        let output_name = if focus { "logits" } else { "scores" };
+        let options =
+            RunOptions::new()?.with_outputs(OutputSelector::no_default().with(output_name));
+        let outputs = if focus { session.run_with_options(ort::inputs![
+            "input_ids" => Tensor::from_array(([1,tokens],input.input_ids.clone()))?,
+            "attention_mask" => Tensor::from_array(([1,tokens],input.attention_mask.clone()))?,
+            "position_ids" => Tensor::from_array(([1,tokens],input.position_ids.clone()))?,
+        ], &options) } else { session.run_with_options(ort::inputs![
             "input_ids" => Tensor::from_array(([1,tokens],input.input_ids.clone()))?,
             "attention_mask" => Tensor::from_array(([1,tokens],input.attention_mask.clone()))?,
             "position_ids" => Tensor::from_array(([1,tokens],input.position_ids.clone()))?,
             "decision_positions" => Tensor::from_array(([1],vec![input.decision_position]))?,
             "candidate_positions" => Tensor::from_array(([1,candidates],input.candidate_positions.clone()))?,
             "option_mask" => Tensor::from_array(([1,candidates],input.option_mask.clone()))?,
-        ],&options).context("Arbiter full trained readout execution failed")?;
-        let (shape, scores) = outputs["scores"].try_extract_tensor::<f32>()?;
+        ],&options) }.context("Arbiter full trained readout execution failed")?;
+        let (shape, scores) = outputs[output_name].try_extract_tensor::<f32>()?;
         ensure!(
             shape.as_ref() == [1, candidates as i64]
                 && scores.iter().all(|score| score.is_finite()),

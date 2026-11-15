@@ -170,7 +170,10 @@ class StandaloneMacInstaller(unittest.TestCase):
 native_tests = load("standalone_macos_native_tests", "scripts/tests/test_package_native.py")
 native = load("standalone_macos_native_package", "scripts/package-native.py")
 SPLIT_VERSION = "1.8.24"
-BASH = shutil.which("bash")
+# Windows' WSL launcher is not a provisioned bash interpreter. Use the installed
+# Git Bash explicitly; other hosts use their native shell.
+GIT_BASH = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which("bash")
 
 
 class SplitServiceMacInstaller(unittest.TestCase):
@@ -194,7 +197,9 @@ class SplitServiceMacInstaller(unittest.TestCase):
                 self.assertLess(script.index("--prepare"), script.index("( place )"))
                 for absent in ("sudo", "python", ".vsix", ".zshrc", ".bash_profile", "runtime-source"):
                     self.assertNotIn(absent, script)
-                self.assertIn("Login startup is not implemented", readme)
+                self.assertIn("SMAppService agent", readme)
+                self.assertIn("login_consent_required", readme)
+                self.assertIn("Headless installation skips login startup", readme)
                 self.assertIn("airkctl service uninstall --yes", readme)
         target = next(iter(package.TARGETS))
         for arguments in ((SPLIT_VERSION, "unknown", *pins, 12), ("1.8.14", target, *pins, 12),
@@ -207,9 +212,13 @@ class SplitServiceMacInstaller(unittest.TestCase):
     def test_split_wrapper_is_valid_bash(self):
         script = package.split_installer_files(SPLIT_VERSION, next(iter(package.TARGETS)), "a" * 64, "b" * 64,
                                                "c" * 64, 3)["Install AIRK.command"]
-        # On stdin, so a bash that cannot open host paths (WSL's launcher) still checks it.
+        before = hashlib.sha256(script).hexdigest()
+        version = subprocess.run([BASH, "--version"], capture_output=True)
+        self.assertEqual(version.returncode, 0, version.stderr.decode("utf-8", "replace"))
+        self.assertIn(b"GNU bash", version.stdout)
         result = subprocess.run([BASH, "-n"], input=script, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        self.assertEqual(hashlib.sha256(script).hexdigest(), before)
 
     def test_split_staging_places_the_signed_bundle_notices_and_inventory(self):
         target = "aarch64-apple-darwin"

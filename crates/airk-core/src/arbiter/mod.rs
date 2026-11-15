@@ -10,14 +10,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const CONFIGURATION_SCHEMA: &str = "airk.arbiter.configuration/2";
-pub const CATALOG_SCHEMA: &str = "airk.arbiter.catalog/1";
+pub const CONFIGURATION_SCHEMA: &str = "airk.arbiter.configuration/3";
+pub const CATALOG_SCHEMA: &str = "airk.arbiter.catalog/2";
 pub const ADVICE_SCHEMA: &str = "airk.arbiter.advice/1";
 pub const REQUEST_SCHEMA: &str = "airk.arbiter.context.request/1";
 pub const CONTEXT_SCHEMA: &str = "airk.arbiter.context/1";
 pub const PACKET_SCHEMA: &str = "airk.arbiter.packet/1";
 pub const RUNTIME: &str = "onnxruntime-cpu/1.30.0";
-pub const STATUS_SCHEMA: &str = "airk.arbiter.status/1";
+pub const STATUS_SCHEMA: &str = "airk.arbiter.status/2";
 pub const COMPILER_SCHEMA: &str = "airk.arbiter.compiler/1";
 pub const MAX_CONFIGURATION_BYTES: usize = 256 << 10;
 pub const MAX_ENROLLMENTS: usize = 1024;
@@ -42,6 +42,8 @@ pub enum Task {
     ContextGap,
     #[serde(rename = "airk.context_action.v1")]
     ContextAction,
+    #[serde(rename = "airk.focus_rank.v1")]
+    FocusRank,
 }
 
 #[derive(
@@ -56,6 +58,12 @@ pub enum ModelChoice {
     LargeIntern,
     #[serde(rename = "arbiter-large-kev-4b")]
     LargeKev,
+    #[serde(rename = "arbiter-focus-qwen3-reranker-06b")]
+    FocusQwenReranker06B,
+    #[serde(rename = "arbiter-context-qwen3-17b")]
+    ContextQwenCompact,
+    #[serde(rename = "arbiter-context-qwen3-4b")]
+    ContextQwenLarge,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -65,92 +73,20 @@ pub struct Enrollment {
     pub tasks: BTreeSet<Task>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Configuration {
-    pub schema: String,
-    pub installation: Sha256Digest,
-    pub catalog: Incarnation,
-    pub revision: u64,
-    pub enabled: bool,
-    pub selected_profile: Option<Sha256Digest>,
-    pub indexes: Vec<Enrollment>,
-}
-impl Configuration {
-    pub fn disabled(installation: Sha256Digest, catalog: Incarnation) -> Self {
-        Self {
-            schema: CONFIGURATION_SCHEMA.into(),
-            installation,
-            catalog,
-            revision: 1,
-            enabled: false,
-            selected_profile: None,
-            indexes: vec![],
-        }
-    }
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.schema == CONFIGURATION_SCHEMA && self.revision > 0,
-            "invalid Arbiter configuration identity"
-        );
-        ensure!(
-            self.indexes.len() <= MAX_ENROLLMENTS,
-            "Arbiter enrollment limit"
-        );
-        let mut seen = BTreeSet::new();
-        for enrollment in &self.indexes {
-            ensure!(
-                !enrollment.tasks.is_empty() && seen.insert(enrollment.index_id),
-                "empty or duplicate Arbiter enrollment"
-            );
-        }
-        ensure!(
-            !self.enabled || (self.selected_profile.is_some() && !self.indexes.is_empty()),
-            "Arbiter enablement requires a profile and named indexes"
-        );
-        Ok(())
-    }
-    pub fn eligible(&self, index: IndexId, task: Task) -> bool {
-        self.enabled
-            && self.selected_profile.is_some()
-            && self
-                .indexes
-                .iter()
-                .any(|entry| entry.index_id == index && entry.tasks.contains(&task))
-    }
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        self.validate()?;
-        let mut bytes = serde_json::to_vec(self)?;
-        bytes.push(b'\n');
-        ensure!(
-            bytes.len() <= MAX_CONFIGURATION_BYTES,
-            "Arbiter configuration byte limit"
-        );
-        Ok(bytes)
-    }
-    pub fn decode(bytes: &[u8], installation: Sha256Digest, catalog: Incarnation) -> Result<Self> {
-        ensure!(
-            bytes.len() <= MAX_CONFIGURATION_BYTES,
-            "Arbiter configuration byte limit"
-        );
-        let value: Self = serde_json::from_slice(bytes)?;
-        ensure!(
-            value.installation == installation && value.catalog == catalog,
-            "Arbiter configuration belongs to another installation or catalog"
-        );
-        ensure!(
-            value.canonical_bytes()? == bytes,
-            "noncanonical Arbiter configuration"
-        );
-        Ok(value)
-    }
-}
+mod stages;
+pub use stages::*;
+pub mod focus;
+pub use focus::{
+    FocusApplication, FocusApplicationReceipt, FocusIdentity, FocusObservation, FocusPresentation,
+    FocusProfileLimits, FocusScore,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Readout {
     DecisionSymbol,
     PointerHead,
+    FocusYesNo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -216,6 +152,8 @@ pub struct AssetDownload {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<Stage>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub task_policies: BTreeMap<Task, Sha256Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -271,6 +209,7 @@ impl CpuFit {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             (self.minimum_physical_cores == 1 && self.intra_threads == 1
+                || self.minimum_physical_cores == 4 && self.intra_threads == 4
                 || self.minimum_physical_cores == 8 && self.intra_threads == 8
                 || self.minimum_physical_cores == 16 && self.intra_threads == 16
                 || self.minimum_physical_cores == 24 && self.intra_threads == 24)
@@ -296,6 +235,8 @@ pub enum CompilerRecipe {
     InternSingleChoiceV1,
     StrandsSingleChoiceV1,
     KevSingleChoiceV1,
+    QwenSingleChoiceV1,
+    QwenRerankYesNoV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -336,14 +277,29 @@ impl CompilerProfile {
             );
         }
         match self.recipe {
-            CompilerRecipe::InternSingleChoiceV1 => ensure!(
+            CompilerRecipe::InternSingleChoiceV1 | CompilerRecipe::QwenSingleChoiceV1 => ensure!(
                 self.symbols.len() == self.max_options,
                 "missing Intern decision symbols"
             ),
-            _ => ensure!(
+            CompilerRecipe::QwenRerankYesNoV1 => ensure!(
+                self.max_options == 2
+                    && self.symbols.len() == 2
+                    && self.symbols[0].text == "no"
+                    && self.symbols[1].text == "yes"
+                    && self.symbols[0].id != self.symbols[1].id,
+                "Focus compiler requires exact no/yes symbol order"
+            ),
+            CompilerRecipe::StrandsSingleChoiceV1 | CompilerRecipe::KevSingleChoiceV1 => ensure!(
                 self.symbols.is_empty(),
                 "pointer compiler cannot use LM decision symbols"
             ),
+        }
+        if self.recipe == CompilerRecipe::QwenSingleChoiceV1 {
+            let ids: BTreeSet<_> = self.symbols.iter().map(|symbol| symbol.id).collect();
+            ensure!(
+                ids.len() == self.symbols.len(),
+                "duplicate Qwen decision symbol ID"
+            );
         }
         Ok(())
     }
@@ -371,6 +327,10 @@ pub enum Availability {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_fit: Option<CpuFit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qualified_targets: Vec<QualifiedTarget>,
     pub model: ModelChoice,
     pub profile: Option<Sha256Digest>,
     pub availability: Availability,
@@ -381,25 +341,15 @@ pub struct ProfileStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Status {
-    pub schema: String,
-    pub configuration: Configuration,
-    pub selected_profile: Option<Sha256Digest>,
-    pub active_profile: Option<Sha256Digest>,
-    pub availability: Availability,
-    pub reason: String,
-    pub queued: usize,
-    pub running: usize,
-    pub profiles: Vec<ProfileStatus>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ManagementRequest {
     Status,
+    Initialize {
+        expected_legacy_configuration: Option<Sha256Digest>,
+    },
     Configure {
         expected_revision: u64,
+        stage: Stage,
         enabled: bool,
         selected_profile: Option<Sha256Digest>,
         indexes: Vec<Enrollment>,
@@ -410,6 +360,7 @@ pub enum ManagementRequest {
     },
     Cancel {
         expected_revision: u64,
+        stage: Stage,
     },
     Remove {
         expected_revision: u64,
@@ -417,6 +368,7 @@ pub enum ManagementRequest {
     },
     Recover {
         expected_revision: u64,
+        stage: Stage,
     },
 }
 impl Profile {
@@ -491,6 +443,14 @@ impl Profile {
         if let Some(fit) = &self.cpu_fit {
             fit.validate()?;
         }
+        if let Some(stage) = self.model.stage() {
+            self.validate_stage(stage)?;
+        } else {
+            ensure!(
+                self.stage.is_none(),
+                "historical profile cannot acquire a current stage"
+            );
+        }
         ensure!(
             self.task_policies
                 .keys()
@@ -528,8 +488,12 @@ impl Profile {
             "incomplete Arbiter task or resource profile"
         );
         let readout = match self.model {
-            ModelChoice::SmallIntern | ModelChoice::LargeIntern => Readout::DecisionSymbol,
+            ModelChoice::SmallIntern
+            | ModelChoice::LargeIntern
+            | ModelChoice::ContextQwenCompact
+            | ModelChoice::ContextQwenLarge => Readout::DecisionSymbol,
             ModelChoice::SmallStrands | ModelChoice::LargeKev => Readout::PointerHead,
+            ModelChoice::FocusQwenReranker06B => Readout::FocusYesNo,
         };
         ensure!(
             self.abi.readout == readout && self.abi.output.element == TensorType::Float32,
@@ -964,3 +928,6 @@ pub mod literal;
 pub mod schema;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod stage_tests;

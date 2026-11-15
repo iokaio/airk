@@ -95,8 +95,7 @@ class VsixContracts(unittest.TestCase):
                 self.assertFalse((root / "missing").exists())
 
     def test_vsix_model_notice_owner_retains_exact_public_companions_and_rejects_extra_files(self):
-        expected = {"LICENSE": "minilm-v2-LICENSE.txt", "TRAINING-NOTICES.md": "minilm-v2-TRAINING-NOTICES.md",
-                    "training-provenance.json": "minilm-v2-provenance.json", "CC-BY-4.0.txt": "CC-BY-4.0.txt"}
+        expected = {"LICENSE": "minilm-LICENSE.txt"}
         with tempfile.TemporaryDirectory() as directory:
             stage = Path(directory)
             package.stage_model_notices(stage)
@@ -106,7 +105,7 @@ class VsixContracts(unittest.TestCase):
                 self.assertEqual((notice / output).read_bytes(), (package.ROOT / "third_party/models" / source).read_bytes())
             self.assertEqual((notice / "provenance.json").read_bytes(), (package.ROOT / "crates/airk-retrieval/src/model_catalog.json").read_bytes())
             (notice / "not-reviewed.txt").write_text("must not ship")
-            with self.assertRaisesRegex(ValueError, "Unexpected trained-model notice inventory"):
+            with self.assertRaisesRegex(ValueError, "Unexpected model notice inventory"):
                 package.stage_model_notices(stage)
 
     def test_finished_vsix_refuses_unresolvable_listing_images_even_with_valid_hashes(self):

@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use tokenizers::Tokenizer;
 
+pub mod focus;
+pub mod qwen;
+
+type PreparedPrompt = (String, Vec<u32>, usize, Vec<i64>);
+
 const INTERN_SYSTEM: &str = "You are a careful decision assistant. Use the state and decision schema in the user message to make the requested decisions. For every field, choose exactly one answer symbol (e.g. A, B, C, ...) from its listed options and return one valid JSON object mapping each field name to its chosen symbol. Use the field names and symbols exactly as given. Do not include explanations, Markdown, or extra text.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,6 +38,7 @@ pub struct CompiledInput {
 
 pub struct Compiler {
     profile: CompilerProfile,
+    profile_bytes: Vec<u8>,
     tokenizer: Tokenizer,
 }
 fn python_space(character: char) -> bool {
@@ -84,6 +90,9 @@ impl Compiler {
     pub fn recipe(&self) -> CompilerRecipe {
         self.profile.recipe
     }
+    pub(crate) fn limits(&self) -> (usize, usize) {
+        (self.profile.max_tokens, self.profile.max_options)
+    }
     pub fn from_verified(profile_bytes: &[u8], tokenizer_bytes: &[u8]) -> Result<Self> {
         use sha2::{Digest, Sha256};
         ensure!(
@@ -108,7 +117,17 @@ impl Compiler {
                 "Arbiter compiler token binding mismatch"
             );
         }
-        Ok(Self { profile, tokenizer })
+        if profile.recipe == CompilerRecipe::QwenSingleChoiceV1 {
+            qwen::validate_profile(&profile)?;
+        }
+        if profile.recipe == CompilerRecipe::QwenRerankYesNoV1 {
+            focus::validate_profile(&profile)?;
+        }
+        Ok(Self {
+            profile,
+            profile_bytes: profile_bytes.to_vec(),
+            tokenizer,
+        })
     }
     fn encode(&self, text: &str, special: bool) -> Result<tokenizers::Encoding> {
         self.tokenizer
@@ -121,6 +140,9 @@ impl Compiler {
         question: &str,
         options: &[Candidate],
     ) -> Result<CompiledInput> {
+        if self.profile.recipe == CompilerRecipe::QwenRerankYesNoV1 {
+            return self.compile_focus(state, question, options);
+        }
         ensure!(
             !question.trim().is_empty()
                 && question.len() <= 16_384
@@ -153,6 +175,10 @@ impl Compiler {
             })
             .collect::<Result<Vec<_>>>()?;
         let (prompt, ids, decision, candidates) = match self.profile.recipe {
+            CompilerRecipe::QwenSingleChoiceV1 => self.compile_qwen(&state, &question, &options)?,
+            CompilerRecipe::QwenRerankYesNoV1 => {
+                anyhow::bail!("Focus pairs cannot use Context input admission")
+            }
             CompilerRecipe::InternSingleChoiceV1 => {
                 let mut lines = vec![format!("result: {question}")];
                 for (symbol, option) in self.profile.symbols.iter().zip(&options) {
@@ -286,7 +312,7 @@ impl Compiler {
             "Arbiter compiler context exceeded; truncation is forbidden"
         );
         let count = ids.len();
-        Ok(CompiledInput {
+        let mut compiled = CompiledInput {
             prompt,
             input_ids: ids.into_iter().map(i64::from).collect(),
             attention_mask: vec![1; count],
@@ -295,6 +321,10 @@ impl Compiler {
             candidate_positions: candidates,
             option_mask: vec![true; options.len()],
             input_digest: framed_digest(b"airk.arbiter.compiled-input/1", &[&original]),
-        })
+        };
+        if self.profile.recipe == CompilerRecipe::QwenSingleChoiceV1 {
+            compiled.input_digest = self.qwen_input_digest(&original, &compiled)?;
+        }
+        Ok(compiled)
     }
 }

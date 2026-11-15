@@ -1,0 +1,85 @@
+{
+  "context": {
+    "allowance": {
+      "assessment_ordinals": [
+        1
+      ],
+      "attempt": "09090909090909090909090909090909",
+      "index_id": "idx_01010101010101010101010101010101",
+      "parent_budget": {
+        "calls": 1,
+        "candidates": 4,
+        "deadline_ms": 1000,
+        "fanout": 1,
+        "input_tokens": 512,
+        "max_bytes": 65536,
+        "rounds": 1
+      },
+      "resources": {
+        "bytes": 65536,
+        "calls": 1,
+        "candidates": 4,
+        "input_tokens": 512
+      },
+      "schema": "airk.context-partition-allowance/1",
+      "selection": "0808080808080808080808080808080808080808080808080808080808080808"
+    },
+    "canonical_tool": "answer",
+    "is_ordinary_focus": false
+  },
+  "ordinary_focus": {
+    "allowance": {
+      "assessment_ordinals": [],
+      "attempt": "09090909090909090909090909090909",
+      "index_id": "idx_01010101010101010101010101010101",
+      "parent_budget": {
+        "calls": 1,
+        "candidates": 4,
+        "deadline_ms": 1000,
+        "fanout": 1,
+        "input_tokens": 512,
+        "max_bytes": 65536,
+        "rounds": 1
+      },
+      "resources": {
+        "bytes": 65536,
+        "calls": 1,
+        "candidates": 4,
+        "input_tokens": 512
+      },
+      "schema": "airk.context-partition-allowance/1",
+      "selection": "0808080808080808080808080808080808080808080808080808080808080808"
+    },
+    "canonical_tool": "search",
+    "is_ordinary_focus": true
+  },
+  "ordinary_focus_requires_own_outer_delivery_guard": true,
+  "qualification": false,
+  "schema": "airk.focus-only-allowance-cases/1",
+  "zero_optional_work": {
+    "allowance": {
+      "assessment_ordinals": [],
+      "attempt": "09090909090909090909090909090909",
+      "index_id": "idx_01010101010101010101010101010101",
+      "parent_budget": {
+        "calls": 1,
+        "candidates": 4,
+        "deadline_ms": 1000,
+        "fanout": 1,
+        "input_tokens": 512,
+        "max_bytes": 65536,
+        "rounds": 1
+      },
+      "resources": {
+        "bytes": 65536,
+        "calls": 1,
+        "candidates": 4,
+        "input_tokens": 0
+      },
+      "schema": "airk.context-partition-allowance/1",
+      "selection": "0808080808080808080808080808080808080808080808080808080808080808"
+    },
+    "canonical_tool": "answer",
+    "is_ordinary_focus": false
+  }
+}

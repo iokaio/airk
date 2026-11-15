@@ -905,6 +905,17 @@ fn canonical_control(
                     code: "arbiter_catalog_required".into(),
                 },
             },
+            ControlMethod::ArbiterImport { request } => match &state.arbiter {
+                Some(owner) => match owner.import(*request, &state.supervisor).await {
+                    Ok(observation) => ControlResponse::ArbiterImport {
+                        observation: Box::new(observation),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
             ControlMethod::ArbiterApplication {
                 worker,
                 authority,
@@ -913,6 +924,32 @@ fn canonical_control(
                 Some(owner) => match owner.application(worker, authority, publication) {
                     Ok(application) => ControlResponse::ArbiterApplication {
                         application: Box::new(application),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterFocusApplication {
+                worker,
+                authority,
+                publication,
+            } => match &state.arbiter {
+                Some(owner) => match owner.focus_application(worker, authority, publication) {
+                    Ok(application) => ControlResponse::ArbiterFocusApplication {
+                        application: application.map(Box::new),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterFocusRank { request } => match &state.arbiter {
+                Some(owner) => match owner.focus_rank(*request, &state.supervisor).await {
+                    Ok(response) => ControlResponse::ArbiterFocusRank {
+                        response: response.map(Box::new),
                     },
                     Err(error) => arbiter::failure(error),
                 },

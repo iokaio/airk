@@ -142,6 +142,7 @@ mod arbiter_tests {
     fn arbiter_rows_match_only_the_typed_nested_management_operation() {
         for action in [
             "Status",
+            "Initialize",
             "Configure",
             "Provision",
             "Cancel",
@@ -152,6 +153,7 @@ mod arbiter_tests {
             assert!(names(&format!("Arbiter.{action}"), &body));
             for other in [
                 "Status",
+                "Initialize",
                 "Configure",
                 "Provision",
                 "Cancel",
@@ -172,5 +174,9 @@ mod arbiter_tests {
         let table = table().unwrap();
         assert!(table.never_over_http(&serde_json::json!({"arbiter_next_read":{}})));
         assert!(table.never_over_http(&serde_json::json!({"arbiter_application":{}})));
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_context_action":{}})));
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_focus_application":{}})));
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_focus_rank":{}})));
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_import":{}})));
     }
 }

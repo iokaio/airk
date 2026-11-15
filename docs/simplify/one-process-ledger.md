@@ -4364,3 +4364,345 @@ remain unsupported; new training attempt is not selected into the old fixed
 epoch1 FINAL experiment. Finalization, synthetic admission, resource release and
 opaque execution/grade remain separate pending steps. Full workspace/doctests,
 new artifact/client, installed/platform/package/publication gates remain open.
+
+### 15 November 2026: new model comparison authorized; R70 stops on catalog drift
+
+User authorized Qwen3-1.7B/4B plus Qwen3-Reranker-0.6B experiments, followed by
+conditional replacement if significantly better. Decision is recorded in the
+split plan; comparison criteria must precede outcomes. Asset/protocol preparation
+is delegated with explicit ownership and no neural execution until root review.
+No new model is selected, promoted or treated as calibrated yet.
+
+R70 workspace Clippy passes8.221s. Full Nextest selected4,394 and stopped at
+346run/345pass/1failure,93skips/4,048unrun,485.379scommand/434.910stest. Previously
+failing MCP catalog now passes, as do current Answer complete CLI/pipe/HTTPS-MCP
+comparisons. Failure is stale model-catalog test expected uint8 versus current
+mixed-u8; independent current descriptor expectations are being reviewed.
+Full Python discovery also stops:215run/214pass/1failure,21.793stest/23.757scommand;
+two actual Admin imports are missing from the exact container copy/seal roster.
+Original receipts retained under `receipts/workspace-r70/` and
+`receipts/python-full-discovery-r1/`. No full-workspace or full-script pass claimed.
+
+Current public I4 journey preparation has12synthetic controls, no actual installer
+execution. Native OS-user folders/pointers and registrations require a genuinely
+clean OS identity; five explicit roots do not isolate the user's installation.
+Retained orchestration under `public-install-journey-preparation-r1/` is not
+installed qualification. Packaging audit confirms four optional CAL fits remain
+unsupported, catalog0profiles, so no legitimate publication bootstrap capture
+exists.20focused package/release fixtures pass, with actual blocked gate retained
+in `receipts/optional-publication-prerequisite-audit/`.
+
+Root finalized old fixed MiniLM six-role inputs: freeze41d24146f36562f335844d55719
+af5fec39ab4fc9bbce018e272ba937f9a4217, packet82585bcec62e761d003bc89c6e3855f1842e
+964ea16dd0d917b71c20ca6a6e85; same-image synthetic population control1/1 passes and
+all6static preflights pass97pins each, opaque inputs stat-only. No FINAL neural
+call or grading occurred at this entry. R3 MiniLM TRAIN validator-only correction
+passes19controls and all180whole-native/99uncropped-query witnesses; actual raw
+numerical-loop AST matches failed R2. Earlier normalized-text hash metadata error
+is retained and corrected separately. Root releases bounded R3 attempt under
+sealfdfedb8a858eb5083a6bc182cab4be75360be15d46b5c57025017f1f5eefcf8a, after
+R70 exited; result remains pending, not a training or quality pass.
+
+### 15 November 2026: selected Focus/Context path and local installer outcome
+
+Later user instructions supersede the conditional bakeoff: implement and test
+the selected path, avoiding extra model comparisons. User approved exact names
+Arbiter Focus (independent Qwen3-Reranker-0.6B), Arbiter Context — Compact
+(Qwen3-1.7B) and Arbiter Context — Large (Qwen3-4B), with two selectable Context
+choices plus shared Focus replacing the original four-choice requirement. Focus
+can run with Context off; MiniLM remains bundled candidate retrieval. User also
+requests accurate model/usage/requirements Help and local installers for morning
+testing. Cargo clean is authorized when D: space gets low; preserve receipts and
+needed artifacts first. Last observed free space is approximately599GB, so warm
+target removal is not yet necessary. Public publication approval remains separate
+from the authorized implementation/tests/signed branch commits and pushes.
+
+Both Qwen closures acquired/authenticated:23officialfiles12,140,373,596bytes.
+Focus closure14files1,207,498,117bytes (official reranker metadata/weights plus
+separately identified declared-base LICENSE); reranker repository has no LICENSE
+file and that fact is retained, not disguised. New model acquisition is not native
+execution, calibration, hardware or release qualification.
+
+Primary reviewed Core stage/configuration3/privatearbiter-v3, catalog/status2,
+new typed FocusRank/YesNo and QwenSingleChoice readouts, bounded canonical stable
+permutation receipts, source authority and combined resource ownership. Recorded
+decision `focus-contract-preparation-r1/recorded-decision.json`, SHA
+6bd58ec8d78a6bb9adb189efdbcdbaa397d1b709e65ff86b03174c6a8509c698.
+Store explicit v3 initialization/asset custody approved after owning-contract
+review: `stage-service-preparation-r1/recorded-store-decision.json`, SHA
+7a168f61c1a49a29848793c9285540e2c335ba1476ef4fcf64d24e4617e210ba.
+Legacy bytes/unfinished custody remain preserved; no automatic consent migration.
+Rust implementation/emission precedes dependent consumers; no native fixture pass
+is claimed yet. Help updates applied across9files, real authored catalog validates
+87topics/4findabilityqueries and guide links; native content/pilots/manifest
+generation awaits the root Cargo batch. Docs remain explicit about pending stages
+and measurements.
+
+Old six-role FINAL comparison was cancelled under user steering after first
+family632.970s. Root terminated only actual retained nativePID71160 after exact
+image/start identity proof; owner observed exit4294967295, empty job and settled
+process, inputs unchanged, complete=false. Its internal forced flag covers only
+owner-forced termination; separate user-steered-cancellation.json truthfully
+records root-forced cancellation. Partial capture SHA b0170471e0f6d05086c5b495
+e4e528c236564a492a7fed2a6c5cd3bf17cfca3e remains private, ungraded. Other five
+families never ran. This holdout is partially consumed, not fresh/unconsumed, and
+cannot be reused to select new models. No question/evidence/gold was inspected.
+
+New MiniLM R3 TRAIN completes13/13finite steps, natural2process95.059s, host
+3,776,368,640bytes/CUDA826,648,064allocated912,261,120reserved. Checkpoint
+e4d2c66590e830cc9fedde5061e86a5195891db490a7eb967e3ec9c52c566d29.
+CPU export separately released/sealed45432d22c62659747efe0baf3d6ae9173d9987ae
+9924b887fdcff3ba3c83e46c,49,306pins; actual natural55.308s, host1,935,474,688
+bytes, two total processes/job empty, no input drift. Both mixedINT8 profiles
+pass12independent cases: minimumcosine.995255/maxL2.097416; independent eager
+FP32 vsONNX maximum componenterror1.25873e-7. U8graph1d9ca474df1025a006f0b8f
+dfc6372d2bcb78502f6c8f46ee7c72a588fbb248b; S8d918cfad34439a7258ddd403e1dbba
+cf44109a228be50985407dcbdd01151ccd. Native typed emission/quality and promotion
+remain pending. Required DEV preparation is2newprofiles+2unsignedcontrols, not
+superseded six-role diagnostics. Receipt `models/native-parent-bag-export-execution-r1/execution.json`.
+
+R71 current mixedcatalog assertion repair passes CLIClippy10.031s and actual
+1selectedtest(.988stest/11.611scommand). Containerclosure fix adds exact two
+Admin imports acrossmanifest/Dockerfile/dockerignore,7controls pass. Python
+residuals explicitly exclude only3genuine missing-publication-capture cases,
+never weakening their gate. Restricted-token HTTPS SSPI0x8009030E affects baseline
+and namespace calls before HTTP, not protected-reader logic; unchanged actual
+normal-owner HTTPS/namespace2tests pass13.034s. Normal-owner fullresidualR6 then
+stops432run/430pass/1skip/1failure on signingfixture TEMP placement. Product
+outside-repository guard is correct; test-only sibling-repository fixtures plus
+independent before-download inside-repository refusal pass8/8.19next modernsetup
+controls also pass. Fullresidual is held until coherent Core/service integration;
+no fullPython/workspace/release pass is claimed.
+
+15 November 05:47 UTC selected-model checkpoint: both actual full Qwen
+references now pass all three synthetic shapes against the official forward
+(hidden error0; maximum score error2.8611e-6). The1.7B owner settled naturally
+106.391s/14,535,348,224host bytes; outer190.116s. The4B owner settled naturally
+130.007s/37,504,020,480host bytes; outer227.281s. Both retained two actual exit0
+processes, empty jobs and unchanged sealed inputs. These FP32 reference peaks
+are not native product requirements. Exact receipts are under
+`models/qwen3-challengers-r1/full-stages-r4/owned-{17,4}-reference-r4/`.
+The separately sealed1.7B six-input/scores-only export is now running; no export
+or task-quality pass is claimed yet.
+
+Focus weight8 numerical conversion passes all12 cases with197 trained
+projections converted, exact two-file closure1,118,816,950bytes, raw maximum
+error.2344970703125 against pre-frozen.25 and relevance maximum
+.006103331888258484 against.05; all argmaxes remain exact. Owner184.181s,
+host3,658,874,880bytes, two natural exit0 processes/job empty/no input drift;
+seal a24e47505829adc1857d419c4cd7c1c7585cd4776e7cecb75bf431253681ae8e,
+`models/qwen3-reranker06-weight8-r1/owned-weight8-r1/execution-receipt.json`.
+Single-thread512-pair forwards took6.55–6.71s in that numerical stage. Actual
+native CpuFit, memory, latency, task quality and combined-stage qualification
+remain required; this is not a universal hardware requirement or product pass.
+
+R77 Core nested allocation/typed initialization refinements pass scoped Clippy
+25.772s and4/4 tests (.021stest/38.325s command), unchanged Core inputs. Actual
+Rust stage12-case/focus allocation fixtures emitted; schema emitter additionally
+passes1/1 (1.375s command), native group unchanged. Arbiter TS generation
+write/check passes. Initialization preserves actual resident/queued/running
+observations while marking the disabled placeholder as non-writable; normal
+status bytes remain unchanged. Shared UI37/37 plus Admin typecheck2.284s pass,
+`receipts/arbiter-stage-ui-r2/`. Root's metadata/content decision timestamp
+labels were coarse manual labels ahead of the wall clock; the retained
+`context-action-cohort-admission-r1/timestamp-correction.json` records this.
+Use actual owned receipts and hash-bound execution order for chronology.
+
+15 November selected-path P0–P11 review: P0–P6 retain their committed source,
+repair and scoped client/UI evidence under the original identities; the new
+stage contracts/UI/Help require fresh affected consumer and final candidate
+qualification. P7/P8 local installer/portable source and signing preparation
+are ready, but actual final builds and installed journeys remain outstanding.
+P9 authored Help is updated; native/parser/pilot regeneration, sealed assets,
+current download metadata and final artifact checks remain. P10 is the critical
+path: actual selected model artifacts, Rust compiler/runtime, independent-stage
+integration, native CAL and goal-level acceptance. P11 final workspace,
+platform, installed/package and published-output gates remain open; local
+candidates are not published release completion. Root remains sole Cargo/NN
+window owner; no clean is needed at roughly580GB free. Revised operational
+targets are in byte-identical AGENTS/CLAUDE and do not waive acceptance.
+
+15 November 2026 05:30 UTC: selected stages continue toward the user's local
+installer set. D: has about 581 GB free; retain the warm isolated target until
+space requires the authorized clean, preserving receipts and completed packages.
+R73 Core all-target/all-feature Clippy passes24.707s; six actual Rust fixture
+emitters pass6/6 and all335 Core tests pass (7.142s test/8.322s command).
+R74 owner-only offline import Clippy passes23.607s and5/5 focused tests pass;
+receipts `artifacts/advanced-split/receipts/core-stages-r73/` and
+`artifacts/advanced-split/receipts/core-offline-r74/`. The later Focus-only
+singleton allowance refinement still awaits its own validation. Shared stage UI
+passes27/27 and Admin typecheck2.152s under `receipts/arbiter-stage-ui-r1/`.
+
+Actual Focus static512 FP32 export passes12 publisher/wrapper and12 ORT cases,
+finite/exact shapes/argmax: maximum raw errors7.62939453125e-6 and
+1.52587890625e-5 respectively. Owned execution299.504s, host5,773,758,464bytes,
+two natural exit0 processes, empty job and unchanged sealed inputs. Seal
+1286e3eafaee69bd52f91733cc26cb9d1e7641f89eee602d6721a0481358aeba;
+`models/qwen3-reranker06-static-export-r1/`. Its diagnostic FP32 closure has
+200 files/2,384,924,643bytes, exceeding the product128-asset cap. Quantization,
+consolidation, actual native/compiler quality and hardware qualification remain
+pending; these reference measurements are not end-user requirements.
+
+Full pretrained Qwen3-1.7B synthetic reference separately released after root
+self-review of strict assets, resource-profile diffs and owner/worker chain.
+Release1ce0fe21d3374f636a2b1b959fc8d4dc2959d588413a2c1a075bbc42c9394b00,
+seal147c7f39a6e010ecce58cb2443a8779f49eb13847502d41ce92dc2fdd21b0c9d,
+49,323 retained pins,900s/32GiB host/16GiB CUDA caps. Execution is underway;
+no full-reference, quality or release pass is claimed yet.
+
+New selected Context metadata-only reservation passed naturally1.263s, exit0,
+empty job/no input drift. Only original unopened CAL components were split;
+entire prior EXPOSED/DEV/FINAL and all QASPER excluded. Reserved CAL367questions/
+280components and confirmation364/274; rights/alignment eligibility remains
+NOT_PERFORMED. Decisiondd854c857be243d275c30db62d1dd2e2ef73480491b133bc0b69daf5d275d3aa;
+reservatione47eb9e67e0d2fa48a72bc5c6f29f0648ac25e6657f5930ea3383c3683dccfd4,
+`models/context-action-cohort-admission-r1/execution-metadata-r1.json`.
+No new task/gold corpus was opened. Separate content review and actual native
+CAL/A6 gates remain; human semantic gold remains0. Offline recovery decision
+recorded: removal reconciliation or verified cached activation only; incomplete
+acquisition requires explicit Provision or owner-only Import and cannot silently
+switch local import into network acquisition.
+
+
+15 November 2026 05:28 UTC: native stage-service implementation batch frozen
+for root integration checks. Applied explicit configuration/3 initialization
+preserving legacy bytes; stage-bound assets/3 custody; independent Focus/Context
+lifecycles on one bounded native lane with separate resident pins/actual charges;
+shared original-attempt Focus/Context token ledger; exact-prefix Focus scoring
+and staged final-write guards; native I1/CLI/I3 stage controls. Owner-only offline
+import now reads the exact compiled bundle through retained readonly nofollow
+descriptors, local-volume/single-link/default-stream and full-source-hash checks,
+and publishes through the existing Store transaction. It never supplies model
+metadata authority or changes consent. Incomplete acquisition recovery refuses
+implicit network acquisition under the recorded offline-recovery decision.
+
+New cheap regressions cover legacy preservation, stage consent/isolation,
+actual reference accounting, shared tokens/one-use invocation caps, per-stage
+rollback/final delivery, readonly local import, invalid source closure/aliases,
+and cancellation recovery. Direct pinned rustfmt parsing and scoped whitespace
+checks passed; no Cargo, model or runtime pass is claimed for this batch yet.
+Root remains the sole Cargo owner. Actual singleton selector/admission production
+is assigned to the shared UI/native test owner using the existing private
+PartitionAllowance; its refined Core fixture gate remains separate.
+
+15 November 2026: Core ordinary-singleton Focus allowance gate. R75 scoped
+all-target/all-feature Core Clippy stopped11.098s on an unnecessary concat!
+wrapper around the independent retained Context wire literal; no tests selected
+or runtime pass claimed. The earlier wrapper edit had not matched rustfmt's
+multiline form. Removing only that wrapper preserves literal bytes (SHA
+867391ace7a8fd4378522cbc1be1e6acd5e1427fd1460813816bf70e0ed35ddc).
+R76 Clippy passes10.686s; all5 focused purpose/cross-purpose/bounds/byte/delivery
+cases pass(.029stest/19.699scommand), with consumed Core/Cargo snapshots unchanged.
+Target `artifacts/v190/p10-target`, incremental1; root was the only Cargo owner.
+Receipts `artifacts/advanced-split/receipts/core-focus-r75/` and `core-focus-r76/`.
+Actual Rust fixture `fixtures/split/arbiter/focus_only_allowance_cases.json` adds
+no field or old Context byte change: positive-token/empty-ordinal allocation is
+valid only for the recorded ordinary Focus1call/round/fanout shape, and cannot
+authorize native Context assessment. Direct Focus retains its own outer delivery
+guard. Self-review matches emitted Context data to the independent old literal;
+Focus differs only in empty Context ordinals and known-zero Context remains
+valid. Review receipt: `focus-contract-preparation-r1/focus-only-fixture-self-review-r1.json`.
+This proves the exercised Core structural contract; Host/Kernel/service consumers
+and real transport/runtime/package qualification remain separate.
+
+
+15 November 2026: Core nested-stage allocation and initialization status R77.
+Root's scoped all-target/all-feature Core Clippy passes25.772s; all4 focused
+nested/init/emitter cases pass(.021stest/38.325scommand), and the separate actual
+stage/schema emitter passes1/1(1.375scommand). Consumed Core inputs remained
+unchanged. Target `artifacts/v190/p10-target`, incremental1; root alone ran Cargo.
+Receipts: `artifacts/advanced-split/receipts/core-stage-refinements-r77/`.
+Rust emission updates focus_cases/stage_cases and the native Arbiter schema;
+generation-pilot TypeScript write/check passes. Self-review confirms all8 normal
+status rows omit initialization, preserving normal owner bytes (independent
+retained-owner serialization regression); all4 initialization rows are explicit
+non-writable placeholders. Corrupt-state emission preserves actual resident
+profile/queued2/running1/Draining observations rather than fabricating completion.
+Seven nested-allocation fixture rows independently yield1024/512/0/2048/512/512/0
+whole-pair tokens: initial actual Context readiness halves the cumulative LOCAL
+Focus ceiling, shared/profile limits still intersect it, and ordinary Focus keeps
+its original full budget. This does not promise a Context roster fits, authorize
+cropping or qualify actual neural/runtime/transport/package outcomes. Consumer
+implementation was released only after this native fixture/schema checkpoint.
+
+### 2026-11-15 07:52 UTC — selected-stage integration and native artifact correction
+
+Root integration Clippy R87/R88 passed across13 affected packages/all targets/features. R87 selected138 tests stopped after6 (5pass/1fixture failure); typed full SearchResponse fixture corrected. R88 selected138 stopped after12 (11pass/1actual completion failure);126 unrun. Actual2optional resident references exposed old Core high-water+1 bound. Recorded three-resident decision and independent review preserve work/admission/zero-provider/barriers; Core gate pending. Exact receipts: artifacts/advanced-split/receipts/stage-integration-r87 and -r88. These are not whole-workspace test qualification.
+
+Retrieval R83 scopedClippy and18+8+1 selected controls passed: native Qwen compiler/runtime guards, complete six-input ABI and actual Rust Focus experimental profile emission, zero model forwards. Core R82 six-input guard passed1selected test after scopedClippy. Native Focus first parity attempt settled naturally with0score rows: loader correctly refused external Constant tensor attributes. Shared exact-byte storage normalizer (67df2aea...) produced fresh graph5072c663... with451 unchanged external main initializers and3 inlined nonmain tensors; sidecar SHA unchanged. Zero-forward normalization owned6.391s/whole7.020s. Original failed artifact retained; corrected native parity/resource checks pending.
+
+Root reviewed and released ContextCompact weight8 R3 seal934131a6... under fixed32GiB/900s owner, original FP32 strict tolerance retained, separate predeclared approximate limits/all-live H checks; active run not yet qualified. R1/R2 unexecuted proposals remain historical. No broad model bakeoff or fresh205 campaign resumed. D drive free about546GB; warm Cargo target retained until low space. Repository check passed3374public files after process-local Git safe-directory binding; no global configuration modified.
+
+Mac isolated prerequisites ready (Node24.15/npm11.12, exact8 current bundled MiniLM assets), original dirty checkout preserved. No new platform, installed journey, signing, packaging or public release completion claim. Deadline remains15November15:05UTC; local installer/package/VSIX and verified offline model bundle set required.
+
+### 2026-11-15 08:06 UTC — integrated compile and selected model path
+
+Core completion correction gate R89: Clippy10.700s,7/7 tests .035stest/17.153cmd, unchangedCore inputs; independent reviewer found no defect. R90 fullworkspaceClippy stopped on duplicate selected-model matcharm plus missing serde_json serialization propagation in newly mounted private qualification harness; both corrected after process settlement. R91 fullworkspaceClippy passed32.609s unchangedinputs; selected139 stopped23run22pass on a direct-answer fixture lacking publication. Fixture corrected without changing production guards.
+
+Empty release catalog adopted recorded schema2 while retainingprofiles[]; no model qualification granted. R92 fullworkspaceClippy passed24.024s unchangedsourcec31cfdcdf8d9411c109ba139c643e7a574a506df699f7ea0f09f8647f8b56ddc. Actual corrected FocusProfileR3 Rust emitter1/1 passed2.736stest/21.911cmd; manifest68f4945ffb5a65208dcb0139ed3ef09071d98dc949f3af598ba300359cdbc7c0. Actual native inference image compiled19.948s, SHA c721302898f023e347498ef57d16ab882dac565abfcc5018154344bd6c260e69,329061888bytes. Private runner omitted allow-no-tests for cargo --no-run, so pipeline stopped after valid compilation; no zero-selected test pass claimed.
+
+R93 both corrected direct-answer publication and embedded emptycatalog regressions2/2 passed1.721stest/108.938cmd. Wider139selected stopped28run27pass on service streamed-download test fixture missing task policy;111unrun. Owner preparing wholefixtureclass correction, source held during native Focus run. Actual corrected Focus12 parity released and running under600s/16GiB owner, not yet a pass.
+
+ContextCompact approximate weight8R3 failed fixedraw.25 gate atT128 (.290778875); normalizedmass.031235 andargmaxmatch do not override refusal. Owned125.701s/peak10,865,831,936bytes,2natural exit1,0active/noforce. Artifact retained; no unchanged retry/limit widening. Root recorded exactFP32 fallback with streaming tensor-byte relocation, preserved original strict1e-3 numerical basis and same selectedmodels. Compact storage passed outer235.677s/byteclosure only, noNN; proofbaae2924e9540e926e13c20e23a6c321a3abbbbae16fef013368b259e36f4d32, ownedreceipt e3a09a3205d65666bc02396a4299b6abfb2b2656f7919d6d3107f7ad97d68af0. Large storage active. Predeclared native experimental CPU4/16GiB andCPU8/40GiB candidates underoriginal32/48GiBhardcaps,30s product deadline unchanged. These are not established userhardwarefloors or qualification. Original-trained-row all-live/H readout sealed but notlaunched; no repeatedfullbackbone.
+
+### 2026-11-15 10:20 UTC — actual selected component results and remaining qualification
+
+R94 full-workspace Clippy passed30.641s;143 selected regressions stopped after51 (50pass/1 stale structural-roster test failure,92unrun). The correction rebuilds the same fixture's roster through its owning constructor and explicitly retains foreign-policy refusal. R95 full-workspace Clippy passed16.610s on source64a0a51d6893b54b23e55706be7aaa0c5e05382fefecff2e3f984479dd26c8d0; both actual Rust Context profile emitters passed1/1, and actual Inference/Kernel test images compiled11.867/30.989s. Exact commands/source identities/timings are in receipts/stage-integration-r94 and -r95. No whole-workspace test pass is claimed.
+
+Focus actual native12-case numeric parity passed (capture67bc0b1e...), followed by20 full512-token CPU4 measurements: p95 2.172421s, RSS2,942,795,776bytes, committed3,962,093,568bytes, under4GiB reservation. Original naturally settled owner receipts, strict error limits and unchanged-input proofs retained in focus-native-qualification-preparation-r1/native-{parity,resource}-r2. These establish component observations only.
+
+Both Context FP32 storage closures preserve original tensor/protobuf bytes and all-live readout references. Compact actual native3shape numeric controls and20 measurements passed: p95 19.455458s, RSS15,105,560,576bytes, committed16,827,879,424bytes under16GiB, owner591.630s, naturalexit0/empty/no force/no drift. Capture09431960... in models/qwen3-challengers-r1/context-native-owned-r1/native-17-result. Large CPU8 passed3 numeric rows but failed its first measurement30.585085s against unchanged30s;1/20, no p95/complete fit. Capture9337df6f... and failed profile remain immutable. Root approved one new CPU16/40GiB hardware requirement candidate, exact model/precision/memory/deadline unchanged; decision and source mount in receipts/context-cpu16-mount-r96. No CPU8 fit or release qualification inferred.
+
+CAL/confirmation source and rubric materialization completed under original60s/256MiB bounds after a cheap reproduction isolated pre-import thread environment as the relevant memory difference. FailedR1/R2 evidence retained; additiveR3 actual three remaining operations passed9.507s, execution5ad18fa6..., source/rubric bindings768f6613... pin all1477 source files. Root inspected counts and identities only; no question/gold peek. Actual CAL inference, fitting and held-out A6 remain unexecuted.
+
+Help generation and exercised consumers are complete: six native emitters1/1 each, native drift20/20, extension Help3/3, actual browser/shared Help20/20 and static Help12/12. Sandbox browser failure and erroneous wrapper21-count expectation retained; exact authored20-name audit explains correction. Unchanged browser command passed under normal user identity without timeout/skip changes. Final receipts/final-help-complete-r3/result.json retains original evidence chain. Signing preflight confirms available normal-user Artifact Signing authorization/tools, but no signing or local installer exists yet.
+
+Two lifecycle races involving accepted identical Configure and pre-spawn Remove CAS failure have deterministic real-store regressions prepared for integration. Private dispatch/return/job/actual-charge-release observation and final native proof promotion are being integrated. Component passes do not replace final fitted/composed memory/admission, calibration, task quality, transport, package or platform gates. D free about480GiB; warm target retained. Public publication remains unauthorized; local installers are the requested delivery artifact.
+
+### 2026-11-15 12:45 UTC — original encoder retained, live selected-path qualification
+
+All selected Qwen component native gates completed on Windows x64. LargeCPU16 passed3numeric/20resource calls under unchanged30s/40GiB reservation: p95 23.129116s,max23.145872s,RSS33,841,053,696bytes, natural owner588.7928s/no force/no drift. Capture9c75d0c7...6a85f in context-native-owned-r2/native-4-result. CPU8 failure remains failed. Focus and Compact retain their prior exact identities/results; component passes do not establish composed/task/platform release qualification.
+
+MiniLM actual R95 retained Kernel image c920c02d... executed native typed emission,24numeric cases and exactly four DEV64 roles, all natural/empty/no drift. Each retained64requests/20quality44refusals. NewU8/S8 and both original unsigned controls tied17/20 complete and11/12 mean recall; all gains0. Epoch1 is not promoted; no further encoder search. Original grading wrapper failed its256MiB cap while reading a whole PE for a posthash. Additive streaming-only grader passed12.685s/47,493,120bytes under unchanged60s/256MiB, original frozen22/91 files unchanged. Actual grade models/native-parent-bag-matched-DEV-grade-r2. Root pre-CAL decisioncef9af82... restores exact original publisher U8/S8 graphs to v3 catalog on existing ORT1.30 implementation, initially unqualified. R100 scopedRetrievalClippy2.802s and actual Rust draft emitter1/1 passed11.685cmd/.123stest. Fresh bundled-model-v3 provisioned from authenticated original files. OriginalS8 separate12case native qualification passed under R102 retained PE0f6ff333..., owner138.230s/236,195,840bytes, capture3e0a0981...641eb; no six-role/205 run and no blanket task/resource/platform claim.
+
+R97 fullworkspaceClippy32.654s +152/152 focused regressions passed. Observer/lifecycle source mounted contract-first with backups. R98 fullworkspaceClippy26.809s, final-proof controls5/5 and portable native producers2/2 passed. A command-receipt/native-facts filename collision was corrected by disjoint outputs; genuine reemission1/1 .027stest, actualfactsbc9db666...cd0b. All23raw asset rights match actual Rust typed objects/digests; Root raw-rights review is recorded separately, final fitted calibration needs fresh rights. Exact24,130,010,313byte raw-three staging passed62.164s, no hardlinks/aliases, source and independent destination hashes, proven protectedSID1012 anchor. Initial .NETACL helper failure preserved; existing native-create helper succeeded on a fresh anchor.
+
+R101 fullworkspaceClippy passed40.7s on native3a64a188c7188d44a3da18afd9ca2efa5c3e996f171d28b62bd8a3f89c9f031f. R101 private selector construction failed before tests; corrected R102 selected167 and passed167/167 in7.246stest, including same-runtime retired weights, missing/corrupt metadata, independently resealed wrong neural lengths, policy, lifecycle, membership frames, observers and offline custody. This is scoped qualification, not final workspace tests/doctests. R102 actual Service/Kernel images and build receipts retained.
+
+Help/current UI union complete: Admin246/246 and VSCode1122/1122 pass after actual native portable producers and retained real-I3 capture consumers. Current-pair live transport and installed journeys remain separate. Full script discovery1299 Python/13Nodefiles: Python1296 actually executed,1272pass/3requiredfail/21platform-historical skips; original3publication-input tests deferred required. Test-only shortpath/historical-duty/legal-fixture repairs passed42Node+34release controls and were reviewed/mounted; currentnativev3identity provenance available for the remaining historical/current split. No test-force-exit pass claimed.
+
+Source guard identified exact webpki-roots1.0.9. Independent source review authenticated archive/all12files/121certificate fingerprints and static literals/sole bounded hash-pinned download consumer. Earlier importedMozilla-trust coverage assertion was wrong: actual cargo-vet resolver uses imported trusted records only for suggestions; R109 correctly failed. Root accepted one explicit exact-version limited reviewed exception under existing policy, no fabricated human audit or publisher trust. Unnecessary generated imports and automatic exception cleanup were rejected/restored. Actual unfiltered all-feature locked cargo-vet R111 passed with all inputs unchanged; source guard passed432external/19firstparty. Receipts cargo-vet-check-r111 and webpki-exception-acceptance-r110; public correction in supply-chain/reviews/webpki-roots-1.0.9-2026-11-15.md.
+
+Matched debug pair R104 passed canonical builder201.123s unchangednative3a64..., current checked R2Admin inventory explicitly selected after R103 default-inventory refusal. Pair runtime-selected-baseline-r104, actual embedded U8smoke repeated finite384vector, legacyfdd2d44d...b64c/pipelinecb2166f2...b638. Live owned private CAL service is PID62056/SID1012, instance2eafbbf85a9c4a7b23b8542319150ae3, actual R102 testimageaaea0e8d...4aec, no human installed-state changes. Native setup and all6 original jobs succeeded exactlyonce. Initial busy1024-read wrapper exhausted at40s while originalConfigure later succeeded; failedreceipt preserved and event-driven continuation retained the SAME1800s deadline. Actual final diagnostics753/753 artifacts and767/767 vectors, exact pipeline/localmodelReady. PrettyJSON parser failure corrected against actual retained logs without native request retries.
+
+Warm setup first created a redundant second singleton set because librarysetup already created one. Native emitter correctly refused ambiguous membership before any stageConfigure or taskNN. Exact preview/receipt-owned redundant metadata deletion and only-unexecuted continuation approved; index/data/source bytes and original set preserved. Actual Focus/Context warm, CAL capture/fitting, composed10cases and held-outA6 remain pending at this checkpoint. Qualification cutoff11:05 was missed; no acceptance gate waived. Deadline15:05 remains the execution target. No signed local installers, final native/package/platform qualification, published artifacts, new commit or push yet. Public publication is not authorized. D free about488GB; warm target retained, cleanup if low remains authorized.
+
+### 2026-11-15 13:15 UTC — live readiness, harness corrections and final-gate preparation
+
+The same native CAL service now reports both Focus68f4945f...bc7c0 and Compact8fb3d13e...e8f96 Ready at configuration3, exact original-U8 pipelinecb216...b638, publication57 and753/767 artifact/vector coverage. Ready observers failed: busy status reads exhausted their cap, and the replacement filesystem observer watched a registry that does not report in-memory warm completion. Both failures remain failed; a later genuine Ready observation grants no coldwarm30-second timing pass. Only unexecuted cal-live emission continued; its actual native bindings and status succeeded without reconfiguration. A private future completion-event seam is being prepared against the native lifecycle owner, not fabricated from registry activity.
+
+Root reviewed and released fixed100 FocusON CAL capture4677e075...e94c0d and exact1800-second owned controller5c32c2a7...636ba. Recorded build-input deletion app.237791b9.js was initially treated as a real SHA/file by the private producer; the actual R102 receipt explicitly records it as missing. The corrected producer preserves that absence separately, authenticates all real input hashes, and passes10/10 cheap controls. The owned controller rejects reappearing files and aliases before/after capture. The first actual capture then stopped before any question, Focus score or Context request because NativeGoalClient still expected an observation wrapper around actual raw CLI Status2. Its failed receipt CAL-capture-owned-r1 remains incomplete; the whole known adapter/capture/confirmation/controller class is being corrected against retained real output before an additive release. No CAL outcomes, fit or held-out confirmation results exist at this checkpoint.
+
+Before either Context raw100 run or task score, Root recorded native-cal-owned-r1/whole-census-phase-bound-r1.json:3360 seconds per complete scientific phase, derived from100 unchanged30-second calls plus360 seconds for load, authentication and closure. Original2048tokens/eightcards, CPU4/16 and reservations16/40GiB, host caps32/48GiB, fixed populations and all quality floors remain unchanged. Earlier1200/1800 proposals were unexecuted, not failed runs being retried. This does not change the already released collector1800-second limit or any product deadline.
+
+Current script evidence union receipts/script-union-r113 covers Python1300 identities:1276 pass,21 explicitly unqualified platform/historical skips, and3 required publication-input tests deferred until genuine profiles exist. Node138/138 passes naturally across13 files. The missing retained native-consumer log was supplied by a cheap5/5 focused rerun; original failure evidence and unchanged-scope reuse remain explicit. Actual cargo-vet R111 five policy/lock inputs still match live files. Repository check passed3390 public files and whitespace passed. The guide now explains retained original MiniLM, independent Focus, both Context choices, MCP answer behavior and candidate component hardware reservations, with final combined qualification still pending.
+
+Final lightweight-main Clippy R113 failed29.241s on three private optional-history helpers unused without local-inference. A reviewed private patch adds only caller-matched cfg attributes and contract text; it preserves the existing no-default Focus tests and introduces no warning suppression. It is held until the current consumed-source freeze ends. Native3a64 remains unchanged; workspace doctests R114 are running in the otherwise idle window, with no simultaneous task/model measurement. Full workspace tests/restored campaigns, final fitted/composed/A6, transports, installed journeys and package/platform gates remain required. P0–P11 acceptance was reviewed in final-gate-preparation-r1/ACCEPTANCE-INVENTORY.md.
+
+Mac Neo now has an actual independent draft source copy3262 files under ~/airk-builds/advanced-split-local-delivery-r1/source, exact packet04f933fe...c4fe1/native sourceaca9...6b75; original checkout HEAD/index/status are unchanged. Exact original MiniLMv3 eight-file transfer and remote readback passed; no Cargo, signing or model qualification occurred there. The source remains a draft awaiting final catalog changes. Windows existing signing authorization refreshed silently with expiry metadata only; no token was printed. Signed local installers have not yet been built. D free459GB; no cleanup is needed yet. No publication, PR, merge, commit or push occurred in this interval.
+
+R114 update: actual unfiltered all-feature workspace doctest command exited0 in69.870s with unchanged inputs; all19 libraries have zero authored examples. The generic receipt wrapper separately rejected selected0. Source inventory confirms no authored doctests, so this is successful documentation compilation with no behavioral assertions, not a filtered-zero test pass. Original wrapper result retained; final-gate-preparation-r1/doctest-r114-classification.json explains the distinction without rerunning Cargo. Future wrapper permits zero only for this exact unfiltered documentation command; ordinary filtered-test guards remain unchanged. All compiler/rustdoc descendants exited before the model window resumed.
+
+Root reviewed the exact five private Status2 diffs and authored additive capture release0a2236a4...866fc/controller packet19daeb19...7b6de. All actual native/data/model/resource inputs and1800/100/500 limits remain identical; four reviewed private driver/test pins changed, old bytes and failed capture retained. Affected29 controls pass plus3 absence passes/one actual-symlink skip. Extra historical QASPER final-output expectation failure reproduces against unchanged original code and remains disclosed; current CAL scopes contain only the fixed Hotpot collection. Fresh CAL-capture-r2 execution started under the same live service. Independent source review confirms native admission association, zero-Context advice, cumulative Focus work and SDK closure schemas; actual capture outcomes remain pending.
+
+### 2026-11-15 13:55 UTC — actual worker panic corrected; fresh private service started
+
+CAL R2 stopped at its first canonical answer with native read_failed/retrieval-worker-failed. Actual native.log records an airk-project-runtime panic at Supervisor runtime_metadata/arbiter.rs32: ambient Handle.block_on attempted nested runtime entry. Identity/parse/deadline checks were not the cause. The native dispatch journal was empty and no Context admission record existed, so no Focus/Context model task outcome was consumed. The old fixture subsequently shut down naturally, same ServiceLease reacquired, owned descendants settled with active0/no force and inputdrift[]. Fixture closure f80138ef...b5ff proves cleanup, not a successful CAL read; both capture attempts remain failed.
+
+The reviewed recovery batch records contract-first changes in native-recovery-integration-r115 and native-bridge-integration-r117. All five synchronous Supervisor callbacks now use one driver-safe bridge: same two-worker production runtime through block_in_place, driver-owned local/joined fallback outside/current-thread Tokio, factories constructing timers inside the selected driver, and unchanged requests/once policy/absolute deadlines/typed refusals. No detached work or permanent per-session runtime is added. The native-only warm observer is gated by test plus existing features; it records genuine activation facts without filesystem I/O in the callback, distinguishes retained/native-admitted paths, fails closure on dropped captures and intersects actual parent/warm deadlines. FocusContract independently reviewed the corrected seam and ran12/12 Python controls. Core's three optional helpers have caller-matched cfg attributes without warning suppression.
+
+R116 exact lightweight-main Clippy passed41.135s under its original sourceaf62 identity. R118 whole-workspace Clippy stopped25.950s on a missing explicit Sha256Digest import; R119 scoped Service Clippy stopped37.345s on helpers placed after an existing test module. Root added the import, narrowed the private Guard-returning method's visibility and moved the exact helper bytes before the tests, retaining failures and mechanical-move evidence. R121 scoped Clippy passed31.349s and selected14 tests: six native warm controls, two Focus accounting/refusal controls and two bridge deadline/error controls passed; four real-TCP bridge cases failed because Windows accepted peer sockets inherited nonblocking mode. The common test peer was corrected with set_nonblocking(false) before its unchanged3-second timeouts; the async client, product bridge and assertions were unchanged.
+
+R122 scoped Service/Supervisor/Kernel all-target/all-feature Clippy passed40.439s. All six bridge cases passed, selected6,0.049s test/15.493s command. The unchanged prior ten passing assertions retain R121 evidence. Current native source is eac7b9aac9a5a9943422a08406dd9602da55a35d2d7ed7cbceb24a2f4bdc29c5, formatted after the peer fix. Actual Cargo no-run JSON/build receipt passed1.392s with unchanged inputs; immutable Service imagee51772ac...61119/339122176bytes, Kernel5e56f25e...f57b2/229762560bytes and Supervisor0783b6e2...aa01f are retained in native-recovery-gates-r122/images.json. All compiler descendants exited before handing the resource window back. These are focused recovery passes; a final whole-workspace pass is still required.
+
+Root approved fresh native fixture packeta79396b0...6a96b/launcher7ef62665...42c9e/decision54a16540...27bab, same10800/11400-second bounds, unchanged raw3assets/CAL753sources/original-U8pipeline and genuine warm journal enabled. The entire unchanged R104 pair remains the client distribution; the separately identified new test Service image is the actual server. No mixed-pair or source relabel is claimed. Native ownership refuses adoption of the old namespace's nonempty index storage, so the fresh namespace uses canonical semantic regeneration while old control/index/cache data remains retained. Session33216 started; actual Ready/setup/model quality outcomes remain pending. No installers have yet been produced and no public publication is authorized. D free451GB; no clean is needed yet.

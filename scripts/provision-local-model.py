@@ -16,7 +16,7 @@ _policy = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_policy)
 _policy.validate_catalog(CATALOG)
 PROFILE = CATALOG["profiles"][0]
-if CATALOG["schema"] != 2 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "mixed-u8" or len(CATALOG["profiles"]) != 2:
+if CATALOG["schema"] != 2 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "uint8" or len(CATALOG["profiles"]) != 2:
     raise ValueError("No approved INT8 provisioning profiles")
 REVISION = PROFILE["manifest"]["revision"]
 SOURCE = PROFILE["manifest"]["source"]
@@ -62,7 +62,7 @@ def provision(destination, download=False, profile=None, source_directory=None):
             verify(path, size, digest)
             continue
         if source_directory is None and (not download or url is None):
-            raise ValueError(f"Missing {name}; trained assets require explicit authenticated local build inputs")
+            raise ValueError(f"Missing {name}; assets require explicit authenticated local inputs")
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(dir=destination, prefix="model-download-", delete=False) as output:
@@ -109,7 +109,7 @@ def provision(destination, download=False, profile=None, source_directory=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("--download", action="store_true", help="fetch only when the native catalog supplies an authenticated URL; trained-v2 assets are local-build inputs")
+    parser.add_argument("--download", action="store_true", help="fetch only when the native catalog supplies an authenticated URL; current assets use authenticated local inputs")
     parser.add_argument("--profile", choices=[profile["id"] for profile in CATALOG["profiles"]])
     parser.add_argument("--source-directory", type=Path, help="explicit local model.onnx/tokenizer.json/LICENSE inputs for --profile")
     args = parser.parse_args()

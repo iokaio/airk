@@ -542,3 +542,301 @@ envelopes and foreign combined-member index bindings mark the inventory
 incomplete. Existing combined-read member traversal reuses this owner recursively.
 Request arguments, assessment/paragraph prose and arbitrary JSON fields are not
 locators. No source-free verification claim substitutes for retained records.
+## Independent Focus / Context foundation (15 November 2026)
+
+Primary recorded the new current-version decision before dependent behavior,
+SHA-256 `6bd58ec8d78a6bb9adb189efdbcdbaa397d1b709e65ff86b03174c6a8509c698`.
+Approved product names are **Arbiter Focus**, **Arbiter Context — Compact**
+(Qwen3-1.7B) and **Arbiter Context — Large** (Qwen3-4B). Two selectable Context
+choices and one shared Focus ranking component supersede four-choice completion.
+Selection is not qualification. MiniLM remains a separate bundled encoder.
+
+Core configuration is `airk.arbiter.configuration/3`, with installation/catalog,
+one monotonic revision, and independent `focus`/`context` StageConfiguration
+blocks. Each has enabled, selected_profile and explicit immutable-index Enrollment
+rows. Stage::Focus permits only new `airk.focus_rank.v1`; Stage::Context currently
+permits ContextAction. Enabling/selecting one never enrolls or loads the other.
+Both disabled is the side-effect-free default. Context may run without Focus;
+when both are explicitly eligible the selected pipeline uses Focus first. Index
+rename preserves identity; recreation/import never inherits either stage consent.
+Unknown/noncanonical fields, empty/duplicate/wrong-stage enrollment refuse.
+
+The new private state root is `arbiter-v3`, with newly versioned receipts binding
+configuration schema AND stage in addition to existing identities/custody. It is
+not an airk-state/1 alteration. Prior arbiter-v1/v2 bytes remain retained and
+cannot supply v3 consent or custody. Absence creates nothing. Present v3 is
+current; if only legacy optional state exists, optional operation reports repair
+until explicit initialization publishes both-disabled v3 under the actual native
+lease, preserving legacy bytes. Store must update its owning contract before
+these new custody consumers. No automatic migration/download occurs on a read.
+
+Catalog/status are `/2`. Current ModelChoice IDs are
+`arbiter-focus-qwen3-reranker-06b`, `arbiter-context-qwen3-17b`, and
+`arbiter-context-qwen3-4b`. Historical four ModelChoice variants remain only for
+retained decoding/cleanup and are never current selectable stage profiles.
+Profile.stage is omitted when None: retained prototype profile serialization and
+asset/qualification identities remain unchanged, with an independent prior-owner
+serialization fixture proof. Current profiles require a matching explicit stage,
+matching tasks and exact per-task policy bindings. StageStatus exposes independent
+selected/active/availability/reason/queue observations, native declared CpuFit and
+qualified-target facts; missing fit is not a hardware promise.
+
+Context uses new QwenSingleChoiceV1, its own exact tokenizer/control/symbol assets,
+and DecisionSymbol raw logits over the native closed-card roster. Distinct actual
+option IDs are required; no generation/chain-of-thought or old pointer/token
+parity claim is admitted. Existing ContextAction semantic/calibration/roster/work
+rules remain. New Focus QwenRerankYesNoV1 instead has the distinct FocusYesNo ABI:
+three int64 [batch,tokens] inputs input_ids/attention_mask/position_ids, one float32
+[batch,labels] logits output with exactly no/yes labels. Its compiler binds exact
+no/yes tokenizer IDs/order. Every actual pair uses batch one and is charged.
+Publisher two-logit normalization is a relevance ordering score, never a calibrated
+sufficiency, correctness, abstention or source-authority probability. It cannot
+validate as ContextAction advice; old task/CAL results do not transfer.
+
+NativeFocusRequest is private inert data carrying the actual original read attempt,
+parent Budget, WorkerIdentity, ScopedReadRef, ScopeBinding, question, complete typed
+candidate Hits and exact UTF-8 source windows, complete order digest, prefix count,
+canonical-read ordinal, optional partition allowance and remaining time/tokens.
+Core validates same-host original expiry and the structural scope/worker/authority,
+publication, bounds, exact full-hit/window/order hashes and partition binding.
+These checks cannot create a native lease, grant, source proof or one-use charge;
+service must validate those actual owners before tokenizer and native dispatch.
+No caller-defined request/digest supplies a new reservation or fresh deadline.
+
+FocusApplicationReceipt, optionally carried by SearchResponse.focus, binds the
+actual scope/input/profile/compiler/calibration/task policy, entire original and
+ranked candidate order, finite score observations, prepared source windows with
+exact original UTF-8 offsets/full source length, presented/scored/omitted counts,
+reserved versus observed tokens and actual scoring Work. Preparation is not proof
+of successful FFI. NativeFocusResponse validates every source window against the
+complete original Hit and every order/identity against the exact native request.
+A successful application is the complete stable score permutation of the scored
+original prefix followed by the unscored original tail, retaining every complete
+hit/citation/future field. Exact ties retain original order. Native search's
+100-returned-candidate cap and original optional Budget caps remain; qualified
+profile/context/resource limits may narrow them, never enlarge them. No universal
+five-pair/128-token or hardware-fit claim is made by this contract.
+
+Failed/not-applied Focus keeps the entire original order; finite partial score
+observations and actual partial costs may remain disclosed, never partial ranking.
+Observed token overruns remain truthful only as Failed/not applied, without a
+second dispatch or a released-charge claim. Applied results require known complete
+work within the original allocation and deadline. Unknown native work retains
+actual admission, source/asset pins and reservations until observed completion.
+Scope/configuration/publication are checked before dispatch and delivery; common
+revision changes suppress stale composite delivery. Off/excluded ordinary results
+retain exact bytes where representation permits, full parsed equality otherwise;
+None focus is omitted from the existing SearchResponse serialization.
+
+Focus applies only to bounded relevance Search candidates. It grants no new reads,
+query rewrite, refill, drop, source access or rank of exhaustive/list/exact/read
+operations. Mixed requests partition before tokenizer/features/cache/scoring and
+retain excluded ordering/metadata/continuations. Context receives the same complete
+canonical results and counts all optional stages under the original common limits.
+One selected Context residency and one shared Focus residency are independently
+charged once with actual opaque permits; aggregate admission includes MiniLM,
+combined peaks, load copies and fresh headroom. Turning off one stage does not
+silently unload the other; actual FFI drain precedes release/removal.
+
+Rust owns schema and semantic emission. Core test emitters produce independent
+configuration/status/management/Focus request-and-result cases through the approved
+generation pilot before consumer behavior. No handwritten client schema mirror
+or unmeasured qualified model fixture is introduced. Core tests and schema presence
+prove structural contracts only; model/reference/numeric/task/calibration/resource,
+actual transport, installed/platform/package and release gates remain separate.
+Ordinary single-index Search has a distinct Core-owned optional allocation from
+its actual Host-captured ReadAttemptBudget: calls/rounds/fanout1, candidates the
+minimum of actual returned/requested/64/qualified profile cap and the conservatively
+reserved total-token/pair-token ratio, at most2048 total input tokens, at most65536
+receipt-metadata bytes intersected with the existing frame allowance, and the
+same earliest original expiry capped30s and floored once to whole milliseconds.
+Zero candidates, submillisecond expiry or insufficient metadata allowance grants
+no optional invocation. This adds no Search argument or attempt and does not
+change Search max_bytes, which remains TEXT-only. Nested Answer must supply its
+actual original parent and observed remaining allocation, never these defaults.
+Unpartitioned mixed ordinary reads remain complete NotApplied until the actual
+Host supplies a shared original-work partition. FocusApplication exposes validated
+profile-derived pair/candidate/total caps only on Ready; unavailable grants none.
+
+Private I1 adds ArbiterFocusApplication (actual worker/authority/publication) and
+ArbiterFocusRank (NativeFocusRequest), using existing128KiB tool request and4MiB
+tool response frame classes without raising constants. Both are refused by the
+metadata relay. Their typed responses require an explicit nullable application
+or response; absent fields cannot be treated as disabled/no work. A delivered
+None represents native not-dispatched absence, never lost/unknown dispatched work.
+Actual transport peer/worker/source/deadline/one-use checks remain adapter duties.
+
+### Complete staged outer delivery and compact pre-dispatch observations
+
+SearchResponse.focus is now an optional tagged FocusObservation: Receipt carries
+the full actual native FocusApplicationReceipt; NotApplied is a compact known
+pre-dispatch notice with bounded reason/availability/candidate count/optional order
+digest and required work_unknown=false. Off/excluded or zero metadata headroom
+retains None and the original complete result. A compact notice cannot replace
+unknown dispatched work, claim Ready, inflate an existing frame or drop source
+hits. The native Focus response still returns the full typed receipt. A Ready
+FocusApplication includes actual profile/runtime/compiler/calibration/task-policy
+identity as well as qualified caps, permitting truthful failed/unknown custody
+if the callback closes after dispatch; placeholders cannot supply these facts.
+
+ContextDeliveryBinding now has stage defaulting to Context and omitted when
+Context, preserving retained legacy bytes. Focus is explicit. Rosters are keyed
+by (stage,index), bounded by two times existing MAX_SELECTION inside unchanged
+frame constants. Core extracts only canonical Search.focus, typed Search records
+inside actual Context packets and the packet's own Context native receipt; no
+arbitrary nested metadata or source text is scanned. Duplicate/conflicting stage
+bindings refuse. The actual service must recheck that stage's selected profile,
+consent/task/configuration and source/publication through the final outer write.
+
+Distinct Focus score observations add known tokens and phase timings to Context
+aggregate work with checked overflow, while candidates are a peak and source
+calls/bytes remain owned once by canonical reads. Unknown Focus work makes old
+Context assessments historical and cannot support a learned terminal or another
+optional dispatch. A known Focus token-reservation violation remains Failed with
+actual observed work, explicit Budget/unassessed terminal and no current/later
+learned Context assessment. Actual one-use native reservations enforce time/order;
+the wire does not invent an interleaving proof from commutative totals. Current
+Core task semantic policy binds Focus validation/accounting and native input rules;
+old calibration identities never transfer to these new semantics.
+
+NativeFocusRequest semantic input digest uses a new framed
+`airk.arbiter.focus.input/2` domain under the separately recorded primary decision.
+Only remaining_ms and read_attempt.remaining_ns are zeroed in a private owning
+Rust clone before hashing, as native transport can monotonically shorten them.
+Original attempt ID/clock/absolute and retry expiry, parent allocation, token
+allowance, ordinal/partition, authority/scope and full source/window/order data
+remain bound. Runtime validation still checks the actual shortened carriers;
+zeroing for identity grants neither time nor authority. Prior /1 fixtures and
+receipts retain their original source identity; new Rust-emitted /2 cases prove
+the exact normalization and all immutable-field refusals.
+
+### Owner-only verified offline import (15 November 2026)
+
+The separately recorded offline-import decision adds NativeOfflineImportRequest
+outside the public ManagementRequest and Arbiter schema. Required fields are the
+original positive expected configuration revision, exact compiled qualified
+profile SHA-256, and explicit native absolute LOCAL bundle directory (UTF-8,
+4096-byte/control-character bound). Structural validation rejects URI/relative,
+UNC/network namespaces, device roots, traversal and Windows alternate-stream
+syntax while retaining supported local extended Windows drive paths. This pure
+Core check neither opens a filesystem nor proves local volume, alias exclusion,
+source custody, source immutability or model qualification.
+
+Private owner-only I1 ArbiterImport carries the typed request; its typed response
+requires a non-null Status observation. Both request/response retain the existing
+128KiB/4MiB tool frame classes. Metadata relay/public console forwarding refuses
+it. No HTTP/I3/browser source-path operation, public management import variant or
+public schema path is introduced. Unknown fields and absent/null required response
+observations refuse rather than imply success or no work.
+
+The native service must check actual local-owner admission, exact expected current
+revision and the compiled qualified stage profile before reading declared assets.
+The caller supplies neither profile metadata nor URLs/commands/provider code.
+Read every source through the existing no-follow/native-identity-aware directory
+and file helpers; reject unsupported aliases/streams, mapped/network sources,
+foreign/changing bytes and incomplete external tensor closure. Check all compiled
+lengths/digests and use actual ServiceLease-bound Store transactional staging,
+custody and original partial/recovery proofs. Preserve source/index bytes and
+all prior failed receipts; a failed or unknown operation never fabricates Ready.
+Import does not change stage selection, enablement or immutable-index enrollment.
+Only separately configured and eligible stages may activate verified assets.
+Rust-owned native fixtures prove this private interface; actual source/process,
+transaction/refusal/recovery and installer/offline journeys remain consumer gates.
+
+### Ordinary singleton Focus allowance purpose
+
+The separately recorded Focus-only allowance decision refines existing private
+PartitionAllowance validation without a new field or change to old valid Context
+bytes. is_ordinary_focus is true only for schema1, empty Context assessment
+ordinals, parent calls/rounds/fanout1, resources.calls1, positive optional tokens
+at most2048, candidates at most64 and metadata bytes at most65536, all within the
+validated original parent allocation. Old Context ordinal/token rules remain
+unchanged for every other shape, including known-zero optional allocations.
+NativeContextAction explicitly rejects a Focus-only allowance. Actual Host proves
+the original singleton selection/attempt/index; this predicate supplies purpose,
+not source permission, fresh capacity or caller-controlled authority.
+
+Host/MCP admission permits these private Focus-only allowances only for canonical
+Search and genuine Context allowances only for canonical Answer, before storage
+or scorer work. Nested native Focus inside Answer may retain its genuine Context
+allocation. Focus-only direct Search must keep its own outer native delivery guard;
+it is not a combined Context child whose parent will perform that final cut.
+Original attempt/selection/index bindings and common service one-use/token/frame
+limits still apply. Rust emits purpose, malformed/cross-purpose, oversubscription
+and retained-byte cases before consumers; ordinary unpartitioned mixed reads
+remain explicit NotApplied until an actual Host partition is available.
+
+
+### Cumulative nested Focus allocation
+
+The recorded nested-stage allocation decision gives Focus at most half (rounded
+down) of the actual original local parent optional token allocation when the
+initial actual Context application is Ready. Capture that readiness before reads
+once; neither subsequent rounds nor later availability changes renew the ceiling.
+Core focus_token_allowance intersects the ceiling less cumulative Focus cost with
+the shared remaining tokens and qualified profile token bound, then rounds down
+to complete qualified pairs. Known actual Focus costs and unknown held reservations
+count cumulatively. A zero result means no dispatch. Unknown work still blocks
+later optional work under the existing refusal rule; this helper grants no new
+authority and replaces no native common total ledger.
+
+When initial Context is unavailable, or for independent ordinary Search, Focus
+retains the full original local allocation subject to those same intersections.
+Context continues using actual shared remaining capacity, independently of whether
+the Focus ceiling is exhausted. At local2048/pair512, Focus can consume at most1024
+when Context starts Ready. The remaining capacity does not guarantee any Context
+roster fits: original compiler bounds still refuse or abstain without cropping.
+No wire field, total budget increase or per-round reset is introduced. Rust emits
+independent local/cumulative/shared/profile/whole-pair cases before consumers.
+
+
+### Explicit initialization observation
+
+Status2 initialization is optional and omitted on normal initialized status,
+preserving normal serialized bytes. When present, its typed actual_legacy_digest
+is the positively observed retained digest (omitted if unavailable) and its native
+reason is nonempty and at most1024 UTF8 bytes. Presence marks the disabled, empty,
+configuration as a non-writable placeholder. It is neither a current CAS draft
+nor permission to initialize or start work. Configuration load failure can follow
+native work: preserve actual resident profiles, queued/running counts, draining
+observations and charges. The marker must not fabricate zero work or completion;
+stages cannot report Ready against a placeholder.
+
+Native configuration load failure reports this marker, including missing, legacy,
+ambiguous and corrupt state; normal stage failure with a valid configuration does
+not require it. Clients retain the complete observation/outcome, display explicit
+Initialize controls and native digest/reason, and create no editable stage draft
+from a placeholder. No reason-string inference or automatic initialization occurs.
+The existing Initialize expected_legacy_configuration checks remain authoritative,
+including ambiguous retained-state refusal. No consent is migrated automatically.
+Rust emits these observations and proves unchanged normal bytes before consumers.
+
+
+### Explicit CPU4 execution tier
+
+The recorded CPU4 decision adds the exact minimum_physical_cores4/intra_threads4
+pair to the closed CpuFit tiers1/8/16/24. All tiers still require inter_threads1,
+sequential=true and spinning=false; mixed thread/core pairs and arbitrary tiers
+refuse. There is no new field, fallback or change to existing runtime identities.
+New CPU4 profiles carry their own runtime/profile/qualification identities; older
+CPU1 numerical observations and other tiers never transfer qualification. This
+selects one baseline Focus qualification configuration suitable for testing on
+the six-core Mac host, not a hardware fit or performance claim. Native CPU4 actual
+resource/latency/correctness and combined-stage gates remain required under the
+original deadlines, budgets and service resource admission. Rust emits the valid
+CPU4 value and independent mixed-tier/execution-mode refusals before consumers.
+
+
+### Selected Context Qwen six-input ABI enforcement
+
+Both selected Context Qwen profiles require DecisionSymbol readout with exactly
+these ordered inputs: input_ids, attention_mask and position_ids each Int64 with
+axes[batch_1,tokens]; decision_positions Int64[batch_1]; candidate_positions
+Int64[batch_1,options]; option_mask Bool[batch_1,options]. The sole scores output
+is Float32[batch_1,options]. Core Profile.validate_stage calls the shared
+ScoreAbi.validate_context_qwen validator before asset/session consumers. Missing,
+extra, reordered, renamed, mistyped or differently shaped tensors refuse. Native
+Rust cases prove the complete selected ABI and independent refusals; synthetic
+current Context profiles use it explicitly. Historical four-model fixtures remain
+unchanged and gain no selected-model eligibility. No wire field, tokenizer/model
+math, budget, persisted format or historical qualification identity changes.

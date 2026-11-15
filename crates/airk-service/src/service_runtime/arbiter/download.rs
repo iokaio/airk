@@ -218,6 +218,17 @@ mod tests {
         let mut profile: Profile = serde_json::from_slice(include_bytes!(
             "../../../../../fixtures/arbiter/profile-downloads.json"
         ))?;
+        // This is a Store/stream boundary fixture, not a qualified model.
+        profile.qualification = None;
+        profile.stage = Some(airk_core::arbiter::Stage::Context);
+        profile.model = airk_core::arbiter::ModelChoice::ContextQwenCompact;
+        profile.tasks = std::collections::BTreeSet::from([airk_core::arbiter::Task::ContextAction]);
+        let task_policy = airk_retrieval::arbiter::context_action::policy_digest()?;
+        profile.task_policies = std::collections::BTreeMap::from([(
+            airk_core::arbiter::Task::ContextAction,
+            task_policy,
+        )]);
+        profile.abi = super::super::failure_tests::structural_context_abi();
         let digest = airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"hello").into());
         profile.assets.truncate(6);
         profile.peak_disk_bytes = 1 << 20;
@@ -287,7 +298,7 @@ mod tests {
         assert!(store.pin(&profile).is_err());
         let path = root
             .path()
-            .join("arbiter-v2/assets")
+            .join("arbiter-v3/assets")
             .join(profile.manifest.to_string());
         assert_eq!(
             std::fs::read(path.join(&profile.assets[0].name))?,

@@ -1427,6 +1427,47 @@ root-cause stop rule.
   qualification status. Publication is claimed only after authorized
   workflows and published-artifact verification succeed.
 
+### 15 November 2026: selected Focus and Context architecture
+
+The user first authorized Qwen3-1.7B, Qwen3-4B and Qwen3-Reranker-0.6B
+experiments and conditional replacement. Later instructions superseded the
+comparison condition: select this path directly, implement it and test it without
+extra model bakeoffs. Required quality, safety, resource and release evidence
+remains mandatory; historical failed and unsupported outcomes retain their
+original identities.
+
+The approved names and roles are:
+
+- **Arbiter Focus:** independent optional relevance reranking after bundled MiniLM,
+  using Qwen3-Reranker-0.6B. It can run while Context is off.
+- **Arbiter Context — Compact:** bounded contextual evidence gathering using
+  Qwen3-1.7B.
+- **Arbiter Context — Large:** the same task using Qwen3-4B with its independently
+  measured resource profile.
+
+These two Context choices and their shared Focus component supersede the original
+two-smaller/two-larger requirement. Only one Context model is active; combined
+Focus/Context resource costs remain subject to native admission/lifetime limits.
+Each stage needs explicit index consent, qualified assets, honest availability
+and MiniLM-only/deterministic fallback. Neither stage grants source authority or
+authorizes automatic downloads. Focus ranking does not establish sufficiency,
+next-read authority or exhaustive recall. Both stages off preserve ordinary
+results. Record reviewed native contract/catalog/state decisions before dependent
+consumers, including independent stage configuration and receipts.
+
+Product Help must explain the pipeline, each model's role, independent stage
+enablement, index consent, provisioning/offline use, selected versus active state,
+resource requirements, fallback, removal and errors. Hardware requirements come
+from actual native measurements; do not invent a universal memory floor or claim
+unqualified support.
+
+The old six-role MiniLM FINAL comparison was stopped under this instruction. Its
+first family was partially consumed and cancelled, with private outputs retained
+and no grading or developer evidence/gold inspection. Do not call that holdout
+unconsumed or reuse it to select the new path. New MiniLM recovery training and
+its required export/quality/regeneration qualification remain separate from the
+selected optional-model path.
+
 ## 13. References
 
 | Area | Starting points |

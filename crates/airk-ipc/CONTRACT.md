@@ -185,3 +185,31 @@ keeps its existing30s cap. None remains125s canonical/135s response behavior.
 Service scope/backend resolution, frontend/MCP capacity handling, native member
 reads, Kernel and scorer share the earliest decoded parent context. Existing
 accepted-work ownership and cleanup/settlement guards remain in force.
+
+
+## Independent Focus original deadline (2026-11-15)
+
+ArbiterFocusApplication and ArbiterFocusRank are private native-worker callbacks;
+metadata relays and browser Admin cannot invoke them. FocusRank carries Core's
+original ReadAttemptBudget, actual worker/source scope, immutable publication,
+exact full-hit/order/window bindings, original parent/partition allocation and
+one-use local read ordinal. The once-only I1 exchange uses the same conservative
+clock conversion as ContextAction: connect, encode, write and read share the
+earliest captured deadline, at most30seconds, with unchanged shorter connect/write
+ceilings and128KiB request/4MiB response limits. No timeout or uncertain response
+allows replay, a new attempt, a fresh allowance or an unprotected fallback.
+
+The native service independently verifies authority and common stage budget
+ledger before optional dispatch. A profile hash, typed request or receipt alone
+grants no read authority, resident charge or permission to tokenize another index.
+
+
+Private ArbiterImport carries Core NativeOfflineImportRequest on the owner pipe
+only; its required nonnull ArbiterImport observation uses actual native Status/2.
+It is forbidden to metadata relays, generic forwarding and HTTP management. The
+native original directory is retained verbatim for backend nofollow/local-volume
+checks. Structural decode grants neither profile qualification nor filesystem
+custody. Existing 128KiB tool request and 4MiB response bounds apply. Acceptance
+starts owned bounded background import; a lost response retains unknown outcome,
+not rollback or automatic retry authorization. No public ManagementRequest path
+field or new untrusted model manifest authority is introduced.

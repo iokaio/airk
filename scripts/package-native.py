@@ -169,7 +169,7 @@ def validate_runtime(runtime, version, target, source):
         required.update(model_files)
         for name, digest in model_files.items():
             if files.get(name) != digest:
-                raise ValueError("Pinned trained-model notice differs or is missing: " + name)
+                raise ValueError("Pinned model notice differs or is missing: " + name)
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)
@@ -257,9 +257,12 @@ def main():
     parser.add_argument("--output", type=Path, help="Fresh directory inside ignored artifacts/; defaults to artifacts/native/<target>")
     parser.add_argument("--runtime-dir", type=Path, required=True, help="Exact tested build-service-runtime.py output")
     parser.add_argument("--signed-dir", type=Path, help="Fresh sign-native.py artifact copy and receipt, verified again on this OS")
+    parser.add_argument("--local-artifact-signing", action="store_true", help="Explicitly consume a Windows local-signing pair; never hosted release provenance")
     parser.add_argument("--source-manifest", type=Path, help="Reuse verified CI compiler metadata for signed repackaging")
     parser.add_argument("--signtool", default="signtool")
     args = parser.parse_args()
+    if args.local_artifact_signing and (args.target != "x86_64-pc-windows-msvc" or not args.signed_dir):
+        parser.error("Local Artifact Signing packaging requires the Windows target and --signed-dir")
     source_manifest = None
     if args.source_manifest:
         source_manifest = source_packaging_metadata(args.source_manifest, args.target, bool(args.signed_dir))
@@ -280,8 +283,10 @@ def main():
         specification = importlib.util.spec_from_file_location("airk_signing", ROOT / "scripts/sign-native.py")
         signer = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(signer)
-        runtime, signing = signer.read_verified_pair(args.signed_dir.resolve(strict=True), runtime, args.target,
-                                                     capture("git", "rev-parse", "HEAD"), sha256(ROOT / "Cargo.lock"), args.signtool)
+        arguments = (args.signed_dir.resolve(strict=True), runtime, args.target,
+                     capture("git", "rev-parse", "HEAD"), sha256(ROOT / "Cargo.lock"), args.signtool)
+        runtime, signing = (signer.read_verified_pair(*arguments, allow_local=True) if args.local_artifact_signing
+                            else signer.read_verified_pair(*arguments))
         files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
     executable = executables[0]
     output = (args.output or ROOT / "artifacts" / "native" / args.target).resolve()

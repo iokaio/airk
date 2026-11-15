@@ -17,6 +17,24 @@ use std::{
 /// Service composition supplies the native owner. No public fingerprint or
 /// downloaded model descriptor constructs this controller.
 pub trait NativeController: Send + Sync {
+    fn focus_application(
+        &self,
+        _worker: airk_core::service::WorkerIdentity,
+        _authority: airk_core::service::ScopedReadRef,
+        _publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<airk_core::arbiter::FocusApplication>> {
+        Ok(None)
+    }
+    fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+        Ok(None)
+    }
+    fn focus_rank(
+        &self,
+        _request: airk_core::native_focus::NativeFocusRequest,
+        _deadline: Instant,
+    ) -> Result<Option<airk_core::native_focus::NativeFocusResponse>> {
+        Ok(None)
+    }
     fn application(
         &self,
         worker: airk_core::service::WorkerIdentity,
@@ -40,6 +58,9 @@ pub trait NativeController: Send + Sync {
 }
 pub type CanonicalReader<'a> =
     dyn Fn(&str, &Map<String, Value>, Option<&str>) -> Result<Value> + 'a;
+/// The owning read adapter supplies representation/frame headroom. Kernel has
+/// no knowledge of SDK, HTTP, SSE or session envelopes.
+pub type FocusReplyBudget = Arc<dyn Fn(&airk_core::SearchResponse) -> Result<usize> + Send + Sync>;
 #[derive(Clone)]
 pub(crate) struct NativeContext {
     worker: airk_core::service::WorkerIdentity,
@@ -47,6 +68,8 @@ pub(crate) struct NativeContext {
     owner: Arc<dyn NativeController>,
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     partition: Option<airk_core::combined_context::PartitionAllowance>,
+    focus: Arc<std::sync::Mutex<focus::Attempt>>,
+    focus_reply_budget: Option<FocusReplyBudget>,
 }
 fn observed_application(
     context: &NativeContext,
@@ -113,6 +136,8 @@ impl crate::Kernel {
             owner,
             attempt: None,
             partition: None,
+            focus: Arc::new(std::sync::Mutex::new(focus::Attempt::default())),
+            focus_reply_budget: None,
         }));
         Ok(kernel)
     }
@@ -143,6 +168,9 @@ impl crate::Kernel {
             "native context attempt already captured"
         );
         context.attempt = Some(attempt);
+        // A native session is reusable; optional accounting is not. Each actual
+        // Host-captured request gets fresh private state under its original ID.
+        context.focus = Arc::new(std::sync::Mutex::new(focus::Attempt::default()));
         let mut kernel = self.clone();
         kernel.arbiter_context = Some(Arc::new(context));
         Ok(kernel)
@@ -164,6 +192,10 @@ impl crate::Kernel {
             .context("new native context unexpectedly shared")?;
         ensure!(
             context.authority.index_id == allowance.index_id
+                && context
+                    .authority
+                    .selection
+                    .is_none_or(|selection| selection.scope_identity == allowance.selection)
                 && self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
             "context partition differs from installed authority"
         );
@@ -179,6 +211,7 @@ impl crate::Kernel {
     ) -> Result<ContextResponse> {
         request.validate()?;
         require_live()?;
+        self.with_focus_parent_budget(request.budget.clone(), deadline)?;
         let started = Instant::now();
         request.budget.deadline_ms = request.budget.deadline_ms.min(
             deadline
@@ -204,6 +237,7 @@ impl crate::Kernel {
         );
         let publication = self.arbiter_publication()?;
         let application = observed_application(context, &publication, None)?;
+        self.bind_initial_context_readiness(application.availability == Availability::Ready)?;
         ensure!(
             application.scope.authorization == context.authority.fingerprint
                 && application.scope.index_id == context.authority.index_id
@@ -282,6 +316,9 @@ impl crate::Kernel {
             };
             require_live()?;
             let result = reader(dispatch.tool, &dispatch.arguments, Some(&dispatch.revision));
+            if let Ok(body) = &result {
+                self.observe_optional_source_reply(dispatch.tool, body)?;
+            }
             gathering.observe(result, Instant::now())?;
         }
         require_live()?;
@@ -374,6 +411,7 @@ pub struct Gathering {
     seen: BTreeSet<Sha256Digest>,
     excerpts: BTreeSet<Sha256Digest>,
     output: ContextResponse,
+    focus_work: Work,
 }
 
 fn token(value: &Value) -> Option<&str> {
@@ -449,6 +487,7 @@ impl Gathering {
             seen: BTreeSet::new(),
             excerpts: BTreeSet::new(),
             output,
+            focus_work: Work::default(),
         })
     }
 
@@ -618,6 +657,60 @@ impl Gathering {
             self.queue.clear();
             return Ok(());
         }
+        let focus = airk_core::arbiter::focus::observed_focus_work(
+            &self.output.records,
+            &self.request.budget,
+        )?;
+        self.output.work.input_tokens = self
+            .output
+            .work
+            .input_tokens
+            .checked_sub(self.focus_work.input_tokens)
+            .and_then(|tokens| tokens.checked_add(focus.work.input_tokens))
+            .context("combined Focus/Context token accounting overflow")?;
+        for (total, previous, observed) in [
+            (
+                &mut self.output.work.queue_us,
+                self.focus_work.queue_us,
+                focus.work.queue_us,
+            ),
+            (
+                &mut self.output.work.compile_us,
+                self.focus_work.compile_us,
+                focus.work.compile_us,
+            ),
+            (
+                &mut self.output.work.inference_us,
+                self.focus_work.inference_us,
+                focus.work.inference_us,
+            ),
+            (
+                &mut self.output.work.policy_us,
+                self.focus_work.policy_us,
+                focus.work.policy_us,
+            ),
+        ] {
+            if observed.is_some() || previous.is_some() {
+                *total = Some(
+                    total
+                        .unwrap_or(0)
+                        .checked_sub(previous.unwrap_or(0))
+                        .and_then(|value| value.checked_add(observed.unwrap_or(0)))
+                        .context("combined Focus/Context timing accounting overflow")?,
+                );
+            }
+        }
+        self.output.work.candidates = self.output.work.candidates.max(focus.work.candidates);
+        self.focus_work = focus.work;
+        if focus.work_unknown {
+            self.optional_failure = Some("Focus native work is unsettled; canonical evidence remains available but optional scoring is not replayed.".into());
+        }
+        if focus.failed_token_overrun {
+            self.optional_failure = Some("Focus measured work exceeded its reservation; no later optional scoring was admitted.".into());
+            self.output.stop = StopReason::Budget;
+            self.queue.clear();
+            return Ok(());
+        }
         if let Some(source) = literal::SourceLiteral::parse(&dispatch.choice.target)? {
             let result_record = self
                 .output
@@ -769,6 +862,21 @@ impl Gathering {
 
     fn retain(&mut self, dispatch: &Dispatch, body: Value, role: EvidenceRole) -> Result<bool> {
         let bytes = serde_json::to_vec(&body)?;
+        let record = EvidenceRecord {
+            id: framed_digest(
+                b"airk.arbiter.canonical-record/1",
+                &[
+                    dispatch.choice.id.as_bytes(),
+                    &serde_json::to_vec(&dispatch.arguments)?,
+                    &bytes,
+                ],
+            ),
+            scope: self.scope.clone(),
+            operation: dispatch.choice.operation,
+            arguments: dispatch.arguments.clone().into_iter().collect(),
+            role,
+            canonical_result: body,
+        };
         let initial = self.output.candidate_count == 0;
         self.output.candidate_count += 1;
         if self
@@ -780,6 +888,14 @@ impl Gathering {
             || self.output.records.len() >= self.request.budget.candidates
         {
             ensure!(
+                !airk_core::arbiter::focus::observed_focus_work(
+                    std::slice::from_ref(&record),
+                    &self.request.budget,
+                )?
+                .has_native_receipt,
+                "original Answer retention budget cannot retain mandatory Focus native work; optional work is not replayed"
+            );
+            ensure!(
                 !initial,
                 "Arbiter mandatory initial canonical search exceeds original retention budget"
             );
@@ -787,23 +903,8 @@ impl Gathering {
             self.output.stop = StopReason::Budget;
             return Ok(false);
         }
-        let id = framed_digest(
-            b"airk.arbiter.canonical-record/1",
-            &[
-                dispatch.choice.id.as_bytes(),
-                &serde_json::to_vec(&dispatch.arguments)?,
-                &bytes,
-            ],
-        );
         self.output.work.bytes += bytes.len();
-        self.output.records.push(EvidenceRecord {
-            id,
-            scope: self.scope.clone(),
-            operation: dispatch.choice.operation,
-            arguments: dispatch.arguments.clone().into_iter().collect(),
-            role,
-            canonical_result: body,
-        });
+        self.output.records.push(record);
         Ok(true)
     }
 
@@ -864,6 +965,7 @@ impl Gathering {
     }
 }
 
+mod focus;
 mod joint;
 pub use joint::JointPostExecutionStale;
 #[cfg(test)]

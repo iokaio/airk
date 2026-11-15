@@ -19,8 +19,11 @@ fn default_disabled_lane_never_creates_a_warm_or_source_queue() -> Result<()> {
     handle.configure(Configuration::disabled(installation, service))?;
     let queue = shared.queue.lock().unwrap();
     assert!(queue.jobs.is_empty());
-    assert!(queue.warm.is_none());
-    assert!(!queue.configuration.as_ref().unwrap().enabled);
+    assert!(queue.warm.is_empty());
+    assert!(
+        !queue.configuration.as_ref().unwrap().focus.enabled
+            && !queue.configuration.as_ref().unwrap().context.enabled
+    );
     drop(queue);
     handle.close();
     assert!(
@@ -103,7 +106,11 @@ fn request_fixture(
     };
     let reservation = {
         let mut queue = shared.queue.lock().unwrap();
-        if let Some(resident) = queue.resident.upgrade() {
+        if let Some(resident) = queue
+            .residents
+            .get(&Stage::Context)
+            .and_then(std::sync::Weak::upgrade)
+        {
             resident
         } else {
             let resident = Arc::new(resources.reserve_optional(
@@ -111,8 +118,12 @@ fn request_fixture(
                 1,
                 Some(8 << 30),
             )?);
-            queue.active_profile = Some(Sha256Digest::from_bytes([7; 32]));
-            queue.resident = Arc::downgrade(&resident);
+            queue
+                .active_profiles
+                .insert(Stage::Context, Sha256Digest::from_bytes([7; 32]));
+            queue
+                .residents
+                .insert(Stage::Context, Arc::downgrade(&resident));
             resident
         }
     };
@@ -134,7 +145,7 @@ fn request_fixture(
                 },
             ),
         },
-        task: Task::ContextNextRead,
+        task: Task::ContextAction,
         deadline: Instant::now() + Duration::from_secs(1),
         authority: Arc::new(|_| true),
         state: "source evidence".into(),
@@ -165,12 +176,15 @@ fn per_index_capacity_includes_the_actual_running_request() -> Result<()> {
     )?;
     let first = request_fixture(&shared, &resources, 10)?;
     let mut configuration = Configuration::disabled(first.scope.installation, shared.service);
-    configuration.enabled = true;
-    configuration.selected_profile = Some(Sha256Digest::from_bytes([7; 32]));
-    configuration.indexes.push(airk_core::arbiter::Enrollment {
-        index_id: first.scope.index_id,
-        tasks: std::collections::BTreeSet::from([Task::ContextNextRead]),
-    });
+    configuration.context.enabled = true;
+    configuration.context.selected_profile = Some(Sha256Digest::from_bytes([7; 32]));
+    configuration
+        .context
+        .indexes
+        .push(airk_core::arbiter::Enrollment {
+            index_id: first.scope.index_id,
+            tasks: std::collections::BTreeSet::from([Task::ContextAction]),
+        });
     handle.configure(configuration)?;
     shared.queue.lock().unwrap().running_index = Some(first.scope.index_id);
     let _accepted = handle.score(first)?;
@@ -189,7 +203,12 @@ fn actual_lane_exit_closes_admission_and_discards_queued_deliveries() -> Result<
     let handle = Handle(shared.clone());
     shared.accounting.begin_arbiter();
     shared.accounting.arbiter_cached(true);
-    shared.queue.lock().unwrap().active_profile = Some(Sha256Digest::from_bytes([9; 32]));
+    shared
+        .queue
+        .lock()
+        .unwrap()
+        .active_profiles
+        .insert(Stage::Context, Sha256Digest::from_bytes([9; 32]));
     shared.running.store(1, Ordering::Release);
     drop(LaneCompleted(shared.clone()));
     assert!(shared.done.load(Ordering::Acquire));
@@ -473,3 +492,129 @@ fn canceled_or_expired_before_actual_score_cannot_mint_completion_receipt() -> R
     assert_eq!(calls.get(), 0);
     Ok(())
 }
+
+#[test]
+fn disabling_one_stage_does_not_select_or_release_the_other_resident() -> Result<()> {
+    use airk_core::{
+        arbiter::{Enrollment, StageConfiguration},
+        index_catalog::IndexId,
+    };
+    use std::collections::BTreeSet;
+    let installation = Sha256Digest::from_bytes([1; 32]);
+    let catalog = Incarnation::from_bytes([2; 16]);
+    let index = IndexId::from_identity(Incarnation::from_bytes([3; 16]));
+    let focus = Sha256Digest::from_bytes([4; 32]);
+    let context = Sha256Digest::from_bytes([5; 32]);
+    let mut config = Configuration::disabled(installation, catalog);
+    config.focus = StageConfiguration {
+        enabled: true,
+        selected_profile: Some(focus),
+        indexes: vec![Enrollment {
+            index_id: index,
+            tasks: BTreeSet::from([Task::FocusRank]),
+        }],
+    };
+    config.context = StageConfiguration {
+        enabled: true,
+        selected_profile: Some(context),
+        indexes: vec![Enrollment {
+            index_id: index,
+            tasks: BTreeSet::from([Task::ContextAction]),
+        }],
+    };
+    config.validate()?;
+    let released = BTreeSet::new();
+    assert!(retains_resident(
+        Some(&config),
+        Stage::Focus,
+        focus,
+        &released
+    ));
+    assert!(retains_resident(
+        Some(&config),
+        Stage::Context,
+        context,
+        &released
+    ));
+    config.context.enabled = false;
+    config.revision += 1;
+    assert!(retains_resident(
+        Some(&config),
+        Stage::Focus,
+        focus,
+        &released
+    ));
+    assert!(!retains_resident(
+        Some(&config),
+        Stage::Context,
+        context,
+        &released
+    ));
+    assert!(!retains_resident(
+        Some(&config),
+        Stage::Focus,
+        context,
+        &released
+    ));
+    assert!(!retains_resident(
+        Some(&config),
+        Stage::Focus,
+        focus,
+        &BTreeSet::from([focus])
+    ));
+    Ok(())
+}
+
+#[test]
+fn both_actual_resident_references_hold_completion_until_each_stage_and_lane_settle() -> Result<()>
+{
+    use airk_core::inference_provider::{CompletionState, ProviderIdentity};
+    let service = Incarnation::from_bytes([1; 16]);
+    let operation = Incarnation::from_bytes([2; 16]);
+    let provider = ProviderIdentity {
+        schema: 1,
+        service_instance: service,
+        provider_generation: operation,
+        approved_execution_sha256: Sha256Digest::from_bytes([3; 32]),
+    };
+    let accounting = accounting::Accounting::default();
+    accounting.begin_arbiter();
+    accounting.arbiter_cached_count(2);
+    accounting.close(operation, vec![])?;
+    accounting.mark_engine_barrier();
+    assert_eq!(
+        accounting
+            .observation(provider, operation)?
+            .model_references_outstanding,
+        2
+    );
+    assert_eq!(
+        accounting.observation(provider, operation)?.state,
+        CompletionState::Pending
+    );
+    accounting.arbiter_cached_count(1);
+    assert_eq!(
+        accounting
+            .observation(provider, operation)?
+            .model_references_outstanding,
+        1
+    );
+    assert_eq!(
+        accounting.observation(provider, operation)?.state,
+        CompletionState::Pending
+    );
+    accounting.arbiter_cached_count(0);
+    assert_eq!(
+        accounting.observation(provider, operation)?.state,
+        CompletionState::Pending
+    );
+    accounting.mark_arbiter_barrier();
+    assert_eq!(
+        accounting.observation(provider, operation)?.state,
+        CompletionState::Complete
+    );
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+mod execution_observation;

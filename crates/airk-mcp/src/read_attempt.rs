@@ -283,14 +283,18 @@ impl ReadAttemptContext {
         self.delivery_factory = Some(factory);
         self
     }
-    /// Called on the complete known Answer value, before transport rendering
+    /// Called on the complete known Search/Answer value, before transport rendering
     /// or SSE/chunk buffering. Ordinary external clients retain their existing
     /// native handoff boundary; native server planes install the owning factory.
     pub fn retain_delivery_for(&self, value: &serde_json::Value) -> anyhow::Result<()> {
         // A captured private member is not the whole reply owner. Its complete
         // native body is reconciled by the aggregate parent, which registers
         // exactly one full binding roster on the shared outer custody.
-        if self.context_partition.is_some() {
+        if self
+            .context_partition
+            .as_ref()
+            .is_some_and(|partition| !partition.is_ordinary_focus())
+        {
             return Ok(());
         }
         if let Some(factory) = &self.delivery_factory {

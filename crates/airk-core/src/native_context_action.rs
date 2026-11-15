@@ -95,6 +95,10 @@ impl NativeContextActionRequest {
         );
         if let Some(partition) = &self.partition {
             ensure!(
+                !partition.is_ordinary_focus(),
+                "ordinary Focus allowance cannot authorize Context assessment"
+            );
+            ensure!(
                 partition.parent_budget == self.parent_budget,
                 "native joint-task parent budget differs from captured partition"
             );

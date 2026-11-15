@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 4,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": false
+      },
+      "id": "cpu4",
+      "runtime_identity": "onnxruntime-cpu/1.30.0/physical4/intra4/inter1/sequential/spinning0",
+      "valid": true
+    },
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 4,
+        "minimum_physical_cores": 1,
+        "sequential": true,
+        "spinning": false
+      },
+      "id": "mixed_minimum",
+      "valid": false
+    },
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 1,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": false
+      },
+      "id": "mixed_intra",
+      "valid": false
+    },
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 8,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": false
+      },
+      "id": "mixed_eight",
+      "valid": false
+    },
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 6,
+        "minimum_physical_cores": 6,
+        "sequential": true,
+        "spinning": false
+      },
+      "id": "unapproved_six",
+      "valid": false
+    },
+    {
+      "fit": {
+        "inter_threads": 2,
+        "intra_threads": 4,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": false
+      },
+      "id": "parallel_inter",
+      "valid": false
+    },
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 4,
+        "minimum_physical_cores": 4,
+        "sequential": false,
+        "spinning": false
+      },
+      "id": "parallel_execution",
+      "valid": false
+    },
+    {
+      "fit": {
+        "inter_threads": 1,
+        "intra_threads": 4,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": true
+      },
+      "id": "spinning",
+      "valid": false
+    }
+  ],
+  "qualification": false,
+  "schema": "airk.arbiter.cpu-four-cases/1"
+}

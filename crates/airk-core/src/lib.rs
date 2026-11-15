@@ -41,6 +41,8 @@ pub mod mapped_binding;
 pub mod model_objects;
 pub mod native_admin;
 pub mod native_context_action;
+pub mod native_focus;
+pub mod native_offline_import;
 pub mod native_reads;
 pub mod profile_families;
 pub mod publication;
@@ -237,6 +239,8 @@ pub struct Hit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<arbiter::FocusObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<search_execution::SearchExecution>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

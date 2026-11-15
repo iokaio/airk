@@ -166,4 +166,23 @@ unit tests. Platform-only cases require their native host.
 
 ## Optional Arbiter management (2026-11-14)
 
-The additive management rows are arbiter.status/configure/provision/cancel/remove/recover. Their canonical body is `{ "arbiter": { "request": <Rust ManagementRequest> } }`, matched exhaustively on request.operation. Status is read-only; other rows are naturally revision-fenced mutations. Remove affects only optional private model assets, never indexed sources. Owner pipe or authenticated Admin session plus CSRF applies. Dispatch rechecks the pure admission callback at the configuration CAS or before accepting a background native job; the accepted job subsequently owns its ServiceLease/configuration/cancellation authority. ArbiterApplication and ArbiterNextRead remain native owner-pipe internals and never receive HTTP routes. No browser field creates worker scope or model qualification.
+The additive management rows are arbiter.status/initialize/configure/provision/cancel/remove/recover. Their canonical body is `{ "arbiter": { "request": <Rust ManagementRequest> } }`, matched exhaustively on request.operation. Status is read-only; other rows are naturally revision-fenced mutations. Remove affects only optional private model assets, never indexed sources. Owner pipe or authenticated Admin session plus CSRF applies. Dispatch rechecks the pure admission callback at the configuration CAS or before accepting a background native job; the accepted job subsequently owns its ServiceLease/configuration/cancellation authority. ArbiterApplication and ArbiterNextRead remain native owner-pipe internals and never receive HTTP routes. No browser field creates worker scope or model qualification.
+
+
+## Independent Focus and Context stages (2026-11-15)
+
+The Rust-owned configuration/3 and Status/2 expose independently enabled Focus
+and Context. Configure, Cancel and Recover bind an explicit stage. Provision and
+Remove derive the stage from the exact profile or original native cleanup
+receipt; no client stage substitutes for that identity. Initialization is an
+explicit management mutation fenced by the retained legacy configuration digest.
+It creates only new disabled v3 state while preserving old consent and assets.
+It is never an implicit status/read action or automatic migration.
+
+The `arbiter.initialize` row has the same owner-pipe or authenticated Admin+CSRF
+authority as other optional model management; its typed request is Core
+ManagementRequest::Initialize. Native ArbiterApplication, ArbiterNextRead,
+ArbiterContextAction, ArbiterFocusApplication and ArbiterFocusRank are forbidden
+over HTTP. No stage control grants native source scope, model qualification or
+permission to download assets on an ordinary read. Existing outcome custody,
+unknown/nonreplayable effects and dispatch/liveness rechecks remain mandatory.

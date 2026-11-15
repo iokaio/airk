@@ -180,8 +180,29 @@ fn approved(model: ModelChoice) -> Result<Sha256Digest> {
             "d10876d7b5b3da240fac17228985714f24aabbb6c53df35a8398b28fa04ed7bc"
         }
         ModelChoice::LargeKev => "83e19e51906b2a7024af2432f6815ab6b032cd5945cf50ac5496f149c1a9f5e9",
+        ModelChoice::FocusQwenReranker06B
+        | ModelChoice::ContextQwenCompact
+        | ModelChoice::ContextQwenLarge => anyhow::bail!(
+            "selected Qwen stages are outside the historical four-model calibration artifacts"
+        ),
     }
     .parse()
+}
+
+#[test]
+fn historical_approved_artifacts_refuse_every_selected_qwen_stage() -> Result<()> {
+    for model in [
+        ModelChoice::FocusQwenReranker06B,
+        ModelChoice::ContextQwenCompact,
+        ModelChoice::ContextQwenLarge,
+    ] {
+        assert!(approved(model).is_err());
+    }
+    assert_eq!(
+        approved(ModelChoice::SmallIntern)?.to_string(),
+        "feff8b9d12f179ab9d719134bbedf2fe5d6a789d68761001130283ca082c9044"
+    );
+    Ok(())
 }
 fn cases(preflight: &Value, raw: &Value) -> Result<Vec<Case>> {
     ensure!(
@@ -575,3 +596,5 @@ fn native_proxy_fit_serialized_asset_binds_complete_model_map_policy_and_abi() -
     );
     Ok(())
 }
+
+mod selected;

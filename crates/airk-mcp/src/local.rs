@@ -200,24 +200,55 @@ impl LocalTools {
             "narrowed Answer requires the native Host-captured absolute attempt before local dispatch"
         );
         if let Some(attempt) = context.captured_transport_attempt()
-            && (matches!(name.as_str(), "airk_answer" | "answer")
-                || context.context_partition().is_some())
+            && matches!(
+                name.as_str(),
+                "airk_answer" | "answer" | "airk_search" | "search"
+            )
         {
             anyhow::ensure!(
-                matches!(name.as_str(), "airk_answer" | "answer"),
-                "context partition requires canonical Answer"
+                context.context_partition().is_none_or(|partition| {
+                    if partition.is_ordinary_focus() {
+                        matches!(name.as_str(), "airk_search" | "search")
+                    } else {
+                        matches!(name.as_str(), "airk_answer" | "answer")
+                    }
+                }),
+                "native partition purpose differs from the canonical operation"
             );
             server.kernel = match context.context_partition() {
                 Some(partition) => server
                     .kernel
-                    .with_context_partition(partition.clone(), attempt)?,
-                None => server.kernel.with_context_attempt(attempt)?,
+                    .with_context_partition(partition.clone(), attempt)?
+                    .with_optional_deadline(context.deadline())?,
+                None => server
+                    .kernel
+                    .with_optional_read_attempt(attempt, context.deadline())?,
             };
         } else if context.wire_attempt().is_none() {
             anyhow::ensure!(
                 context.context_partition().is_none(),
                 "context partition has no original wire attempt"
             );
+        }
+        if matches!(
+            name.as_str(),
+            "airk_answer" | "answer" | "airk_search" | "search"
+        ) {
+            let scope = server.kernel.scope_observation().cloned();
+            let include_status = arguments
+                .get("include_status")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
+            server.kernel =
+                server
+                    .kernel
+                    .with_focus_reply_budget(std::sync::Arc::new(move |response| {
+                        crate::response::focus_reply_headroom(
+                            response,
+                            scope.as_ref(),
+                            include_status,
+                        )
+                    }))?;
         }
         server.read_attempt = Some(if context.uses_remote_admission() {
             context.clone()

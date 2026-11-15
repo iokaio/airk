@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Capability selection works offline before any workspace/model state exists.
 use anyhow::{Result, ensure};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 mod common;
 
@@ -52,12 +52,50 @@ fn model_catalog_never_opens_collection_state_and_only_selects_int8() -> Result<
             .iter()
             .any(|p| p["id"] == value["selection"]["profile_id"])
     );
-    assert_eq!(profiles[0]["precision"], "uint8");
-    assert_eq!(profiles[1]["precision"], "int8");
-    assert_eq!(
-        profiles[0]["manifest"]["model_sha256"],
-        "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21"
-    );
+    assert_eq!(value["catalog"]["schema"], 2);
+    assert_eq!(value["catalog"]["default_profile"], "minilm-l6-v2-u8-v3");
+    let runtime = "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2";
+    assert_eq!(value["capabilities"]["runtime"], runtime);
+    // Independent current-contract expectations: no FP32 profile, inherited
+    // v1 graph or fabricated upstream URL can replace either trained export.
+    // The mixed policy explicitly retains embeddings and six FFN outputs FP32.
+    let expected = [
+        (
+            "minilm-l6-v2-u8-v3",
+            "uint8",
+            "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
+            23_046_789,
+        ),
+        (
+            "minilm-l6-v2-s8-v3",
+            "int8",
+            "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
+            23_026_053,
+        ),
+    ];
+    let tokenizer = "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037";
+    let license = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30";
+    for (profile, (id, precision, model, bytes)) in profiles.iter().zip(expected) {
+        assert_eq!(profile["id"], id);
+        assert_eq!(profile["precision"], precision);
+        assert_eq!(profile["runtime"], runtime);
+        assert_eq!(profile["manifest"]["model_sha256"], model);
+        assert_eq!(profile["manifest"]["tokenizer_sha256"], tokenizer);
+        assert_eq!(profile["manifest"]["license_sha256"], license);
+        assert!(
+            profile
+                .get("quantization")
+                .is_none_or(|value| value.is_null())
+        );
+        assert_eq!(
+            profile["assets"],
+            json!([
+                {"name":"model.onnx","bytes":bytes,"sha256":model,"url":null},
+                {"name":"tokenizer.json","bytes":466247,"sha256":tokenizer,"url":null},
+                {"name":"LICENSE","bytes":11358,"sha256":license,"url":null}
+            ])
+        );
+    }
     assert_eq!(fs::read_dir(directory.path())?.count(), 0);
     Ok(())
 }

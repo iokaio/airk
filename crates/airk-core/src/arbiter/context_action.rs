@@ -26,6 +26,7 @@ pub fn semantic_policy_digest() -> Result<Sha256Digest> {
         &[
             source(include_bytes!("context_action.rs"))?.as_bytes(),
             source(include_bytes!("context_action/calibration.rs"))?.as_bytes(),
+            super::focus::semantic_policy_digest()?.as_bytes(),
         ],
     ))
 }
@@ -578,16 +579,24 @@ impl ContextResponseV2 {
             self.assessment_history.len() <= MAX_ASSESSMENTS,
             "joint assessment history limit"
         );
+        let focus_work = super::focus::observed_focus_work(&self.records, budget)?;
         let mut previous = 0;
         let mut tokens = 0usize;
-        let mut timings = [None; 4];
+        let mut timings = [
+            focus_work.work.queue_us,
+            focus_work.work.compile_us,
+            focus_work.work.inference_us,
+            focus_work.work.policy_us,
+        ];
         let mut unknown = false;
         let mut task_policy = None;
         let failed_token_overrun = self.stop == PartitionTermination::Budget
             && matches!(self.assessment.coverage, PartitionCoverage::Unassessed { .. })
             && self.assessment_history.last().is_some_and(|event| matches!(&event.result,
                 AssessmentResult::Unavailable { reason: AssessmentUnavailable::TokenBudget | AssessmentUnavailable::Unavailable,
-                    advice: Some(advice), .. } if advice.observed_input_tokens.is_some()));
+                    advice: Some(advice), .. } if advice.observed_input_tokens.is_some()))
+            || (focus_work.failed_token_overrun && self.stop == PartitionTermination::Budget
+                && matches!(self.assessment.coverage, PartitionCoverage::Unassessed { .. }));
         for (position, event) in self.assessment_history.iter().enumerate() {
             ensure!(
                 !unknown
@@ -715,9 +724,34 @@ impl ContextResponseV2 {
                 "joint measured token violation cannot permit later assessment"
             );
         }
+        tokens = tokens
+            .checked_add(focus_work.work.input_tokens)
+            .ok_or_else(|| anyhow::anyhow!("joint Focus and Context token overflow"))?;
+        unknown |= focus_work.work_unknown;
         ensure!(
-            tokens <= self.work.input_tokens,
-            "joint assessment tokens not retained"
+            !focus_work.failed_token_overrun
+                || (self.stop == PartitionTermination::Budget
+                    && matches!(
+                        self.assessment.coverage,
+                        PartitionCoverage::Unassessed { .. }
+                    )
+                    && self
+                        .assessment_history
+                        .iter()
+                        .all(|event| event.applicability != AssessmentApplicability::Current)),
+            "Focus token violation cannot permit a current or later learned Context result"
+        );
+        ensure!(
+            !focus_work.work_unknown
+                || self
+                    .assessment_history
+                    .iter()
+                    .all(|event| event.applicability != AssessmentApplicability::Current),
+            "unknown Focus work cannot retain a current Context assessment"
+        );
+        ensure!(
+            tokens <= self.work.input_tokens && focus_work.work.candidates <= self.work.candidates,
+            "joint Focus/Context observed tokens or candidate peak not retained"
         );
         let learned_terminal = matches!(
             self.stop,

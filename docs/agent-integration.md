@@ -15,6 +15,26 @@ extension between a standalone client and AIRK. Headless reads still require the
 native service to be running and the client process to have its reviewed
 credential and CA trust. A saved configuration alone does not supply either.
 
+## Retrieval, ranking and contextual questions
+
+MiniLM remains the bundled embedding encoder for native candidate retrieval.
+The approved source design adds independently enabled **Arbiter Focus**
+(Qwen3-Reranker-0.6B), followed when enabled by **Arbiter Context — Compact**
+(Qwen3-1.7B) or **Arbiter Context — Large** (Qwen3-4B). Focus can assist ordinary
+retrieval while Context is off; Context guides bounded evidence gathering.
+Controls and new profiles remain under implementation/qualification.
+
+The `answer` MCP tool gathers contextual evidence for a question and retains
+source receipts, gaps, work and stop reasons. It differs from `context`, which
+expands lines around an indexed coordinate. Neither model advice nor stage
+enrollment expands the client's authorized index scope. Inspect the running
+catalog and native status for supported operations and active profiles.
+
+The [Arbiter operator guide](arbiter/user-guide.md) explains stage/index consent,
+explicit model provisioning, hardware admission, offline use, selected versus
+active state and fallback. A reranker cannot recover evidence absent from the
+candidate set, and a relevance score is not a sufficiency guarantee.
+
 ## Select scope and provision the actual client
 
 **Open connections (1.8.35 split candidate, U105).** In the Explorer, apply a

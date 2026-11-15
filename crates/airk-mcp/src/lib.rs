@@ -50,6 +50,8 @@ mod arbiter_public_tests;
 #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
 mod context_action_capture_tests;
 #[cfg(test)]
+mod focus_handler_tests;
+#[cfg(test)]
 mod scoped_observation_tests;
 #[cfg(test)]
 mod ui_pilot_cases;

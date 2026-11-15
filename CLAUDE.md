@@ -230,9 +230,11 @@ Campaign execution rules:
   and published-artifact checks for reviewed integrated candidates.
 - Keep the critical path moving while another owner works. Review the whole
   P0–P11 status at least every four hours, shift effort to unfinished acceptance
-  criteria. The revised cutoffs are 14 November 10:05 UTC for integrated source
-  and model inputs, 16:05 UTC for qualification, and 15 November 02:05 UTC for
-  publication and downloaded-byte verification, leaving one hour for recovery.
+  criteria. Under the user's 12-hour extension, operational targets are
+  15 November 07:05 UTC for integrated source and model inputs, 11:05 UTC for
+  qualification, and 14:05 UTC for local installer delivery, leaving one hour
+  for recovery. Public publication remains separately authorized only after
+  concrete reviewed artifacts and required release gates are ready.
   Move to qualification as soon as a coherent candidate is ready. Do not fill
   the window with optional cleanup or treat the deadline as a waiver of checks.
 
@@ -247,6 +249,7 @@ Campaign execution rules:
 - Current-version delivery: previous-version compatibility is not required. If indexed data cannot be upgraded, index replacement/regeneration is authorized. Preserve source files and unrelated user work; current-version contracts, authority, budgets, quality and release gates still apply. Historical receipts remain historical evidence, not compatibility obligations.
 - Resume from the working tree, the ledger and the relevant receipts.
 - The advanced split's approved local Arbiter work follows its own boundaries in the plan.
+- The user selected independent Arbiter Focus (Qwen3-Reranker-0.6B) plus Arbiter Context Compact/Large (Qwen3-1.7B/4B). This supersedes the original four-choice catalog and broad comparison condition; implement and qualify this path with the existing acceptance gates. Product Help must explain the stages, models, consent and measured requirements.
 - DiskANN is the selected final disk-backed vector engine. The lexical/SQLite bootstrap storage is not that implementation; do not treat it as one.
 - The installed-editor repair is superseded. Ordinary split work does not resume it.
 - Authorized milestone commits/pushes: `feat/advanced-split` to `origin` (`https://github.com/iokaio/airk.git`); no force-push and no pushes to other branches.

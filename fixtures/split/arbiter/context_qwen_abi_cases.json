@@ -1,0 +1,709 @@
+{
+  "cases": [
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "complete_six_input",
+      "valid": true
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "missing_input",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "reordered_input",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "extra_input",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "wrong_mask_type",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "historical_1d",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "wrong_decision_axes",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "logits"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "wrong_output_name",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "wrong_output_axes",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "int64",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "id": "wrong_output_type",
+      "valid": false
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "focus_yes_no"
+      },
+      "id": "wrong_readout",
+      "valid": false
+    }
+  ],
+  "qualification": false,
+  "schema": "airk.arbiter.context-qwen-abi-cases/1"
+}

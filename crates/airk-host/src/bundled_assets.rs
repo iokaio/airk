@@ -59,11 +59,11 @@ fn manifest_bytes() -> Result<&'static [u8]> {
             .id
             .as_str()
         {
-            "minilm-l6-v2-u8-v2" => {
-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v2/model.json"))
+            "minilm-l6-v2-u8-v3" => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v3/model.json"))
             }
-            "minilm-l6-v2-s8-v2" => {
-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v2/model.json"))
+            "minilm-l6-v2-s8-v3" => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v3/model.json"))
             }
             _ => anyhow::bail!("unsupported bundled model"),
         },

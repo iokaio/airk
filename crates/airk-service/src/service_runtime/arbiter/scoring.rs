@@ -2,12 +2,14 @@
 //! Actual optional next-read scoring under the installed native worker scope.
 use super::*;
 
-impl Owner {
+impl StageOwner {
     pub(in crate::service_runtime) async fn next_read(
         &self,
         request: NativeNextReadRequest,
         supervisor: &airk_supervisor::project_supervisor::Supervisor,
     ) -> Result<Option<Advice>> {
+        #[cfg(feature = "local-inference")]
+        let stage = self.stage;
         let started = Instant::now();
         let attempt = request
             .read_attempt
@@ -78,6 +80,7 @@ impl Owner {
             use airk_retrieval::arbiter::tasks;
             let profile = self.execution_profile(
                 configuration
+                    .stage(stage)
                     .selected_profile
                     .context("Arbiter selected profile missing")?,
             )?;
@@ -103,7 +106,7 @@ impl Owner {
                     current.revision == scope.configuration_revision
                         && current.installation == scope.installation
                         && current.catalog == scope.catalog
-                        && current.selected_profile == Some(manifest)
+                        && current.stage(stage).selected_profile == Some(manifest)
                         && current.eligible(scope.index_id, Task::ContextNextRead)
                 }) && gate.catalog_clock().is_some_and(|clock| {
                     clock.namespace == scope.catalog
@@ -115,25 +118,28 @@ impl Owner {
                 })
             });
             let pending = async {
-                let handle = supervisor.arbiter().await?;
+                let handle = supervisor.arbiter_management().existing().await?;
                 // The warmed session already owns the qualified maximum peak
                 // charge. Recheck that exact charge and fresh OS headroom;
                 // serialized scoring never allocates a second model session.
                 let resident = handle.resident(profile.manifest)?;
                 let admission = supervisor.reuse_optional(resident.reservation()).await?;
-                handle.score(ScoreRequest {
-                    worker: request.worker.worker,
-                    scope: request.scope.clone(),
-                    task: Task::ContextNextRead,
-                    deadline,
-                    authority: live,
-                    state: prompt.state,
-                    question: prompt.question,
-                    candidates: prompt.candidates,
-                    resident,
-                    admission,
-                    max_input_tokens: request.remaining_input_tokens,
-                })
+                self.score_request(
+                    &handle,
+                    ScoreRequest {
+                        worker: request.worker.worker,
+                        scope: request.scope.clone(),
+                        task: Task::ContextNextRead,
+                        deadline,
+                        authority: live,
+                        state: prompt.state,
+                        question: prompt.question,
+                        candidates: prompt.candidates,
+                        resident,
+                        admission,
+                        max_input_tokens: request.remaining_input_tokens,
+                    },
+                )
             };
             let mut pending =
                 match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)

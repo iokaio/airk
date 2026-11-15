@@ -809,3 +809,33 @@ fn emit_context_action_semantic_cases() -> Result<()> {
     );
     Ok(())
 }
+#[test]
+fn nested_focus_costs_are_additive_and_unknown_work_cannot_support_current_context() -> Result<()> {
+    let mut packet = response();
+    let record = crate::arbiter::focus::tests::search_record(packet.assessment.scope.clone())?;
+    packet.records.push(record);
+    packet.candidate_count = 2;
+    packet.work.calls = 2;
+    packet.work.candidates = 3;
+    assert!(packet.validate(&Budget::default()).is_err());
+    packet.work.input_tokens = 190;
+    packet.work.compile_us = Some(1);
+    packet.work.inference_us = Some(2);
+    packet.validate(&Budget::default())?;
+    let raw = &mut packet.records[1].canonical_result["focus"]["receipt"];
+    raw["applied"] = false.into();
+    raw["availability"] = "failed".into();
+    raw["ranked_order"] = raw["original_order"].clone();
+    raw["observed_input_tokens"] = Value::Null;
+    raw["work"]["input_tokens"] = 0.into();
+    assert!(packet.validate(&Budget::default()).is_err());
+    packet.stop = PartitionTermination::Unsupported;
+    packet.gaps = vec![Gap::Unsupported];
+    packet.assessment.coverage = PartitionCoverage::Unassessed {
+        reason: AssessmentUnavailable::Unavailable,
+    };
+    packet.assessment.termination = PartitionTermination::Unsupported;
+    packet.assessment_history[0].applicability = AssessmentApplicability::HistoricalAfterRead;
+    packet.validate(&Budget::default())?;
+    Ok(())
+}

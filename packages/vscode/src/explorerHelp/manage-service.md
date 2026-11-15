@@ -3,8 +3,8 @@ id: management.service
 title: Service and runtime
 route: manage/service
 area: management
-aliases: start, stop, restart, upgrade, rollback, embedding, resources
-related_airk_help: service, upgrades, resources
+aliases: start, stop, restart, upgrade, rollback, embedding, resources, Arbiter Focus, Arbiter Context, Qwen, MiniLM
+related_airk_help: service, upgrades, resources, models, arbiter
 ---
 # Service and runtime
 
@@ -13,3 +13,11 @@ Stopping the AIRK Service and reviewing its runtime are in AIRK Admin, Service. 
 Advanced management uses AIRK Admin. Explorer also keeps Agents, Activity, Usage and evidence reads inside this window; choose the corresponding main destination for those native service results.
 
 Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
+
+## Optional Arbiter stages
+
+The approved source design separates **Arbiter Focus** (Qwen3-Reranker-0.6B) from **Arbiter Context — Compact** (Qwen3-1.7B) and **Arbiter Context — Large** (Qwen3-4B). Focus ranks MiniLM's retrieved candidates and can run with Context off. Context assesses evidence and guides bounded additional reads. Only one Context model is active. These controls require a service version with stage support and qualified profiles; inspect the running service rather than assuming this guide enables them.
+
+Both stages are off by default and need their own explicit index enrollment and verified supported assets. Model selection is intended configuration; active readiness additionally needs task/platform support and current resources. Status, ordinary queries and Help never authorize model downloads. Use native Arbiter status and current generated command/schema guidance for supported controls.
+
+Focus still has a memory and latency cost; candidate count and passage length matter. There is no universal RAM floor or assumed GPU support. An unavailable stage retains ordinary retrieval with an explicit reason, while normal vector/completeness refusals still apply. Disablement drains native work; remove models through guarded service controls instead of deleting live assets. Native Help's Arbiter guide explains requirements, offline use, stage consent, fallback and recovery.

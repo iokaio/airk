@@ -3,11 +3,13 @@ import hashlib
 import importlib.util
 import json
 import os
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 import tempfile
 import unittest
 import zipfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("package_native", Path(__file__).parents[1] / "package-native.py")
 package = importlib.util.module_from_spec(spec)
@@ -340,10 +342,7 @@ class SplitPairContracts(unittest.TestCase):
     def test_trained_model_notices_require_exact_authenticated_five_file_closure(self):
         # Independent roster and literal rights pins: no expected set derived from the producer.
         companions = {
-            "minilm-v2-LICENSE.txt": ("LICENSE", "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd"),
-            "minilm-v2-TRAINING-NOTICES.md": ("TRAINING-NOTICES.md", "2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be"),
-            "minilm-v2-provenance.json": ("training-provenance.json", "6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81"),
-            "CC-BY-4.0.txt": ("CC-BY-4.0.txt", "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"),
+            "minilm-LICENSE.txt": ("LICENSE", "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
         }
         for target in SPLIT_IMAGES:
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
@@ -360,11 +359,9 @@ class SplitPairContracts(unittest.TestCase):
                 files, _ = package.validate_runtime(root, "1.9.0", target, self.source)
                 self.assertEqual({name.removeprefix("notices/all-MiniLM-L6-v2/") for name in files
                                   if name.startswith("notices/all-MiniLM-L6-v2/")},
-                                 {"LICENSE", "TRAINING-NOTICES.md", "training-provenance.json",
-                                  "CC-BY-4.0.txt", "provenance.json"})
+                                 {"LICENSE", "provenance.json"})
                 # Reseal the outer inventory to prove it cannot authorize changed legal bytes.
-                for name in ("LICENSE", "TRAINING-NOTICES.md", "training-provenance.json",
-                             "CC-BY-4.0.txt", "provenance.json"):
+                for name in ("LICENSE", "provenance.json"):
                     path = notice_root / name
                     original = path.read_bytes()
                     for replacement in (None, original + b"tampered"):
@@ -373,7 +370,7 @@ class SplitPairContracts(unittest.TestCase):
                         else:
                             path.write_bytes(replacement)
                         seal_split(root, pair, build)
-                        with self.assertRaisesRegex(ValueError, "Pinned trained-model notice"):
+                        with self.assertRaisesRegex(ValueError, "Pinned model notice"):
                             package.validate_runtime(root, "1.9.0", target, self.source)
                         path.write_bytes(original)
                 (notice_root / "unreviewed.txt").write_bytes(b"extra")
@@ -459,6 +456,41 @@ class SplitPairContracts(unittest.TestCase):
             self.assertEqual((receipt["i1_protocol"], receipt["i2_contract"]), (1, 1))
             with self.assertRaises(ValueError):
                 package.split_candidate({**common, "archive": "airk-other.zip"}, files, executables, root, {"schema": 1})
+
+
+class LocalSigningAdmission(unittest.TestCase):
+    def test_local_flag_requires_windows_signed_pair_before_compiler_or_filesystem_work(self):
+        for target, extra in (("x86_64-pc-windows-msvc", []), ("aarch64-apple-darwin", ["--signed-dir", "missing"])):
+            with self.subTest(target=target), patch.object(sys, "argv", ["package-native.py", "--target", target,
+                    "--runtime-dir", "missing", "--local-artifact-signing", *extra]), \
+                    patch.object(package, "capture") as capture, patch("sys.stderr"), self.assertRaises(SystemExit):
+                package.main()
+            capture.assert_not_called()
+
+    def test_only_explicit_local_packaging_opts_into_local_receipts(self):
+        class ReachedSigning(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for local in (False, True):
+                with self.subTest(local=local):
+                    reader = Mock(side_effect=ReachedSigning)
+                    signer = SimpleNamespace(read_verified_pair=reader)
+                    specification = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
+                    argv = ["package-native.py", "--target", "x86_64-pc-windows-msvc", "--runtime-dir", str(root),
+                            "--signed-dir", str(root), "--source-manifest", "fixture"]
+                    if local:
+                        argv.append("--local-artifact-signing")
+                    with patch.object(sys, "argv", argv), \
+                            patch.object(package, "source_packaging_metadata", return_value={"version": "1.8.24", "rustc": "rustc fixture"}), \
+                            patch.object(package, "runtime_builder", return_value=SimpleNamespace(source_identity=lambda: "fixture")), \
+                            patch.object(package, "validate_runtime", return_value=({}, ("airk.exe", "airkctl.exe"))), \
+                            patch.object(package, "capture", return_value="a" * 40), \
+                            patch.object(package.importlib.util, "spec_from_file_location", return_value=specification), \
+                            patch.object(package.importlib.util, "module_from_spec", return_value=signer), self.assertRaises(ReachedSigning):
+                        package.main()
+                    self.assertEqual(reader.call_count, 1)
+                    self.assertEqual(reader.call_args.kwargs, {"allow_local": True} if local else {})
 
 
 if __name__ == "__main__":

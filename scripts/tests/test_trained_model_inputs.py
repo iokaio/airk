@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Independent trained-v2 acquisition and retained-v1 identity regressions."""
+"""Independent current-original acquisition and retained-v1 identity regressions."""
 import copy
 import hashlib
 import importlib.util
@@ -18,16 +18,15 @@ SPEC.loader.exec_module(MODULE)
 class TrainedModelInputs(unittest.TestCase):
     def test_trained_catalog_has_new_identities_and_no_false_upstream_asset_urls(self):
         profiles = MODULE.CATALOG["profiles"]
-        self.assertEqual([p["id"] for p in profiles], ["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"])
+        self.assertEqual([p["id"] for p in profiles], ["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"])
         self.assertEqual([p["manifest"]["model_sha256"] for p in profiles], [
-            "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
-            "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c"])
+            "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
+            "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474"])
         for profile in profiles:
             self.assertTrue(all(asset["url"] is None for asset in profile["assets"]))
-            self.assertEqual(profile["quantization"]["quantized_linear_parameters"], 7_077_888)
-            self.assertEqual(profile["quantization"]["constant_linear_parameters"], 10_616_832)
-            self.assertEqual(len(profile["quantization"]["protected_fp32_nodes"]), 6)
-            self.assertTrue(profile["quantization"]["fp32_embeddings_retained"])
+            self.assertIsNone(profile.get("quantization"))
+            self.assertEqual(profile["qualification"]["verified_platforms"], [])
+            self.assertEqual(profile["manifest"]["license_sha256"], "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30")
 
     def test_retained_v1_profiles_preserve_their_original_runtime_and_hashes(self):
         original = json.loads((ROOT / "crates/airk-retrieval/src/model_catalog_v1.json").read_bytes())

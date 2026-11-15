@@ -1273,6 +1273,27 @@
    ]
   },
   {
+   "operation": "arbiter.initialize",
+   "method": "Arbiter.Initialize",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
    "operation": "arbiter.configure",
    "method": "Arbiter.Configure",
    "plane": "management",
@@ -2129,7 +2150,11 @@
    "item": "native_arbiter_scope",
    "methods": [
     "ArbiterApplication",
-    "ArbiterNextRead"
+    "ArbiterNextRead",
+    "ArbiterContextAction",
+    "ArbiterFocusApplication",
+    "ArbiterFocusRank",
+    "ArbiterImport"
    ],
    "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."
   },

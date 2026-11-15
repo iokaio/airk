@@ -76,25 +76,34 @@ impl ReadDeliveryGuard for PolicyDelivery {
 }
 fn validate_policy(current: &Configuration, expected: &[ContextDeliveryBinding]) -> Result<()> {
     ensure!(
-        !expected.is_empty() && expected.len() <= airk_core::index_catalog::MAX_SELECTION,
+        !expected.is_empty()
+            && expected.len() <= airk_core::combined_context::MAX_DELIVERY_BINDINGS,
         "invalid context delivery roster"
     );
     let mut indexes = BTreeSet::new();
     for binding in expected {
         ensure!(
-            indexes.insert(binding.scope.index_id)
+            indexes.insert((binding.stage, binding.scope.index_id))
                 && binding.scope.installation == current.installation
                 && binding.scope.catalog == current.catalog
                 && binding.scope.configuration_revision == current.revision,
             "context delivery configuration changed"
         );
         ensure!(
-            profile_for_index(current, binding.scope.index_id) == binding.profile,
+            stage_profile_for_index(current, binding.stage, binding.scope.index_id)
+                == binding.profile,
             "context delivery profile changed"
         );
         if binding.profile.is_some() {
             ensure!(
-                current.eligible(binding.scope.index_id, Task::ContextAction),
+                current.eligible_for(
+                    binding.stage,
+                    binding.scope.index_id,
+                    match binding.stage {
+                        Stage::Focus => Task::FocusRank,
+                        Stage::Context => Task::ContextAction,
+                    }
+                ),
                 "context delivery task no longer eligible"
             );
         }
@@ -107,7 +116,7 @@ pub(in crate::service_runtime) fn factory(
     let weak = Arc::downgrade(state);
     Arc::new(move |expected, context| {
         ensure!(
-            expected.len() <= airk_core::index_catalog::MAX_SELECTION,
+            expected.len() <= airk_core::combined_context::MAX_DELIVERY_BINDINGS,
             "invalid context delivery roster"
         );
         ensure!(

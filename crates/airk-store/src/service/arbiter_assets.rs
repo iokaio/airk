@@ -3,7 +3,7 @@
 use super::ServiceLease;
 use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
 use airk_core::{
-    arbiter::{Asset, Profile},
+    arbiter::{Asset, CONFIGURATION_SCHEMA, Profile, Stage},
     identity::{Incarnation, Sha256Digest},
 };
 use anyhow::{Context, Result, ensure};
@@ -16,6 +16,9 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     sync::{Arc, Mutex, Weak},
 };
+
+mod offline;
+pub use offline::OfflineBundle;
 
 const RECEIPT: &str = "receipt.json";
 fn checked_assets(assets: &[Asset]) -> Result<()> {
@@ -49,6 +52,10 @@ fn checked_assets(assets: &[Asset]) -> Result<()> {
 }
 fn checked_profile(profile: &Profile) -> Result<()> {
     profile.validate()?;
+    ensure!(
+        profile.declared_stage().is_some(),
+        "Historical profile cannot supply new stage asset custody"
+    );
     checked_assets(&profile.assets)
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +70,7 @@ pub enum Phase {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Observation {
+    pub stage: Stage,
     pub phase: Phase,
     pub configuration_revision: u64,
 }
@@ -70,6 +78,8 @@ pub struct Observation {
 #[serde(deny_unknown_fields)]
 struct Record {
     schema: String,
+    configuration_schema: String,
+    stage: Stage,
     installation: Sha256Digest,
     catalog: Incarnation,
     manifest: Sha256Digest,
@@ -213,9 +223,9 @@ impl AssetStore {
     }
     fn parent(&self, create: bool) -> Result<SetupDirectory> {
         let optional = if create {
-            self.root.create_dir(OsStr::new("arbiter-v2"))?
+            self.root.create_dir(OsStr::new("arbiter-v3"))?
         } else {
-            self.root.open_dir(OsStr::new("arbiter-v2"))?
+            self.root.open_dir(OsStr::new("arbiter-v3"))?
         };
         if create {
             optional.create_dir(OsStr::new("assets"))
@@ -247,7 +257,8 @@ impl AssetStore {
         let record: Record = serde_json::from_slice(&bytes)?;
         ensure!(
             canonical(&record)? == bytes
-                && record.schema == "airk.arbiter.assets/2"
+                && record.schema == "airk.arbiter.assets/3"
+                && record.configuration_schema == CONFIGURATION_SCHEMA
                 && record.installation == self.installation
                 && record.catalog == self.catalog
                 && record.manifest == manifest
@@ -277,7 +288,7 @@ impl AssetStore {
         let record = self.read_owned(directory, profile.manifest)?;
         if let Some((record, _)) = &record {
             ensure!(
-                record.assets == profile.assets,
+                record.assets == profile.assets && Some(record.stage) == profile.declared_stage(),
                 "Arbiter assets differ from current compiled profile"
             );
         }
@@ -293,12 +304,27 @@ impl AssetStore {
         Ok(self
             .read_owned(&directory, manifest)?
             .map(|(record, _)| Observation {
+                stage: record.stage,
                 phase: record.phase,
                 configuration_revision: record.configuration_revision,
             }))
     }
     /// Explicit recovery may find an old removal without qualifying its model.
     pub fn pending_owned_removals(&self, configuration_revision: u64) -> Result<Vec<Sha256Digest>> {
+        self.pending_removals(None, configuration_revision)
+    }
+    pub fn pending_owned_removals_for(
+        &self,
+        stage: Stage,
+        configuration_revision: u64,
+    ) -> Result<Vec<Sha256Digest>> {
+        self.pending_removals(Some(stage), configuration_revision)
+    }
+    fn pending_removals(
+        &self,
+        stage: Option<Stage>,
+        configuration_revision: u64,
+    ) -> Result<Vec<Sha256Digest>> {
         let parent = match self.parent(false) {
             Ok(value) => value,
             Err(error) if missing(&error) => return Ok(Vec::new()),
@@ -322,6 +348,7 @@ impl AssetStore {
             );
             let directory = parent.open_dir(&name)?;
             if let Some((record, _)) = self.read_owned(&directory, manifest)?
+                && stage.is_none_or(|stage| stage == record.stage)
                 && record.phase == Phase::Removing
                 && record.configuration_revision == configuration_revision
             {
@@ -366,6 +393,7 @@ impl AssetStore {
         Ok(self
             .read(&directory, profile)?
             .map(|(record, _)| Observation {
+                stage: record.stage,
                 phase: record.phase,
                 configuration_revision: record.configuration_revision,
             }))
@@ -444,7 +472,11 @@ impl AssetStore {
             prior.as_ref().map_or(0, |(record, _)| record.revision),
         )?;
         let record = Record {
-            schema: "airk.arbiter.assets/2".into(),
+            schema: "airk.arbiter.assets/3".into(),
+            configuration_schema: CONFIGURATION_SCHEMA.into(),
+            stage: profile
+                .declared_stage()
+                .context("Asset operation requires an explicit stage profile")?,
             installation: self.installation,
             catalog: self.catalog,
             manifest: profile.manifest,
@@ -574,7 +606,7 @@ impl AssetStore {
             let root = OpenedDirectory::open(self.ownership.root())?;
             same_directory(&root, &self.root)?;
             let raw = root
-                .open_child(OsStr::new("arbiter-v2"))?
+                .open_child(OsStr::new("arbiter-v3"))?
                 .open_child(OsStr::new("assets"))?
                 .open_child(OsStr::new(&manifest.to_string()))?;
             same_directory(&raw, &directory)?;
@@ -733,7 +765,7 @@ fn cleanup_stages(
             let partial: PartialRecord = serde_json::from_slice(&bytes)?;
             ensure!(
                 canonical(&partial)? == bytes
-                    && partial.schema == "airk.arbiter.partial/2"
+                    && partial.schema == "airk.arbiter.partial/3"
                     && partial.operation == intent
                     && partial.asset == *asset
                     && partial.written_bytes <= asset.bytes,
@@ -950,7 +982,7 @@ impl AssetWriter {
         partial.sha256 = sha256;
         hash(&mut actual, &partial)?;
         let record = PartialRecord {
-            schema: "airk.arbiter.partial/2".into(),
+            schema: "airk.arbiter.partial/3".into(),
             operation: self.operation.clone(),
             asset: self.asset.clone(),
             written_bytes: self.bytes,

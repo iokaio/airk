@@ -25,6 +25,8 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl arbiter`](#airkctl-arbiter)
 - [`airkctl arbiter cancel`](#airkctl-arbiter-cancel)
 - [`airkctl arbiter configure`](#airkctl-arbiter-configure)
+- [`airkctl arbiter import`](#airkctl-arbiter-import)
+- [`airkctl arbiter initialize`](#airkctl-arbiter-initialize)
 - [`airkctl arbiter provision`](#airkctl-arbiter-provision)
 - [`airkctl arbiter recover`](#airkctl-arbiter-recover)
 - [`airkctl arbiter remove`](#airkctl-arbiter-remove)
@@ -1216,12 +1218,14 @@ Explicit optional model configuration, provisioning and recovery
 Usage: airkctl arbiter [OPTIONS] <COMMAND>
 
 Commands:
-  status     Inspect optional model readiness, selection and exact per-index enrollment
-  configure  Apply one complete native Configure request. Enrollments are explicit immutable index IDs
-  provision  Explicitly acquire the compiled qualified profile asset closure
-  cancel     Cancel this native optional operation; running native calls drain before removal
-  remove     Explicitly remove one optional profile after actual native pins drain
-  recover    Recover a retained optional model operation under the current configuration revision
+  status      Inspect optional model readiness, selection and exact per-index enrollment
+  initialize  Explicitly create disabled Focus/Context state, preserving retained old consent and assets
+  configure   Apply one complete native Configure request. Enrollments are explicit immutable index IDs
+  provision   Explicitly acquire the compiled qualified profile asset closure
+  import      Import the exact compiled qualified asset closure from a read-only local bundle
+  cancel      Cancel this native optional operation; running native calls drain before removal
+  remove      Explicitly remove one optional profile after actual native pins drain
+  recover     Recover a retained optional model operation under the current configuration revision
 
 Options:
       --output <OUTPUT>
@@ -1273,10 +1277,68 @@ Options:
 ```text
 Cancel this native optional operation; running native calls drain before removal
 
-Usage: airkctl arbiter cancel [OPTIONS] --expected-revision <EXPECTED_REVISION>
+Usage: airkctl arbiter cancel [OPTIONS] --expected-revision <EXPECTED_REVISION> --stage <STAGE>
 
 Options:
       --expected-revision <EXPECTED_REVISION>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --stage <STAGE>
+
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter configure
+
+```text
+Apply one complete native Configure request. Enrollments are explicit immutable index IDs
+
+Usage: airkctl arbiter configure [OPTIONS] --file <FILE>
+
+Options:
+      --file <FILE>
 
 
       --output <OUTPUT>
@@ -1323,15 +1385,76 @@ Options:
           Print help
 ```
 
-## airkctl arbiter configure
+## airkctl arbiter import
 
 ```text
-Apply one complete native Configure request. Enrollments are explicit immutable index IDs
+Import the exact compiled qualified asset closure from a read-only local bundle
 
-Usage: airkctl arbiter configure [OPTIONS] --file <FILE>
+Usage: airkctl arbiter import [OPTIONS] --expected-revision <EXPECTED_REVISION> --profile <PROFILE> --directory <DIRECTORY>
 
 Options:
-      --file <FILE>
+      --expected-revision <EXPECTED_REVISION>
+
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --profile <PROFILE>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --directory <DIRECTORY>
+
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter initialize
+
+```text
+Explicitly create disabled Focus/Context state, preserving retained old consent and assets
+
+Usage: airkctl arbiter initialize [OPTIONS]
+
+Options:
+      --expected-legacy-configuration <EXPECTED_LEGACY_CONFIGURATION>
 
 
       --output <OUTPUT>
@@ -1441,7 +1564,7 @@ Options:
 ```text
 Recover a retained optional model operation under the current configuration revision
 
-Usage: airkctl arbiter recover [OPTIONS] --expected-revision <EXPECTED_REVISION>
+Usage: airkctl arbiter recover [OPTIONS] --expected-revision <EXPECTED_REVISION> --stage <STAGE>
 
 Options:
       --expected-revision <EXPECTED_REVISION>
@@ -1455,6 +1578,9 @@ Options:
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
+
+      --stage <STAGE>
+
 
       --service-project <SERVICE_PROJECT>
           A registered project binding

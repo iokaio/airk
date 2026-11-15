@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native feature observations and explicitly qualified automatic model profiles.
 //! Inspection is independent of collection state and never opens model assets.
-use crate::model::{MAX_MODEL_BYTES, MAX_TOKENIZER_BYTES, ONNX_RUNTIME, OnnxManifest};
+use crate::model::{ONNX_RUNTIME, OnnxManifest};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -123,6 +123,7 @@ pub struct IntegerLowering {
     pub converted_weight_parameters: usize,
     pub weight_identity: String,
 }
+#[cfg(test)]
 impl QuantizationPolicy {
     fn validate(&self, signed: bool) -> Result<()> {
         ensure!(
@@ -176,86 +177,58 @@ impl ModelCatalog {
         ensure!(
             self.schema == 2
                 && self.profiles.len() == 2
-                && self.default_profile == "minilm-l6-v2-u8-v2",
-            "unsupported model catalog"
+                && self.default_profile == "minilm-l6-v2-u8-v3",
+            "unsupported original baseline catalog"
         );
+        let retained = legacy_catalog()?;
         let mut ids = BTreeSet::new();
         for profile in &self.profiles {
+            let (hash, size, precision) = match (profile.id.as_str(), profile.precision.as_str()) {
+                ("minilm-l6-v2-u8-v3", "uint8") => (
+                    "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
+                    23046789,
+                    "uint8",
+                ),
+                ("minilm-l6-v2-s8-v3", "int8") => (
+                    "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
+                    23026053,
+                    "int8",
+                ),
+                _ => anyhow::bail!("only exact original CPU profiles are active"),
+            };
             ensure!(
                 ids.insert(&profile.id)
                     && profile.runtime == ONNX_RUNTIME
-                    && profile.manifest.schema == 2,
-                "invalid INT8 profile"
+                    && profile.quantization.is_none(),
+                "invalid original baseline profile/policy"
             );
-            let (approved_hash, approved_size, signed) =
-                match (profile.id.as_str(), profile.precision.as_str()) {
-                    ("minilm-l6-v2-u8-v2", "mixed-u8") => (
-                        "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
-                        69_325_926,
-                        false,
-                    ),
-                    ("minilm-l6-v2-s8-v2", "mixed-s8") => (
-                        "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
-                        69_355_444,
-                        true,
-                    ),
-                    _ => anyhow::bail!("FP32 and unknown model precisions are forbidden"),
-                };
-            profile
-                .quantization
-                .as_ref()
-                .context("trained quantization policy missing")?
-                .validate(signed)?;
-            let mut expected = legacy_catalog()?
+            let original = retained
                 .profiles
-                .into_iter()
-                .find(|old| old.precision == if signed { "int8" } else { "uint8" })
-                .context("retained base profile missing")?
-                .manifest;
-            expected.model_sha256 = approved_hash.into();
-            expected.license_sha256 =
-                "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd".into();
+                .iter()
+                .find(|old| old.precision == precision)
+                .context("original baseline metadata missing")?;
             ensure!(
-                profile.manifest == expected,
-                "trained model base/tokenizer/ABI metadata differs"
-            );
-            ensure!(
-                profile.manifest.model_sha256 == approved_hash,
-                "unapproved weight hash"
+                profile.manifest == original.manifest && profile.manifest.model_sha256 == hash,
+                "original publisher manifest/ABI differs"
             );
             ensure!(
                 profile.assets.len() == 3,
-                "model catalog asset inventory differs"
+                "original asset inventory differs"
             );
             let mut names = BTreeSet::new();
             for asset in &profile.assets {
-                let (expected, maximum, exact_size) = match asset.name.as_str() {
-                    "model.onnx" => (
-                        &profile.manifest.model_sha256,
-                        MAX_MODEL_BYTES,
-                        approved_size,
-                    ),
-                    "tokenizer.json" => (
-                        &profile.manifest.tokenizer_sha256,
-                        MAX_TOKENIZER_BYTES,
-                        466_247,
-                    ),
-                    "LICENSE" => (&profile.manifest.license_sha256, 262_144, 34_889),
-                    _ => anyhow::bail!("unsupported model catalog asset"),
+                let (pin, length) = match asset.name.as_str() {
+                    "model.onnx" => (&profile.manifest.model_sha256, size),
+                    "tokenizer.json" => (&profile.manifest.tokenizer_sha256, 466247),
+                    "LICENSE" => (&profile.manifest.license_sha256, 11358),
+                    _ => anyhow::bail!("unsupported original model asset"),
                 };
                 ensure!(
                     names.insert(&asset.name)
-                        && asset.bytes > 0
-                        && asset.bytes <= maximum
-                        && asset.sha256 == *expected
-                        && asset.sha256.len() == 64
-                        && asset
-                            .sha256
-                            .bytes()
-                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-                        && asset.bytes == exact_size
+                        && asset.sha256 == *pin
+                        && asset.bytes == length
                         && asset.url.is_none(),
-                    "invalid model catalog asset binding"
+                    "original asset identity/length/download policy differs"
                 );
             }
         }
@@ -273,6 +246,8 @@ fn legacy_catalog() -> Result<ModelCatalog> {
     Ok(serde_json::from_slice(bytes)?)
 }
 
+#[cfg(test)]
+mod baseline_emitter;
 #[cfg(test)]
 mod policy_cases;
 
@@ -296,16 +271,16 @@ pub struct ModelCatalogReport {
 fn select_profile(catalog: &ModelCatalog, hardware: &ModelCapabilities) -> Result<ModelSelection> {
     catalog.validate()?;
     let (id, reason) = match hardware.architecture {
-        "aarch64" => ("minilm-l6-v2-s8-v2", "arm64_signed_int8"),
+        "aarch64" => ("minilm-l6-v2-s8-v3", "arm64_signed_int8"),
         "x86_64"
             if hardware
                 .cpu_features
                 .iter()
                 .any(|feature| matches!(*feature, "avxvnni" | "avx512vnni")) =>
         {
-            ("minilm-l6-v2-s8-v2", "vnni_signed_int8")
+            ("minilm-l6-v2-s8-v3", "vnni_signed_int8")
         }
-        "x86_64" => ("minilm-l6-v2-u8-v2", "portable_unsigned_int8"),
+        "x86_64" => ("minilm-l6-v2-u8-v3", "portable_unsigned_int8"),
         _ => anyhow::bail!("unsupported INT8 architecture"),
     };
     let profile = catalog
@@ -325,6 +300,42 @@ fn select_profile(catalog: &ModelCatalog, hardware: &ModelCapabilities) -> Resul
 }
 
 /// Only these exact pinned exports can execute; arbitrary/FP32 graphs cannot.
+pub(crate) fn contains_active_manifest(manifest: &OnnxManifest) -> Result<bool> {
+    let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
+    catalog.validate()?;
+    Ok(catalog
+        .profiles
+        .iter()
+        .any(|profile| profile.manifest == *manifest))
+}
+
+pub(crate) fn contains_active_asset_references(
+    set: &airk_core::model_objects::ModelObjectSet,
+) -> Result<bool> {
+    use airk_core::model_objects::ModelAssetName;
+    set.validate()?;
+    let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
+    catalog.validate()?;
+    Ok(catalog.profiles.iter().any(|profile| {
+        [
+            (ModelAssetName::ModelOnnx, "model.onnx"),
+            (ModelAssetName::TokenizerJson, "tokenizer.json"),
+            (ModelAssetName::License, "LICENSE"),
+        ]
+        .into_iter()
+        .all(|(name, file)| {
+            let Some(reference) = set.assets.get(&name) else {
+                return false;
+            };
+            profile.assets.iter().any(|asset| {
+                asset.name == file
+                    && reference.sha256.to_string() == asset.sha256
+                    && reference.bytes == asset.bytes
+            })
+        })
+    }))
+}
+
 pub fn approved_manifest(manifest: &OnnxManifest) -> Result<()> {
     let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
     catalog.validate()?;
@@ -367,11 +378,11 @@ mod tests {
     fn selection_covers_non_vnni_vnni_and_arm_without_fp32_fallback() -> Result<()> {
         let mut report = inspect_catalog()?;
         for (architecture, features, expected) in [
-            ("x86_64", vec![], "minilm-l6-v2-u8-v2"),
-            ("x86_64", vec!["avx2", "avx512f"], "minilm-l6-v2-u8-v2"),
-            ("x86_64", vec!["avxvnni"], "minilm-l6-v2-s8-v2"),
-            ("x86_64", vec!["avx512vnni"], "minilm-l6-v2-s8-v2"),
-            ("aarch64", vec!["neon"], "minilm-l6-v2-s8-v2"),
+            ("x86_64", vec![], "minilm-l6-v2-u8-v3"),
+            ("x86_64", vec!["avx2", "avx512f"], "minilm-l6-v2-u8-v3"),
+            ("x86_64", vec!["avxvnni"], "minilm-l6-v2-s8-v3"),
+            ("x86_64", vec!["avx512vnni"], "minilm-l6-v2-s8-v3"),
+            ("aarch64", vec!["neon"], "minilm-l6-v2-s8-v3"),
         ] {
             report.capabilities.architecture = architecture;
             report.capabilities.cpu_features = features;

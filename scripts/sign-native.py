@@ -130,14 +130,35 @@ def read_verified(directory, source, target, commit, lock_digest, signtool="sign
     return binary, receipt
 
 
-def read_verified_pair(directory, source, target, commit, lock_digest, signtool="signtool"):
+def signing_receipts():
+    import importlib.util
+    specification = importlib.util.spec_from_file_location("airk_signing_receipts", ROOT / "scripts/split_receipts.py")
+    owner = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(owner)
+    return owner
+
+
+def local_component(receipt):
+    """The existing local receipt contract plus the exact pinned client/publisher policy."""
+    signing_receipts().validate_native_signing_local(receipt)
+    policy = SIGNING_IDENTITY["windows"]["local_client"]
+    if (receipt["platform"] != "Windows" or receipt.get("azure") != AZURE_SIGNING
+            or receipt["local_signing"]["client"] != {key: policy[key] for key in ("package", "version", "dlib_sha256")}):
+        raise ValueError("Local signing component differs from the pinned Windows policy")
+
+
+def read_verified_pair(directory, source, target, commit, lock_digest, signtool="signtool", *, allow_local=False):
     package = pair_package()
     receipt_path = directory / "signing.json"
     receipt = package.bounded_json(receipt_path, 65_536)
-    if (receipt.get("schema") != "airk-service-pair-signing/1" or receipt.get("target") != target
+    local = allow_local and target == "x86_64-pc-windows-msvc" and receipt.get("schema") == "airk-service-pair-signing-local/1"
+    expected_schema = "airk-service-pair-signing-local/1" if local else "airk-service-pair-signing/1"
+    if (receipt.get("schema") != expected_schema or receipt.get("target") != target
             or receipt.get("commit") != commit or receipt.get("cargo_lock_sha256") != lock_digest
             or receipt.get("source_install_sha256") != digest(source / "airk-install.json")):
         raise ValueError("Pair signing receipt differs from tested source")
+    if local:
+        signing_receipts().validate_service_pair_signing_local(receipt)
     runtime = directory / "runtime"
     original = package.bounded_json(source / "airk-install.json")
     signed = package.bounded_json(runtime / "airk-install.json")
@@ -160,7 +181,9 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
             raise ValueError("Signing changed unrelated runtime payload")
     for name in signing_names:
         component = components[name]
-        if (component.get("schema") != "airk-native-signing/1" or component.get("target") != target
+        if local:
+            local_component(component)
+        if (component.get("schema") != ("airk-native-signing-local/1" if local else "airk-native-signing/1") or component.get("target") != target
                 or component.get("commit") != commit or component.get("cargo_lock_sha256") != lock_digest
                 or component.get("source_sha256") != original["files"][name]
                 or component.get("binary_sha256") != signed["files"][name]):
@@ -252,7 +275,9 @@ def prepare_pair(source, output, target):
     return source, runtime, executables, files
 
 
-def finish_pair(source, output, target, components, commit, lock_digest, signtool="signtool"):
+def finish_pair(source, output, target, components, commit, lock_digest, signtool="signtool", *, local=False):
+    if local and target != "x86_64-pc-windows-msvc":
+        raise ValueError("Local Artifact Signing pairs require the Windows target")
     package = pair_package()
     runtime = output / "runtime"
     original_build = json.loads((source / "airk-build.json").read_text(encoding="utf-8"))
@@ -274,7 +299,9 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     if set(components) != set(signing_names):
         raise ValueError("Both signed service components are required")
     for name, component in components.items():
-        if (component.get("schema") != "airk-native-signing/1" or component.get("target") != target
+        if local:
+            local_component(component)
+        if (component.get("schema") != ("airk-native-signing-local/1" if local else "airk-native-signing/1") or component.get("target") != target
                 or component.get("commit") != commit or component.get("cargo_lock_sha256") != lock_digest
                 or component["source_sha256"] != files[name] or component["binary_sha256"] != digest(runtime / name)):
             raise ValueError("Signed service component differs from tested build")
@@ -295,9 +322,12 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     (runtime / "airk-build.json").write_text(json.dumps(original_build, indent=2) + "\n", encoding="utf-8")
     original_install["files"] = {name: value for name, value in package.inventory(runtime).items() if name != "airk-install.json"}
     (runtime / "airk-install.json").write_text(json.dumps(original_install, indent=2) + "\n", encoding="utf-8")
-    receipt = {"schema": "airk-service-pair-signing/1", "target": target, "commit": commit,
+    receipt = {"schema": "airk-service-pair-signing-local/1" if local else "airk-service-pair-signing/1", "target": target, "commit": commit,
                "cargo_lock_sha256": lock_digest, "source_install_sha256": digest(source / "airk-install.json"),
                "install_manifest_sha256": digest(runtime / "airk-install.json"), "components": components}
+    if local:
+        receipt["provenance"] = "local"
+        signing_receipts().validate_service_pair_signing_local(receipt)
     if "apple" in target and package.runtime_builder().standalone_launcher_version(original_install["version"]):
         launcher = package.runtime_builder().launcher_name("macos", original_install["version"])
         receipt["copied_launcher"] = verify_copied_launcher(runtime, original_install["version"], components[launcher], signtool)
@@ -360,13 +390,41 @@ def sign_pair(args):
     finish_pair(source, output, args.target, components, commit, lock_digest, args.signtool)
 
 
+def sign_local_pair(args):
+    """Sign one tested Windows pair through the existing local adapter, without Cargo."""
+    if platform.system() != "Windows" or args.target != "x86_64-pc-windows-msvc":
+        raise ValueError("Local Artifact Signing pairs require the native Windows target")
+    import importlib.util
+    specification = importlib.util.spec_from_file_location("airk_local_pair_adapter", ROOT / "scripts/local_signing.py")
+    adapter = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(adapter)
+    output = args.output.resolve()
+    source, runtime, _executables, _files = prepare_pair(args.runtime_dir, output, args.target)
+    commit = run(["git", "rev-parse", "HEAD"]).strip()
+    lock_digest = digest(ROOT / "Cargo.lock")
+    tool = adapter.signtool_path() if args.signtool == "signtool" else Path(args.signtool)
+    dlib = adapter.provision()
+    version = json.loads((runtime / "airk-install.json").read_text(encoding="utf-8"))["version"]
+    components = {}
+    for name in pair_package().runtime_builder().signing_names("windows", version):
+        destination = output / (Path(name).name + ".signature") / Path(name).name
+        component = adapter.sign(source / name, destination, args.target, commit, lock_digest, dlib=dlib, signtool=tool)
+        local_component(component)
+        verify(destination, component, str(tool))
+        (destination.parent / "signing.json").write_text(json.dumps(component, indent=2) + "\n", encoding="utf-8")
+        shutil.copyfile(destination, runtime / name)
+        components[name] = component
+    finish_pair(source, output, args.target, components, commit, lock_digest, str(tool), local=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True, choices=("x86_64-pc-windows-msvc", "x86_64-apple-darwin", "aarch64-apple-darwin"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, help="Sign both executables from one tested native pair")
     parser.add_argument("--source-file", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--identity", required=True, help="Windows certificate thumbprint or Apple Developer ID Application name/exact certificate SHA-1")
+    parser.add_argument("--identity", help="Windows certificate thumbprint or Apple Developer ID Application name/exact certificate SHA-1")
+    parser.add_argument("--local-artifact-signing", action="store_true", help="Sign a tested Windows pair through the existing local Artifact Signing adapter; no hosted provenance")
     parser.add_argument("--signtool", default="signtool")
     parser.add_argument("--timestamp-url")
     parser.add_argument("--team-id")
@@ -377,6 +435,12 @@ def main():
     windows = "windows" in args.target
     if platform.system() != ("Windows" if windows else "Darwin"):
         parser.error("Sign and verify on the intended native OS")
+    if args.local_artifact_signing:
+        if not windows or not args.runtime_dir or args.source_file or any((args.identity, args.timestamp_url, args.team_id, args.keychain, args.keychain_profile, args.notarize)):
+            parser.error("Local Artifact Signing requires only a Windows runtime pair and the pinned local policy")
+        return sign_local_pair(args)
+    if not args.identity:
+        parser.error("An explicit OS signing identity is required")
     if windows:
         url = urllib.parse.urlsplit(args.timestamp_url or "")
         if not re.fullmatch(r"[0-9a-fA-F]{40}", args.identity) or url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:

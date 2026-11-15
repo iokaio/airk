@@ -2,16 +2,31 @@
 
 Signing is opt-in and operates on a fresh copy under ignored `artifacts/`. It does not import certificates, export keys, change the original build or publish a package. `scripts/sign-native.py` only writes a success receipt after OS signature verification succeeds. The native packager accepts `--signed-dir` and re-verifies the signature, source binary digest, target, commit and dependency lock before including the signed copy.
 
+Local Windows pair packaging uses the existing Artifact Signing adapter with
+`sign-native.py --target x86_64-pc-windows-msvc --runtime-dir <tested-pair>
+--local-artifact-signing --output <fresh-signed-directory>`. It retains the
+existing `airk-native-signing-local/1` component receipts and
+`airk-service-pair-signing-local/1` pair receipt with `provenance: local`.
+`package-native.py` requires its own explicit `--local-artifact-signing` flag
+with `--signed-dir` to consume that pair. Both owners verify the unchanged tested
+source, complete roster, commit, lockfile and actual OS signatures, including
+the pinned publisher, identity EKU and timestamp. The default hosted reader
+continues refusing local receipts; local and hosted components cannot mix.
+This produces an unpublished local candidate. Hosted release qualification,
+installation journeys and publication retain their separate gates.
+
 The public signing identities live in one reviewed file, `scripts/signing-identity.json` (schema `airk-signing-identity/1`): the Windows publisher, identity EKU and Azure Artifact Signing account and profile; the pinned local Artifact Signing client; and the Apple team, Developer ID name, leaf-certificate SHA-256 and the Neo keychain and notary profile names. It holds no secrets. `sign-native.py` loads it, refuses unknown or missing fields, and derives the hosted `AZURE_SIGNING` policy from it unchanged. Tests check that the hosted workflow inputs and the macOS script constants still equal the file.
 
-## Current 1.8.14 signing contract
+## Current split runtime signing contract
 
-The unpublished modern runtime has one main executable, with embedded default
-MiniLM/tokenizer assets and statically linked CPU ORT. On Mac it stays inside
-`AIRK.app/Contents/MacOS/airk`. Sign the tested schema-2 runtime through
-`--runtime-dir`; a bare no-feature `cargo build` is not the modern distributable.
+The split runtime has the `airk` service and the lightweight `airkctl` client.
+Its schema-3 pair metadata and schema-2 build receipt bind both images and the
+sealed Admin bundle. The service embeds the selected default MiniLM/tokenizer
+assets and statically linked CPU ORT. On Mac both images stay inside
+`AIRK.app/Contents/MacOS/`. Sign the tested runtime through `--runtime-dir`;
+a bare no-feature `cargo build` is not the distributable.
 The builder's development ad-hoc signature establishes no Developer ID or Apple
-notarization trust. Release signing verifies the exact main and enclosing app,
+notarization trust. Release signing verifies both exact images and the enclosing app,
 Developer ID/team, hardened runtime and timestamp, then notarizes/staples the app
 and reseals the complete external inventories. There is no modern embedding
 executable, dynamic ORT library or separately copied launcher image to sign.

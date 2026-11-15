@@ -32,12 +32,14 @@ fn retain_late_scope_refusal(advice: &mut ContextActionAdvice, checked: Result<(
     advice.outcome=Outcome::Unavailable {reason:"Original source authority changed after native work; the decision was discarded and actual work is retained as a private failed receipt.".into()};
     true
 }
-impl Owner {
+impl StageOwner {
     pub(in crate::service_runtime) async fn context_action(
         &self,
         request: NativeContextActionRequest,
         supervisor: &airk_supervisor::project_supervisor::Supervisor,
     ) -> Result<Option<ContextActionAdvice>> {
+        #[cfg(feature = "local-inference")]
+        let stage = self.stage;
         let started = Instant::now();
         let clock = if cfg!(windows) {
             airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
@@ -100,6 +102,7 @@ impl Owner {
             use airk_retrieval::arbiter::context_action;
             let execution = self.execution_profile(
                 configuration
+                    .stage(stage)
                     .selected_profile
                     .context("joint selected profile missing")?,
             )?;
@@ -114,9 +117,40 @@ impl Owner {
                 request.roster.policy == task_policy,
                 "joint roster task policy changed"
             );
+            #[cfg(all(feature = "local-inference", feature = "test-support"))]
+            if let Some(observer) = &self.context_observer {
+                ensure!(
+                    self.evaluation.is_some(),
+                    "Context observer requires the private native evaluation catalog"
+                );
+                // This is still before Context ledger reservation, compiler queueing,
+                // model lookup/load or scoring dispatch. Existing Focus work is intact.
+                // Only the zero-effect admission check takes the native gate.
+                // Compiler census and private recorder I/O must not hold it.
+                // A retained observation alone grants no source delivery authority.
+                self.gate
+                    .check_scope_issue(issue, request.worker, request.authority)?;
+                observer(&request, &profile)?;
+                self.gate
+                    .check_scope_issue(issue, request.worker, request.authority)?;
+                self.validate_scope(request.worker, request.authority)?;
+                let current = self.configuration()?;
+                ensure!(
+                    current.revision == request.scope.configuration_revision
+                        && current.stage(stage).selected_profile == Some(profile.manifest)
+                        && current.eligible(request.scope.index_id, Task::ContextAction)
+                        && Instant::now() < deadline,
+                    "Context capture admission changed before known non-dispatch reply"
+                );
+                return Ok(Some(captured_without_dispatch(
+                    &request,
+                    &profile,
+                    task_policy,
+                )?));
+            }
             let handle = tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
-                supervisor.arbiter(),
+                supervisor.arbiter_management().existing(),
             )
             .await
             .context("joint native owner deadline")??;
@@ -175,7 +209,7 @@ impl Owner {
                     current.revision == scope.configuration_revision
                         && current.installation == scope.installation
                         && current.catalog == scope.catalog
-                        && current.selected_profile == Some(manifest)
+                        && current.stage(stage).selected_profile == Some(manifest)
                         && current.eligible(scope.index_id, Task::ContextAction)
                 }) && gate.catalog_clock().is_some_and(|clock| {
                     clock.namespace == scope.catalog
@@ -189,19 +223,22 @@ impl Owner {
             let pending = async {
                 let resident = handle.resident(profile.manifest)?;
                 let admission = supervisor.reuse_optional(resident.reservation()).await?;
-                handle.score(ScoreRequest {
-                    worker: request.worker.worker,
-                    scope: request.scope.clone(),
-                    task: Task::ContextAction,
-                    deadline,
-                    authority: live,
-                    state: prompt.state,
-                    question: prompt.question,
-                    candidates: prompt.candidates,
-                    resident,
-                    admission,
-                    max_input_tokens: request.remaining_input_tokens,
-                })
+                self.score_request(
+                    &handle,
+                    ScoreRequest {
+                        worker: request.worker.worker,
+                        scope: request.scope.clone(),
+                        task: Task::ContextAction,
+                        deadline,
+                        authority: live,
+                        state: prompt.state,
+                        question: prompt.question,
+                        candidates: prompt.candidates,
+                        resident,
+                        admission,
+                        max_input_tokens: request.remaining_input_tokens,
+                    },
+                )
             };
             let mut pending =
                 match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)
@@ -309,7 +346,7 @@ impl Owner {
             }
             if !self.configuration().is_ok_and(|current| {
                 current.revision == request.scope.configuration_revision
-                    && current.selected_profile == Some(profile.manifest)
+                    && current.stage(stage).selected_profile == Some(profile.manifest)
                     && current.eligible(request.scope.index_id, Task::ContextAction)
             }) {
                 advice.outcome=Outcome::Unavailable {reason:"Joint configuration changed; native work remains charged and the decision was discarded.".into()};
@@ -319,5 +356,33 @@ impl Owner {
         }
     }
 }
+
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+fn captured_without_dispatch(
+    request: &NativeContextActionRequest,
+    profile: &Profile,
+    task_policy: airk_core::identity::Sha256Digest,
+) -> Result<ContextActionAdvice> {
+    use airk_core::{arbiter::context_action::ADVICE_SCHEMA_V2, identity::framed_digest};
+    let prompt = airk_retrieval::arbiter::context_action::prompt(request)?;
+    let input_digest = framed_digest(
+        b"airk.arbiter.planned-task-input/1",
+        &[&serde_json::to_vec(&prompt)?],
+    );
+    let value = ContextActionAdvice {
+        schema: ADVICE_SCHEMA_V2.into(), task: Task::ContextAction,
+        profile: profile.manifest, runtime: profile.runtime.clone(), compiler: profile.compiler,
+        calibration: profile.calibration, policy: profile.policy, task_policy,
+        scope: request.scope.clone(), input_digest,
+        evidence: request.roster.basis.source_units_presented.iter().map(|unit|unit.record)
+            .collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
+        reserved_input_tokens: request.remaining_input_tokens,
+        observed_input_tokens: Some(0), work: Work::default(),
+        outcome: Outcome::Unavailable { reason: "Private native CAL observation captured before Context compile/dispatch. No Context forward or scoring dispatch occurred; existing Focus work remains charged. Separate data-preparation compiler census remains in its own receipt. This is not a fitted action, abstention score or task qualification.".into() },
+    };
+    value.validate()?;
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests;

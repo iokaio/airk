@@ -53,6 +53,20 @@ pub async fn request_once(
         Duration::from_secs(5)
     };
     let original_deadline = match &method {
+        ControlMethod::ArbiterFocusRank { request } => {
+            let sampled_at = tokio::time::Instant::now();
+            let remaining = arbiter_remaining(
+                Some(request.read_attempt),
+                request.remaining_ms,
+                host_read_clock(),
+                airk_process::monotonic::now_ns()?,
+            )?;
+            Some(
+                sampled_at
+                    .checked_add(remaining)
+                    .context("Focus native deadline overflow")?,
+            )
+        }
         ControlMethod::ArbiterContextAction { request } => {
             let sampled_at = tokio::time::Instant::now();
             let remaining = arbiter_remaining(

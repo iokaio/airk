@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Projection of the immutable compiled catalog, never evaluation metadata.
 use airk_core::{arbiter::*, identity::Sha256Digest};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +29,18 @@ pub fn compiled_publication(tag: &str) -> Result<Publication> {
     );
     project(include_bytes!("release-catalog.json"), tag)
 }
+/// Private build-input check; this grants no runtime acquisition authority.
+#[cfg(feature = "test-support")]
+pub fn validate_candidate_for_distribution(profile: &Profile) -> Result<()> {
+    profile.validate()?;
+    super::runtime::validate_selected_policies(profile)
+}
+/// Reuse the canonical publication owner for a privately prepared final catalog.
+/// Embedding, packaging, target qualification and publication remain separate.
+#[cfg(feature = "test-support")]
+pub fn project_distribution_candidate(bytes: &[u8], tag: &str) -> Result<Publication> {
+    project(bytes, tag)
+}
 fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -46,8 +58,8 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     );
     let catalog: Catalog = serde_json::from_slice(bytes)?;
     ensure!(
-        catalog.schema == CATALOG_SCHEMA && catalog.profiles.len() == 4,
-        "publication requires four qualified model slots"
+        catalog.schema == CATALOG_SCHEMA && catalog.profiles.len() == 3,
+        "publication requires the three selected qualified stage profiles"
     );
     let mut models = BTreeSet::new();
     let mut manifests = BTreeSet::new();
@@ -55,19 +67,36 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
     for profile in catalog.profiles {
         profile.validate_release_downloads()?;
+        super::runtime::validate_selected_policies(&profile)?;
+        let stage = profile
+            .model
+            .stage()
+            .context("publication model is not a selected stage choice")?;
+        profile.validate_stage(stage)?;
+        let (task, readout, policy) = match stage {
+            Stage::Focus => (
+                Task::FocusRank,
+                Readout::FocusYesNo,
+                super::compiler::focus::policy_digest()?,
+            ),
+            Stage::Context => (
+                Task::ContextAction,
+                Readout::DecisionSymbol,
+                super::context_action::policy_digest()?,
+            ),
+        };
+        ensure!(
+            profile.tasks == BTreeSet::from([task])
+                && profile.abi.readout == readout
+                && profile.task_policies == BTreeMap::from([(task, policy)]),
+            "publication stage/task/readout/native source policy differs"
+        );
         ensure!(
             profile.qualification.is_some()
                 && profile.cpu_fit.is_some()
                 && !profile.qualified_targets.is_empty(),
             "publication requires final qualification and explicit execution fit"
         );
-        if profile.tasks.contains(&Task::ContextNextRead) {
-            ensure!(
-                profile.task_policies.get(&Task::ContextNextRead)
-                    == Some(&super::tasks::policy_digest()?),
-                "publication next-read policy is not native compiled policy"
-            );
-        }
         ensure!(
             models.insert(profile.model) && manifests.insert(profile.manifest),
             "duplicate publication slot or manifest"
@@ -95,10 +124,9 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     ensure!(
         models
             == BTreeSet::from([
-                ModelChoice::SmallIntern,
-                ModelChoice::SmallStrands,
-                ModelChoice::LargeIntern,
-                ModelChoice::LargeKev
+                ModelChoice::FocusQwenReranker06B,
+                ModelChoice::ContextQwenCompact,
+                ModelChoice::ContextQwenLarge,
             ]),
         "incomplete model slot coverage"
     );
@@ -115,7 +143,25 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
 mod tests {
     use super::*;
     #[test]
-    #[ignore = "requires four actually qualified compiled release profiles"]
+    fn embedded_current_catalog_is_observable_without_starting_or_qualifying_models() -> Result<()>
+    {
+        let observed = super::super::runtime::catalog_profiles()?;
+        let raw: serde_json::Value =
+            serde_json::from_slice(include_bytes!("release-catalog.json"))?;
+        assert_eq!(raw["schema"], "airk.arbiter.catalog/2");
+        if observed.is_empty() {
+            assert!(
+                super::super::runtime::ExecutionProfile::from_release(Sha256Digest::from_bytes(
+                    [0; 32]
+                ))
+                .is_err()
+            );
+            assert!(compiled_publication(concat!("v", env!("CARGO_PKG_VERSION"))).is_err());
+        }
+        Ok(())
+    }
+    #[test]
+    #[ignore = "requires the three actually qualified selected stage profiles"]
     fn compiled_publication_matches_retained_production_projection() -> Result<()> {
         let projection = compiled_publication(concat!("v", env!("CARGO_PKG_VERSION")))?;
         let value = serde_json::to_value(&projection)?;
@@ -138,16 +184,16 @@ mod tests {
         ))?;
         let mut profiles = Vec::new();
         for (i, model) in [
-            ModelChoice::SmallIntern,
-            ModelChoice::SmallStrands,
-            ModelChoice::LargeIntern,
-            ModelChoice::LargeKev,
+            ModelChoice::FocusQwenReranker06B,
+            ModelChoice::ContextQwenCompact,
+            ModelChoice::ContextQwenLarge,
         ]
         .into_iter()
         .enumerate()
         {
             let mut profile = base.clone();
             profile.model = model;
+            profile.stage = model.stage();
             profile.manifest = Sha256Digest::from_bytes([i as u8 + 1; 32]);
             profile.cpu_fit = Some(CpuFit::default());
             profile.qualified_targets = vec![QualifiedTarget {
@@ -156,15 +202,84 @@ mod tests {
                     "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0".into(),
                 receipt: Sha256Digest::from_bytes([42; 32]),
             }];
-            profile
-                .task_policies
-                .insert(Task::ContextNextRead, super::super::tasks::policy_digest()?);
-            profile.abi.readout =
-                if matches!(model, ModelChoice::SmallIntern | ModelChoice::LargeIntern) {
-                    Readout::DecisionSymbol
-                } else {
-                    Readout::PointerHead
+            let (task, policy) = if model == ModelChoice::FocusQwenReranker06B {
+                profile.max_tokens = 512;
+                profile.max_candidates = 2;
+                profile.abi = ScoreAbi {
+                    readout: Readout::FocusYesNo,
+                    inputs: ["input_ids", "attention_mask", "position_ids"]
+                        .into_iter()
+                        .map(|name| TensorContract {
+                            name: name.into(),
+                            element: TensorType::Int64,
+                            axes: vec!["batch".into(), "tokens".into()],
+                        })
+                        .collect(),
+                    output: TensorContract {
+                        name: "logits".into(),
+                        element: TensorType::Float32,
+                        axes: vec!["batch".into(), "labels".into()],
+                    },
                 };
+                (
+                    Task::FocusRank,
+                    super::super::compiler::focus::policy_digest()?,
+                )
+            } else {
+                profile.max_tokens = 2048;
+                profile.max_candidates = 8;
+                profile.abi = ScoreAbi {
+                    readout: Readout::DecisionSymbol,
+                    inputs: vec![
+                        TensorContract {
+                            name: "input_ids".into(),
+                            element: TensorType::Int64,
+                            axes: vec!["batch_1".into(), "tokens".into()],
+                        },
+                        TensorContract {
+                            name: "attention_mask".into(),
+                            element: TensorType::Int64,
+                            axes: vec!["batch_1".into(), "tokens".into()],
+                        },
+                        TensorContract {
+                            name: "position_ids".into(),
+                            element: TensorType::Int64,
+                            axes: vec!["batch_1".into(), "tokens".into()],
+                        },
+                        TensorContract {
+                            name: "decision_positions".into(),
+                            element: TensorType::Int64,
+                            axes: vec!["batch_1".into()],
+                        },
+                        TensorContract {
+                            name: "candidate_positions".into(),
+                            element: TensorType::Int64,
+                            axes: vec!["batch_1".into(), "options".into()],
+                        },
+                        TensorContract {
+                            name: "option_mask".into(),
+                            element: TensorType::Bool,
+                            axes: vec!["batch_1".into(), "options".into()],
+                        },
+                    ],
+                    output: TensorContract {
+                        name: "scores".into(),
+                        element: TensorType::Float32,
+                        axes: vec!["batch_1".into(), "options".into()],
+                    },
+                };
+                (
+                    Task::ContextAction,
+                    super::super::context_action::policy_digest()?,
+                )
+            };
+            profile.tasks = BTreeSet::from([task]);
+            profile.task_policies = BTreeMap::from([(task, policy)]);
+            profile.policy = if model == ModelChoice::FocusQwenReranker06B {
+                super::super::compiler::focus::policy_digest()?
+            } else {
+                super::super::compiler::qwen::policy_digest()?
+            };
             for download in &mut profile.downloads {
                 for part in &mut download.parts {
                     let name = part.url.rsplit('/').next().unwrap();
@@ -176,10 +291,10 @@ mod tests {
         }
         let input = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
         let positive = project(&serde_json::to_vec(&input)?, "v1.9.0")?;
-        assert_eq!(positive.profiles.len(), 4);
+        assert_eq!(positive.profiles.len(), 3);
         assert!(!positive.assets.is_empty());
         let mut cases = vec![
-            serde_json::json!({"name":"hypothetical_four_final_slots","accepted":true,"projection":positive}),
+            serde_json::json!({"name":"hypothetical_three_selected_stage_profiles","accepted":true,"projection":positive}),
         ];
         for (name, mut value) in [
             ("missing_slot", input.clone()),
@@ -187,6 +302,12 @@ mod tests {
             ("missing_execution_fit", input.clone()),
             ("foreign_release_tag", input.clone()),
             ("conflicting_part_pin", input.clone()),
+            ("wrong_stage", input.clone()),
+            ("legacy_model_substitution", input.clone()),
+            ("wrong_task_policy", input.clone()),
+            ("wrong_task", input.clone()),
+            ("wrong_readout", input.clone()),
+            ("stale_compiler_policy", input.clone()),
         ] {
             match name {
                 "missing_slot" => {
@@ -199,6 +320,31 @@ mod tests {
                 "foreign_release_tag" => {
                     value["profiles"][0]["downloads"][0]["parts"][0]["url"] =
                         "https://github.com/iokaio/airk/releases/download/v0.0.0/foreign.bin".into()
+                }
+                "wrong_stage" => {
+                    value["profiles"][0]["stage"] = serde_json::to_value(Stage::Context)?
+                }
+                "legacy_model_substitution" => {
+                    value["profiles"][0]["model"] = serde_json::to_value(ModelChoice::SmallIntern)?
+                }
+                "wrong_task_policy" => {
+                    value["profiles"][0]["task_policies"] =
+                        serde_json::to_value(BTreeMap::from([(
+                            Task::FocusRank,
+                            Sha256Digest::from_bytes([0; 32]),
+                        )]))?
+                }
+                "wrong_task" => {
+                    value["profiles"][0]["tasks"] =
+                        serde_json::to_value(BTreeSet::from([Task::ContextAction]))?
+                }
+                "wrong_readout" => {
+                    value["profiles"][1]["abi"]["readout"] =
+                        serde_json::to_value(Readout::PointerHead)?
+                }
+                "stale_compiler_policy" => {
+                    value["profiles"][1]["policy"] =
+                        serde_json::to_value(Sha256Digest::from_bytes([0; 32]))?
                 }
                 _ => {
                     value["profiles"][0]["downloads"][0]["parts"][0]["sha256"] =

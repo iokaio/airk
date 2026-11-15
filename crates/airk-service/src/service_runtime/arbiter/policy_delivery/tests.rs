@@ -24,15 +24,16 @@ fn fixture() -> Result<(
         catalog,
     )?);
     let mut current = Configuration::disabled(installation, catalog);
-    current.enabled = true;
+    current.context.enabled = true;
     current.revision = 2;
-    current.selected_profile = Some(profile);
-    current.indexes = vec![Enrollment {
+    current.context.selected_profile = Some(profile);
+    current.context.indexes = vec![Enrollment {
         index_id: index,
         tasks: BTreeSet::from([Task::ContextAction]),
     }];
     store.apply(1, &current)?;
     let binding = ContextDeliveryBinding {
+        stage: Stage::Context,
         profile: Some(profile),
         scope: ScopeBinding {
             installation,
@@ -63,6 +64,34 @@ fn guard(store: Arc<ConfigurationStore>, binding: ContextDeliveryBinding) -> Pol
     }
 }
 #[test]
+fn both_stages_may_bind_one_index_but_each_requires_its_actual_stage_profile_and_task() -> Result<()>
+{
+    let (_root, store, context) = fixture()?;
+    let mut current = store.load()?;
+    current.revision += 1;
+    current.focus.enabled = true;
+    current.focus.selected_profile = Some(Sha256Digest::from_bytes([8; 32]));
+    current.focus.indexes = vec![Enrollment {
+        index_id: context.scope.index_id,
+        tasks: BTreeSet::from([Task::FocusRank]),
+    }];
+    let current = store.apply(2, &current)?;
+    let mut context = context;
+    context.scope.configuration_revision = current.revision;
+    let focus = ContextDeliveryBinding {
+        stage: Stage::Focus,
+        profile: current.focus.selected_profile,
+        scope: context.scope.clone(),
+    };
+    validate_policy(&current, &[context.clone(), focus.clone()])?;
+    assert!(validate_policy(&current, &[focus.clone(), focus.clone()]).is_err());
+    let mut changed = current.clone();
+    changed.focus.indexes[0].tasks = BTreeSet::from([Task::ContextAction]);
+    assert!(validate_policy(&changed, &[context.clone(), focus]).is_err());
+    validate_policy(&changed, &[context])?;
+    Ok(())
+}
+#[test]
 fn disable_or_switch_while_another_member_is_pending_refuses_cached_advice() -> Result<()> {
     for switch in [false, true] {
         let (_root, store, binding) = fixture()?;
@@ -83,9 +112,9 @@ fn disable_or_switch_while_another_member_is_pending_refuses_cached_advice() -> 
         let mut changed = store.load()?;
         changed.revision += 1;
         if switch {
-            changed.selected_profile = Some(Sha256Digest::from_bytes([8; 32]));
+            changed.context.selected_profile = Some(Sha256Digest::from_bytes([8; 32]));
         } else {
-            changed.enabled = false;
+            changed.context.enabled = false;
         }
         store.apply(2, &changed)?;
         release_tx.send(())?;
@@ -122,7 +151,7 @@ async fn actual_outer_pipe_partial_write_closes_after_policy_revocation_without_
     reader.read_exact(&mut first).await?;
     let mut changed = store.load()?;
     changed.revision += 1;
-    changed.enabled = false;
+    changed.context.enabled = false;
     store.apply(2, &changed)?;
     let mut remainder = Vec::new();
     reader.read_to_end(&mut remainder).await?;

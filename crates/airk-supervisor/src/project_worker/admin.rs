@@ -42,11 +42,27 @@ pub(super) fn validate_request(purpose: SessionPurpose, request: &protocol::Quer
     if let Some(partition) = &request.context_partition {
         partition.validate()?;
         ensure!(
-            purpose == SessionPurpose::Evidence
-                && request.native.is_none()
-                && request.tool == "airk_answer",
-            "context partition requires scoped canonical Answer"
+            purpose == SessionPurpose::Evidence && request.native.is_none(),
+            "context partition requires scoped canonical Answer or singleton Focus Search"
         );
+        if partition.is_ordinary_focus() {
+            ensure!(
+                request.tool == "airk_search",
+                "Focus-only partition requires scoped canonical Search"
+            );
+            let args: airk_mcp::SearchArgs =
+                serde_json::from_value(serde_json::Value::Object(request.arguments.clone()))?;
+            airk_core::validate_budget(args.limit, args.max_bytes)?;
+            ensure!(
+                partition.resources.candidates <= args.limit,
+                "Focus-only partition exceeds original Search candidate allowance"
+            );
+        } else {
+            ensure!(
+                request.tool == "airk_answer",
+                "context partition requires scoped canonical Answer"
+            );
+        }
         let attempt = request
             .read_attempt
             .as_ref()
@@ -55,20 +71,28 @@ pub(super) fn validate_request(purpose: SessionPurpose, request: &protocol::Quer
             attempt.request_id == partition.attempt,
             "context partition attempt mismatch"
         );
-        let args: airk_mcp::AnswerArgs =
-            serde_json::from_value(serde_json::Value::Object(request.arguments.clone()))?;
-        args.request.validate()?;
-        let budget = args.request.budget;
-        ensure!(
-            budget.calls <= partition.resources.calls
-                && budget.candidates <= partition.resources.candidates
-                && budget.max_bytes <= partition.resources.bytes
-                && budget.input_tokens <= partition.resources.input_tokens.max(1)
-                && budget.rounds <= partition.parent_budget.rounds
-                && budget.fanout <= partition.parent_budget.fanout
-                && budget.deadline_ms <= partition.parent_budget.deadline_ms,
-            "context partition request exceeds reserved budget"
-        );
+        if partition.is_ordinary_focus() {
+            // Actual host clock/expiry refusal precedes storage and broker admission.
+            ensure!(
+                std::time::Instant::now() < airk_host::read_attempt::decode(*attempt)?.deadline(),
+                "singleton Focus original read deadline expired"
+            );
+        } else {
+            let args: airk_mcp::AnswerArgs =
+                serde_json::from_value(serde_json::Value::Object(request.arguments.clone()))?;
+            args.request.validate()?;
+            let budget = args.request.budget;
+            ensure!(
+                budget.calls <= partition.resources.calls
+                    && budget.candidates <= partition.resources.candidates
+                    && budget.max_bytes <= partition.resources.bytes
+                    && budget.input_tokens <= partition.resources.input_tokens.max(1)
+                    && budget.rounds <= partition.parent_budget.rounds
+                    && budget.fanout <= partition.parent_budget.fanout
+                    && budget.deadline_ms <= partition.parent_budget.deadline_ms,
+                "context partition request exceeds reserved budget"
+            );
+        }
     }
     if purpose == SessionPurpose::NativeAdministrativeRead {
         ensure!(
@@ -93,7 +117,15 @@ pub(super) fn validate_context_partition(
             .context("context partition original attempt missing")?;
         // The selected-scope digest is inert frontend-owned identity. The
         // installed lease, not that digest, grants this exact local index.
-        partition.validate_binding(attempt, partition.selection, authority.index_id)?;
+        let selection = if partition.is_ordinary_focus() {
+            authority
+                .selection
+                .context("singleton Focus requires actual installed selection authority")?
+                .scope_identity
+        } else {
+            partition.selection
+        };
+        partition.validate_binding(attempt, selection, authority.index_id)?;
     }
     Ok(())
 }

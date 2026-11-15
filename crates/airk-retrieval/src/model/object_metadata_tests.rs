@@ -329,7 +329,7 @@ fn both_current_trained_precisions_preserve_runtime_compatibility_independent_of
             .iter()
             .map(|p| p.id.as_str())
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"])
+        std::collections::BTreeSet::from(["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"])
     );
     for profile in &catalog.profiles {
         let descriptor = descriptor_from_manifest(DescriptorManifest::Onnx(&profile.manifest))?;
@@ -426,5 +426,190 @@ fn unowned_model_setup_preserves_product_cpu_selection_with_or_without_native_in
         );
     }
     assert_eq!(accepted, 1);
+    Ok(())
+}
+
+#[test]
+fn same_runtime_unapproved_model_metadata_requires_upgrade_without_payload_reads() -> Result<()> {
+    let fixture = Fixture::new(true)?;
+    assert!(onnx_descriptor_uses_current_runtime(&fixture.descriptor));
+    for name in [
+        ModelAssetName::ModelOnnx,
+        ModelAssetName::TokenizerJson,
+        ModelAssetName::License,
+    ] {
+        fs::remove_file(fixture.path(name))?;
+    }
+    assert!(!onnx_object_metadata_uses_active_catalog(
+        fixture.collection.path(),
+        &fixture.set
+    )?);
+    assert_eq!(
+        descriptor_from_objects_metadata(fixture.collection.path(), &fixture.set)?,
+        fixture.descriptor
+    );
+    assert!(EmbeddingModel::open_objects(fixture.collection.path(), &fixture.set).is_err());
+    Ok(())
+}
+
+#[test]
+fn active_manifest_metadata_is_lazy_and_same_runtime_weight_change_cannot_mix_cache_keys()
+-> Result<()> {
+    struct OnlyMetadata(Vec<u8>);
+    impl ModelAssetSource for OnlyMetadata {
+        fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+            ensure!(
+                name == ModelAssetName::ModelJson && self.0.len() as u64 <= maximum,
+                "payload opened in metadata fence"
+            );
+            Ok(self.0.clone())
+        }
+    }
+    let profile = crate::model_catalog::selected_profile()?;
+    let build = |manifest: &OnnxManifest| -> Result<(OnlyMetadata, ModelObjectSet)> {
+        let bytes = serde_json::to_vec(manifest)?;
+        let mut refs = BTreeMap::from([
+            (
+                ModelAssetName::ModelOnnx,
+                ModelObjectRef {
+                    sha256: manifest.model_sha256.parse()?,
+                    bytes: profile
+                        .assets
+                        .iter()
+                        .find(|asset| asset.name == "model.onnx")
+                        .context("known catalog asset absent")?
+                        .bytes,
+                },
+            ),
+            (
+                ModelAssetName::TokenizerJson,
+                ModelObjectRef {
+                    sha256: manifest.tokenizer_sha256.parse()?,
+                    bytes: profile
+                        .assets
+                        .iter()
+                        .find(|asset| asset.name == "tokenizer.json")
+                        .context("known catalog asset absent")?
+                        .bytes,
+                },
+            ),
+            (
+                ModelAssetName::License,
+                ModelObjectRef {
+                    sha256: manifest.license_sha256.parse()?,
+                    bytes: profile
+                        .assets
+                        .iter()
+                        .find(|asset| asset.name == "LICENSE")
+                        .context("known catalog asset absent")?
+                        .bytes,
+                },
+            ),
+        ]);
+        refs.insert(
+            ModelAssetName::ModelJson,
+            ModelObjectRef {
+                sha256: Sha256Digest::from_bytes(Sha256::digest(&bytes).into()),
+                bytes: bytes.len() as u64,
+            },
+        );
+        let set = plan_from_asset_references(&bytes, refs)?;
+        Ok((OnlyMetadata(bytes), set))
+    };
+    let (source, current) = build(&profile.manifest)?;
+    assert!(onnx_asset_metadata_uses_active_catalog(&source, &current)?);
+    assert!(
+        onnx_asset_metadata_uses_active_catalog(&OnlyMetadata(b"{}".to_vec()), &current).is_err(),
+        "corrupt active metadata must remain an error"
+    );
+    let mut other = profile.manifest;
+    other.model_sha256 = "01".repeat(32);
+    let (old_source, old) = build(&other)?;
+    assert!(!onnx_asset_metadata_uses_active_catalog(&old_source, &old)?);
+    assert_ne!(current.pipeline_digest, old.pipeline_digest);
+    let a = descriptor_from_asset_metadata(&source, &current)?;
+    let b = descriptor_from_asset_metadata(&old_source, &old)?;
+    assert_eq!(
+        a.inference, b.inference,
+        "regression must preserve the exact runtime"
+    );
+    assert_ne!(
+        airk_core::embedding::embedding_key(&a, b"same input")?,
+        airk_core::embedding::embedding_key(&b, b"same input")?
+    );
+    let mut crossed = old.clone();
+    crossed.pipeline_digest = current.pipeline_digest;
+    assert!(descriptor_from_asset_metadata(&old_source, &crossed).is_err());
+    Ok(())
+}
+
+#[test]
+fn active_manifest_rejects_resealed_wrong_neural_lengths_without_payload_reads() -> Result<()> {
+    struct OnlyMetadata(Vec<u8>);
+    impl ModelAssetSource for OnlyMetadata {
+        fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+            ensure!(
+                name == ModelAssetName::ModelJson && self.0.len() as u64 <= maximum,
+                "length validation opened a model payload"
+            );
+            Ok(self.0.clone())
+        }
+    }
+    let profile = crate::model_catalog::selected_profile()?;
+    let raw = serde_json::to_vec(&profile.manifest)?;
+    let mut references = BTreeMap::new();
+    for name in [
+        ModelAssetName::ModelOnnx,
+        ModelAssetName::TokenizerJson,
+        ModelAssetName::License,
+    ] {
+        let asset = profile
+            .assets
+            .iter()
+            .find(|asset| asset.name == name.filename())
+            .context("known catalog asset absent")?;
+        references.insert(
+            name,
+            ModelObjectRef {
+                sha256: asset.sha256.parse()?,
+                bytes: asset.bytes,
+            },
+        );
+    }
+    references.insert(
+        ModelAssetName::ModelJson,
+        ModelObjectRef {
+            sha256: Sha256Digest::from_bytes(Sha256::digest(&raw).into()),
+            bytes: raw.len() as u64,
+        },
+    );
+    let correct = plan_from_asset_references(&raw, references.clone())?;
+    let source = OnlyMetadata(raw.clone());
+    assert!(onnx_asset_metadata_uses_active_catalog(&source, &correct)?);
+    let owner = Sha256Digest::from_bytes([41; 32]);
+    let sealed_correct = correct.shared_with(owner)?;
+    for name in [
+        ModelAssetName::ModelOnnx,
+        ModelAssetName::TokenizerJson,
+        ModelAssetName::License,
+    ] {
+        let mut changed = references.clone();
+        assert!(changed[&name].bytes > 1);
+        changed.get_mut(&name).unwrap().bytes = 1;
+        // The owning planner/shared-set sealer recomputes a valid complete set;
+        // this is a catalog-length contradiction, not a broken set digest.
+        let wrong = plan_from_asset_references(&raw, changed)?.shared_with(owner)?;
+        wrong.validate()?;
+        assert_ne!(
+            wrong.shared.as_ref().unwrap().set,
+            sealed_correct.shared.as_ref().unwrap().set
+        );
+        assert_eq!(wrong.pipeline_digest, correct.pipeline_digest);
+        assert!(descriptor_from_asset_metadata(&source, &wrong).is_ok());
+        assert!(
+            onnx_asset_metadata_uses_active_catalog(&source, &wrong).is_err(),
+            "{name:?}"
+        );
+    }
     Ok(())
 }

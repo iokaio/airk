@@ -64,8 +64,8 @@ fn packet_work(packet: &ContextResponseV2) -> Result<Resources> {
     Resources::from_packet(packet)
 }
 
-fn packet_unknown(packet: &ContextResponseV2) -> bool {
-    packet.assessment_history.iter().any(|event| {
+fn packet_unknown(packet: &ContextResponseV2) -> Result<bool> {
+    Ok(packet.assessment_history.iter().any(|event| {
         matches!(
             &event.result,
             AssessmentResult::Unavailable {
@@ -73,7 +73,11 @@ fn packet_unknown(packet: &ContextResponseV2) -> bool {
                 ..
             }
         )
-    })
+    }) || airk_core::arbiter::focus::observed_focus_work(
+        &packet.records,
+        &airk_core::arbiter::focus::validation_budget(),
+    )?
+    .work_unknown)
 }
 
 fn charged_ordinals(packet: &ContextResponseV2) -> Vec<u8> {
@@ -380,15 +384,18 @@ impl<S: Session> Backend<S> {
                     let used = packet_work(&packet)?;
                     let body_bytes =
                         airk_kernel::combined_reads::context_member_payload_bytes(&value)?;
-                    ensure!(
-                        body_bytes <= allocation.resources.bytes,
-                        "unreserved native context body overhead"
+                    let focus_delivery_bytes =
+                        airk_kernel::combined_reads::context_packet_focus_binding_bytes(&packet)?;
+                    let reclaimable_body_bytes =
+                        airk_kernel::combined_reads::context_reclaimable_body_bytes(
+                            allocation.resources.bytes,
+                            used.bytes,
+                            body_bytes,
+                            focus_delivery_bytes,
+                        )?;
+                    delivery_bindings.extend(
+                        airk_core::combined_context::packet_delivery_bindings(&packet)?,
                     );
-                    if let Some(binding) =
-                        airk_core::combined_context::ContextDeliveryBinding::from_packet(&packet)?
-                    {
-                        delivery_bindings.push(binding);
-                    }
                     let ordinals = charged_ordinals(&packet);
                     ensure!(
                         ordinals
@@ -396,7 +403,7 @@ impl<S: Session> Backend<S> {
                             .all(|ordinal| allocation.assessment_ordinals.contains(ordinal)),
                         "native context packet used unallocated assessment ordinal"
                     );
-                    let unknown = packet_unknown(&packet);
+                    let unknown = packet_unknown(&packet)?;
                     let report = if !used.fits(&allocation.resources) {
                         ensure!(
                             airk_core::combined_context::known_budget_failure(&packet),
@@ -421,10 +428,7 @@ impl<S: Session> Backend<S> {
                         // Native Work has its unchanged packet-accounting meaning.
                         // Rendering metadata is separately consumed in the delivery
                         // admission pool and cannot be reallocated to another body.
-                        reclaimed.bytes = allocation
-                            .resources
-                            .bytes
-                            .saturating_sub(used.bytes.max(body_bytes));
+                        reclaimed.bytes = reclaimable_body_bytes;
                         returned_ordinals.extend(
                             allocation
                                 .assessment_ordinals
@@ -628,6 +632,143 @@ impl<S: Session> Backend<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_unknown_packet_holds_partition_and_both_stage_bindings_survive() -> Result<()> {
+        use airk_core::arbiter::{self, context_action::*, *};
+        use airk_core::native_focus::{FocusSourceWindow, NativeFocusCandidate};
+        let fixtures: Value = serde_json::from_slice(include_bytes!(
+            "../../../../fixtures/split/arbiter/context_action_cases.json"
+        ))?;
+        for unknown in [false, true] {
+            let mut packet: ContextResponseV2 =
+                serde_json::from_value(fixtures["cases"][0]["input"].clone())?;
+            let scope = packet.records[0].scope.clone();
+            let question = packet.records[0].arguments["query"]
+                .as_str()
+                .context("fixture search question")?;
+            let hit: airk_core::Hit =
+                serde_json::from_value(packet.records[0].canonical_result["hits"][0].clone())?;
+            let candidate = NativeFocusCandidate::new(
+                &scope,
+                question,
+                0,
+                hit.clone(),
+                FocusSourceWindow {
+                    utf8_start: 0,
+                    utf8_end: hit.text.len(),
+                },
+            )?;
+            let receipt = FocusApplicationReceipt {
+                schema: arbiter::focus::RANKING_SCHEMA.into(),
+                scope: scope.clone(),
+                identity: Some(FocusIdentity {
+                    profile: Sha256Digest::from_bytes([90; 32]),
+                    runtime: RUNTIME.into(),
+                    compiler: Sha256Digest::from_bytes([91; 32]),
+                    calibration: Sha256Digest::from_bytes([92; 32]),
+                    task_policy: Sha256Digest::from_bytes([93; 32]),
+                }),
+                availability: Availability::Failed,
+                reason: "Synthetic bounded native failure retains custody".into(),
+                applied: false,
+                input_digest: Sha256Digest::from_bytes([94; 32]),
+                original_order: vec![candidate.id],
+                ranked_order: vec![candidate.id],
+                scores: vec![],
+                presentations: vec![],
+                presented_count: 0,
+                candidate_count: 1,
+                scored_count: 0,
+                omitted_count: 1,
+                reserved_input_tokens: 32,
+                observed_input_tokens: (!unknown).then_some(16),
+                work: if unknown {
+                    Work::default()
+                } else {
+                    Work {
+                        input_tokens: 16,
+                        compile_us: Some(1),
+                        inference_us: Some(2),
+                        ..Work::default()
+                    }
+                },
+            };
+            receipt.validate(&Budget::default())?;
+            let original_body = packet.records[0].canonical_result.clone();
+            let complete = airk_core::SearchResponse {
+                generation: scope.publication.generation,
+                collection: scope.publication.collection.clone(),
+                publication: Some(scope.publication.clone()),
+                hits: vec![hit],
+                truncated: false,
+                execution: None,
+                semantic_readiness: None,
+                discovery_readiness: None,
+                focus: Some(FocusObservation::Receipt {
+                    receipt: Box::new(receipt),
+                }),
+            };
+            let complete = serde_json::to_value(&complete)?;
+            let body = packet.records[0]
+                .canonical_result
+                .as_object_mut()
+                .context("fixture canonical Search object")?;
+            for (field, value) in complete
+                .as_object()
+                .context("typed canonical Search object")?
+            {
+                // Retain the original full Hit objects and any future fields.
+                if field != "hits" {
+                    body.insert(field.clone(), value.clone());
+                }
+            }
+            assert_eq!(body.get("hits"), original_body.get("hits"));
+            assert_eq!(
+                body.get("future_native_field"),
+                original_body.get("future_native_field")
+            );
+            let _: airk_core::SearchResponse = serde_json::from_value(Value::Object(body.clone()))?;
+            if unknown {
+                for event in &mut packet.assessment_history {
+                    event.applicability = AssessmentApplicability::HistoricalAfterRead;
+                }
+                packet.stop = PartitionTermination::NoProgress;
+                packet.assessment.termination = packet.stop;
+                packet.assessment.coverage = PartitionCoverage::Unassessed {
+                    reason: AssessmentUnavailable::Unavailable,
+                };
+                packet.gaps = vec![Gap::Unsupported];
+            } else {
+                packet.work.input_tokens += 16;
+                packet.work.compile_us = Some(packet.work.compile_us.unwrap_or(0) + 1);
+                packet.work.inference_us = Some(packet.work.inference_us.unwrap_or(0) + 2);
+            }
+            packet.validate(&Budget::default())?;
+            assert_eq!(packet_unknown(&packet)?, unknown);
+            let bindings = airk_core::combined_context::packet_delivery_bindings(&packet)?;
+            assert_eq!(
+                bindings
+                    .iter()
+                    .map(|binding| binding.stage)
+                    .collect::<Vec<_>>(),
+                vec![Stage::Focus, Stage::Context]
+            );
+            let body_bytes = serde_json::to_vec(&packet)?.len();
+            let outer = airk_kernel::combined_reads::context_packet_focus_binding_bytes(&packet)?;
+            assert!(outer > 0);
+            assert_eq!(
+                airk_kernel::combined_reads::context_reclaimable_body_bytes(
+                    body_bytes + outer,
+                    0,
+                    body_bytes,
+                    outer
+                )?,
+                0
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn malformed_context_success_is_unknown_nonreplayable_and_failure_bytes_stay_full() {

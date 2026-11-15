@@ -816,6 +816,7 @@ impl Kernel {
             }
         }
         Ok(SearchResponse {
+            focus: None,
             publication,
             execution: None,
             semantic_readiness: None,
@@ -1084,6 +1085,7 @@ impl Kernel {
         let read = self.current_reader()?;
         let snapshot = self.current_scan_projection(&read)?;
         let mut evidence = SearchResponse {
+            focus: None,
             execution: None,
             publication: Some(current::runtime::envelope(&read)?),
             semantic_readiness: Some(current::enrichment::readiness(&read, &self.store)?),

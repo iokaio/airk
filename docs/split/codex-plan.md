@@ -13,7 +13,7 @@ Release a matched AIRK Service/`airkctl` pair and the separate universal VS Code
 5. Working Windows, macOS and Linux installers, including an exact `--silent` entry point that installs with documented defaults without terminal interactions.
 6. A verified ZIP for each supported platform/architecture containing the runnable service pair, required assets/notices and platform-specific manual setup instructions; no installer or VS Code is required to use it.
 7. Static online help at `https://airk.ioka.io/help/html.index`, generated from the help shipped in the product and covering extension users and CLI-only users.
-8. The [Arbiter concept](../arbiter/concept.md), with the purpose clarified in §9: local AI gathers relevant evidence from the index and provides fuller contextual answers for agents and Workbench users, reducing the follow-up turns needed to satisfy a user's prompt or instructions. Deliver improved bundled MiniLM INT8 retrieval plus an optional, default-off, per-index Arbiter with two smaller and two larger qualified model choices, running inside the existing service.
+8. The [Arbiter concept](../arbiter/concept.md), with the purpose clarified in §9: local AI gathers relevant evidence from the index and provides fuller contextual answers for agents and Workbench users, reducing the follow-up turns needed to satisfy a user's prompt or instructions. Deliver improved bundled MiniLM INT8 retrieval plus independent, default-off, per-index Arbiter Focus and Arbiter Context Compact/Large, using the three selected Qwen profiles inside the existing service.
 9. When a user splits an index, both resulting indexes automatically become members of an index set named after the original index. Include this set and both memberships in the split's reviewed outcome and completion checks (§7.3.1).
 10. Qualify the existing independent index-set deletion path against the full preservation/recovery matrix, implementing only missing behavior or coverage (§7.3.2). Member indexes remain intact; a separate retirement operation has not been established.
 11. During extension setup/first use, when the service is confirmed not installed and the host supports installation, offer **Download and install automatically**, **Install manually**, and **Not now**. The automated option discovers the official compatible service installer from `iokaio/airk` GitHub releases, verifies it and runs its headless `--silent` entry point. It requires the user's choice; extension installation/activation alone is not consent (§8.5).
@@ -52,7 +52,25 @@ Earlier planning sessions exposed no AIRK MCP tools and used scoped local search
 
 ### Current implementation checkpoint (15 November 2026)
 
-Restart checkpoint: the user requests a pause after the expanded architecture
+Execution is resumed through the user's extended deadline, 15 November 15:05
+UTC, with a local installer set requested for morning testing. The selected path
+is independent Arbiter Focus (Qwen3-Reranker-0.6B) and Arbiter Context Compact or
+Large (Qwen3-1.7B/4B). Implement and test that path directly; the old four-model
+catalog and broad bakeoff are superseded. Source integration, actual model
+artifacts, native calibration/goal gates, current runtime/client/platform checks
+and installers remain required. Full 1.7B synthetic reference and Focus FP32
+numerical export have passed; these are not task-quality or release passes.
+The execution ledger owns exact receipts and current blockers.
+
+The cancelled old205 FINAL run is partially consumed and cannot be reused.
+Fresh selected-Context data now has an independently reserved CAL/confirmation
+split, with opaque source alignment completed for100 questions in each half.
+Human terminal-semantic gold remains0; unsupported outcomes remain unsupported.
+Local packaging produces test candidates; public publication still requires
+explicit authorization and the complete release gates.
+
+The following is retained historical checkpoint evidence, not current execution
+state. At the earlier pause, the user requested the expanded architecture
 guide and landscape Word edition. Reviewed source milestones after `b5f9a946`
 are recorded in the execution ledger; the R2 binary pair retains its original
 `b5f9a946` identity. Source commits do not replace or requalify that artifact. All four
@@ -61,8 +79,9 @@ exit. The native CAL-only fit returned `unsupported_no_positive_safe_margin` for
 all four models; no calibration asset or profile activation followed. Unknown
 Read outcomes remain UNKNOWN, not semantic negatives. A1's original205 quality
 failure, unsupported Arbiter calibrations and unproved final turn reduction
-still block release/model promotion. Fresh FINAL and100-goal fixtures remain
-sealed and unconsumed.
+still blocked release/model promotion. At that checkpoint fresh FINAL and
+100-goal fixtures were sealed and unconsumed; the later cancelled205 run and new
+selected-path reservations above supersede that freshness statement.
 
 The fresh matched debug pair R2 completed170.194s from `b5f9a946`, builder source
 `41b6e453...397c` over1,739files, under
@@ -251,7 +270,7 @@ This is a dependency order, not one large patch. Each substep finishes source re
 | P7 — Platform installers, silent mode and optional extension setup | User requirements 2–3 plus §8.5's user-selected download/headless install and manual/defer alternatives. P2/P3 and P9's verified release metadata precede qualification. Separate native installer ownership from the narrow extension bootstrap. | Interactive and exact `--silent` entry points work on supported hosts; a clean machine without `airkctl` can complete the opted-in extension flow. Manual/Not now choices cause no installer download or execution; failure/recovery and no-TTY cases are explicit. |
 | P8 — Portable service ZIPs | User requirement 4; approved public setup contract, P2/P3 and platform verification. | Clean non-admin host with no installer/VS Code follows included instructions to healthy service, CLI indexing/search and browser Admin. |
 | P9 — Product help, download site and release wiring | User requirements 1 and 5 plus the Admin Help review and §8.5's official installer discovery/compatibility metadata. Correct shared content first, add host-aware guides with P5/P6/P7, and draft from implemented behavior as packages land; finalize against the frozen candidate. | Same applicable help content in product/static site; task-findability/continuation/schema checks, exact URLs, verified release assets, extension installer selection and real command examples pass. |
-| P10 — Arbiter | User requirement 6; staged work in §9. Preparation can run alongside unrelated source work; final integration follows canonical read/lifecycle fixes. | Improved bundled encoder and four optional slots meet separate quality, lifetime, platform and package gates. |
+| P10 — Arbiter | User requirement 6; staged work in §9. Preparation can run alongside unrelated source work; final integration follows canonical read/lifecycle fixes. | The bundled encoder, independent Arbiter Focus and Arbiter Context Compact/Large meet their separate quality, lifetime, platform and package gates. |
 | P11 — Final qualification and publication | All requested feature gates plus unresolved-review dispositions closed; versions/docs/assets frozen. | Ordered host/package validation, authorized release workflows and verification of downloaded published bytes/site/VSIX. |
 
 Parallelize by component, not by starting every package. For example, native authority investigation, installer investigation and Admin behavior tests can proceed independently; P1/P4 cannot concurrently edit the same selection/session files. Model preparation uses a separate bounded resource schedule and never competes with a native validation batch.
@@ -595,18 +614,72 @@ MiniLM INT8 remains bundled in every installer and service executable and works 
 
 Retain the initial 256-token WordPiece, 384-dimensional masked-mean/L2 and batch-one execution contract unless a separate change is approved. Keep the strict two-profile embedded MiniLM catalog; create a separate qualified Arbiter catalog instead of relaxing its pinned validation. New weights change `EmbeddingDescriptor` identity even at the same dimension. Invalidate affected caches and regenerate semantic representations through approved mechanisms while preserving lexical availability and honest readiness. Arbiter enable/disable/model switches themselves do not change semantic representations or require re-indexing.
 
-Arbiter is globally disabled by default and explicitly enabled for named immutable index identities. New/recreated/imported indexes do not inherit consent. Rename preserves enrollment. One selected optional profile per service is shared only by enrolled indexes. No sidecar, Python serving, additional installer/executable, model server, cloud fallback, autonomous agent loop or model-supplied executable/custom operator.
+Arbiter Focus and Arbiter Context are independently disabled by default and explicitly enabled for named immutable index identities. Focus may run while Context is off; Context may gather deterministically when Focus is unavailable or off. Each stage has its own explicit consent and resource admission. New/recreated/imported indexes do not inherit consent. Rename preserves enrollment. One selected Context model per service is shared only by its enrolled indexes; the shared Focus component has separate enrollment and full combined resource accounting when both stages run. No sidecar, Python serving, additional installer/executable, model server, cloud fallback, autonomous agent loop or model-supplied executable/custom operator.
 
 Enable/apply without selected indexes is incomplete configuration and does not download a model. A service-wide enable switch permits the capability but never enrolls every current or future index. Global off and excluded indexes preserve ordinary complete results under the exact-byte/parsed-equality rules; model choice never grants access to an index.
 
-| Slot / proposed ID | Candidate from the concept | Preparation obligation |
-| --- | --- | --- |
-| Smaller / `arbiter-small-intern-08b` | Intern-Decision-0.8B | Pin publisher revision and full assets; reproduce compiler/template, option ordering, placeholder/symbol-logit scoring. |
-| Smaller / `arbiter-small-strands-2b` | Strands Decider 2B | Complete Qwen base, adapter and trained head/readout; Python reference is a development oracle, not installed serving. |
-| Larger / `arbiter-large-intern-4b` | Intern-Decision-4B | Independent native export, calibration and resource evidence; smaller-sibling qualification does not transfer. |
-| Larger / `arbiter-large-kev-4b` | Kev-4B | Complete base/adapter/pointer head; reproduce native pointer scoring and independently measure cost/quality. |
+The user revised the release target on 15 November 2026 and then selected the
+new path directly: replace the original four selections with two Qwen choices
+and a shared, independently enabled reranker. Approved product names are
+**Arbiter Focus**, **Arbiter Context — Compact** and **Arbiter Context — Large**. The original Intern/Strands/Kev preparation and
+failed CAL receipts remain historical evidence, not current qualification.
 
-Exactly two smaller and two larger choices must qualify for four-choice completion. Precision/backend variants are profiles, not extra choices. MiniLM is not a fifth option. A failed slot stays unavailable and blocks that completion claim; replacing a candidate requires a reviewed change. The concept's model links/metadata are research inputs, not a fresh license or native-support determination. Reverify primary publisher terms, revisions and complete base/data rights when acquisition is authorized.
+| Release candidate | Role | Preparation obligation |
+| --- | --- | --- |
+| Arbiter Context — Compact (Qwen3-1.7B) | Smaller selectable Context model | Pin publisher revision, full assets and rights; qualify constrained evidence/action scoring, native export, calibration and resources. |
+| Arbiter Context — Large (Qwen3-4B) | Larger selectable Context model | Independently qualify the same tasks and justify its added resource cost. Smaller-model evidence does not transfer. |
+| Arbiter Focus (Qwen3-Reranker-0.6B) | Independently enabled evidence-ranking component | Reproduce publisher query/passage scoring; measure its contribution with each Qwen choice. Ranking alone grants no sufficiency or next-read authority. |
+
+Implement and qualify the selected MiniLM → Focus → Context path. Focus also
+works independently after MiniLM with Context off. Test the selected components
+and their composed behavior under the existing fixed task/budget and quality
+floors. Do not spend the delivery window on a broad replacement-model bakeoff.
+Retain ordinary-baseline comparisons only where required to establish the
+existing goal-completion, coverage and follow-up-work acceptance criteria. There are two selectable decision-model choices; the
+shared reranker is a pipeline component, not a third choice. MiniLM remains the
+separate bundled candidate-retrieval encoder. Precision/backend variants are
+profiles, not extra choices. A composed optional profile must account for the
+selected Qwen and reranker together through the existing native ownership,
+admission, lifetime and total resource limits; only one Qwen choice is active.
+No sidecar or cloud fallback is introduced.
+
+Current export preparation preserves the original Qwen Context FP32 tensor
+bytes after Compact weight8 exceeded its fixed numerical error limit. The
+failed compressed artifact is retained; its thresholds are unchanged. External
+weight files are consolidated without changing tensor bytes or graph behavior.
+The native candidate scopes are Compact CPU4/16 GiB and Large CPU16/40 GiB,
+subject to actual resource and combined-service checks under the original
+30-second operation deadline. These are experimental reservations, not
+established user hardware floors. The Large CPU8 candidate passed numerical
+checks but failed its first measured call at 30.585085 seconds; that failed
+artifact remains recorded. The CPU16 candidate changes only the declared
+hardware requirement, retaining the same model bytes, precision, memory and
+30-second deadline. Focus has passed its twelve-case native
+numerical comparison and twenty CPU4 measurements under a 4 GiB candidate
+reservation; those component observations do not qualify the composed path,
+another platform or a release. Final requirements come from the qualified
+catalog and its actual admission checks.
+
+The selected path must satisfy all existing task, calibration, native-runtime,
+platform, package and release gates. Candidate selection is no longer conditional
+on a broad model-comparison tournament. Research or
+downloaded weights do not make a profile selectable. Record reviewed contract
+and catalog decisions before dependent consumers; reverify primary publisher
+terms, exact revisions and complete base/data rights during authorized acquisition.
+
+The completed epoch1 MiniLM experiment did not meet its improvement reference:
+both exports and both original unsigned controls tied at17/20 complete evidence
+and11/12 mean recall on the fixed DEV population. No epoch1 weights are promoted
+and no further encoder search is scheduled. A1's retention rule applies: restore
+the exact original publisher U8/S8 graphs under current catalog generation
+`minilm-l6-v2-u8-v3` and `minilm-l6-v2-s8-v3`, with current-runtime qualification
+still required. The unqualified checkpoint515 candidate is not a qualified
+baseline. The existing ORT1.30 provider implementation identity/options remain
+unchanged; its historical name does not describe the original weights as trained.
+This decision precedes any selected-path CAL outcome. Bind all CAL, composed and
+held-out work to the actual native-emitted original-baseline pipeline; transfer
+no calibration between different encoder identities. Qwen choices, cohorts,
+budgets, floors and original failed/cancelled evidence remain unchanged.
 
 ### 9.2 Dependency-ordered work packages
 
@@ -614,15 +687,15 @@ Exactly two smaller and two larger choices must qualify for four-choice completi
 | --- | --- | --- |
 | A0 — Baselines and floors | Retrieval/inference test owners: freeze assistant context-preparation tasks and direct Workbench information questions, independent required-evidence sets, current MiniLM/Workbench/raw-MCP baselines, ordinary-result/state goldens, model references and resource-pressure populations. | Numeric floors cover goal completion, contextual answer quality, critical-evidence retention, agent turns/retrieval calls and latency/resources, separately from proxy retrieval/scorer metrics. Approve them before final evaluation. |
 | A1 — Train MiniLM first | Developer-only training/export tools and retrieval model catalog: train user-question-to-useful-evidence retrieval across code, tests and documents, including complementary evidence. Export both CPU INT8 profiles; freeze new model/pipeline identity and regeneration design. | Native INT8 improves evidence available for the context/Workbench tasks as well as agreed retrieval metrics; general-document/language and resource gates pass, old/new vector mixing refuses, supported regeneration is ready. Current qualified weights remain until this gate passes. |
-| A2 — Prepare the four candidates | Sequential smaller pair, then larger pair. Evaluate unchanged models, then train/adapt for measured gaps in relevance, evidence roles, complementary context, bounded next-read choice and uncertainty/abstention. Export and calibrate each complete supported head/readout. | Each model demonstrates useful contribution to fuller contextual responses under the common task/budget suite; routing accuracy alone cannot qualify it. Immutable bundles, reference fixtures, rights/notices and resource receipts exist; larger choices justify cost. Prepared is not product-selectable. |
+| A2 — Prepare the Qwen candidates and shared reranker | Prepare the smaller Qwen, larger Qwen and shared reranker under the recorded comparison protocol. Evaluate unchanged models, then train/adapt for measured gaps in relevance, evidence roles, complementary context, bounded next-read choice and uncertainty/abstention. Export and calibrate each complete supported head/readout. | Each model demonstrates useful contribution to fuller contextual responses under the common task/budget suite; routing accuracy alone cannot qualify it. Immutable bundles, reference fixtures, rights/notices and resource receipts exist; larger choices justify cost. Prepared is not product-selectable. |
 | A3 — Core contracts and state | Core configuration/profile/status/advice/packet and composed contextual-response contracts; bounded expansion inputs, permitted read choices, sufficiency/gap reasons, accounting and termination; management/read applicability and retained-state fixtures. Separate reviewed contract landing before consumers. | D8/state decisions and new task applicability resolved; every expansion preserves authorization/publication and original budgets; authenticated catalog trust and independent fixtures/generation reviewed. No new hand-written TS/Python native mirror. |
 | A4 — Embedded scorer and lifetime | Retrieval scorer behind an owned facade; inference owner admission/completion/drain; service composition hooks. Prefer existing static ONNX only where it faithfully executes each full scoring path. | Tokenization/masks/positions/raw scores/typed decisions match reference tolerances; native failure/cancellation/pins/charges obey service ownership; no extra executable. Alternative embedded runtime needs its own pinned dependency/package qualification. |
 | A5 — Provisioning and enrollment | Service-owned asset transaction, Store-approved state, immutable per-index enrollment, resource observer/admission and lifecycle. | Download/verify/warm/activate/switch/rollback/disable/remove/restart cases pass; index opt-out never enters optional scoring; current availability is rechecked/reserved. |
 | A6 — Context gathering and canonical responses | Kernel/frontend/MCP: implement §9.0 through canonical reads, deterministic recipes/packets first, then qualified local selection and bounded additional evidence gathering. | Multi-source questions produce fuller cited context than initial raw hits; gap handling and termination work; fewer downstream turns are evaluated without sacrificing goal completion. Explicit direct reads retain semantics; scope/publication/budgets and mixed-index/full-result transport parity pass. |
-| A7 — Workbench answers and controls | Existing clients expose the composed question/context flow; Workbench shows organized cited answers, evidence roles, limitations, source navigation, packet preview/copy/export and full/expanded evidence. Add model/index controls through service authority. | Users answer held-out file questions beyond what individual raw-result views supply; agent and Workbench contexts agree for equivalent requests. Four model entries show task/fit/availability/selected-active state; only eligible profiles activate and MiniLM status stays separate. |
-| A8 — Promote and ship | Frozen model/service/package owners across supported targets/backends. | Each promoted profile passes service/platform/package/offline/coexistence gates; both smaller and larger slots complete; trained MiniLM independently passes normal release/regeneration packaging. |
+| A7 — Workbench answers and controls | Existing clients expose the composed question/context flow; Workbench shows organized cited answers, evidence roles, limitations, source navigation, packet preview/copy/export and full/expanded evidence. Add model/index controls through service authority. | Users answer held-out file questions beyond what individual raw-result views supply; agent and Workbench contexts agree for equivalent requests. Two Qwen choices and their shared reranker show task/fit/availability/selected-active state; only eligible profiles activate and MiniLM status stays separate. |
+| A8 — Promote and ship | Frozen model/service/package owners across supported targets/backends. | Each promoted profile passes service/platform/package/offline/coexistence gates; both Qwen choices and their shared reranker qualify; trained MiniLM independently passes normal release/regeneration packaging. |
 
-A1/A2 and A4–A7 can use a private explicitly scoped development qualification harness. That does not enroll user indexes or make an unqualified bundle selectable. Model preparation/training is not authorized by ordinary product enablement or by this document-only task.
+A1/A2 and A4–A7 can use a private explicitly scoped development qualification harness. That does not enroll user indexes or make an unqualified bundle selectable. The user's campaign instructions authorize model preparation and implementation; ordinary product enablement does not authorize training.
 
 ### 9.3 Data, evaluation and typed advice
 
@@ -662,7 +735,7 @@ Proposed `airk.arbiter.packet/1` packets are explicitly selected projections wit
 - Authenticate the release-approved catalog separately from checking downloaded hashes. Pin exact lengths/digests, roles, base/head/tokenizer dependencies, sources, notices, compatibility, fixtures and staging/rollback disk needs. Download only selected missing data; never execute model-repository code or fetch evidence-supplied URLs.
 - Use installation-owned private content-addressed assets outside sources/index contents. Public immutable weights may be shared within the installation; private features/caches stay index/user isolated. No cross-user shared store.
 - States: disabled → requested/download → verify → warm/qualify → ready; constrained, switching/draining, failed and removal have explicit outcomes. Downloaded is not ready. A canceled/superseded request never resumes after restart. Offline import uses identical authentication/verification.
-- Retain the previous qualified bundle for rollback; one resident optional model means switching can temporarily disable Arbiter. Disclose selected versus active identity and failed rollback. Existing verified assets may warm on restart; missing assets require explicit reprovisioning, never ordinary-read/startup downloads.
+- Retain the previous qualified bundle for rollback; one selected Context model plus the shared Focus component are admitted under combined resource limits; switching Context can temporarily disable Context without disabling eligible Focus. Disclose selected versus active identity and failed rollback. Existing verified assets may warm on restart; missing assets require explicit reprovisioning, never ordinary-read/startup downloads.
 - Distinguish release qualification, static system fit and live availability. Publish measured per-profile OS/architecture/CPU/backend/driver, RAM/VRAM, context/candidate/concurrency, transfer/peak-disk and cold/warm p50/p95/p99 data. Unified-memory machines have one shared pool. No universal 16 GB floor or assumed GPU/CPU support.
 - Start experiments at 2,048 input tokens, one active optional request and a finite fair queue. Larger context/concurrency is a separately qualified profile. Recheck resources before provisioning, loading/warming and admission; reserve capacity, including MiniLM and load-time peaks. Qualification is invalidated/rechecked for relevant runtime/backend/driver/device changes.
 - Preserve selected model/enrollment during temporary pressure and return ordinary AIRK results with explicit not-applied reasons. No silent model/precision/context/device switch, application termination, service restart to create capacity or cloud fallback. OOM/device/warm failures require recovery evidence, not retry loops.
@@ -673,7 +746,7 @@ For mixed-index reads, partition by authorized immutable index before any tokeni
 
 ### 9.5 Arbiter minimum scenario matrix
 
-Cover global off/excluded/no-profile/missing-assets/unsupported hosts; enrollment of A with B excluded and new C off; rename/recreation/import; forged identities; mixed scopes and continuations; revocation during queue/execution/delivery; cross-index cache isolation; missing task/failed switch/rollback; CPU/driver/backend changes; capacity loss between probe and admission; concurrent reservations and original deadlines; corruption/traversal/links/disk-full/interrupted download/offline import/removal with pins; native OOM/stuck drain/completion-persistence failure; stale/contradictory/instruction-bearing evidence; actual CLI/MCP/UI complete parity; sustained pressure and MiniLM progress; offline inference with outbound networking blocked; exact two-smaller/two-larger catalog and separate bundled MiniLM inventory.
+Cover global off/excluded/no-profile/missing-assets/unsupported hosts; enrollment of A with B excluded and new C off; rename/recreation/import; forged identities; mixed scopes and continuations; revocation during queue/execution/delivery; cross-index cache isolation; missing task/failed switch/rollback; CPU/driver/backend changes; capacity loss between probe and admission; concurrent reservations and original deadlines; corruption/traversal/links/disk-full/interrupted download/offline import/removal with pins; native OOM/stuck drain/completion-persistence failure; stale/contradictory/instruction-bearing evidence; actual CLI/MCP/UI complete parity; sustained pressure and MiniLM progress; offline inference with outbound networking blocked; exact two-Qwen-choice/shared-reranker catalog and separate bundled MiniLM inventory.
 
 Add primary-purpose scenarios: a question whose initial hits omit a relevant constraint/test/document; complementary information across several permitted files; a non-code information request; conflicting evidence; an ambiguous target needing clarification; no justified next read; duplicate/no-progress expansion; and budget exhaustion with explicit gaps. Prove that useful additional evidence is actually read, the contextual response answers the information need with citations, Workbench presents it directly, and equivalent agent tasks meet the turn-reduction and goal-quality gates. Raw exact reads remain unchanged, and every expansion preserves per-index opt-in, scope, publication and budget checks.
 
@@ -698,7 +771,7 @@ P5/P6 implement UX05 and §7.6's reading behavior using this content owner: task
 
 Validate the renderer against the actual authored format before relying on internal links, tables or nested procedures. Add shared schema cases for required/optional/nullable enums and complete tool arguments; optional/null must not render as accepting arbitrary `any`. Continuations say Load next section/Continue reading unless they guarantee the rest, preserve loaded text on failure, and expose loaded/remaining coverage. Search matches ordinary task terms and supported error codes with title/category/excerpt/applicability; article changes move focus to a meaningful heading with a short announcement. These are implementation deliverables, not claims that the current renderer/search already supports them.
 
-Required user topics: install and verify each platform; exact silent defaults/refusals; portable setup/update/remove; start/stop/restart/status; browser and Explorer Admin; folder/index/set setup; indexing/watch/pause/jobs/readiness; lexical/semantic/combined search and citations; CLI tools/help/shell; Workbench/Explorer; open and grant-bound agent setup/defaults/choice; local TLS/trust; storage/quotas/relocation; retained-data reinstall/recovery/unknown outcomes; logs and support evidence; privacy and limitations; bundled MiniLM versus optional Arbiter models, per-index consent, requirements, provisioning/offline/disable/remove and failures. Include Arbiter examples showing a question, additional evidence gathered, its contextual answer and visible gaps, for both an agent and a Workbench user; explain the turn-reduction goal without promising unmeasured savings or code generation. Examples must execute against the shipped parser/catalog rather than merely typecheck.
+Required user topics: install and verify each platform; exact silent defaults/refusals; portable setup/update/remove; start/stop/restart/status; browser and Explorer Admin; folder/index/set setup; indexing/watch/pause/jobs/readiness; lexical/semantic/combined search and citations; CLI tools/help/shell; Workbench/Explorer; open and grant-bound agent setup/defaults/choice; local TLS/trust; storage/quotas/relocation; retained-data reinstall/recovery/unknown outcomes; logs and support evidence; privacy and limitations; bundled MiniLM versus independently enabled Arbiter Focus and Arbiter Context Compact/Large, per-stage/per-index consent, requirements, provisioning/offline/disable/remove and failures. Include Arbiter examples showing a question, additional evidence gathered, its contextual answer and visible gaps, for both an agent and a Workbench user; explain the turn-reduction goal without promising unmeasured savings or code generation. Examples must execute against the shipped parser/catalog rather than merely typecheck.
 
 ### 10.2 Downloads and publication graph
 
@@ -776,7 +849,7 @@ Run the required CONTRIBUTING gates once per necessary frozen host/configuration
 
 ```text
 cargo fmt --all --check
-cargo check -p airk-cli --no-default-features --all-targets --locked
+cargo clippy -p airk-cli --no-default-features --all-targets --locked --timings -- -D warnings
 cargo clippy --workspace --all-targets --all-features --locked --timings -- -D warnings
 python scripts/build-service-runtime.py --destination target/service-runtime --profile debug
 cargo build --workspace --locked --timings
@@ -808,7 +881,7 @@ Release gates:
 | Review closure | R01–R27, §5.1, UX01–UX10 and the Admin screen/topic/tool plus Explorer preservation inventories have evidence and owners; all requested product requirements covered; no unresolved required blocker presented as an accepted omission. |
 | Current-contract integrity | Current state/connection/digest fixtures, selection authority, installation matrix, complete read parity and current input catalogs; approved contract changes identified. Previous-version compatibility is waived by the recorded user decision; index replacement/regeneration preserves original sources. |
 | Product experience | Shared VS Code/browser management and retained Explorer workflows pass §7.6, including low-scrolling first views, task-based Help, distinct scope, editor/startup behavior and complete exports. Duplicate UI retirement has surviving-owner evidence and milestone approval; Workbench/Arbiter obligations remain. CLI-only setup/search/recovery, exact silent flags, portable instructions and §8.5's explicit automated/manual/defer installation choices also pass on intended targets. |
-| Models and contextual answers | Bundled trained MiniLM qualification/regeneration; two smaller/two larger Arbiter choices prepared and qualified; bounded additional evidence gathering and useful Workbench answers demonstrated; fewer agent turns to the stated goal with quality floors preserved; per-profile task/platform/resource limitations honestly listed. |
+| Models and contextual answers | Bundled trained MiniLM qualification/regeneration; both Qwen choices and their shared reranker prepared and qualified; bounded additional evidence gathering and useful Workbench answers demonstrated; fewer agent turns to the stated goal with quality floors preserved; per-profile task/platform/resource limitations honestly listed. |
 | Artifact integrity | Matched pair, UI/help/model seals, signatures/notarization, complete notices, checksums/attestations and no private/index/temp material; local and hosted inventories agree. |
 | Documentation/version | Native/extension/lockfiles synchronized once per PR; README/docs index/current release/Marketplace/help/download page agree with actual behavior and qualification. Historical records remain dated. |
 | Release execution | Authorized merge/release/publication workflows succeed; verify downloaded installers, ZIPs, VSIX, manifests and published `index.html`/`help/html.index` against frozen receipts. Marketplace version and links resolve correctly. |

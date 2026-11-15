@@ -34,10 +34,10 @@ fn main() {
     );
     for profile in profiles {
         let id = profile["id"].as_str().unwrap();
-        assert!(["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"].contains(&id));
+        assert!(["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"].contains(&id));
         let precision = match id {
-            "minilm-l6-v2-u8-v2" => "mixed-u8",
-            "minilm-l6-v2-s8-v2" => "mixed-s8",
+            "minilm-l6-v2-u8-v3" => "uint8",
+            "minilm-l6-v2-s8-v3" => "int8",
             _ => panic!("only the two pinned INT8 models may be embedded"),
         };
         assert_eq!(profile["precision"], precision);
@@ -49,9 +49,10 @@ fn main() {
             .unwrap();
         assert_eq!(weight["sha256"], profile["manifest"]["model_sha256"]);
         assert!(
-            profile["quantization"]["fp32_embeddings_retained"]
-                .as_bool()
-                .unwrap()
+            profile
+                .get("quantization")
+                .is_none_or(|value| value.is_null()),
+            "original graph must not inherit trained mixed policy"
         );
         let destination = output.join(id);
         fs::create_dir_all(&destination).unwrap();
@@ -66,7 +67,7 @@ fn main() {
         let prepared = directory.join(id);
         let manifest_path = prepared.join("model.json");
         println!("cargo:rerun-if-changed={}", manifest_path.display());
-        let manifest = fs::read(manifest_path).expect("Prepare BOTH trained mixed-INT8 models from explicit authenticated local inputs using scripts/provision-local-model.py, then set AIRK_BUNDLED_MODEL_DIR");
+        let manifest = fs::read(manifest_path).expect("Prepare BOTH exact original INT8 models from explicit authenticated local inputs using scripts/provision-local-model.py, then set AIRK_BUNDLED_MODEL_DIR");
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&manifest).unwrap(),
             profile["manifest"]

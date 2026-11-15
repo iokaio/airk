@@ -67,7 +67,7 @@ MODULES = ("extension.js", "extensionUpdateLoader.js", "uninstallHook.js", "serv
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css", "help-manifest.json")
 MODEL_NOTICE_FILES = tuple("notices/all-MiniLM-L6-v2/" + name for name in (
-    "LICENSE", "TRAINING-NOTICES.md", "training-provenance.json", "CC-BY-4.0.txt", "provenance.json"))
+    "LICENSE", "provenance.json"))
 # Host-only implementations that must never ship a second bundled copy.
 HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class NativeSession", "class IntentJournal", "class PrivateIntentStore", "function probeMcp",
                 "class ServiceConsoleController", "class RuntimeHost")
@@ -136,7 +136,7 @@ def stage_model_notices(destination):
     owner.stage_model_notices(ROOT, destination / "notices")
     actual = {p.relative_to(destination).as_posix() for p in (destination / "notices").rglob("*") if p.is_file()}
     if actual != set(MODEL_NOTICE_FILES):
-        raise ValueError("Unexpected trained-model notice inventory")
+        raise ValueError("Unexpected model notice inventory")
 
 
 def update_inventory_paths(native=False):

@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Real native charge/queue fixtures and injected score-return seam; no NN qualification.
+use super::super::execution_observer::{Kind, Observer, Outcome, Record};
+use super::*;
+fn queued(observer: Observer) -> Result<(Arc<Shared>, Job, Arc<Reservation>, PendingScore)> {
+    let shared = shared_fixture();
+    let handle = Handle(shared.clone());
+    let resources = airk_kernel::service_resources::Resources::new(
+        airk_core::service_resources::ResourceConfiguration {
+            memory_bytes: Some(8 << 30),
+            ..Default::default()
+        },
+        8,
+        Some(16 << 30),
+    )?;
+    let request = request_fixture(&shared, &resources, 61)?;
+    let charge = request.resident.reservation.clone();
+    let mut config = Configuration::disabled(request.scope.installation, shared.service);
+    config.context.enabled = true;
+    config.context.selected_profile = Some(request.resident.profile);
+    config.context.indexes = vec![airk_core::arbiter::Enrollment {
+        index_id: request.scope.index_id,
+        tasks: std::collections::BTreeSet::from([Task::ContextAction]),
+    }];
+    handle.configure(config)?;
+    let pending = handle.score_observed(request, observer)?;
+    let mut job = shared
+        .queue
+        .lock()
+        .unwrap()
+        .jobs
+        .pop_front()
+        .context("original queued job missing")?;
+    job.compute.running();
+    Ok((shared, job, charge, pending))
+}
+fn compiled() -> CompiledReceipt {
+    CompiledReceipt {
+        input_digest: Sha256Digest::from_bytes([71; 32]),
+        input_tokens: 17,
+        queue_us: 2,
+        compile_us: 3,
+    }
+}
+#[test]
+fn canceled_or_expired_actual_dispatch_guard_emits_no_phantom_native_event() -> Result<()> {
+    for expired in [false, true] {
+        let (observer, mut events) = Observer::channel(16)?;
+        let (_shared, job, _charge, _pending) = queued(observer.clone())?;
+        let prepared = observer.prepare(&job, &compiled());
+        let calls = std::cell::Cell::new(0);
+        let deadline = if expired {
+            Instant::now()
+        } else {
+            Instant::now() + Duration::from_secs(1)
+        };
+        let result = dispatch_before_original_deadline(
+            deadline,
+            Instant::now,
+            || !expired,
+            || {
+                let _observed = prepared.map(|value| value.admitted());
+                calls.set(calls.get() + 1);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 0);
+        drop(job);
+        assert!(events.try_recv().is_err());
+        assert_eq!(observer.dropped(), 0);
+    }
+    Ok(())
+}
+#[tokio::test]
+async fn actual_dispatch_return_job_drop_and_final_charge_release_have_one_native_identity()
+-> Result<()> {
+    use std::future::Future;
+    let (observer, mut events) = Observer::channel(32)?;
+    let (shared, mut job, charge, _pending) = queued(observer.clone())?;
+    let refs = Arc::strong_count(&charge);
+    let prepared = observer
+        .prepare(&job, &compiled())
+        .context("native observation preparation absent")?;
+    assert_eq!(Arc::strong_count(&charge), refs);
+    dispatch_before_original_deadline(
+        job.deadline,
+        Instant::now,
+        || false,
+        || {
+            job.observation = Some(prepared.admitted());
+            let returned = observed_score_call(&compiled(), Instant::now(), Instant::now, || {
+                Ok(vec![1.0, 2.0])
+            });
+            job.observation.as_mut().unwrap().returned(&returned);
+            returned.map(|_| ())
+        },
+    )?;
+    let dispatch = events.try_recv()?;
+    assert_eq!(dispatch.record.kind, Kind::DispatchAdmitted);
+    assert!(dispatch.record.work.is_none());
+    let binding = dispatch.record.binding.clone();
+    let returned = events.try_recv()?;
+    assert_eq!(returned.record.kind, Kind::ScoreReturned);
+    assert_eq!(returned.record.outcome, Some(Outcome::Success));
+    assert_eq!(returned.record.finite_raw_scores, Some(true));
+    assert_eq!(returned.record.work.as_ref().unwrap().input_tokens, 17);
+    assert_eq!(
+        serde_json::to_value(&binding)?,
+        serde_json::to_value(&returned.record.binding)?
+    );
+    assert!(events.try_recv().is_err());
+    drop(job);
+    let settled = events.try_recv()?;
+    assert_eq!(settled.record.kind, Kind::JobSettled);
+    assert!(settled.record.return_observed);
+    assert_eq!(
+        shared
+            .accounting
+            .status(airk_core::inference_provider::ProviderIdentity {
+                schema: 1,
+                service_instance: shared.service,
+                provider_generation: shared.service,
+                approved_execution_sha256: Sha256Digest::from_bytes([72; 32])
+            })?
+            .running_outstanding,
+        0
+    );
+    let mut proof = Box::pin(
+        dispatch
+            .release
+            .context("actual opaque charge proof absent")?
+            .wait(),
+    );
+    assert!(
+        proof
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            .is_pending()
+    );
+    drop(charge);
+    let proof = proof.await?;
+    let mut crossed = binding.clone();
+    crossed.charge_identity.push('x');
+    assert!(proof.emit_for(&[crossed]).is_err());
+    assert!(events.try_recv().is_err());
+    proof.emit_for(std::slice::from_ref(&binding))?;
+    for kind in [Kind::ProfileReleased, Kind::ChargeReleased] {
+        let event = events.try_recv()?;
+        assert_eq!(event.record.kind, kind);
+        assert_eq!(
+            serde_json::to_value(&event.record.binding)?,
+            serde_json::to_value(&binding)?
+        );
+        let decoded: Record = serde_json::from_value(serde_json::to_value(&event.record)?)?;
+        decoded.validate()?;
+        assert_eq!(decoded.sequence, event.record.sequence);
+    }
+    assert_eq!(observer.dropped(), 0);
+    Ok(())
+}
+#[test]
+fn actual_failed_or_nonfinite_score_return_retains_work_and_exact_score_bits() -> Result<()> {
+    for nonfinite in [false, true] {
+        let (observer, mut events) = Observer::channel(16)?;
+        let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
+        job.observation = observer
+            .prepare(&job, &compiled())
+            .map(|value| value.admitted());
+        let value = observed_score_call(&compiled(), Instant::now(), Instant::now, || {
+            if nonfinite {
+                Ok(vec![f32::NAN])
+            } else {
+                anyhow::bail!("actual injected native score error")
+            }
+        });
+        job.observation.as_mut().unwrap().returned(&value);
+        let _ = events.try_recv()?;
+        let returned = events.try_recv()?;
+        assert_eq!(returned.record.work.as_ref().unwrap().input_tokens, 17);
+        if nonfinite {
+            assert_eq!(returned.record.finite_raw_scores, Some(false));
+            assert_eq!(
+                returned.record.raw_score_bits,
+                Some(vec![f32::NAN.to_bits()])
+            );
+            let _: Record = serde_json::from_value(serde_json::to_value(&returned.record)?)?;
+        } else {
+            assert_eq!(returned.record.outcome, Some(Outcome::Error));
+            assert!(
+                returned
+                    .record
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("injected native score error")
+            );
+            assert!(returned.record.raw_scores.is_none());
+        }
+        drop(job);
+    }
+    Ok(())
+}
+#[test]
+fn full_or_disconnected_observer_retains_failure_count_without_granting_or_suppressing_native_dispatch()
+-> Result<()> {
+    assert!(Observer::channel(0).is_err());
+    assert!(Observer::channel(4097).is_err());
+    for disconnected in [false, true] {
+        let (observer, events) = Observer::channel(1)?;
+        let mut receiver = Some(events);
+        if disconnected {
+            drop(receiver.take());
+        }
+        let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
+        let calls = std::cell::Cell::new(0);
+        let prepared = observer.prepare(&job, &compiled()).unwrap();
+        dispatch_before_original_deadline(
+            job.deadline,
+            Instant::now,
+            || false,
+            || {
+                job.observation = Some(prepared.admitted());
+                let result = observed_score_call(&compiled(), Instant::now(), Instant::now, || {
+                    calls.set(calls.get() + 1);
+                    Ok(vec![1.0])
+                });
+                job.observation.as_mut().unwrap().returned(&result);
+                result.map(|_| ())
+            },
+        )?;
+        drop(job);
+        assert_eq!(calls.get(), 1);
+        assert!(observer.dropped() >= 2);
+        if let Some(mut receiver) = receiver {
+            assert_eq!(receiver.try_recv()?.record.kind, Kind::DispatchAdmitted);
+            assert!(receiver.try_recv().is_err());
+        }
+    }
+    Ok(())
+}
+#[test]
+fn dispatch_without_actual_return_never_reports_known_or_zero_completed_work() -> Result<()> {
+    let (observer, mut events) = Observer::channel(16)?;
+    let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
+    job.observation = observer
+        .prepare(&job, &compiled())
+        .map(|value| value.admitted());
+    drop(job);
+    let _ = events.try_recv()?;
+    let settled = events.try_recv()?;
+    assert_eq!(settled.record.kind, Kind::JobSettled);
+    assert!(!settled.record.return_observed);
+    assert!(settled.record.work.is_none());
+    assert!(events.try_recv().is_err());
+    Ok(())
+}
+
+#[test]
+fn native_observer_record_owner_refuses_fake_return_and_false_complete_loss() -> Result<()> {
+    use super::super::execution_observer::RecorderSummary;
+    let (observer, mut events) = Observer::channel(16)?;
+    let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
+    job.observation = observer
+        .prepare(&job, &compiled())
+        .map(|value| value.admitted());
+    let result = observed_score_call(&compiled(), Instant::now(), Instant::now, || Ok(vec![1.0]));
+    job.observation.as_mut().unwrap().returned(&result);
+    let dispatch = events.try_recv()?;
+    dispatch.record.validate()?;
+    let returned = events.try_recv()?;
+    returned.record.validate()?;
+    let mut fake = returned.record.clone();
+    fake.work = None;
+    assert!(fake.validate().is_err());
+    let mut fake = returned.record.clone();
+    fake.raw_score_bits.as_mut().unwrap()[0] ^= 1;
+    assert!(fake.validate().is_err());
+    let mut fake = dispatch.record;
+    fake.work = returned.record.work;
+    assert!(fake.validate().is_err());
+    let mut summary = RecorderSummary {
+        schema: "airk.private.native-dispatch-recorder/1".into(),
+        complete: true,
+        evaluation: true,
+        release_qualified: false,
+        dropped: 1,
+        writer_failed: 0,
+        records: 1,
+        bytes: 100,
+        last_sequence: 1,
+        error: None,
+        proof: "fixture".into(),
+    };
+    assert!(summary.validate().is_err());
+    summary.complete = false;
+    summary.records = 8193;
+    summary.bytes = 65 << 20;
+    summary.error = Some("actual recorder bound refused; evidence incomplete".into());
+    summary.validate()?;
+    Ok(())
+}
