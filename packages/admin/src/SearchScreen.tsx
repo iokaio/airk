@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Guided presentation over existing I3 catalog, scope and canonical read owners.
+import {completeEvidenceMarkdown as completeSearchMarkdown} from './evidenceExports';
+import {EvidenceToolsScreen} from './EvidenceToolsScreen';
+import {GUIDED_EVIDENCE_ROUTES} from './guidedEvidence';
+import type {BrowserEvidenceRoute} from './browserEvidenceRoutes';
+import {BrowserReviewScreen,isBrowserReviewRoute} from './ReviewScreen';
+import {BrowserStrategiesScreen,isBrowserStrategyRoute} from './StrategiesScreen';
+import {PageVisible} from './pageVisibility';
+import {guardWorkflowCapture} from './workflowLifetime';
 import type { JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { call, type CallResult } from './api';
 import { body, isCatalogId, isDigest, isIncarnation, OPS, type CatalogKind, type Operation } from './operations';
 import { itemOf, type Item, type CatalogHeader } from './catalogRequests';
@@ -35,19 +43,35 @@ export function searchBody(value: unknown): Rec {
 // A retired pending selection must settle before a replacement can be sent.
 const scopeQueues = new WeakMap<object, Promise<CallResult | null>>();
 /** Exact owning canonical scope locations, never a scan of arbitrary evidence. */
-export function returnedSearchScopeMatches(original: unknown, expected: string): boolean {
-  if (!isDigest(expected)) return false;
-  const value = searchBody(original), observation = rec(value.scope_observation), selection = rec(observation.selection);
-  const observed: unknown[] = [];
-  if (Object.hasOwn(selection, 'scope_identity')) observed.push(selection.scope_identity);
-  if (value.schema === 'airk.combined-read/1' && Object.hasOwn(rec(value.publication_vector), 'authority')) observed.push(rec(value.publication_vector).authority);
-  return observed.length > 0 && observed.every(value => value === expected);
+export interface ReturnedScopeBinding {scopeIdentity:string;catalogRevision:number;indexIds:readonly string[];projectIds:readonly string[]}
+const nativeIds = (value:unknown,prefix:'idx_'|'prj_'):value is string[] => Array.isArray(value)&&value.length>0&&value.length<=32&&value.every(id=>typeof id==='string'&&isCatalogId(prefix,id))&&new Set(value).size===value.length;
+const sameIds=(left:unknown,right:readonly string[],prefix:'idx_'|'prj_')=>nativeIds(left,prefix)&&left.length===right.length&&left.every(id=>right.includes(id));
+export function returnedSearchScopeMatches(original: unknown, expected: ReturnedScopeBinding, restored=false): boolean {
+  if (!isDigest(expected.scopeIdentity)||!Number.isSafeInteger(expected.catalogRevision)||!nativeIds([...expected.indexIds],'idx_')||!nativeIds([...expected.projectIds],'prj_')) return false;
+  const sourceMatches=(value:unknown)=>{const source=rec(value);return source.owner==='admin'&&source.scope_identity===expected.scopeIdentity&&source.catalog_revision===expected.catalogRevision;};
+  const observationMatches=(value:unknown,ids:readonly string[])=>{const observation=rec(value);return observation.grant==null&&observation.provenance==null&&sourceMatches(observation.selection)&&Array.isArray(observation.members)&&sameIds(observation.members.map(member=>rec(member).index_id),ids,'idx_');};
+  const value=searchBody(original);
+  if(value.schema!=='airk.combined-read/1')return observationMatches(value.scope_observation,expected.indexIds);
+  const selected=rec(value.selection),vector=rec(value.publication_vector);
+  // SelectedScopeObservation.selection is the A2 source; vector.authority is
+  // the distinct native combined-selection-authority digest, never that grant.
+  if(selected.grant_id!=null||selected.grant_revision!=null||!sourceMatches(selected.selection)
+    ||!sameIds(selected.index_ids,expected.indexIds,'idx_')||!sameIds(selected.project_ids,expected.projectIds,'prj_')
+    ||!Array.isArray(value.members)||!sameIds(value.members.map(member=>rec(member).index_id),expected.indexIds,'idx_')
+    ||!isDigest(label(vector.authority))||!Array.isArray(vector.members)||!sameIds(vector.members.map(member=>rec(member).index_id),expected.indexIds,'idx_'))return false;
+  if(Object.hasOwn(value,'scope_observation')&&!observationMatches(value.scope_observation,expected.indexIds))return false;
+  return value.members.every(raw=>{const member=rec(raw),body=searchBody(member.result);
+    if(Object.hasOwn(body,'scope_observation'))return observationMatches(body.scope_observation,[String(member.index_id)]);
+    return !restored||member.outcome!=='complete'||member.is_error===true;
+  });
 }
+export interface ScopedReadObservation {raw:Rec;logical:Rec;request:unknown;scopeIdentity:string}
+export interface ScopedReadCapture {readonly indexIds:readonly string[];readonly backingBinding?:string;checkCurrent():void;read(tool:string,args:Rec):Promise<ScopedReadObservation>}
 /** Presentation state only; it never grants authority or retries a read. */
 export function createSearchWorkspace(deps: { run(operation: Operation, request: unknown): Promise<CallResult>; session(): unknown; changed(): void; materialize(raw: Rec, checkCurrent: () => void): Promise<Rec> }) {
   let epoch = 0, disposed = false, loading = false, applying = false, sessionOwner = deps.session();
   let header: CatalogHeader | null = null, items: Item[] = [], projects: string[] = [], indexes: string[] = [];
-  let applied: { epoch: number; session: unknown; title: string; request: unknown; scopeIdentity: string } | null = null;
+  let applied: { epoch: number; session: unknown; title: string; request: unknown; scopeIdentity: string; indexIds:readonly string[] } | null = null;
   let verifiedScope = false, logicalBody: Rec | null = null, metadataError: string | null = null;
   let originalRequest: { tool: string; arguments: Rec; scope: string; scopeIdentity: string } | null = null;
   let problem: string | null = null, catalog: CallState = { phase: 'idle' }, scope: CallState = { phase: 'idle' }, result: CallState = { phase: 'idle' };
@@ -113,27 +137,50 @@ export function createSearchWorkspace(deps: { run(operation: Operation, request:
       const value = ok(reply);
       if (value?.status === 'admin_scope_granted' && isDigest(label(value.scope_identity)) && value.catalog_revision === header?.revision) {
         const setNames = names(items.filter(item => item.kind === 'project'), projects), indexNames = names(items.filter(item => item.kind === 'index'), chosen.chosen);
-        applied = { epoch, session, title: `${setNames.join(', ')} · ${indexNames.join(', ')}`, request: chosen.request, scopeIdentity: String(value.scope_identity) };
+        applied = { epoch, session, title: `${setNames.join(', ')} · ${indexNames.join(', ')}`, request: chosen.request, scopeIdentity: String(value.scope_identity), indexIds:Object.freeze([...chosen.chosen]) };
       }
       notify();
     },
-    async execute(tool: string, args: Rec, responseMode: 'terse' | 'full') {
+    captureReads():ScopedReadCapture {
+      synchronize();const authority=applied,generation=epoch,session=deps.session();
+      if(!authority||authority.epoch!==epoch||authority.session!==session||loading||applying)throw Error('Apply named sources before starting this workflow.');
+      const checkCurrent=()=>{if(!live(generation,session)||applied!==authority)throw Error('The captured management scope changed; no further workflow read was sent.');};
+      const definitions=authority.indexIds.length===1?items.filter(item=>item.kind==='index'&&item.value.id===authority.indexIds[0]):[];
+      const binding=definitions.length===1?rec(definitions[0].value.backing).binding:undefined;
+      const backingBinding=typeof binding==='string'&&isDigest(binding)?binding:undefined;
+      return {indexIds:authority.indexIds,...(backingBinding?{backingBinding}:{}),checkCurrent,read:async(tool,args)=>{checkCurrent();const result=await this.execute(tool,args,'full');checkCurrent();if(!result)throw Error('The native read was not verified for the captured scope. Complete native failure remains available.');return result;}};
+    },
+    async execute(tool: string, args: Rec, responseMode: 'terse' | 'full'):Promise<ScopedReadObservation|undefined> {
       synchronize(); if (result.phase === 'pending' || !applied || applied.epoch !== epoch || applied.session !== deps.session() || applying || loading) return;
-      const generation = epoch, session = deps.session(); originalRequest = { tool, arguments: structuredClone(args), scope: applied.title, scopeIdentity: applied.scopeIdentity }; verifiedScope = false; result = { phase: 'pending', operation: OPS.searchCall }; notify();
+      const generation = epoch, session = deps.session();
+      const granted=rec(rec(applied.request).admin_scope_grant).selection,base=rec(granted),baseProjects=base.project_ids;
+      const requestedProjects=Object.hasOwn(args,'project_ids')?args.project_ids:baseProjects;
+      // Native read_selection_snapshot prunes projects against ORIGINAL grant
+      // indexes before applying a read's narrower index_ids, using this same
+      // frozen complete catalog. It never expands an absent membership.
+      const effectiveProjects=nativeIds(requestedProjects,'prj_')?requestedProjects.filter(project=>items.some(item=>item.kind==='membership'&&item.value.project_id===project&&applied!.indexIds.includes(String(item.value.index_id))&&Array.isArray(item.value.scope)&&item.value.scope.length>0)):[];
+      const permitted=Object.hasOwn(args,'project_ids')?applied.indexIds.filter(index=>items.some(item=>item.kind==='membership'&&item.value.index_id===index&&effectiveProjects.includes(String(item.value.project_id))&&Array.isArray(item.value.scope)&&item.value.scope.length>0)):[...applied.indexIds];
+      const requestedIndexes=Object.hasOwn(args,'index_ids')?args.index_ids:permitted;
+      const binding:ReturnedScopeBinding|null=nativeIds(requestedProjects,'prj_')&&nativeIds(baseProjects,'prj_')&&requestedProjects.every(id=>baseProjects.includes(id))
+        &&nativeIds(effectiveProjects,'prj_')&&nativeIds(requestedIndexes,'idx_')&&requestedIndexes.every(id=>permitted.includes(id))
+        &&(!Object.hasOwn(args,'index_ids')||Object.hasOwn(args,'project_ids'))
+        ?{scopeIdentity:applied.scopeIdentity,catalogRevision:Number(base.expected_catalog_revision),indexIds:[...requestedIndexes],projectIds:[...effectiveProjects]}:null;
+      originalRequest = { tool, arguments: structuredClone(args), scope: applied.title, scopeIdentity: applied.scopeIdentity }; verifiedScope = false; result = { phase: 'pending', operation: OPS.searchCall }; notify();
       const reply = await run(OPS.searchCall, body.searchCall(tool, structuredClone(args), responseMode));
       if (!live(generation, session)) return;
-      const matched = reply.kind === 'ok' && returnedSearchScopeMatches(reply.envelope.result, originalRequest!.scopeIdentity);
+      let matched = reply.kind === 'ok' && binding!==null && returnedSearchScopeMatches(reply.envelope.result, binding);
       let restored: Rec | null = null, failure: string | null = null;
       if (matched && reply.kind === 'ok') {
         const checkCurrent = () => { if (!live(generation, session)) throw new Error('Search selection changed while restoring native metadata.'); };
-        try { restored = await deps.materialize(searchBody(reply.envelope.result), checkCurrent); }
-        catch { failure = 'Native metadata could not be restored. The complete original response remains available; no reference or citation was guessed.'; }
+        try { restored = await deps.materialize(searchBody(reply.envelope.result), checkCurrent);checkCurrent();if(!returnedSearchScopeMatches(restored,binding!,true)){matched=false;throw Error('Native member scope differs from the accepted grant.');} }
+        catch { restored=null;failure = 'Native metadata could not be restored. The complete original response remains available; no reference or citation was guessed.'; }
       }
       if (!live(generation, session)) return;
       result = { phase: 'done', operation: OPS.searchCall, result: reply, at: Date.now() };
       verifiedScope = matched; logicalBody = restored; metadataError = failure;
       if (!verifiedScope) applied = null;
       notify();
+      if(matched&&restored&&reply.kind==='ok')return {raw:structuredClone(rec(reply.envelope.result)),logical:restored,request:structuredClone(originalRequest),scopeIdentity:originalRequest!.scopeIdentity};
     },
     dispose() { disposed = true; epoch++; applied = null; },
   };
@@ -145,11 +192,8 @@ export function guidedArguments(kind: 'search' | 'answer', text: string, retriev
   }
   return { ...advanced, query: text, mode: retrieval, limit, ...(path ? { path_prefix: path } : {}) };
 }
-export function completeSearchMarkdown(original: unknown, request: unknown): string {
-  const raw = JSON.stringify(original, null, 2), input = JSON.stringify(request, null, 2);
-  const fence = '`'.repeat(Math.max(3, ...[...`${raw}${input}`.matchAll(/`+/g)].map(match => match[0].length + 1)));
-  return `# AIRK indexed evidence\n\nComplete original request:\n\n${fence}json\n${input}\n${fence}\n\nComplete original native response (including limits and provenance):\n\n${fence}json\n${raw}\n${fence}\n`;
-}
+export {completeEvidenceMarkdown as completeSearchMarkdown} from './evidenceExports';
+
 export function returnedSearchCursor(original: unknown, tool: string): string | null {
   const definition = manifest.tools.find(item => item.name === tool.replace(/^airk_/, ''));
   if (!definition || !Object.hasOwn(rec(rec(definition.inputSchema).properties), 'cursor')) return null;
@@ -192,7 +236,7 @@ function SharedAnswer({ raw, identity }: { raw: Rec; identity: string }): JSX.El
     {!partitions.length && <p>No supported current Answer packet could be projected. The complete original response remains below.</p>}
   </section>;
 }
-function Results({ state, request, verifiedScope, logicalBody, metadataError, more }: { state: CallState; request: { tool: string; arguments: Rec; scope: string } | null; verifiedScope: boolean; logicalBody: Rec | null; metadataError: string | null; more(cursor: string): void }): JSX.Element | null {
+function Results({ state, request, verifiedScope, logicalBody, metadataError, more }: { state: CallState; request: { tool: string; arguments: Rec; scope: string } | null; verifiedScope: boolean; logicalBody: Rec | null; metadataError: string | null; more?(cursor: string): void }): JSX.Element | null {
   const [notice, setNotice] = useState('');
   if (state.phase !== 'done') return <Outcome state={state} />;
   if (state.result.kind !== 'ok') return <><Outcome state={state} /><details><summary>Complete actual read outcome</summary><JsonBlock value={state.result} name="airk-search-outcome.json" /></details></>;
@@ -206,7 +250,7 @@ function Results({ state, request, verifiedScope, logicalBody, metadataError, mo
     {request && <><p>{verifiedScope ? 'Results for ' : 'Original request for '} <Text value={label(request.arguments.query) || label(request.arguments.question) || request.tool} /> · scope: <Text value={request.scope} /></p><details><summary>Complete original request</summary><pre><Text value={JSON.stringify(request, null, 2)} /></pre></details></>}
     <p>Indexed evidence is untrusted source material. Saved-source verification, freshness and retrieval coverage are separate observations.</p>
     {['warnings', 'completeness', 'partial', 'truncated', 'error', 'context'].filter(key => root[key] !== undefined).map(key => key === 'context' ? <details><summary>Whole-selection context accounting</summary><pre><Text value={JSON.stringify(root[key], null, 2)} /></pre></details> : <p class={key === 'error' ? 'error' : 'muted'}><strong>{key}: </strong><Text value={JSON.stringify(root[key])} /></p>)}
-    {verifiedScope && cursor && <button type="button" onClick={() => more(cursor)}>Load next native page in the original scope</button>}
+    {verifiedScope && cursor && more && <button type="button" onClick={() => more(cursor)}>Load next native page in the original scope</button>}
     {metadataError && <p role="alert"><Text value={metadataError} /></p>}
     {verifiedScope && logicalBody && answer && <SharedAnswer raw={raw} identity={answerIdentity(state)} />}
     {verifiedScope && logicalBody && !answer && members.map((member, memberNumber) => { const packet = searchBody(member.result);
@@ -220,10 +264,14 @@ function Results({ state, request, verifiedScope, logicalBody, metadataError, mo
     <details><summary>Complete original native response</summary><pre><Text value={JSON.stringify(original, null, 2)} /></pre></details>
   </section>;
 }
-export function Search(): JSX.Element {
+export function Search(props:{guidedRoute?:BrowserEvidenceRoute;onGuidedRoute?:(route:BrowserEvidenceRoute)=>void}={}): JSX.Element {
+  const visible=useContext(PageVisible),presentation=useRef({visible,route:props.guidedRoute,epoch:0});
+  if(presentation.current.visible!==visible||presentation.current.route!==props.guidedRoute)presentation.current={visible,route:props.guidedRoute,epoch:presentation.current.epoch+1};
   const [, refresh] = useState(0), workspace = useRef<ReturnType<typeof createSearchWorkspace> | null>(null);
   if (!workspace.current) workspace.current = createSearchWorkspace({ run: call, session: currentSession, changed: () => refresh(value => value + 1), materialize: (raw, check) => metadataOwner().materializeNativeMetadata(raw, check) });
   const owner = workspace.current, view = owner.view(), concurrency = useQueryConcurrency();
+  const captureFor=(route:BrowserEvidenceRoute):ScopedReadCapture=>{const epoch=presentation.current.epoch;const capture=guardWorkflowCapture(owner.captureReads(),()=>presentation.current.visible&&presentation.current.route===route&&presentation.current.epoch===epoch);capture.checkCurrent();return capture;};
+  useEffect(()=>()=>{presentation.current.visible=false;presentation.current.epoch++;},[]);
   useEffect(() => { void owner.reload(); return () => owner.dispose(); }, []);
   const [kind, setKind] = useState<'search' | 'answer'>('search'), [query, setQuery] = useState(''), [retrieval, setRetrieval] = useState('lexical'), [path, setPath] = useState(''), [limit, setLimit] = useState(10);
   const [extra, setExtra] = useState(''), [tool, setTool] = useState('search'), [custom, setCustom] = useState(false), [response, setResponse] = useState<'terse' | 'full'>('full'), [filter, setFilter] = useState('');
@@ -244,13 +292,16 @@ export function Search(): JSX.Element {
         <ConcurrencyNote text={scopeNote} /><button type="button" disabled={!view.canApply} onClick={() => void owner.apply()}>Use selected sources</button>
         <details><summary>Native catalog clock and selection details</summary><pre><Text value={JSON.stringify({ clock: view.header, project_ids: view.projects, index_ids: view.indexes }, null, 2)} /></pre><Outcome state={view.catalog} /><Outcome state={view.scope} /></details>
       </details>
-      <form onSubmit={event => { event.preventDefault(); if (!advanced || !view.applied) return; void owner.execute(selectedTool, custom ? advanced : guidedArguments(kind, query, retrieval, path, limit, advanced), response); }}>
+      <section hidden={!!props.guidedRoute}>      <form onSubmit={event => { event.preventDefault(); if (!advanced || !view.applied) return; void owner.execute(selectedTool, custom ? advanced : guidedArguments(kind, query, retrieval, path, limit, advanced), response); }}>
         <div class="row"><label class="field">Read<select value={kind} onChange={event => { setKind(event.currentTarget.value === 'answer' ? 'answer' : 'search'); setCustom(false); }}><option value="search">Search indexed evidence</option><option value="answer">Gather cited context for a question</option></select></label><Field label={kind === 'answer' ? 'Question' : 'Query'} wide value={query} placeholder="Where is request cancellation handled?" onInput={setQuery} /></div>
         {!custom && kind === 'search' && <div class="row"><label class="field">Retrieval mode<select value={retrieval} onChange={event => setRetrieval(event.currentTarget.value)}><option value="lexical">Text</option><option value="hybrid">Hybrid</option><option value="vector">Semantic</option></select></label><Field label="Path prefix (optional)" value={path} onInput={setPath} /><NumberField label="Result limit" value={limit} min={1} max={100} onInput={setLimit} /></div>}
         <button type="submit" disabled={!view.applied || view.loading || view.applying || view.result.phase === 'pending' || advanced === null || (!custom && !query.trim())}>{custom ? 'Run selected read' : kind === 'answer' ? 'Gather cited context' : 'Search'}</button>
         <details><summary>Advanced tools, arguments and full native schema</summary><label><input type="checkbox" checked={custom} onChange={event => setCustom(event.currentTarget.checked)} />Use an advanced native tool with exactly the JSON arguments below</label><label class="field">Native tool<select value={tool} onChange={event => setTool(event.currentTarget.value)}>{manifest.tools.map(item => <option value={item.name}>{item.name}</option>)}</select></label><Field label="Other native tool name (optional)" value={tool} onInput={setTool} /><label class="field">Native arguments JSON<textarea rows={5} value={extra} class={advanced === null ? 'invalid' : ''} onInput={event => setExtra(event.currentTarget.value)} /></label><p>Advanced tool mode sends this object unchanged. Guided search keeps every extra field; the visible query, retrieval mode and limit take precedence. Question mode retains a supplied budget; otherwise it uses the existing Workbench context budget.</p><label class="field">Response detail<select value={response} onChange={event => setResponse(event.currentTarget.value === 'terse' ? 'terse' : 'full')}><option value="full">Full</option><option value="terse">Terse</option></select></label>{definition && renderHelpNode((tag, children) => h(tag, {}, ...children), helpToolPresentation(definition))}</details>
-      </form>
+      </form></section>
+      {GUIDED_EVIDENCE_ROUTES.map(route=><section hidden={props.guidedRoute!==route}><EvidenceToolsScreen route={route} scopeIdentity={view.applied?.scopeIdentity} disabled={!view.applied||view.loading||view.applying||view.result.phase==='pending'} capture={()=>captureFor(route)} active={visible&&props.guidedRoute===route}/></section>)}
+      <section hidden={!isBrowserReviewRoute(props.guidedRoute)}><BrowserReviewScreen route={isBrowserReviewRoute(props.guidedRoute)?props.guidedRoute:'review/changes'} scopeIdentity={view.applied?.scopeIdentity} disabled={!view.applied||view.loading||view.applying||view.result.phase==='pending'} capture={()=>captureFor(isBrowserReviewRoute(props.guidedRoute)?props.guidedRoute:'review/changes')} active={visible&&isBrowserReviewRoute(props.guidedRoute)}/></section>
+      <section hidden={!isBrowserStrategyRoute(props.guidedRoute)}><BrowserStrategiesScreen route={isBrowserStrategyRoute(props.guidedRoute)?props.guidedRoute:'strategies/library'} scopeIdentity={view.applied?.scopeIdentity} disabled={!view.applied||view.loading||view.applying||view.result.phase==='pending'} capture={()=>captureFor(isBrowserStrategyRoute(props.guidedRoute)?props.guidedRoute:'strategies/library')} active={visible&&isBrowserStrategyRoute(props.guidedRoute)} onNavigate={props.onGuidedRoute}/></section>
     </Panel>
-    <Panel title="Results"><Results state={view.result} request={view.originalRequest} verifiedScope={view.verifiedScope} logicalBody={view.logicalBody} metadataError={view.metadataError} more={cursor => { if (view.originalRequest && view.applied) void owner.execute(view.originalRequest.tool, { ...view.originalRequest.arguments, cursor }, response); }} /></Panel>
+    {props.guidedRoute?<details><summary>Most recent native management read receipt</summary><p>Original arguments identify this saved read. Selecting another tool keeps this complete receipt as history.</p><Results state={view.result} request={view.originalRequest} verifiedScope={view.verifiedScope} logicalBody={view.logicalBody} metadataError={view.metadataError}/></details>:<Panel title="Results"><Results state={view.result} request={view.originalRequest} verifiedScope={view.verifiedScope} logicalBody={view.logicalBody} metadataError={view.metadataError} more={cursor => { if (view.originalRequest && view.applied) void owner.execute(view.originalRequest.tool, { ...view.originalRequest.arguments, cursor }, response); }} /></Panel>}
   </>;
 }

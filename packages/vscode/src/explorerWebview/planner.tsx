@@ -15,19 +15,10 @@ const LABELS: Record<TaskState, string> = { draft: 'Draft', ready: 'Ready', expo
 type SaveReply = { saved: true; path: string; hash: string; revision: number } | { saved: false; reason: string; revision: number };
 
 const emptyPlan = (objective: string, project?: string): Plan => ({ schema: PLAN_SCHEMA, title: 'New plan', objective, ...(project ? { project } : {}), tasks: [] });
-const nextId = (plan: Plan) => `T${Math.max(0, ...plan.tasks.map(task => Number(task.id.slice(1)))) + 1}`;
 const fileName = (title: string) => `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plan'}.md`;
 
-/** A Studio snapshot as a task: its compiled prompt becomes the instructions and its run the evidence. */
-export function taskFromStudio(plan: Plan, studio: StudioDraft): PlanTask {
-    const run = studio.run?.manifest;
-    const prompt = studioPrompt(studio);
-    if (studio.promptStale || prompt.length > 8000) { throw new Error('Studio snapshot is stale or exceeds 8,000 characters. Rebuild or explicitly reduce its evidence before adding it to Planner.'); }
-    return { id: nextId(plan), title: studio.strategy!.title.slice(0, 160), instructions: prompt || studio.objective, dependsOn: [], state: 'draft',
-        ...(run && run.publication !== 'unknown' ? { evidence: { template: run.template, publication: run.publication, digest: run.evidenceDigest, outcome: run.outcome } } : {}) };
-}
-export const studioPrompt = (studio: StudioDraft) => studio.prompt ?? (studio.strategy ? compilePrompt({ strategy: studio.strategy, objective: studio.objective, profile: studio.profile, run: studio.run }) : '');
-export const canAddStudio = (studio: StudioDraft) => !!studio.strategy && !studio.promptStale && studioPrompt(studio).length <= 8000;
+import {taskFromStudio,studioPrompt,canAddStudio,nextId} from '../explorerStrategyPlanner';
+export {taskFromStudio,studioPrompt,canAddStudio} from '../explorerStrategyPlanner';
 
 export function PlannerScreen(props: ScreenProps) {
     const [draft, setDraft] = usePlanner();

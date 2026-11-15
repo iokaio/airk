@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { HitView, PassageView, SearchResultView, SemanticState, WebviewMessageOf } from './explorerContracts';
 import { explorerError } from './explorerErrors';
-import { EvidenceFailure } from './explorerEvidence';
+import { EvidenceFailure } from './explorerEvidenceCore';
 import { evidenceRows } from './workbenchRender';
 import { readResultBody } from './sourceVerification';
 

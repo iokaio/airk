@@ -13,6 +13,7 @@ import { currentSession, logout, onSessionChange, takeInitialRoute, type Session
 import { Usage } from './usage';
 import { BundledHelp } from './bundledHelp';
 import { browserDestination, MAIN_DESTINATIONS, evidenceToolsPresentation, type EvidenceToolsNode } from '../../ui/src/navigation';
+import {BROWSER_EVIDENCE_ROUTES,isBrowserEvidenceRoute} from './browserEvidenceRoutes';
 import { PreparedActions } from './preparedActions';
 import { Arbiter } from './arbiter';
 import { onPreparationChange } from './api';
@@ -42,14 +43,14 @@ export type PageId = (typeof PAGES)[number][0];
  */
 export type Route = { page: PageId; params: URLSearchParams; seq: number };
 /** Browser hub is inert: unavailable guided editor operations stay explicitly limited. */
-export function SearchWorkspace(props:{route:Route;onView(tools:boolean):void}):JSX.Element {
-  const tools=props.route.params.get('view')==='tools',queryMounted=useRef(false);
-  if(!tools)queryMounted.current=true;
-  const show=(value:EvidenceToolsNode|string):ComponentChildren=>typeof value==='string'?value:h(value.tag,value.href?{href:value.href}:{},...value.children.map(show));
+export function SearchWorkspace(props:{route:Route;onView(tools:boolean,tool?:string):void}):JSX.Element {
+  const tools=props.route.params.get('view')==='tools',guided=props.route.params.get('tool'),route=isBrowserEvidenceRoute(guided)?guided:undefined,queryMounted=useRef(false);const lastTool=useRef<string>();if(route)lastTool.current=route;
+  if(!tools||route)queryMounted.current=true;
+  const show=(value:EvidenceToolsNode|string):ComponentChildren=>typeof value==='string'?value:h(value.tag,value.href?{href:value.href}:value.route?{onClick:()=>props.onView(true,value.route)}:{},...value.children.map(show));
   return <section aria-label="Search workspace"><div class="actions" aria-label="Search views">
     <button type="button" class={tools?'secondary':''} aria-current={!tools?'page':undefined} onClick={()=>props.onView(false)}>Query</button>
     <button type="button" class={tools?'':'secondary'} aria-current={tools?'page':undefined} onClick={()=>props.onView(true)}>Evidence tools</button>
-    </div>{queryMounted.current?<section hidden={tools}><Search/></section>:null}{tools?<section class="evidence-tools" aria-label="Evidence tools hub">{show(evidenceToolsPresentation('browser'))}</section>:null}</section>;
+    </div>{queryMounted.current?<section hidden={tools&&!route}><Search guidedRoute={route} onGuidedRoute={route=>props.onView(true,route)}/></section>:null}{tools&&!route?<section class="evidence-tools" aria-label="Evidence tools hub">{lastTool.current?<button onClick={()=>props.onView(true,lastTool.current)}>Continue last guided tool</button>:null}{show(evidenceToolsPresentation('browser',undefined,BROWSER_EVIDENCE_ROUTES))}</section>:null}</section>;
 }
 
 
@@ -182,10 +183,10 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
     // Keeps a same-tab reload on this page; replaceState fires no hashchange.
     if (!props.embedded) window.history.replaceState(null, '', `#${id}`);
   };
-  const navigateSearch = (tools:boolean):void => {
-    const params=new URLSearchParams(tools?{view:'tools'}:{});
+  const navigateSearch = (tools:boolean,tool?:string):void => {
+    const params=new URLSearchParams(tools?{view:'tools',...(isBrowserEvidenceRoute(tool)?{tool}:{})}:{});
     setRoute(current=>({page:'search',params,seq:current.seq+1}));
-    if(!props.embedded)window.history.pushState(null,'',`#search${tools?'?view=tools':''}`);
+    if(!props.embedded)window.history.pushState(null,'',`#search${params.size?'?'+params.toString():''}`);
   };
   const navigateHelp = (params: URLSearchParams, replace: boolean): void => {
     setRoute(current => ({ page: 'help', params, seq: current.seq + 1 }));

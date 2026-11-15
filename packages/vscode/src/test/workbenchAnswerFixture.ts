@@ -12,3 +12,12 @@ export function answerSourceFixture(): {answer: Value; info: Value} {
     return {answer:{schema:'airk.arbiter.context/2',assessment:{scope:{index_id:answerIndex,authorization:'38'.repeat(32),publication:answerPublication},termination:'no_progress',coverage:{status:'unassessed',reason:'disabled'}},assessment_history:[],gaps:[],records:[{id:answerRecord,operation:'search',role:'unknown',scope:{index_id:answerIndex,authorization:'38'.repeat(32),publication:answerPublication},arguments:{query:'original question'},canonical_result:body}],paragraphs:[{text:'Cited paragraph',evidence:[answerRecord],interpretation:false}],future_packet:{preserve:true}},
         info:{collection:'fixture',publication:answerPublication,path:'api/source.rs',content_hash:answerHash,line_basis:'source',source:{root:'/native/verified-original',relative_path:'api/source.rs'},source_verification:structuredClone(verification)}};
 }
+
+/** Synthetic current whole-context verification placement; file_info stays local. */
+export function wholeAnswerSourceFixture(): {answer:Value;info:Value} {
+    const result=answerSourceFixture(),body=((result.answer.records as Value[])[0].canonical_result as Value);
+    result.answer.source_verification=body.source_verification;
+    ((result.answer.source_verification as Value).references as Value[])[0].result_pointer='/records/0/canonical_result/hits/0/citation';
+    delete body.source_verification;
+    return result;
+}

@@ -5,29 +5,8 @@ import { useEffect, useState } from 'preact/hooks';
 import { STUDIO_SCHEMA, type StudioDocument, type Plan, type PromptProfile, type RunResult, type Strategy } from '../explorerStrategies';
 import { notify, savedState, saveState } from './api';
 
-export interface StudioDraft {
-    readonly strategy?: Strategy;
-    /** The Library entry this draft came from, for its Runnable/Preview label. */
-    readonly origin?: string;
-    readonly params: Readonly<Record<string, string>>;
-    readonly pathPrefix: string;
-    readonly objective: string;
-    readonly profile: PromptProfile;
-    readonly run?: RunResult;
-    readonly prompt?: string;
-    readonly promptEdited: boolean;
-    readonly promptStale?: boolean;
-    /** Increments on every edit; agents name it as expected_target_revision. */
-    readonly revision?: number;
-    readonly saveName?: string;
-    readonly saved?: { readonly name: string; readonly path: string; readonly hash: string; readonly content: string };
-}
-export interface PlannerDraft {
-    readonly plan?: Plan;
-    /** Increments on every edit so a late save result for an older revision is ignored. */
-    readonly revision: number;
-    readonly saved?: { readonly path: string; readonly revision: number; readonly hash: string };
-}
+import type {StudioDraft,PlannerDraft} from '../explorerStrategyDrafts';
+export type {StudioDraft,PlannerDraft} from '../explorerStrategyDrafts';
 interface Stored { studio: StudioDraft; planner: PlannerDraft }
 
 const EMPTY: Stored = { studio: { params: {}, pathPrefix: '', objective: '', profile: 'portable', promptEdited: false }, planner: { revision: 0 } };
@@ -54,12 +33,8 @@ export function selectDraftProject(project: string | undefined, epoch = 0): void
     commit({ studio: { ...current.studio, saved: undefined, run: undefined, prompt: current.studio.promptEdited ? current.studio.prompt : undefined,
         promptStale: current.studio.promptEdited }, planner: { ...current.planner, saved: undefined, revision: current.planner.revision + 1 } });
 }
-const inputs = (draft: StudioDraft) => JSON.stringify([draft.strategy, draft.params, draft.pathPrefix, draft.objective]);
-export function studioDocument(draft: StudioDraft): StudioDocument {
-    return { schema: STUDIO_SCHEMA, strategy: draft.strategy!, objective: draft.objective,
-        params: Object.fromEntries(draft.strategy!.params.map(param => [param.name, draft.params[param.name] ?? ''])),
-        pathPrefix: draft.pathPrefix, profile: draft.profile, ...(draft.promptEdited ? { editedPrompt: draft.prompt ?? '' } : {}) };
-}
+import {reviseStudio,studioDocument,studioHasWork} from '../explorerStrategyDrafts';
+export {studioDocument,studioHasWork} from '../explorerStrategyDrafts';
 
 /** Tell the host the current draft revisions so agent drafts can detect a changed target. */
 export function reportRevisions(): void {
@@ -71,12 +46,8 @@ function commit(next: Stored): void {
     if (project && next.planner.plan && !next.planner.plan.project) {
         next = { ...next, planner: { ...next.planner, plan: { ...next.planner.plan, project } } };
     }
-    if (inputs(next.studio) !== inputs(current.studio)) {
-        next = { ...next, studio: { ...next.studio, run: undefined, prompt: next.studio.promptEdited ? next.studio.prompt : undefined,
-            promptStale: next.studio.promptEdited } };
-    }
     const changed = next.studio !== current.studio || next.planner.revision !== current.planner.revision;
-    if (next.studio !== current.studio) { next = { ...next, studio: { ...next.studio, revision: (current.studio.revision ?? 0) + 1 } }; }
+    if(next.studio!==current.studio)next={...next,studio:reviseStudio(current.studio,next.studio)};
     current = next;
     if (changed) { reportRevisions(); }
     saveState({ ...savedState<object>(), strategies: current });
@@ -94,10 +65,4 @@ export function useStudio(): [StudioDraft, (update: (draft: StudioDraft) => Stud
 }
 export function usePlanner(): [PlannerDraft, (update: (draft: PlannerDraft) => PlannerDraft) => void] {
     return [useStored().planner, update => commit({ ...current, planner: update(current.planner) })];
-}
-
-/** True when loading something else would discard the user's Studio work. */
-export function studioHasWork(draft: StudioDraft): boolean {
-    return !!draft.strategy && (!!draft.run || draft.promptEdited || !!draft.objective.trim() || Object.values(draft.params).some(value => value.trim())
-        || !!draft.strategy.id.startsWith('user/'));
 }

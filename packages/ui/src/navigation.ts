@@ -41,13 +41,13 @@ export function evidenceToolLabel(route:unknown):string|undefined {
 }
 export type EvidenceToolsNode={tag:'section'|'h2'|'h3'|'p'|'div'|'button'|'a';children:readonly(EvidenceToolsNode|string)[];route?:string;href?:string};
 /** Shared named hub. Host actions remain existing guided routes; no read is issued here. */
-export function evidenceToolsPresentation(host:'editor'|'browser',lastRoute?:string):EvidenceToolsNode {
+export function evidenceToolsPresentation(host:'editor'|'browser',lastRoute?:string,browserRoutes:readonly string[]=[]):EvidenceToolsNode {
   const node=(tag:EvidenceToolsNode['tag'],...children:(EvidenceToolsNode|string)[]):EvidenceToolsNode=>({tag,children});
   return node('section',node('h2','Evidence tools'),
     node('p','Choose a guided workflow. Existing inputs, complete native results, citations, publication identity and full exports stay with their owning view.'),
     ...(host==='editor'&&isEvidenceToolRoute(lastRoute)?[{...node('button',`Continue ${evidenceToolLabel(lastRoute)}`),route:lastRoute}]:[]),
-    ...(host==='browser'?[node('p','These guided workflows currently open in AIRK Explorer in VS Code. Browser workflow migration is not complete. Open AIRK Explorer → Search → Evidence tools for the named view; browser and editor scopes are separate. The browser native read form remains available without being represented as a replacement for these workflows.')]:[]),
+    ...(host==='browser'&&browserRoutes.length===0?[node('p','These guided workflows currently open in AIRK Explorer in VS Code. Browser workflow migration is not complete. Open AIRK Explorer → Search → Evidence tools for the named view; browser and editor scopes are separate. The browser native read form remains available without being represented as a replacement for these workflows.')]:[]),
     ...EVIDENCE_TOOLS.map(group=>node('section',node('h3',group.title),node('p',group.description),
       ...(host==='editor'?group.entries.map(([route,label])=>({...node('button',`${group.title}: ${label}`),route}))
-        :[node('p',`Guided editor entries: ${group.entries.map(([,label])=>label).join(', ')}.`),{...node('a',`Read ${group.title} guide`),href:`#help?guide=${encodeURIComponent(group.guide)}`}]))));
+        :[...group.entries.filter(([route])=>browserRoutes.includes(route)).map(([route,label])=>({...node('button',`${group.title}: ${label}`),route})),...(group.entries.some(([route])=>!browserRoutes.includes(route))?[node('p',`Editor workflows: ${group.entries.filter(([route])=>!browserRoutes.includes(route)).map(([,label])=>label).join(', ')}. Their browser migration remains incomplete; scopes and host actions are separate.`)]:[]),{...node('a',`Read ${group.title} guide`),href:`#help?guide=${encodeURIComponent(group.guide)}`}]))));
 }

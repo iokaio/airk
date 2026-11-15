@@ -87,6 +87,10 @@ const workbench = new WorkbenchView({ globalStorageUri: { fsPath: path.join(inpu
 workbench.sessions = { list: async () => [], save: async session => { session.revision++; return []; },
   findShortcut: async () => undefined, remove: async () => undefined };
 const observations = [];
+let journeyStage='initialize';
+function failureObservation(error,stage,deliveries,observations) {
+  return {schema:1,stage,error:Object.fromEntries(Object.getOwnPropertyNames(error).map(key=>[key,error[key]])),deliveries,observations};
+}
 async function until(predicate, label) {
   const timeout = AbortSignal.timeout(60000);
   while (!predicate()) {
@@ -117,16 +121,25 @@ async function runSlash(text, expectedSelection) {
   assert.deepEqual(exported.turns.at(-1).envelope, turn.envelope, 'complete JSON export retains every native field');
   observations.push({ text, selection: expectedSelection, delivery: delivered, turn: structuredClone(turn) });
 }
+function qualifiedAnswerPartitions(envelope) {
+  assert.ok(envelope && ['airk.arbiter.context/2','airk.combined-read/1'].includes(envelope.schema),
+    'current Answer must be an explicit singleton /2 or combined /1 envelope');
+  const combined=envelope.schema==='airk.combined-read/1';
+  if(combined)assert.equal(envelope.context?.schema,'airk.combined-context/1');
+  const partitions=answerPartitions(envelope);
+  assert.equal(partitions.length,1,'these automatic and explicit fixtures each select exactly one index');
+  assert.equal(partitions[0].outcome,combined?'complete':'local');
+  assert.equal(partitions[0].packet?.schema,'airk.arbiter.context/2');
+  return partitions;
+}
 async function runAnswer(expectedSelection) {
+  journeyStage=`answer-${expectedSelection}-invoke`;
   const before = deliveries.length, original = structuredClone(input.answer_request);
   await workbench.message({type:'answer',question:original.question,budget:original.budget}); await workbench.saveQueue;
   const turn = workbench.session.turns.at(-1), delivered = parsedDelivery('airk_answer',before);
   assert.equal(turn.error,undefined,JSON.stringify(turn));
-  assert.equal(turn.envelope?.schema,'airk.combined-read/1',JSON.stringify(turn.envelope));
-  assert.equal(turn.envelope.context?.schema,'airk.combined-context/1');
-  const partitions=answerPartitions(turn.envelope);
-  assert.equal(partitions.length,1,'these automatic and explicit fixtures each select exactly one index');
-  assert.equal(partitions[0].outcome,'complete');assert.equal(partitions[0].packet?.schema,'airk.arbiter.context/2');
+  journeyStage=`answer-${expectedSelection}-projection`;
+  const partitions=qualifiedAnswerPartitions(turn.envelope);
   assert.deepEqual(turn.request,original,'Workbench uses the complete unchanged Rust-emitted current request');
   assert.deepEqual(JSON.parse(delivered.argv[delivered.argv.indexOf('--args')+1]),original,'real framed native request preserves every input field');
   assert.deepEqual(turn.envelope,nativeBody(delivered),'complete native /2 result including all work, history, provenance and records is retained');
@@ -134,6 +147,7 @@ async function runAnswer(expectedSelection) {
   else assert.ok(delivered.argv.includes('--index'));
   assert.ok(partitions[0].packet.records.length>0,'actual question search must retain canonical evidence');
   assert.ok(partitions[0].packet.records.some(record=>record.canonical_result?.hits?.length>0),'indexed exact Rust fixture question must return actual hits');
+  journeyStage=`answer-${expectedSelection}-copy-export`;
   await workbench.message({type:'copy',turn:turn.id,format:'json'});
   assert.deepEqual(JSON.parse(copied).turns[0],turn,'actual host copy preserves entire original turn/request/result');
   await workbench.message({type:'export',turn:turn.id,format:'json'});
@@ -142,6 +156,7 @@ async function runAnswer(expectedSelection) {
   const cards=evidenceCards(turn.envelope),card=cards.find(card=>card.step&&/^\/hits\/\d+$/.test(card.resultPointer));
   assert.ok(card,'actual native source verification must provide an unambiguous Answer citation');
   const sourceBefore=deliveries.length,openBefore=editorOpens.length;
+  journeyStage=`answer-${expectedSelection}-file-info-and-open`;
   await workbench.message({type:'openAnswerCitation',turn:turn.id,record:card.step,hit:Number(card.resultPointer.split('/').at(-1)),member:card.answerMember});
   const info=parsedDelivery('airk_file_info',sourceBefore),args=JSON.parse(info.argv[info.argv.indexOf('--args')+1]);
   assert.equal(args.path,card.path);assert.equal(args.known_hash,card.hash);assert.equal(args.revision,card.publication);
@@ -203,7 +218,10 @@ async function main() {
     observations, source_before: input.source_hashes, host: 'actual Workbench callbacks; injected VS Code host; real native session' }, null, 2) + '\n');
   console.log(JSON.stringify({ tests: 1, passed: 1, exactComparisons, observations: observations.length, output: input.output }));
 }
-main().catch(error => { console.error(error.stack || error); process.exitCode = 1; }).finally(async () => {
+main().catch(error => {
+  fs.writeFileSync(input.output+'.failure.json',JSON.stringify(failureObservation(error,journeyStage,deliveries,observations),null,2)+'\n');
+  console.error(error.stack || error); process.exitCode = 1;
+}).finally(async () => {
   workbench.dispose(); setEvidenceTransport(undefined); native.dispose();
   await Promise.all(children.map(child => child.exitCode !== null || child.signalCode !== null ? undefined : once(child, 'exit', { signal: AbortSignal.timeout(10000) })));
 });

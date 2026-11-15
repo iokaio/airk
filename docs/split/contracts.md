@@ -2101,3 +2101,123 @@ only on the same held handle after exact job-membership proof. Image lookup
 failure is diagnostic data. Names never exclude a member or alter waiting,
 cleanup, the original five-second bound or qualification. This additive
 observer does not turn earlier forced cleanup into natural settlement.
+
+Browser Strategies and Planner reuse the existing closed Strategy model, all
+25 versioned core templates, validation, prompt compiler, snapshot and Plan
+algorithms. Their pure owners remain single source modules; shared UI facades
+expose them without importing the Node transport, workspace filesystem or
+editor host. The existing Node runner injects SHA-256 into the same bounded
+runner that browser WebCrypto consumes. The digest recipe and persisted
+Strategy/Studio/Plan shapes are unchanged. Exact pure-module allowlists include
+the extracted draft and Planner helpers; the import boundary remains enforced.
+
+Browser runs capture one explicitly applied originating index through the same
+Search/A2 owner. The actual pinned backing binding is required; no scope or
+project identity is invented. Each read checks the original session, scope and
+draft revision before and after waiting. Single-member combined results are
+projected only after exact member/publication-head checks, while complete
+original native outer replies remain in the run's copy/download evidence.
+Combined publication-vector authority and A2 scope identity retain their
+different native digest domains. No browser projection grants read authority.
+
+The runner conserves its existing call, fanout, concurrency, evidence and source
+budgets. Browser elapsed time uses a monotonic clock; a child wait never exceeds
+the original remaining deadline. Timeout or a changed owner cannot trigger a
+replay, later read or publication into a successor draft. Native work may still
+finish after the UI stops waiting. Saved-source receipts remain native data;
+unsaved editor-buffer checks are unavailable in the browser and runs disclose
+that limit rather than claiming a full match.
+
+Drafts and complete run observations live only in memory under the exact
+management-session object, survive navigation/remount in that session, and are
+cleared when it ends or is replaced. Hidden/unmounted views release pending
+confirmations and invalidate callbacks. Replacement uses the original draft
+revision, and Planner retains validation, dependency/cycle checks, derived
+blocked/stale states and explicit completion confirmation. Downloads and
+clipboard operations never execute an agent. Browser Plan downloads do not
+establish a workspace save or a verified `.airk/plans` handoff; the editor's
+existing save/overwrite/path owner continues to provide that capability.
+Focused browser/DOM controls establish these callbacks on synthetic replies;
+they do not qualify native transports, embedded assets or packaged clients.
+
+
+### Browser guided evidence workflows (current implementation)
+
+Search → Evidence tools addresses the same thirteen retained route names in both
+hosts. Browser routes share the existing management Search catalog and applied
+A2 scope owner, not an editor-window selection or agent default. Switching tools
+keeps their form state and full receipts in that captured session. The visible
+scope is selected by names; scope/session replacement revokes any captured
+follow-up reader before dispatch or delivery. These are implemented browser
+workflows; runtime, installed-host and cross-platform qualification are separate.
+
+Code Symbols, textual References, indexed Outline, Document Facts, Inspector,
+citation Checker and indexed Changes use dedicated forms and canonical native
+operations. Existing FactHandles/factList, citation parsing, native saved-source
+observations and publication-bound continuation remain their single owners.
+Advanced supported native arguments survive; original indexed path/name and
+opaque token bytes are not trimmed or normalized. Native open kind labels remain
+available. File inventory uses the native `list_files.prefix` spelling. Browser
+source actions copy the exact returned location or inspect it through the same
+scope; they never imply privileged editor file opening or unsaved-buffer access.
+Checker requires one originating index, uses the existing fifty-citation parser
+and twenty-five distinct-path checking bound, and explicitly identifies every
+unchecked or omitted citation. Missing receipts never become a source-match claim.
+
+Review Changes, Impact and Tests share `explorerReviewCore.ts` with the original
+editor Git adapter. The browser supplies explicit relative paths or supported
+unified-diff headers. It does not observe Git, staging or live source files;
+quoted/escaped or unsafe paths refuse rather than being guessed, and hunk text
+cannot create path metadata. The same declaration/reference/test inventory
+sampling, ninety-second report deadline, bounded publication restart, fifty-file
+pages, saved-source budget and candidate limits are preserved. Snapshot SHA-256
+uses the same JSON bytes with an injected standard hash provider; browser hashing
+uses WebCrypto. Old editor Git behavior remains covered by its unchanged tests.
+Manual provenance is explicit in every browser report; candidates are neither
+executed tests nor complete semantic impact. Native scope refusals cannot become
+a successful candidate fallback. Outstanding native work after a wait expires
+stays unknown and is never replayed.
+
+Library, Studio and Planner consume the existing versioned templates, validators,
+prompt compiler and bounded strategy runner with injected transport and hashing.
+Browser imports/downloads do not claim that a plan was saved under `.airk/plans`;
+workspace save, confirmed saved-path handoff, Git and editor buffers retain their
+existing editor owners. Actual native backing metadata is required where the
+existing strategy/plan identity needs it; a selected index ID or grant digest is
+not substituted for that metadata.
+
+Complete JSON and Markdown exports retain every original request/native reply,
+publication, unknown field, failed member and omission alongside any derived
+view. Inspection and continuation retain their original receipts. Historical
+scope/input/publication reports cannot drive current source actions. Clipboard
+or download failure is visible while complete retained evidence remains
+available. No generic raw tool form is counted as a guided workflow migration,
+and no native wire shape, digest domain or `airk-state/1` format changes here.
+
+
+Guided workflow captures also retain presentation custody: the actual outer
+`PageVisible` context and exact subroute generation must still match before and
+after every native call. Hiding a page, switching tools, unmounting, or leaving
+and returning invalidates the old follow-up reader without revoking the native
+session or inventing cancellation of a dispatched call. A held read may finish
+under its original native owner; it cannot start the next Checker/Review/Strategy
+read or publish a result into a replacement view. Forms, drafts and complete
+historical receipts remain available. The same guard applies to all thirteen
+browser guided routes, including retained hidden subviews.
+
+
+Browser diff input supports separate unquoted `diff --git` sections with coherent
+file headers and counted unified hunks. Binary, standalone, combined, mode-only,
+quoted, duplicate-destination or incomplete/mismatched sections refuse the whole
+patch before native reads; the UI directs the user to supply every old/new path
+explicitly instead. No nonempty subset is labeled a complete parsed change list.
+Guided exports additionally retain an immutable snapshot of original form fields,
+complete Checker prose and additional arguments. Editing a form after a read or
+inspecting a result cannot rewrite those original inputs; each follow-up retains
+its own complete actual native arguments and reply.
+
+
+Manual browser Review inputs omit unobserved staging and working-tree fields;
+`false` is not substituted for unknown Git state. The editor adapter still emits
+its actually observed booleans unchanged. This optional presentation field is
+not a native wire or persisted-index format change.

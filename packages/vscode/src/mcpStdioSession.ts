@@ -22,7 +22,8 @@ export interface McpStdioOptions {
     launch?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 }
 interface Pending { resolve(value: any): void; reject(error: Error): void; timer?: NodeJS.Timeout }
-export const DEFAULT_MCP_MESSAGE_BYTES=1024*1024;
+export {DEFAULT_MCP_MESSAGE_BYTES} from './nativeMessageLimits';
+import {DEFAULT_MCP_MESSAGE_BYTES} from './nativeMessageLimits';
 
 /**
  * One bounded newline-delimited JSON-RPC stdio connection to an MCP server.

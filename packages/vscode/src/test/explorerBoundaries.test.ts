@@ -10,7 +10,7 @@ import {build as bundle} from 'esbuild';
 // test reads the TypeScript sources directly (out/test → ../../src).
 const source = path.resolve(__dirname, '..', '..', 'src');
 const compiled = path.resolve(__dirname, '..');
-const CONTRACTS = new Set(['adminUiContract', 'explorerContracts', 'uiPilotContract', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
+const CONTRACTS = new Set(['adminUiContract', 'explorerContracts', 'uiPilotContract', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerStrategyDrafts', 'explorerStrategyPlanner', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
 const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class NativeSession', 'class IntentJournal', 'class PrivateIntentStore', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];

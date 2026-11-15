@@ -57,11 +57,33 @@ export function answerPartitions(envelope:Value):AnswerPartition[] {
     });
 }
 
+/** Follow only addressable JSON objects in the original receipt custodian.
+ * Parsing an error's text for display never creates a source locator. */
+function sourceAtPointer(root:unknown,pointer:string):Value|undefined {
+    if(!pointer.startsWith('/'))return;
+    let current:unknown=root;
+    for(const token of pointer.slice(1).split('/')){
+        if(/~[^01]|~$/.test(token))return;
+        const key=token.replaceAll('~1','/').replaceAll('~0','~');
+        if(Array.isArray(current)){
+            if(!/^(0|[1-9][0-9]*)$/.test(key)||Number(key)>=current.length)return;
+            current=current[Number(key)];
+        }else{
+            const row=object(current);if(!Object.hasOwn(row,key))return;current=row[key];
+        }
+    }
+    return current!==null&&typeof current==='object'&&!Array.isArray(current)?current as Value:undefined;
+}
+
 /** Resolve an exact returned-reference association; roots never come from the renderer. */
 export function answerSourceBinding(body: Value, path: string, hash: string, index: string, publication: unknown,
-    pointer?: string): Value | undefined {
-    const receipt = nativeVerification(body.source_verification);
+    pointer?: string, receiptOwner: Value = body): Value | undefined {
+    const receipt = nativeVerification(receiptOwner.source_verification);
     if (!receipt) return;
+    if(pointer!==undefined){
+        const actual=sourceAtPointer(receiptOwner,pointer);
+        if(actual?.path!==path||actual.content_hash!==hash)return;
+    }
     const references = (receipt.references as unknown[]).map(object);
     const sources = (receipt.sources as unknown[]).map(object);
     const origins = (receipt.origins as unknown[]).map(object);
@@ -86,15 +108,28 @@ export function answerSourceBinding(body: Value, path: string, hash: string, ind
 }
 
 /** Flatten only supported native hit arrays, preserving record ID and hit locator. */
-export function answerEvidenceRows(envelope: Value): Value[] {
-    if(envelope.schema==='airk.combined-read/1')return answerPartitions(envelope).flatMap(partition=>
-        partition.packet&&partition.outcome==='complete'?answerEvidenceRows(partition.packet as unknown as Value).map(row=>({...row,answer_member:partition.member})):[]);
+export function answerEvidenceRows(envelope: Value): Value[] { return answerEvidenceRowsAt(envelope); }
+type ReceiptCustody = {owner:Value;prefix:string};
+function structuredBodyPrefix(raw:unknown):string|undefined {
+    const value=object(raw);
+    if(Array.isArray(value.content)&&Object.keys(object(value.structuredContent)).length)return '/structuredContent';
+    return readResultBody(raw)===value?'':undefined;
+}
+function answerEvidenceRowsAt(envelope:Value,inherited?:ReceiptCustody):Value[] {
+    const custody=inherited??(Object.hasOwn(envelope,'source_verification')?{owner:envelope,prefix:''}:undefined);
+    if(envelope.schema==='airk.combined-read/1')return answerPartitions(envelope).flatMap(partition=>{
+        if(!partition.packet||partition.outcome!=='complete'||partition.member===undefined)return [];
+        const result=partition.raw.result,prefix=structuredBodyPrefix(result);
+        if(prefix===undefined)return [];
+        const child=custody?{owner:custody.owner,prefix:`${custody.prefix}/members/${partition.member}/result${prefix}`}:undefined;
+        return answerEvidenceRowsAt(partition.packet as unknown as Value,child).map(row=>({...row,answer_member:partition.member}));
+    });
     if (envelope.schema !== 'airk.arbiter.context/2' || !Array.isArray(envelope.records)) return [];
     const records = envelope.records.map(object), ids = records.map(record => record.id);
     const scope=object(object(envelope.assessment).scope);
     if(records.some(record=>!sameNativeJson(record.scope,scope)))return [];
     if (ids.some(id => !digest(id)) || new Set(ids).size !== ids.length) return [];
-    return records.flatMap(record => {
+    return records.flatMap((record, recordPosition) => {
         if (!Object.hasOwn(sourceHitOperation, String(record.operation)) || !sourceHitOperation[record.operation as NativeRead]) return [];
         const scope = object(record.scope), body = object(record.canonical_result), publication = object(scope.publication);
         const observation = object(body.scope_observation), members = Array.isArray(observation.members) ? observation.members.map(object) : [];
@@ -104,7 +139,12 @@ export function answerEvidenceRows(envelope: Value): Value[] {
         return body.hits.flatMap((raw, hit) => {
             const row = object(raw), citation = object(row.citation);
             if (typeof citation.path !== 'string' || !digest(citation.content_hash)) return [];
-            const origin = answerSourceBinding(body, citation.path, citation.content_hash, String(scope.index_id), publication, `/hits/${hit}/citation`);
+            // Current native Answer verifies the complete context packet once.
+            // Its reference paths are rooted at that packet, not each nested
+            // canonical read. A present invalid whole receipt never falls back.
+            const origin = answerSourceBinding(body, citation.path, citation.content_hash, String(scope.index_id), publication,
+                custody ? `${custody.prefix}/records/${recordPosition}/canonical_result/hits/${hit}/citation` : `/hits/${hit}/citation`,
+                custody?.owner ?? body);
             const memberships = Array.isArray(own[0].memberships) ? own[0].memberships.map(object) : [];
             if (!origin || !Array.isArray(own[0].source_root_ids) || !own[0].source_root_ids.includes(origin.source_root_id)
                 || !(origin.project_ids as string[]).every(id => memberships.some(member => member.project_id === id))) return [];

@@ -12,7 +12,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 // Native Help can contain meaningful trailing whitespace; encode it in strings.
 const JAVASCRIPT_SUPPORTED = Object.freeze({ 'template-literal': false });
 // Pure contract modules shared by the host, the webview and the Assistance server.
-const CONTRACTS = ['src/adminUiContract.ts', 'src/explorerContracts.ts', 'src/uiPilotContract.ts', 'src/explorerRoutes.ts', 'src/explorerFeatures.ts', 'src/explorerErrors.ts', 'src/explorerStatus.ts', 'src/explorerStrategies.ts', 'src/explorerDrafts.ts', 'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/publications.ts'];
+const CONTRACTS = ['src/adminUiContract.ts', 'src/explorerContracts.ts', 'src/uiPilotContract.ts', 'src/explorerRoutes.ts', 'src/explorerFeatures.ts', 'src/explorerErrors.ts', 'src/explorerStatus.ts', 'src/explorerStrategies.ts', 'src/explorerStrategyDrafts.ts', 'src/explorerStrategyPlanner.ts', 'src/explorerDrafts.ts', 'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/publications.ts'];
 const PILOT_RUNTIME_SOURCES = ['packages/ui/src/nativePilot.ts', 'packages/ui/src/pilotContract.ts', 'packages/vscode/src/uiPilotContract.ts', 'packages/vscode/scripts/build-explorer.cjs'];
 const SHARED_MANAGEMENT_INPUTS = [
     ...['activity.tsx', 'activityRequests.ts', 'agents.tsx', 'api.ts', 'app.tsx', 'arbiter.tsx', 'bundledHelp.tsx',

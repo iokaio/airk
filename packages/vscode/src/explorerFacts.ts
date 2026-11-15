@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { EvidenceClass, FactItemView, FactListView, ProvenanceView } from './explorerContracts';
 import { explorerError } from './explorerErrors';
-import { EvidenceClient, EvidenceFailure, NativeTool } from './explorerEvidence';
+import { EvidenceFailure, type EvidenceReadPort, type NativeTool } from './explorerEvidenceCore';
 import { combinedRows, HandleRegistry, locationLabel, originArgs, QualifiedOrigin, RefRegistry, relativePrefix } from './explorerSearch';
 import { readResultBody } from './sourceVerification';
 import { comparePublicationVector } from './publications';
@@ -162,7 +162,7 @@ function registerCursor(request: Request, payload: Value, publication: string | 
 }
 
 /** Run one fact request and map it. Cursor continuations are rejected once the publication changed. */
-export async function runFacts(session: EvidenceClient, handles: FactHandles, project: string, request: Request): Promise<FactListView> {
+export async function runFacts(session: EvidenceReadPort, handles: FactHandles, project: string, request: Request): Promise<FactListView> {
     try {
         const result = await session.call(request.tool, request.args, { timeout: 30000, supersede: `facts:${request.tool}` });
         return factList(request, result.payload, result.publication, project, handles, result.rawPayload);
@@ -184,7 +184,7 @@ export async function runFacts(session: EvidenceClient, handles: FactHandles, pr
     }
 }
 
-export async function continueFacts(session: EvidenceClient, handles: FactHandles, project: string, more: string): Promise<FactListView> {
+export async function continueFacts(session: EvidenceReadPort, handles: FactHandles, project: string, more: string): Promise<FactListView> {
     const handle = handles.cursors.get(more, project);
     const result = await session.call(handle.tool, { ...handle.args, cursor: handle.cursor }, { timeout: 30000 });
     if (handle.publicationVector && (result.payload.schema !== 'airk.combined-read/1'

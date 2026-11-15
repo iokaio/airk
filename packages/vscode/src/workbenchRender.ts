@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import {SHARED_CAPABILITY_REFERENCE,shareableCapabilityField,materializeCapabilityMember,DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
+import {DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
 export {SHARED_CAPABILITY_REFERENCE,shareableCapabilityField,materializeCapabilityMember,DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
 import { answerEvidenceRows, isAnswerEnvelope } from './workbenchAnswerNavigation';
 import {nativeVerification,readResultBody,selectedVerification,verificationLabel} from './sourceVerification';
-import { CapabilityFieldDisplay, Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn, WORKBENCH_MAX_STEP_REPORTS } from './workbenchContracts';
+import { Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn, WORKBENCH_MAX_STEP_REPORTS } from './workbenchContracts';
 
 export function workbenchStepReportOmissions(envelope:Value):number {
     return Array.isArray(envelope.steps)?Math.max(0,envelope.steps.length-WORKBENCH_MAX_STEP_REPORTS):0;

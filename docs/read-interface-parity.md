@@ -29,7 +29,7 @@ consume `out/test/`, while Admin tests bundle their source through esbuild.
 | Admin native handler and I3 contract | `cargo nextest run --profile ci -p airk-https --no-default-features --lib --locked --timings -E 'test(admin_plane::tests::)'`; `cargo nextest run --profile ci -p airk-endpoint --lib --locked --timings -E 'test(admin_contract)'`; `python scripts/dev/contract_types.py i3 --check` | Handler envelopes, operation mappings, native outcome/recovery receipts and generated contract drift. Handler dispatch/peer observations are injected; this is not live browser/OS peer qualification. |
 | Admin API, outcomes and selection ownership | `node --test packages/admin/test/r04Outcomes.test.mjs packages/admin/test/r19Serial.test.mjs packages/admin/test/r19Race.test.mjs` | Production API/envelope/workflow callbacks and request-state procedures, shared native fixtures, retained unknown outcomes and stale ownership. Injected hooks/fetch are not DOM, focus, browser export or live-transport qualification. |
 | Workbench host, forms, complete details/copies/exports and session consumer | `npm run compile --prefix packages/vscode`, then selection B below | Production host/consumer paths with injected native replies/children, plus render/form/export checks. Combine with selection A's native parser/result evidence; these tests do not establish the new-index default-entry journey against a live session. |
-| Workbench automatic/applied window scope and explicit-index native reads | `python scripts/check-workbench-window-scope.py --runtime-dir <matched-debug-pair-dir> --node <Node-24.15.0-executable> --report <fresh-private-receipt.json>` | Compiled production Workbench callbacks, WindowScope, adapter and framed session against a disposable native fixture. Compares complete native results and JSON exports for status/search, plus Workbench/Explorer search/symbol adapters and legacy-binding refusal. The VS Code host and session-history store are injected: this is not installed-editor, DOM or persistence qualification. The runner seals the compiled tree, harness owners and matched pair, preserves source hashes, and writes a pass only after owned native/directory cleanup. This is an executable selection, not a claim that it has passed on the current pair. |
+| Workbench automatic/applied window scope and explicit-index native reads | `python scripts/check-workbench-window-scope.py --runtime-dir <matched-debug-pair-dir> --node <Node-24.15.0-executable> --report <fresh-private-receipt.json>` | Compiled production Workbench callbacks, WindowScope, adapter and framed session against a disposable native fixture. Compares complete native results and JSON exports for status/search and current Answer, plus Workbench/Explorer search/symbol adapters and legacy-binding refusal. Answer accepts the actual singleton `airk.arbiter.context/2` or explicitly combined `airk.combined-read/1` shape, retaining complete requests, raw results, member-bound citations and real source-verification fences; a one-index fixture still requires exactly one successful partition. The VS Code host and session-history store are injected: this is not installed-editor, DOM or persistence qualification. The runner seals the compiled tree, harness owners and matched pair, preserves source hashes, and writes a pass only after owned native/directory cleanup. This is an executable selection, not a claim that it has passed on the current pair. |
 
 **A — native full-result and input-catalog selection:**
 
@@ -192,6 +192,14 @@ source/byte bounds. The admitted verification allocation, source outcomes,
 counts, hashes, limits hit, fixed budgets, quota observations and raw receipts
 remain literal; no production deadline or source-check budget is increased.
 
+Ordinary combined reads also report each member's share of the original request
+clock remaining after metadata I/O. Comparisons validate member identities,
+the canonical balanced remainder split and the aggregate 30000ms ceiling before
+normalizing only `/members/*/allocation/deadline_ms`. Count, byte and verification
+allocations remain literal, as do unrelated or nested fields with that name.
+Combined context allocations declare their original context budget and remain
+literal. Raw authenticated replies are retained unchanged.
+
 The frontend and one-shot CLI share response observation code. Direct status/diagnostics and completed plan steps report configured `query_concurrency`, reusing the policy observation made for admission. Unified project selection and diagnostics editor observations are also retained inside plan steps. Fresh inner status reads identify their own observation time, zero cache age and `cached: false`; separately cached direct status calls report their actual captured time and age. These values need not match between separate requests.
 
 Scope selection remains interface-specific: unified MCP's `project` is a connection-configured selector, while CLI root/data/collection options select a native registration. The unified endpoint adds its configured project identity and optional Explorer diagnostic observation to both direct and nested results. Headless native CLI calls do not fabricate an attached editor or a connection allowlist. Compare the same underlying collection and native arguments, retain those additional observations when present, and distinguish them from indexed evidence. Native usage accounting measures the worker response before frontend-only metadata is added.
@@ -322,3 +330,21 @@ the Rust-emitted current /2 public request case. This selection proves only the
 exercised unassessed fallback; learned prompt/decision transport parity remains
 a separate required qualification. Without this option the preflight report
 explicitly records Answer transport coverage as unexecuted.
+
+
+Current Answer citation navigation consumes the native verification receipt at
+its actual owner: the complete context packet, with exact
+`/records/<original-position>/canonical_result/hits/<hit>/citation` references.
+Combined-root receipts retain that same outer owner and prefix each reference
+with its original `/members/<position>/result` and, only for actual MCP
+structured envelopes, `/structuredContent`. No receipt is copied into a child.
+A per-read receipt, where independently returned, retains its own local pointer.
+A present invalid whole-context receipt never falls back to a nested receipt.
+Record scope, canonical authorization/publication, unique reference/source/origin
+and original combined-member checks still precede native `file_info` and editor
+effects. Rendering/copy/export never relocates receipts or mutates record bytes.
+
+Source reference paths must resolve to the same actual citation object in the
+original receipt custodian. JSON parsed only from an error text string remains
+display data and cannot supply an addressable member/source location, even when
+it resembles a valid packet or contains a nested verification receipt.

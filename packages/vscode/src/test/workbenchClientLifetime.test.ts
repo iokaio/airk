@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
-import {answerSourceFixture,answerRecord,answerIndex,answerProject,answerRoot,answerHash,answerPublication} from './workbenchAnswerFixture';
+import {wholeAnswerSourceFixture,answerSourceFixture,answerRecord,answerIndex,answerProject,answerRoot,answerHash,answerPublication} from './workbenchAnswerFixture';
 import Module from 'node:module';
 import { test } from 'node:test';
 import type { LaunchSpec } from '../model';
@@ -1002,4 +1002,25 @@ test('A7 paired foreign record authorization and canonical fingerprint refuse be
             assert.equal(f.created[0].requests.filter(value=>value.tool==='airk_file_info').length,0);assert.equal(f.opened.length,0);
         }finally{f.provider.dispose();}
     }
+});
+
+test('A7 whole-context receipt source jump keeps exact file_info and editor fences',async()=>{
+    const f=fixture(),{answer,info}=wholeAnswerSourceFixture();
+    try{
+        await f.state.select(A);await tick();
+        f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
+        await f.state.message({type:'answer',question:'Original answer question'});
+        const turn=f.state.session!.turns.at(-1)!;
+        const before=structuredClone(turn.envelope);
+        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+        assert.equal(f.opened.length,1);
+        assert.equal(f.opened[0].root,'/native/verified-original');assert.equal(f.opened[0].relative,'api/source.rs');
+        assert.equal(f.opened[0].contentHash,answerHash);assert.equal(f.opened[0].startLine,7);
+        assert.deepEqual(f.created[0].requests.find(value=>value.tool==='airk_file_info')?.args,{path:'api/source.rs',project_ids:[answerProject],index_ids:[answerIndex],revision:answerPublication.token,known_hash:answerHash,response_mode:'full'});
+        assert.deepEqual(turn.envelope,before);
+        for(const bad of [{record:'99'.repeat(32),hit:0},{record:answerRecord,hit:1}])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,...bad}),/no unambiguous native source/);
+        (info.source_verification as Value).sources=[{...((info.source_verification as Value).sources as Value[])[0],source_root_id:'src_'+'99'.repeat(16)}];
+        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/source identity changed/);
+        assert.equal(f.opened.length,1);
+    }finally{f.provider.dispose();}
 });

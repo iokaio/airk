@@ -8,7 +8,7 @@ import {answerPartitions,isAnswerEnvelope} from '../workbenchAnswerNavigation';
 import { newSession } from '../workbenchSessions';
 import { evidenceCards, evidenceRows, markdown, renderExport } from '../workbenchRender';
 import { parseWorkbenchMessage, type Value } from '../workbenchContracts';
-import {answerSourceFixture,answerRecord,answerIndex,answerProject,answerRoot,answerHash,answerPublication} from './workbenchAnswerFixture';
+import {wholeAnswerSourceFixture,answerSourceFixture,answerRecord,answerIndex,answerProject,answerRoot,answerHash,answerPublication} from './workbenchAnswerFixture';
 
 test('answer citation projection resolves exact record hit and original native source association without changing evidence',()=>{
     const {answer}=answerSourceFixture(), before=structuredClone(answer);
@@ -167,4 +167,109 @@ test('Answer source scope equality rejects paired foreign authorization and unkn
     const {answer}=answerSourceFixture(),record=(answer.records as Value[])[0],scope=record.scope as Value;
     record.scope=Object.fromEntries(Object.entries(scope).reverse());
     assert.equal(evidenceCards(answer).length,1,'JSON object ordering alone does not change scope identity');
+});
+
+
+test('whole-context Answer receipt binds exact original record position without copying its receipt into canonical reads',()=>{
+    const {answer}=wholeAnswerSourceFixture(),before=structuredClone(answer);
+    const cards=evidenceCards(answer);assert.equal(cards.length,1);
+    assert.equal(cards[0].step,answerRecord);assert.equal(cards[0].hash,answerHash);
+    assert.equal(cards[0].resultPointer,'/hits/0');assert.equal(cards[0].sourceRootId,answerRoot);
+    assert.deepEqual(answer,before);
+    assert.equal(((answer.records as Value[])[0].canonical_result as Value).source_verification,undefined);
+});
+test('whole-context receipt refuses missing wrong-record foreign duplicate and mutated source bindings without local fallback',()=>{
+    for(const kind of ['invalid-root','wrong-record','wrong-hit','missing-ref','duplicate-ref','foreign-origin','wrong-hash','foreign-auth']){
+        const {answer}=wholeAnswerSourceFixture(),receipt=answer.source_verification as Value;
+        const body=(answer.records as Value[])[0].canonical_result as Value;
+        // A valid nested receipt must not bypass a present invalid whole receipt.
+        body.source_verification=((answerSourceFixture().answer.records as Value[])[0].canonical_result as Value).source_verification;
+        if(kind==='invalid-root')receipt.schema='future';
+        if(kind==='wrong-record')(receipt.references as Value[])[0].result_pointer='/records/1/canonical_result/hits/0/citation';
+        if(kind==='wrong-hit')(receipt.references as Value[])[0].result_pointer='/records/0/canonical_result/hits/1/citation';
+        if(kind==='missing-ref')receipt.references=[];
+        if(kind==='duplicate-ref')(receipt.references as Value[]).push(structuredClone((receipt.references as Value[])[0]));
+        if(kind==='foreign-origin')(receipt.origins as Value[])[0].index_id='idx_'+'99'.repeat(16);
+        if(kind==='wrong-hash')(receipt.sources as Value[])[0].expected_hash='99'.repeat(32);
+        if(kind==='foreign-auth')((answer.records as Value[])[0].scope as Value).authorization='99'.repeat(32);
+        assert.deepEqual(evidenceCards(answer),[],kind);
+    }
+});
+
+test('whole-context reference uses actual record position and stays isolated within combined members',()=>{
+    const {answer}=wholeAnswerSourceFixture(),record=(answer.records as Value[])[0];
+    (answer.records as Value[]).unshift({...structuredClone(record),id:'98'.repeat(32),operation:'definitions'});
+    (((answer.source_verification as Value).references as Value[])[0]).result_pointer='/records/1/canonical_result/hits/0/citation';
+    assert.equal(evidenceCards(answer).length,1);assert.equal(evidenceCards(answer)[0].step,answerRecord);
+    const combined=combinedSourceControl();
+    for(const member of combined.members as Value[]){
+        const packet=readResultBody(member.result),body=(packet.records as Value[])[0].canonical_result as Value;
+        packet.source_verification=body.source_verification;delete body.source_verification;
+        (((packet.source_verification as Value).references as Value[])[0]).result_pointer='/records/0/canonical_result/hits/0/citation';
+    }
+    const before=structuredClone(combined),cards=evidenceCards(combined);
+    assert.equal(cards.length,2);assert.deepEqual(cards.map(card=>card.answerMember),[0,1]);
+    assert.equal(cards[0].step,cards[1].step);assert.notEqual(cards[0].indexId,cards[1].indexId);
+    assert.deepEqual(combined,before);
+    const members=combined.members as Value[],first=readResultBody(members[0].result),second=readResultBody(members[1].result);
+    second.source_verification=first.source_verification;
+    assert.deepEqual(evidenceCards(combined).map(card=>card.answerMember),[0]);
+});
+
+function combinedWholeSourceControl():Value {
+    const combined=combinedSourceControl(),sources:Value[]=[],origins:Value[]=[],references:Value[]=[];
+    for(const [position,raw] of (combined.members as Value[]).entries()){
+        const packet=readResultBody(raw.result),body=(packet.records as Value[])[0].canonical_result as Value;
+        const proof=body.source_verification as Value,source=(proof.sources as Value[])[0],origin=(proof.origins as Value[])[0],reference=(proof.references as Value[])[0];
+        source.id=`source-${position}`;source.origin_id=`origin-${position}`;source.reference_ids=[`ref-${position}`];
+        origin.id=`origin-${position}`;reference.id=`ref-${position}`;reference.source_id=source.id;
+        reference.result_pointer=`/members/${position}/result/structuredContent/records/0/canonical_result/hits/0/citation`;
+        sources.push(source);origins.push(origin);references.push(reference);delete body.source_verification;
+    }
+    combined.source_verification={schema:'airk.saved-source-verification/1',method:'sha256-full-saved-source/1',sources,origins,references};
+    return combined;
+}
+test('combined outer verification retains original custody and exact MCP member prefixes without receipt transplantation',()=>{
+    const combined=combinedWholeSourceControl(),before=structuredClone(combined),cards=evidenceCards(combined);
+    assert.equal(cards.length,2);assert.deepEqual(cards.map(card=>card.answerMember),[0,1]);
+    assert.notEqual(cards[0].indexId,cards[1].indexId);assert.equal(cards[0].step,cards[1].step);
+    assert.deepEqual(combined,before);
+    for(const member of combined.members as Value[]){const packet=readResultBody(member.result);assert.equal(packet.source_verification,undefined);assert.equal(((packet.records as Value[])[0].canonical_result as Value).source_verification,undefined);}
+});
+test('combined outer verification rejects wrong member prefixes foreign sources and invalid roots even if local proof exists',()=>{
+    for(const kind of ['wrong-member','wrong-wrapper','wrong-record','foreign-origin','duplicate-reference','wrong-hash','invalid-root']){
+        const combined=combinedWholeSourceControl(),proof=combined.source_verification as Value;
+        if(kind==='wrong-member')(proof.references as Value[])[0].result_pointer='/members/1/result/structuredContent/records/0/canonical_result/hits/0/citation';
+        if(kind==='wrong-wrapper')(proof.references as Value[])[0].result_pointer='/members/0/result/records/0/canonical_result/hits/0/citation';
+        if(kind==='wrong-record')(proof.references as Value[])[0].result_pointer='/members/0/result/structuredContent/records/1/canonical_result/hits/0/citation';
+        if(kind==='foreign-origin')(proof.origins as Value[])[0].index_id='idx_'+'99'.repeat(16);
+        if(kind==='duplicate-reference')(proof.references as Value[]).push(structuredClone((proof.references as Value[])[0]));
+        if(kind==='wrong-hash')(proof.sources as Value[])[0].expected_hash='99'.repeat(32);
+        if(kind==='invalid-root'){
+            proof.schema='future';
+            const packet=readResultBody((combined.members as Value[])[0].result),body=(packet.records as Value[])[0].canonical_result as Value;
+            body.source_verification=((answerSourceFixture().answer.records as Value[])[0].canonical_result as Value).source_verification;
+        }
+        const cards=evidenceCards(combined);
+        assert.ok(!cards.some(card=>card.answerMember===0),kind);
+    }
+});
+test('unchanged Rust combined packets without source provenance never gain guessed source navigation',()=>{
+    const native=JSON.parse(readFileSync(path.resolve(__dirname,'../../../../fixtures/split/arbiter/combined_answer_cases.json'),'utf8'));
+    for(const row of native.cases){const before=structuredClone(row.output);assert.deepEqual(evidenceCards(row.output),[]);assert.deepEqual(row.output,before);}
+});
+
+test('text-only error display cannot manufacture an addressable combined source reference',()=>{
+    const combined=combinedWholeSourceControl(),members=combined.members as Value[],packet=readResultBody(members[0].result);
+    members[0].result={isError:true,content:[{type:'text',text:JSON.stringify(packet)}]};
+    const proof=combined.source_verification as Value;
+    (proof.references as Value[])[0].result_pointer='/members/0/result/records/0/canonical_result/hits/0/citation';
+    assert.ok(!evidenceCards(combined).some(card=>card.answerMember===0));
+    // A receipt inside parsed error text is equally unaddressable from the raw
+    // member custodian and cannot license a file-info or editor action.
+    packet.source_verification=proof;
+    members[0].result={isError:true,content:[{type:'text',text:JSON.stringify(packet)}]};
+    assert.ok(!evidenceCards(combined).some(card=>card.answerMember===0));
+    delete combined.source_verification;
+    assert.ok(!evidenceCards(combined).some(card=>card.answerMember===0),'parsed local proof does not create an original object location');
 });
