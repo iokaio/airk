@@ -1250,7 +1250,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))?;
     let catalog = session.receive(2)?;
     let tools = catalog["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 29);
+    common::assert_unified_mcp_catalog_names(tools);
     assert_query_scope_metadata_tool(tools, "query_scope", true);
     session.wait_source_idle()?;
     for (id, command, option, tool, field, key) in [
@@ -1857,12 +1857,11 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         "CLI and actual MCP must retain complete public tool definitions"
     );
     assert_query_scope_metadata_tool(catalog["tools"].as_array().unwrap(), "query_scope", true);
-    assert_eq!(tools.len(), 29);
+    common::assert_unified_mcp_catalog_names(tools);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names.len(), 29);
     assert_query_scope_metadata_tool(tools, "query_scope", true);
     for tool in catalog["tools"].as_array().unwrap() {
         let name = tool["name"].as_str().unwrap();

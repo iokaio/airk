@@ -209,8 +209,8 @@ At handoff distinguish findings, reproductions, hypotheses, passes and skipped/u
 
 Active campaign: the advanced split.
 
-Delivery window: 14 November 2026 03:05 UTC through 15 November 2026 03:05 UTC,
-as directed by the user. Complete the whole plan on `feat/advanced-split`, with
+Delivery window: 14 November 2026 03:05 UTC through 15 November 2026 15:05 UTC,
+including the user's 12-hour extension on 15 November. Complete the whole plan on `feat/advanced-split`, with
 no PRs. This is an execution deadline, not permission to omit acceptance gates
 or report unfinished work as complete.
 

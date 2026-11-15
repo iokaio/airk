@@ -2017,11 +2017,11 @@ fn probe_https_mcp(service: &common::Service) -> Result<()> {
     let tools = listed["result"]["tools"]
         .as_array()
         .context("HTTPS tool list missing")?;
+    common::assert_unified_mcp_catalog_names(tools);
     ensure!(
-        tools.len() == 29
-            && tools
-                .iter()
-                .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
+        tools
+            .iter()
+            .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
         "public MCP catalog is not unified"
     );
     let canonical = serde_json::to_value(airk_mcp::unified::tools())?;
@@ -2055,13 +2055,18 @@ fn probe_https_mcp(service: &common::Service) -> Result<()> {
             "query scope advertised unsupported {field}"
         );
     }
-    // The native 19-tool catalog remains complete, independent of its retired
+    // The native read catalog remains complete, independent of its retired
     // public stdin role. Exercise metadata directly rather than relaunching it.
     let native = airk_mcp::local::tools();
+    let native_definitions = serde_json::to_value(&native)?;
+    common::assert_native_mcp_catalog_names(
+        native_definitions
+            .as_array()
+            .context("native tool list missing")?,
+    );
     ensure!(
-        native.len() == 19
-            && native.iter().all(|tool| serde_json::to_value(tool)
-                .is_ok_and(|tool| tool["annotations"]["readOnlyHint"] == true)),
+        native.iter().all(|tool| serde_json::to_value(tool)
+            .is_ok_and(|tool| tool["annotations"]["readOnlyHint"] == true)),
         "native catalog exposed management"
     );
     let query = serde_json::json!({"query":"cobalt harbor","mode":"lexical","max_bytes":4096});

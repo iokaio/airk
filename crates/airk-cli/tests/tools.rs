@@ -58,7 +58,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), airk_mcp::unified::tools().len());
+    common::assert_unified_mcp_catalog_names(tools);
     assert_eq!(
         list["tools"],
         serde_json::to_value(airk_mcp::unified::tools()).unwrap()

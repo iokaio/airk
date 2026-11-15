@@ -4325,3 +4325,42 @@ No optional-model feature/gradient/refit, new CAL or FINAL execution occurred.
 Original four unsupported CAL results and independent semantic-annotation needs
 remain explicit blockers. Full workspace remainder/doctests, new artifact/client,
 installed/platform/model and publication gates remain unfinished.
+
+### 15 November 2026: extended execution window and reviewed catalog recovery
+
+User extended the delivery deadline by12hours to15November15:05UTC. Earlier
+cutoffs remain historical; acceptance gates and release authority are unchanged.
+The campaign remains incomplete. AGENTS/CLAUDE retain identical instructions.
+
+R67 all-target/all-feature workspace Clippy passes26.559s. Full Nextest selected
+4,394tests and stopped after327run/326pass/1failure, with93explicit skips and
+4,067unrun (540.678scommand/408.380stest). The MCP expected29-tool catalog was
+stale after Answer admission. Independent literal30-public/20-native sorted
+rosters now reject missing, extra and duplicate operations; full schemas and
+read-only annotations remain checked. R68's scoped follow-up found the sibling
+stale19-native expectation; its original failure is retained. After reviewing
+all affected assertions, R69 scoped CLI Clippy passes8.443s and both actual tools/
+HTTPS catalog regressions pass2/2 (35.662scommand/22.211stest), inputs unchanged.
+Receipts: `artifacts/advanced-split/receipts/mcp-catalog-r68/` and `mcp-catalog-r69/`.
+
+Separate synthetic BERT resource proof passes two random-initialized AdamW
+steps, no pretrained/task text: natural two-process94.142s, peak host3,803,541,504
+bytes, CUDA allocated1,089,251,840/reserved1,189,085,184bytes, no forced/remaining
+process. Proof `models/encoder-recovery-preparation-r1/resource-pilot-r2.json`.
+Root subsequently released one epoch1 TRAIN attempt under the reviewed private
+ACL/output/finite guards. It refuses before BERT/gradients/output creation on
+exact token admission: Python omitted native padding. Receipt44273dd8ac77d9d8
+e09aa63d0b15586ddcb443a014a5a4558378432f8fa23982 records48.692s and two nonzero
+exits, both naturally settled, zero active/forced/timeout; generic owner wording
+does not imply cleanup failed. No checkpoint exists. Tokenizer-only diagnosis
+finds all180native units match after tokenizer-native padding,169already exact;
+11differ only in trailing padding. All99queries need no cropping. Correction
+and independent refusal controls are under review; no unchanged retry.
+
+Fresh FINAL205 remains unconsumed. Current R54 numeric24cases plus mixed order
+pass2.526s. Root recorded pre-outcome dynamic-quantization CAL provenance scope
+without claiming positive optional-model calibration. Optional four CAL results
+remain unsupported; new training attempt is not selected into the old fixed
+epoch1 FINAL experiment. Finalization, synthetic admission, resource release and
+opaque execution/grade remain separate pending steps. Full workspace/doctests,
+new artifact/client, installed/platform/package/publication gates remain open.

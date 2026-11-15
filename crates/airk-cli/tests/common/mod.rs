@@ -26,6 +26,86 @@ pub(crate) type FixtureForeground = reviewed::FixtureForeground;
 type Scope = (PathBuf, PathBuf, String);
 static FIXTURES: OnceLock<Mutex<HashMap<Scope, Weak<Service>>>> = OnceLock::new();
 
+/// Independently reviewed ordinary unified catalog, including canonical Answer.
+/// Keep this literal roster separate from producer definitions: exact sorted
+/// list equality rejects missing, extra and duplicate names on real transports.
+pub(crate) fn assert_unified_mcp_catalog_names(tools: &[serde_json::Value]) {
+    let expected = [
+        "answer",
+        "capabilities",
+        "changes",
+        "code_facts",
+        "context",
+        "diagnostics",
+        "document_facts",
+        "draft_plan",
+        "draft_search",
+        "draft_strategy",
+        "file_info",
+        "get_handoff",
+        "get_template",
+        "help",
+        "imports",
+        "list_files",
+        "list_templates",
+        "outline",
+        "parse",
+        "projects",
+        "proposal_status",
+        "query_scope",
+        "read_file",
+        "references",
+        "relationships",
+        "search",
+        "status",
+        "suggest_view",
+        "symbols",
+        "validate_draft",
+    ];
+    let mut actual = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("public native tool name"))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected, "complete ordinary unified MCP catalog");
+}
+
+/// Independently reviewed canonical native read catalog. Annotation checks
+/// remain separate so adding a read never licenses a management operation.
+pub(crate) fn assert_native_mcp_catalog_names(tools: &[serde_json::Value]) {
+    let expected = [
+        "airk_answer",
+        "airk_capabilities",
+        "airk_changes",
+        "airk_code_facts",
+        "airk_context",
+        "airk_diagnostics",
+        "airk_document_facts",
+        "airk_file_info",
+        "airk_help",
+        "airk_imports",
+        "airk_list_files",
+        "airk_outline",
+        "airk_parse",
+        "airk_query_scope",
+        "airk_read_file",
+        "airk_references",
+        "airk_relationships",
+        "airk_search",
+        "airk_status",
+        "airk_symbols",
+    ];
+    let mut actual = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("canonical native tool name"))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "complete canonical native MCP read catalog"
+    );
+}
+
 fn diagnostic(stage: &str) {
     if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
         eprintln!("airk-service fixture: {stage}");
