@@ -5,8 +5,8 @@ use airk_core::{
     identity::{Incarnation, RevisionToken},
     index_catalog::IndexId,
 };
-use airk_store::service::{ServiceLease, arbiter::ConfigurationStore};
 use airk_mcp::read_attempt::ReadAttemptContext;
+use airk_store::service::{ServiceLease, arbiter::ConfigurationStore};
 
 fn fixture() -> Result<(
     tempfile::TempDir,

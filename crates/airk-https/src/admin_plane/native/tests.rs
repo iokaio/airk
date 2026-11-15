@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use serde_json::json;
 use anyhow::Context as _;
+use serde_json::json;
 
 fn plane() -> AdminPlane {
     let counter = Arc::new(AtomicU8::new(0));
@@ -536,36 +536,86 @@ fn native_admin_chunk_rechecks_original_deadline_at_delivery() {
 
 struct NativePolicyGuard(Arc<std::sync::Mutex<u64>>);
 impl airk_mcp::read_attempt::ReadDeliveryGuard for NativePolicyGuard {
-    fn bindings_digest(&self)->airk_core::identity::Sha256Digest{airk_core::identity::Sha256Digest::from_bytes([2;32])}
-    fn poll(&self,effect:&mut dyn FnMut()->Poll<std::io::Result<usize>>)->Poll<std::io::Result<usize>> {
-        let revision=self.0.lock().unwrap();
-        if *revision!=1{return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,"native policy revoked")))}
+    fn bindings_digest(&self) -> airk_core::identity::Sha256Digest {
+        airk_core::identity::Sha256Digest::from_bytes([2; 32])
+    }
+    fn poll(
+        &self,
+        effect: &mut dyn FnMut() -> Poll<std::io::Result<usize>>,
+    ) -> Poll<std::io::Result<usize>> {
+        let revision = self.0.lock().unwrap();
+        if *revision != 1 {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "native policy revoked",
+            )));
+        }
         effect()
     }
 }
 #[tokio::test]
-async fn native_original_delivery_custody_survives_final_chunk_and_fences_late_policy_change(){
-    let plane=Arc::new(plane());let session=open(&plane);let request_id=id(44);
-    let policy=Arc::new(std::sync::Mutex::new(1u64));let guarded=policy.clone();
-    let owner=plane.clone();let credential=session.clone();
-    let dispatch:NativeDispatch=Arc::new(move |_,check|{
-        let owner=owner.clone();let credential=credential.clone();let guarded=guarded.clone();
+async fn native_original_delivery_custody_survives_final_chunk_and_fences_late_policy_change() {
+    let plane = Arc::new(plane());
+    let session = open(&plane);
+    let request_id = id(44);
+    let policy = Arc::new(std::sync::Mutex::new(1u64));
+    let guarded = policy.clone();
+    let owner = plane.clone();
+    let credential = session.clone();
+    let dispatch: NativeDispatch = Arc::new(move |_, check| {
+        let owner = owner.clone();
+        let credential = credential.clone();
+        let guarded = guarded.clone();
         Box::pin(async move {
             check().map_err(anyhow::Error::msg)?;
-            let context=owner.native_delivery_context(&credential,request_id)?.context("original native read custody")?;
+            let context = owner
+                .native_delivery_context(&credential, request_id)?
+                .context("original native read custody")?;
             context.retain_delivery_guard(Arc::new(NativePolicyGuard(guarded)))?;
-            Ok(ControlResponse::ClientErrorRecorded{})
+            Ok(ControlResponse::ClientErrorRecorded {})
         })
     });
-    let response=plane.native_call(session.clone(),request_id,"service.health".into(),body("\"health\""),deadline(),dispatch,Arc::new(||true)).await;
+    let response = plane
+        .native_call(
+            session.clone(),
+            request_id,
+            "service.health".into(),
+            body("\"health\""),
+            deadline(),
+            dispatch,
+            Arc::new(|| true),
+        )
+        .await;
     assert!(matches!(response,ControlResponse::AdminNativeChunk{chunk} if chunk.done));
-    let context=plane.native_delivery_context(&session,request_id).unwrap().expect("last chunk retained original context");
-    let writes=AtomicUsize::new(0);
-    assert!(matches!(context.poll_delivery(&mut ||{writes.fetch_add(1,Ordering::SeqCst);Poll::Ready(Ok(1))}),Poll::Ready(Ok(1))));
-    *policy.lock().unwrap()=2;
-    assert!(matches!(context.poll_delivery(&mut ||{writes.fetch_add(1,Ordering::SeqCst);Poll::Ready(Ok(1))}),Poll::Ready(Err(_))));
-    assert_eq!(writes.load(Ordering::SeqCst),1,"last chunk cannot bypass the retained actual IO policy guard");
-    assert!(plane.native_delivery_context(&session,id(45)).is_err(),"missing custody must not mint a new context");
-    plane.native_cancel(session.clone(),request_id);
-    assert!(plane.native_delivery_context(&session,request_id).is_err());
+    let context = plane
+        .native_delivery_context(&session, request_id)
+        .unwrap()
+        .expect("last chunk retained original context");
+    let writes = AtomicUsize::new(0);
+    assert!(matches!(
+        context.poll_delivery(&mut || {
+            writes.fetch_add(1, Ordering::SeqCst);
+            Poll::Ready(Ok(1))
+        }),
+        Poll::Ready(Ok(1))
+    ));
+    *policy.lock().unwrap() = 2;
+    assert!(matches!(
+        context.poll_delivery(&mut || {
+            writes.fetch_add(1, Ordering::SeqCst);
+            Poll::Ready(Ok(1))
+        }),
+        Poll::Ready(Err(_))
+    ));
+    assert_eq!(
+        writes.load(Ordering::SeqCst),
+        1,
+        "last chunk cannot bypass the retained actual IO policy guard"
+    );
+    assert!(
+        plane.native_delivery_context(&session, id(45)).is_err(),
+        "missing custody must not mint a new context"
+    );
+    plane.native_cancel(session.clone(), request_id);
+    assert!(plane.native_delivery_context(&session, request_id).is_err());
 }

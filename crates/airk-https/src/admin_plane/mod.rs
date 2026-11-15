@@ -158,8 +158,8 @@ pub struct AdminPlane {
     selection: Option<SelectionAuthority>,
     /// Without it a search under an A2 grant answers `not_yet_served`.
     selection_reader: Option<SelectionReader>,
-    delivery_guard_factory:Option<airk_mcp::read_attempt::ReadDeliveryGuardFactory>,
-    read_parent:Option<airk_mcp::read_attempt::ReadAttemptContext>,
+    delivery_guard_factory: Option<airk_mcp::read_attempt::ReadDeliveryGuardFactory>,
+    read_parent: Option<airk_mcp::read_attempt::ReadAttemptContext>,
 }
 
 /// An unpublished slot reserved before dispatch. Read cancellation proves the
@@ -304,20 +304,38 @@ impl AdminPlane {
             trust_inspect: None,
             selection: None,
             selection_reader: None,
-            delivery_guard_factory:None,
-            read_parent:None,
+            delivery_guard_factory: None,
+            read_parent: None,
         }
     }
 
     /// Internal service policy factory; no browser or native request can supply it.
-    pub fn with_delivery_guard_factory(mut self,factory:airk_mcp::read_attempt::ReadDeliveryGuardFactory)->Self {
-        self.delivery_guard_factory=Some(factory);self
+    pub fn with_delivery_guard_factory(
+        mut self,
+        factory: airk_mcp::read_attempt::ReadDeliveryGuardFactory,
+    ) -> Self {
+        self.delivery_guard_factory = Some(factory);
+        self
     }
-    pub(crate) fn with_read_parent(&self,parent:airk_mcp::read_attempt::ReadAttemptContext)->Self {
-        Self{dispatch:self.dispatch.clone(),instance:self.instance,clock:self.clock.clone(),random:self.random.clone(),
-            secrets:self.secrets.clone(),native:self.native.clone(),native_admission:self.native_admission.clone(),scope_check:self.scope_check.clone(),
-            trust_inspect:self.trust_inspect.clone(),selection:self.selection.clone(),selection_reader:self.selection_reader.clone(),
-            delivery_guard_factory:self.delivery_guard_factory.clone(),read_parent:Some(parent)}
+    pub(crate) fn with_read_parent(
+        &self,
+        parent: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> Self {
+        Self {
+            dispatch: self.dispatch.clone(),
+            instance: self.instance,
+            clock: self.clock.clone(),
+            random: self.random.clone(),
+            secrets: self.secrets.clone(),
+            native: self.native.clone(),
+            native_admission: self.native_admission.clone(),
+            scope_check: self.scope_check.clone(),
+            trust_inspect: self.trust_inspect.clone(),
+            selection: self.selection.clone(),
+            selection_reader: self.selection_reader.clone(),
+            delivery_guard_factory: self.delivery_guard_factory.clone(),
+            read_parent: Some(parent),
+        }
     }
 
     /// Serve searches under A2 grants (selection authority S2).
@@ -1073,8 +1091,14 @@ impl AdminPlane {
                             Default::default(),
                         ),
                     };
-                    let parent=self.read_parent.as_ref().map_or_else(||parent.clone(),|original|original.narrowed(parent.deadline()));
-                    let parent=match &self.delivery_guard_factory {Some(factory)=>parent.with_delivery_guard_factory(factory.clone()),None=>parent};
+                    let parent = self.read_parent.as_ref().map_or_else(
+                        || parent.clone(),
+                        |original| original.narrowed(parent.deadline()),
+                    );
+                    let parent = match &self.delivery_guard_factory {
+                        Some(factory) => parent.with_delivery_guard_factory(factory.clone()),
+                        None => parent,
+                    };
                     let context =
                         airk_mcp::read_attempt::admit_tool_context(tool, arguments, parent);
                     return self.granted_read(operation, cookie, method, context).await;

@@ -158,17 +158,44 @@ impl AdminPlane {
 
     /// Original custody for the owner-pipe writer of this exact native reply.
     /// Lookup is not the policy cut; the caller must poll its guard around IO.
-    pub fn native_delivery_context(&self,session:&NativeAdminSessionSecret,request_id:Incarnation)
-        ->anyhow::Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
-        anyhow::ensure!(self.native_valid(session),"native Admin session invalid before delivery");
-        let key=(secrets::digest(session.cookie()),request_id);
-        let requests=self.native.lock().map_err(|_|anyhow::anyhow!("native Admin custody unavailable"))?;
-        let entry=requests.entries.get(&key).ok_or_else(||anyhow::anyhow!("native Admin original custody missing"))?;
-        anyhow::ensure!(now().is_some_and(|now|now<entry.deadline)&&entry.phase.load(Ordering::Acquire)<2,
-            "native Admin original deadline/cancellation before delivery");
-        anyhow::ensure!(entry.session.as_ref().is_some_and(|permit|permit.valid((self.clock)())),"native Admin original session permit expired");
-        let context=entry.read_context.as_ref().ok_or_else(||anyhow::anyhow!("native Admin original read context missing"))?;
-        anyhow::ensure!(!context.cancellation().is_cancelled(),"native Admin original read canceled");
+    pub fn native_delivery_context(
+        &self,
+        session: &NativeAdminSessionSecret,
+        request_id: Incarnation,
+    ) -> anyhow::Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
+        anyhow::ensure!(
+            self.native_valid(session),
+            "native Admin session invalid before delivery"
+        );
+        let key = (secrets::digest(session.cookie()), request_id);
+        let requests = self
+            .native
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native Admin custody unavailable"))?;
+        let entry = requests
+            .entries
+            .get(&key)
+            .ok_or_else(|| anyhow::anyhow!("native Admin original custody missing"))?;
+        anyhow::ensure!(
+            now().is_some_and(|now| now < entry.deadline)
+                && entry.phase.load(Ordering::Acquire) < 2,
+            "native Admin original deadline/cancellation before delivery"
+        );
+        anyhow::ensure!(
+            entry
+                .session
+                .as_ref()
+                .is_some_and(|permit| permit.valid((self.clock)())),
+            "native Admin original session permit expired"
+        );
+        let context = entry
+            .read_context
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("native Admin original read context missing"))?;
+        anyhow::ensure!(
+            !context.cancellation().is_cancelled(),
+            "native Admin original read canceled"
+        );
         Ok(Some(context.clone()))
     }
 
@@ -222,7 +249,10 @@ impl AdminPlane {
                 Ok(context) => context,
                 Err(_) => return failure("admin_native_deadline"),
             };
-        let read_context=match &self.delivery_guard_factory {Some(factory)=>read_context.with_delivery_guard_factory(factory.clone()),None=>read_context};
+        let read_context = match &self.delivery_guard_factory {
+            Some(factory) => read_context.with_delivery_guard_factory(factory.clone()),
+            None => read_context,
+        };
         let key = (secrets::digest(session.cookie()), request_id);
         let phase = Arc::new(AtomicU8::new(0));
         let _reservation = {
@@ -317,8 +347,8 @@ impl AdminPlane {
             trust_inspect: self.trust_inspect.clone(),
             selection: self.selection.clone(),
             selection_reader,
-            delivery_guard_factory:self.delivery_guard_factory.clone(),
-            read_parent:Some(read_context.clone()),
+            delivery_guard_factory: self.delivery_guard_factory.clone(),
+            read_parent: Some(read_context.clone()),
             native_admission: Some(Arc::new(move || {
                 if !live_service() {
                     Err(AdminCode::ServiceDraining)

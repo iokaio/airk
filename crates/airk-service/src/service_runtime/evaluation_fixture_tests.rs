@@ -186,7 +186,10 @@ fn write(work: &Path, name: &str, value: &impl Serialize) -> Result<()> {
 }
 
 fn context_template() -> Result<airk_core::arbiter::context_action::ContextRequestV2> {
-    use airk_core::arbiter::{Budget, context_action::{ContextRequestV2 as ContextRequest, REQUEST_SCHEMA_V2 as REQUEST_SCHEMA}};
+    use airk_core::arbiter::{
+        Budget,
+        context_action::{ContextRequestV2 as ContextRequest, REQUEST_SCHEMA_V2 as REQUEST_SCHEMA},
+    };
     let budget = Budget::default();
     ensure!(
         (
