@@ -1,8 +1,8 @@
 {
   "schema": "airk.help.manifest/1",
   "catalogVersion": 1,
-  "productVersion": "1.9.0",
-  "extensionVersion": "1.9.0",
+  "productVersion": "1.8.201",
+  "extensionVersion": "1.8.201",
   "channel": null,
   "topics": [
     {
@@ -1937,8 +1937,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -2246,8 +2246,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -2430,8 +2430,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -2580,8 +2580,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -2803,8 +2803,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -2933,8 +2933,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -3219,8 +3219,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -3334,8 +3334,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -3487,8 +3487,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -3633,8 +3633,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -3890,8 +3890,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -4076,8 +4076,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -4214,8 +4214,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -4396,8 +4396,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -4626,8 +4626,8 @@
           },
           "verification_deadline_ms": {
             "default": 2000,
-            "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-            "maximum": 30000,
+            "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+            "maximum": 120000,
             "minimum": 1,
             "type": "integer"
           },
@@ -6041,8 +6041,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -6350,8 +6350,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -6534,8 +6534,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -6684,8 +6684,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -6907,8 +6907,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -7037,8 +7037,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -7323,8 +7323,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -7438,8 +7438,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -7591,8 +7591,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -7737,8 +7737,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -7994,8 +7994,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -8180,8 +8180,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -8318,8 +8318,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -8500,8 +8500,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -8730,8 +8730,8 @@
             },
             "verification_deadline_ms": {
               "default": 2000,
-              "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-              "maximum": 30000,
+              "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+              "maximum": 120000,
               "minimum": 1,
               "type": "integer"
             },
@@ -10029,6 +10029,6 @@
         "title": "Arbiter Focus, Context and model requirements"
       }
     ],
-    "version": "1.9.0"
+    "version": "1.8.201"
   }
 }

@@ -110,6 +110,10 @@ def runtime_package(package):
     """Retain only shipped externals; verifier dependencies are inside its sealed bundle."""
     package = dict(package)
     package.pop("devDependencies", None)
+    # "browser" is a bundler resolution map for the shared metadata codec, not a web-extension entry;
+    # VSCE rejects a non-string value and the packaged UI-only extension has no web host.
+    if isinstance(package.get("browser"), dict):
+        package.pop("browser")
     if package.get("scripts", {}).get("vscode:uninstall") != "node ./out/uninstallHook.js":
         raise ValueError("Expected the packaged AIRK uninstall hook")
     package["scripts"] = {"vscode:uninstall": "node ./out/uninstallHook.js"}
