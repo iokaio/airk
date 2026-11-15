@@ -4752,3 +4752,59 @@ R150 isolated Core gate subsequently passed: Clippy10.821s,6/6 focused tests .03
 ### 2026-11-15 — Public Arbiter model-preparation paper
 
 Added `docs/arbiter/training.md` at the user's request, with two generated PNG diagrams and retained generation prompts under `docs/arbiter/images/`. The self-contained paper distinguishes upstream training, AIRK preparation, per-stage downloadable artifacts and the bounded MCP answer workflow. It describes Focus and Context Compact/Large, dates candidate payload sizes, and preserves the distinction between intended capabilities and incomplete qualification. No product code changed. An independent factual review and primary-agent text/image review passed; two wording corrections were applied. Both 1536x1024 PNGs and paper links/whitespace validated. `git diff --check` passed. `scripts/check-repo.ps1` stops at the pre-existing AGENTS.md/CLAUDE.md mismatch, observed before this work; those files were left untouched. No native builds, publication or commits were performed for this documentation task.
+
+### 2026-11-15 — 1.8.202 install failure, 24-hour review and 1.8.203 candidate
+
+**Finding (reproduced on the user's machine).** Every 1.8.202 Inno install failed after `PairPublished`
+with "verified runtime pair manifest is missing". `a9f1e504` made setup's Inno seal (`inno.rs` `write`)
+and recovery projections (`recovery.rs` `completed`, `placement-required`) call
+`runtime_pair::verify_installed_pair`, which requires `airk-runtime.json` beside `service\airk.exe`; the
+split payload (setup_role CONTRACT, `build-local-service-installer.py` `stage`) never ships it. The unsealed
+Inno custody then refused every service start. Fix `42555838`: the seal checks placed `airk`/`airkctl`
+against the I4 record; recovery relies on the existing full payload-inventory verification (every file,
+version, admin digests, C10). `engine_identity`/`single_executable` already fall back when the file is
+absent; no other installed-path caller requires it (independent install-area review).
+
+**24-hour review** (`6b6c865d..64be9cf7`, four parallel read-only reviewers by area; primary verified each
+finding in code). Fixed in `42555838`: (1) incremental refresh of an index whose DiskANN graph predates
+the `-2` graph specification now refuses with `semantic_upgrade_required` instead of a store replacement
+error; (2) Arbiter per-part deadline is 900 s or bytes at 256 KiB/s (1 GiB parts needed ~1.19 MiB/s);
+(3) retry messages disclose kept partial data and Remove; the restore-failure path keeps the friendly
+text; (4) `download_reason_tests` gated on `local-inference`. Not changed (recorded): partial parts are not
+resumed (store contract decision needed); an `arbiter-v1/v2` directory yields a Focus-failed notice on
+every search until `Arbiter.Initialize` (search continues). Frontend/Admin: no defects in committed code.
+
+**Validation.** Format; Clippy `-p airk-service -p airk-kernel` with `airk-service/local-inference` (target
+`artifacts/v190/p10-target`, incremental 1, 101 s) and without default features; Nextest focused 112 run:
+109 pass, 3 fail. The 3 failures (`setup_role::tests::the_record_step_creates_missing_data_and_cache_locations`,
+`setup_role::transaction::tests::os_management_refuses_unsettled_and_wrong_operation_or_stage`,
+`airk-kernel::integration persistent::source_measurements_are_small_authenticated_values_independent_of_graph_bytes`)
+fail identically with this change removed: pre-existing, not investigated. New regressions
+`seal_accepts_the_split_layout_without_runtime_pair_metadata_and_refuses_changed_images` and
+`large_part_deadline_allows_the_minimum_sustained_rate` pass. Extension 1121/1123 (2 skipped), Admin 244/246
+(2 skipped), `release-version.py check --expected 1.8.203` agrees. Not run: workspace gate, doctests,
+installed journey of the fixed installer, macOS/Linux.
+
+**Bump** `a64ec37c` to 1.8.203 (Help content, UI-pilot fixture, Help manifest, Explorer catalog, sealed
+Admin assets regenerated). Build inputs: static ORT `artifacts/advanced-split/ort130-x64-owned-r5`
+(`cargo-aggregate-env.json`; the provisioner CLI `--verify` path now reports "configure policy changed" for
+R5 — unexplained), model `artifacts/advanced-split/bundled-model-v3`.
+
+**Stuck machine.** The failed 1.8.202 operation stays the active setup owner (stage `PairPublished`, closed
+failed receipt); recovery admits only the exact 1.8.202 image, which still fails, and a new operation is
+refused (`installation_in_progress`). The fixed installer cannot self-heal such a machine.
+
+**Manual reset (user's choice).** Moved, not deleted, to `%LOCALAPPDATA%\airk-manual-reset-20261115\`:
+`install-pointer\{active-setup,current}.json`, the 1.8.202 `AIRK Service\program` folder and the
+`airk-setup-recovery-4a9e…` folder. Data, state, cache and logs were kept.
+
+**1.8.203 candidate** (commit `a64ec37c`, clean tree; `scripts/build-local-installers.ps1 -ForceBuild`,
+902 s; release-local 11m34s in `artifacts/v190/p10-target`):
+
+| File | SHA-256 | Bytes | Signing |
+|---|---|---|---|
+| `artifacts/local-service-installer/20261115-162706/airk-service-1.8.203-x86_64-pc-windows-msvc-installer.exe` | `d8739be0d8b658ebe6529aa2ba1a96d9fc0dc9c4a0f6085e14d40845481eae3b` | 75,428,864 | Authenticode valid, Ioka LLC |
+| `artifacts/local-vsix/20261115-164141/vsix/publish/airk-1.8.203.vsix` | `c06ec614412a2762435dc794ecc2788209d2bb2c90f3a0b3524b0550d98d26dc` | 1,700,295 | none |
+
+Runtime pair: `airk` `c597a11f…d9a4`, `airkctl` `31794b33…9446`. Not yet run: installing it (fresh
+install after the reset), the installed service start, upgrade/uninstall journeys.
